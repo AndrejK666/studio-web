@@ -784,6 +784,18 @@ pub struct InstalledKitDto {
     pub icon: Option<String>,
     /// Where a bundled `icon` is served at this version (`KitDto.icon_url`).
     pub icon_url: Option<String>,
+    /// A retired slug (ADR-0071 §8), listed in `effective` during the alias
+    /// release for an old client: every kit it resolves to applies here.
+    pub retired: bool,
+}
+
+/// A retired kit slug a document named, and what it is now (ADR-0071 §8).
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct RenamedKitDto {
+    pub from: String,
+    /// The kits it resolves to; empty when it went to the shell.
+    pub to: Vec<String>,
 }
 
 /// The kits that apply to one organization, or to one project of it.
@@ -803,8 +815,16 @@ pub struct InstalledKitsDto {
     /// What was installed for the project alone; empty without `project_id`.
     pub project: Vec<InstalledKitDto>,
     /// What applies: `base`, `organization` and `project` together, one
-    /// entry per kit, at the newest version.
+    /// entry per kit, at the newest version. During the alias release
+    /// (ADR-0071 §8) it also lists each retired slug whose kits all apply,
+    /// marked `retired`.
     pub effective: Vec<InstalledKitDto>,
+    /// The retired slugs the platform's, the organization's or the
+    /// project's installations named, and what each is now (ADR-0071 §8).
+    pub renamed: Vec<RenamedKitDto>,
+    /// Kits that apply again although a kit merged into them had been
+    /// removed (ADR-0071 §8): what administrators are told is shown again.
+    pub shown_again: Vec<String>,
 }
 
 /// One micro-frontend package of a kit, for the shell to register
@@ -890,6 +910,7 @@ impl From<InstalledKit> for InstalledKitDto {
             by_default: value.by_default,
             icon: None,
             icon_url: None,
+            retired: value.retired,
         }
     }
 }
@@ -1101,6 +1122,27 @@ async fn get_installed(
     let entries = installed_entries(&service, &installer, &installed).await;
     let bundles = service.bundles();
     let org = Some(installed.organization_id);
+    let reports = installer
+        .rename_reports(&ctx, installed.project_id.unwrap_or(installed.organization_id))
+        .await;
+    let mut renamed: Vec<RenamedKitDto> = Vec::new();
+    let mut shown_again: Vec<String> = Vec::new();
+    for r in reports {
+        for k in r.renamed {
+            if !renamed.iter().any(|x| x.from == k.from) {
+                renamed.push(RenamedKitDto {
+                    from: k.from,
+                    to: k.to,
+                });
+            }
+        }
+        for k in r.shown_again {
+            if !shown_again.contains(&k) {
+                shown_again.push(k);
+            }
+        }
+    }
+    let effective = super::aliases::with_retired(&installed.effective);
     let list = |kits: Vec<InstalledKit>| {
         kits.into_iter()
             .map(|kit| {
@@ -1120,7 +1162,9 @@ async fn get_installed(
         base: list(installed.base),
         organization: list(installed.organization),
         project: list(installed.project),
-        effective: list(installed.effective),
+        effective: list(effective),
+        renamed,
+        shown_again,
     }))
 }
 
@@ -2919,6 +2963,7 @@ mod icon_tests {
             installed_by: None,
             installed_at: None,
             by_default: true,
+            retired: false,
         }
         .into();
         assert_eq!(dto.icon, None);

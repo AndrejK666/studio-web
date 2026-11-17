@@ -413,9 +413,9 @@ mod tests {
         let r = request_of(
             &all,
             "kit_base_install",
-            json!({"kit_slug": "project-issues"}),
+            json!({"kit_slug": "project-tests"}),
         );
-        assert_eq!(r.path, "/studio-kits/v1/base-kits/project-issues");
+        assert_eq!(r.path, "/studio-kits/v1/base-kits/project-tests");
         assert_eq!(r.body, json!({}));
 
         let r = request_of(

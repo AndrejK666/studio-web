@@ -19,7 +19,7 @@ fn the_built_in_kits_say_who_brings_the_moved_screens_types() {
     );
     assert_eq!(
         owners.owner("project", MarkOn::Property("parts")),
-        Some("product-releases")
+        Some("project-product")
     );
     // A claimed gear type, and a field of a kit's own type (it comes with
     // the type).
@@ -39,12 +39,38 @@ fn a_mark_moves_only_from_a_kit_of_studio_s_that_no_longer_brings_it() {
     );
     assert_eq!(
         owners.rehome("components", "project", MarkOn::Property("parts")),
-        Some(Rehome::Kit("product-releases".into()))
+        Some(Rehome::Kit("project-product".into()))
     );
     // Where it already is.
     assert_eq!(
         owners.rehome("project-domain-model", "finding", MarkOn::Type),
         None
+    );
+    // A retired slug's marks go to the kit that brings each piece (ADR-0071
+    // §8): one slug split in two lands in both.
+    assert_eq!(
+        owners.rehome("product-releases", "deployment", MarkOn::Type),
+        Some(Rehome::Kit("delivery".into()))
+    );
+    assert_eq!(
+        owners.rehome("product-releases", "project", MarkOn::Property("components")),
+        Some(Rehome::Kit("project-product".into()))
+    );
+    assert_eq!(
+        owners.rehome(
+            "org-infrastructure",
+            "organization",
+            MarkOn::Property("environments")
+        ),
+        Some(Rehome::Kit("delivery".into()))
+    );
+    assert_eq!(
+        owners.rehome("project-activity", "comment", MarkOn::Type),
+        Some(Rehome::Kit("project-git".into()))
+    );
+    assert_eq!(
+        owners.rehome("project-issues", "work-item", MarkOn::Type),
+        Some(Rehome::Kit("project-git".into()))
     );
     // An organization's own kit keeps its marks.
     assert_eq!(owners.rehome("acme-ops", "finding", MarkOn::Type), None);

@@ -109,6 +109,7 @@ fn kit(slug: &str, version: &str, kind: &'static str, at: Option<&str>) -> Insta
         installed_by: at.map(|_| "someone".to_owned()),
         installed_at: at.map(str::to_owned),
         by_default: at.is_none(),
+        retired: false,
     }
 }
 
@@ -123,17 +124,15 @@ async fn every_builtin_kit_is_a_base_kit_until_the_platform_removes_it() {
         [
             "assistant",
             "components",
+            "delivery",
             "org-connections",
             "org-costs",
-            "org-infrastructure",
             "org-reports",
-            "product-releases",
-            "project-activity",
             "project-artifacts",
             "project-domain-model",
             "project-git",
-            "project-issues",
             "project-lifecycle",
+            "project-product",
             "project-specs",
             "project-team",
             "project-tests",
@@ -199,7 +198,7 @@ async fn only_a_platform_administrator_changes_the_base_kits() {
             Err(Refusal::Forbidden(PLATFORM_ADMIN_REQUIRED))
         ));
         assert!(matches!(
-            installer.uninstall_base(&who, "project-issues").await,
+            installer.uninstall_base(&who, "project-tests").await,
             Err(Refusal::Forbidden(PLATFORM_ADMIN_REQUIRED))
         ));
     }
@@ -261,22 +260,22 @@ async fn an_organization_cannot_uninstall_a_base_kit() {
     let admin = caller(ORG_ADMIN, ORG);
     assert!(matches!(
         installer
-            .uninstall_for_organization(&admin, ORG, "project-issues")
+            .uninstall_for_organization(&admin, ORG, "project-tests")
             .await,
-        Err(Refusal::BaseKit(slug)) if slug == "project-issues"
+        Err(Refusal::BaseKit(slug)) if slug == "project-tests"
     ));
     // Its own installation of a base kit is its own to remove; the base
     // kit stays.
     installer
-        .install_for_organization(&admin, ORG, "project-issues", None)
+        .install_for_organization(&admin, ORG, "project-tests", None)
         .await
         .unwrap();
     installer
-        .uninstall_for_organization(&admin, ORG, "project-issues")
+        .uninstall_for_organization(&admin, ORG, "project-tests")
         .await
         .unwrap();
     let installed = installer.installed(&admin, ORG).await.unwrap();
-    assert!(slugs(&installed.effective).contains(&"project-issues"));
+    assert!(slugs(&installed.effective).contains(&"project-tests"));
     // A kit it never had is not there.
     assert!(matches!(
         installer
@@ -325,12 +324,12 @@ async fn an_unknown_or_malformed_kit_is_refused() {
     // A built-in kit comes at Studio's version and no other.
     assert!(matches!(
         installer
-            .install_base(&admin, "project-issues", Some("9.9.9"))
+            .install_base(&admin, "project-tests", Some("9.9.9"))
             .await,
         Err(Refusal::Invalid(_))
     ));
     installer
-        .install_base(&admin, "project-issues", Some(BUILTIN_VERSION))
+        .install_base(&admin, "project-tests", Some(BUILTIN_VERSION))
         .await
         .unwrap();
 }
@@ -392,7 +391,7 @@ fn a_stored_builtin_kit_takes_the_version_this_image_ships() {
     let doc = InstalledDocument {
         kits: vec![
             InstalledRecord {
-                kit_slug: "project-issues".into(),
+                kit_slug: "project-tests".into(),
                 version: "0.0.1".into(),
                 shelf: "builtin".into(),
                 installed_by: "x".into(),
@@ -410,11 +409,12 @@ fn a_stored_builtin_kit_takes_the_version_this_image_ships() {
         removed_builtin: vec![],
         shelf: vec![],
         shelf_versions: vec![],
+        renamed: None,
     };
     let base = base_kits(&doc, &catalogue());
     let issues = base
         .iter()
-        .find(|k| k.kit_slug == "project-issues")
+        .find(|k| k.kit_slug == "project-tests")
         .unwrap();
     assert_eq!(issues.version, BUILTIN_VERSION);
     assert!(!issues.by_default);
@@ -535,9 +535,9 @@ async fn a_project_cannot_remove_what_its_organization_or_the_platform_installed
     let admin = caller(ORG_ADMIN, ORG);
     assert!(matches!(
         installer
-            .uninstall_for_project(&admin, PROJECT, "project-issues")
+            .uninstall_for_project(&admin, PROJECT, "project-tests")
             .await,
-        Err(Refusal::BaseKit(slug)) if slug == "project-issues"
+        Err(Refusal::BaseKit(slug)) if slug == "project-tests"
     ));
     installer
         .install_for_organization(&admin, ORG, "compete", None)
@@ -675,7 +675,9 @@ async fn a_gear_asks_whether_a_kit_applies_to_an_organization_or_its_project() {
     let installer = Arc::new(installer);
     let presence = InstalledKits::new(Arc::clone(&installer));
     let member = caller(MEMBER, ORG);
-    // A base kit applies by default; the opt-in kit does not, yet.
+    // A base kit applies by default; the opt-in kit does not, yet. A
+    // retired slug applies where everything it resolves to does (ADR-0071
+    // §8): org-infrastructure is delivery now.
     assert!(
         presence
             .applies(&member, ORG, "org-infrastructure")

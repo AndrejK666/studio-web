@@ -945,6 +945,48 @@ repository reads (8 at a time); every entry path is relative, with no `..`,
 `.`, empty segment, backslash, drive or control character. The archive is
 built in memory within those limits, then sent.
 
+### 3.15 Merged kits and their slug aliases
+
+ADR-0071 §6 cut the built-in kits by function, and step 5 merged four of
+them under other slugs. For one release the old slugs are aliases
+(`kit_registry/aliases.rs`, the portal's mirror `mfe-shared` `kitAliases`):
+
+| Retired slug | Resolves to |
+| --- | --- |
+| `project-issues` | `project-domain-model`, `project-git` |
+| `project-activity` | `project-git`, `project-lifecycle` |
+| `product-releases` | `project-product`, `delivery` |
+| `org-infrastructure` | `delivery` |
+
+- **Installations.** Every installed-kits document is read through the
+  table: a base, organization or project installation of a retired slug is
+  one of each kit it resolves to. `removed_builtin`: a surviving kit stays
+  removed only where it and every slug merged into it were removed; a kit
+  the merge brought (`delivery`, `project-product`) where every slug merged
+  into it was. Otherwise the merged kit applies, and the document records
+  what is shown again (`renamed.shown_again`, answered by
+  `GET /installed-kits` as `renamed` and `shown_again`). The first write of
+  a document stores it migrated, and the start-up `kit-rename` sweep writes
+  every tenant's. A request naming a retired slug acts on what it resolves to.
+- **Old clients.** `GET /installed-kits` and `KitPresence` list a retired
+  slug in `effective` (`retired: true`) wherever everything it resolves to
+  applies.
+- **The model.** The `kit-rename` sweep (`DomainObjects::rename_kit_marks`,
+  run first and last in every kit reconciliation and once per organization
+  at start) moves `meta.kit`, `left_by.kit`, a property's and a lifecycle's
+  `kit` of Studio's own kits to the kit that brings the piece now
+  (`kit_registry/owners.rs`, read from the built-in manifests), with the
+  kit's property source and the organization's overrides, as one model
+  version `op = "kit-rename"` with no inverse. The ADR-0070 §5 equality
+  check compares marks as the sweep leaves them.
+- **Removal (step 7, #1089).** One release after step 5 reached every
+  environment — the sweep has run in every organization and no portal,
+  desktop, Theia or script reads or sends a retired slug — the table, its
+  readers (the store's migration, `with_retired`, the request mapping, the
+  portal's `kitIn`) and the old slugs in tests and docs go. Until then
+  `aliases_tests.rs` and `kitAliases.test.ts` list every alias with that
+  note, and the backend test fails on a Studio version past `REMOVE_AFTER`.
+
 ## 4. Additional context
 
 [`docs/kit-registry-prototype.md`](../kit-registry-prototype.md) is the

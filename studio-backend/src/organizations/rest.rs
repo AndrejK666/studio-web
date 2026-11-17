@@ -1310,8 +1310,8 @@ pub struct ProjectSignalDto {
     pub detail: Option<String>,
     pub action: ProjectSignalActionDto,
     /// The kit the signal is read for and whose tab its action opens
-    /// (`project-git`, `project-specs`, `project-issues`, `product-releases`,
-    /// `project-activity`); null for the shell's own (the repository
+    /// (`project-git`, `project-specs`, `project-domain-model`,
+    /// `project-product`, `delivery`); null for the shell's own (the repository
     /// connection, the IDE). A signal of a kit not installed for the project
     /// is not listed (ADR-0070 §7).
     pub kit: Option<String>,

@@ -46,7 +46,7 @@ export function useScope(): Scope {
 /**
  * The portal's project tabs a Product screen opens (the prototype's
  * `onOpenTab`). Releases is not ported yet: `/releases` is the route its kit
- * (`product-releases`) is to take, and opens nothing until it does.
+ * (`project-product`) is to take, and opens nothing until it does.
  */
 export const PROJECT_ROUTES = {
   releases: '/releases',

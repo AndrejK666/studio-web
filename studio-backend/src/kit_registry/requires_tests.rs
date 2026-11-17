@@ -18,9 +18,8 @@ const PROJECT: Uuid = Uuid::from_u128(0x7e02);
 const PLATFORM_ADMIN: Uuid = Uuid::from_u128(0xad);
 const ORG_ADMIN: Uuid = Uuid::from_u128(0x0a);
 const RESEARCH: &str = "constructor-research";
-/// What Constructor Research requires (ADR-0071 §5): the delivery kit, by
-/// its slug of this release.
-const DELIVERY: &str = "org-infrastructure";
+/// What Constructor Research requires (ADR-0071 §5): the delivery kit.
+const DELIVERY: &str = "delivery";
 
 #[derive(Default)]
 struct Memory {

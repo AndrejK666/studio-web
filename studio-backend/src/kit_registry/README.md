@@ -30,12 +30,13 @@ This README is what you need to work in the directory.
   own version, empty `repository_url`), `official` (the catalogue above) and
   `organization` (each organization's own, `shelf.rs`: see below). `?shelf=` filters
   `GET /catalog`; the IDE asks for `official` only, the kits `cfs` can install.
-  The built-in kits are the portal's features, each arriving as a kit:
-  `project-lifecycle`, `project-issues`, `project-tests`, `project-artifacts`,
-  `project-activity`, `project-specs`, `org-costs`, `org-reports`,
-  `studio-api-docs` (level `platform`), `components` (platform, organization
-  and project), `org-infrastructure`, `product-releases`,
-  `project-domain-model`, `org-connections`, `project-team`, `assistant`
+  The built-in kits are the portal's features, cut by function (ADR-0071
+  §6): `project-specs` (Specs), `project-domain-model` (Project model),
+  `project-lifecycle` (Planning), `project-git` (Git collaboration),
+  `project-tests` (Tests), `project-product` (Product), `delivery` (Builds,
+  releases & environments), `constructor-research`, `components`
+  (Catalogue), `org-costs`, `org-reports`, `studio-api-docs` (level
+  `platform`), `project-artifacts`, `org-connections`, `project-team`, `assistant`
   (Studio AI, the chat panel the shell docks in its sidebar; no route, its
   permissions are studio-llm-proxy's client settings and chat completions) and
   `constructor-research`. Every built-in kit is a base kit by default except
@@ -49,9 +50,10 @@ This README is what you need to work in the directory.
   holds every one to `docs/api-contract.json`.
 - What a kit claims of the gears (ADR-0071 §1–§3, step 1), `claims.rs`: the
   `gears` section of a `kit.json`, per gear `{gear, types, mcp_tools,
-  routes, sync_only_with_kit}`. The built-in kits claim under today's slugs
-  (`ci-run`/`ci-job` → `project-tests`, the environments types →
-  `org-infrastructure`, `deployment` and the builds → `product-releases`,
+  routes, sync_only_with_kit}`. The built-in kits claim (`ci-run`/`ci-job` →
+  `project-tests`, the environments types, `deployment` and the builds →
+  `delivery`, the product types → `project-product`, `work-item`/`comment`/
+  `pull-request` → `project-git`, `finding` → `project-domain-model`,
   `budget`/`model-price` → `org-costs`, `report-source` → `org-reports`, the
   catalogue types → `components`, the documents types → `project-specs`,
   `project-domain-model` and `project-lifecycle`, `project-type` →
@@ -86,6 +88,24 @@ This README is what you need to work in the directory.
   asks for its CI runs and jobs, build outputs and releases). Every built-in
   claim leaves the flag off today, so every gear writes as before; a kit
   that sets it says so in `GET /catalog/{slug}` (`gears[].note`).
+- Slug aliases (ADR-0071 §8, step 5), `aliases.rs`: `project-issues` →
+  `project-domain-model` + `project-git`, `project-activity` →
+  `project-git` + `project-lifecycle`, `product-releases` →
+  `project-product` + `delivery`, `org-infrastructure` → `delivery`. Every
+  installed-kits document is read through them (`installed::MigratingStore`):
+  an installation of a retired slug counts as one of each kit it resolves
+  to, and a merged kit stays removed (`removed_builtin`) only where every
+  slug merged into it was removed; otherwise it applies and the document's
+  `renamed` report names it (`GET /installed-kits` `renamed`,
+  `shown_again`). The first write of a document stores it migrated; the
+  start-up `kit-rename` sweep (`sweep.rs`, a `model_sweep` mover) writes
+  every tenant's and reconciles every organization's model. A request
+  naming a retired slug acts on what it resolves to. `GET /installed-kits`
+  and `KitPresence` also list a retired slug in `effective` (`retired:
+  true`) wherever everything it resolves to applies, so an old portal or
+  desktop keeps its screens. **Step 7 (#1089) removes the table** one
+  release after this reached every environment: `aliases_tests.rs` lists
+  the aliases with that note and fails on a Studio past `REMOVE_AFTER`.
 - Who brings a piece of the model now (ADR-0071 §6, §8), `owners.rs`:
   `KitOwners::builtin()` reads every built-in kit's overlay and claims
   into one table (type, field/relation/tab, lifecycle → kit). The
@@ -100,10 +120,10 @@ This README is what you need to work in the directory.
   moved, inside today's kits: Issues (now "Open questions", `/issues`),
   `finding`, `project.issues`, `kit.introduces_type_22` →
   `project-domain-model`; Timeline → `project-lifecycle` (no `needs`);
-  project Components and `project.parts` → `product-releases`.
+  project Components and `project.parts` → `product-releases` (both `project-product` since step 5).
 - Declared dependencies between kits (ADR-0071 §5, step 3), `requires.rs`:
   a manifest's `requires` names the kits it cannot work without
-  (`constructor-research` → `org-infrastructure`, `project-domain-model` →
+  (`constructor-research` → `delivery`, `project-domain-model` →
   `project-specs`). Each install (base, organization, project) computes
   what would apply afterwards on its level and refuses a kit whose
   requirement is not among it (400 `failed_precondition`,

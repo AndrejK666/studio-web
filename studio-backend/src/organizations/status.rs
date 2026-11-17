@@ -27,8 +27,9 @@
 //! EVERY SIGNAL AND STEP NAMES THE KIT whose tab it opens (ADR-0070 §7,
 //! `docs/design/domain-model-split.md` §7): pull requests are project-git's,
 //! specs project-specs', findings (Open questions) and the project domain model
-//! project-domain-model's (ADR-0071 step 4), the product, builds and deploys product-releases',
-//! comment threads and quiet projects project-activity's. A signal or step
+//! project-domain-model's (ADR-0071 step 4), the product project-product's,
+//! builds and deploys delivery's, comment threads and quiet projects
+//! project-git's (ADR-0071 step 5). A signal or step
 //! whose kit does not apply to the project is left out ([`Kits`]) and the
 //! verdict is computed from the rest; the repository connection and the IDE
 //! are the shell's and always stay.
@@ -40,8 +41,11 @@ pub const QUIET_DAYS: u32 = 7;
 pub const GIT_KIT: &str = "project-git";
 pub const SPECS_KIT: &str = "project-specs";
 pub const DOMAIN_MODEL_KIT: &str = "project-domain-model";
-pub const RELEASES_KIT: &str = "product-releases";
-pub const ACTIVITY_KIT: &str = "project-activity";
+/// What the product is made of (ADR-0071 §6; product-releases' Product).
+pub const PRODUCT_KIT: &str = "project-product";
+/// Builds, releases and environments (ADR-0071 §6; product-releases'
+/// Releases and org-infrastructure).
+pub const DELIVERY_KIT: &str = "delivery";
 
 /// The kits that apply to a project: `All` where they cannot be told (an
 /// assembly without studio-kits, or its answer could not be read), so
@@ -183,7 +187,8 @@ pub fn step_kit(id: &str) -> Option<&'static str> {
         "types" => Some(SPECS_KIT),
         "model" => Some(DOMAIN_MODEL_KIT),
         "findings" => Some(DOMAIN_MODEL_KIT),
-        "kind" | "product" | "build" => Some(RELEASES_KIT),
+        "kind" | "product" => Some(PRODUCT_KIT),
+        "build" => Some(DELIVERY_KIT),
         _ => None,
     }
 }
@@ -554,8 +559,10 @@ pub fn signal_kit(key: &str) -> Option<&'static str> {
         "stuck" | "nobody" => Some(GIT_KIT),
         "specs" => Some(SPECS_KIT),
         "findings" => Some(DOMAIN_MODEL_KIT),
-        "product" | "build" | "deploy" => Some(RELEASES_KIT),
-        "threads" | "quiet" => Some(ACTIVITY_KIT),
+        "product" => Some(PRODUCT_KIT),
+        "build" | "deploy" => Some(DELIVERY_KIT),
+        // Activity is Git collaboration's (ADR-0071 §6).
+        "threads" | "quiet" => Some(GIT_KIT),
         _ => None,
     }
 }

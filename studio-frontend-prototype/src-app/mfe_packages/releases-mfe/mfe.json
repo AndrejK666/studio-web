@@ -30,7 +30,7 @@
         "route": "/releases",
         "order": 36,
         "level": "project",
-        "kit": "product-releases"
+        "kit": "delivery"
       }
     }
   ]

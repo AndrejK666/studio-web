@@ -156,8 +156,9 @@ impl KitPresence for InstalledKits {
             self.installer.installed(ctx, tenant).await
         }
         .map_err(|refusal| anyhow::anyhow!("the installed kits could not be read: {refusal:?}"))?;
-        Ok(installed
-            .effective
+        // A retired slug applies where every kit it resolves to does
+        // (ADR-0071 §8), for a gear that still asks by it.
+        Ok(super::aliases::with_retired(&installed.effective)
             .into_iter()
             .map(|k| k.kit_slug)
             .collect())

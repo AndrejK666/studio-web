@@ -1042,7 +1042,7 @@ mod tests {
         o.declare_gear_type(&need("deployment")).unwrap();
         assert_eq!(
             o.entity("deployment").unwrap()["meta"]["kit"],
-            "product-releases"
+            "delivery"
         );
         // As an organization's model had it before the claims.
         o.entity_mut("deployment").unwrap()["meta"]
@@ -1052,7 +1052,7 @@ mod tests {
         assert!(o.declare_gear_type(&need("deployment")).unwrap());
         assert_eq!(
             o.entity("deployment").unwrap()["meta"]["kit"],
-            "product-releases"
+            "delivery"
         );
         assert!(!o.declare_gear_type(&need("deployment")).unwrap(), "once");
         // A core gear type has no kit.

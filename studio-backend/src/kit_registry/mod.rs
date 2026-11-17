@@ -27,6 +27,7 @@ mod rest;
 pub(crate) mod service;
 mod shelf;
 mod shelf_bundles;
+mod sweep;
 
 pub(crate) use installed::KITS_INSTALLED_METADATA_TYPE;
 pub(crate) use mcp::tools as mcp_tools;
@@ -107,6 +108,9 @@ impl Gear for StudioKitsGear {
             .register::<dyn port::KitPresence>(Arc::new(port::InstalledKits::new(Arc::clone(
                 &installer,
             ))) as Arc<dyn port::KitPresence>);
+        // The kit-rename sweep (ADR-0071 §8): every installation and every
+        // organization's model moved off the retired slugs, once after start.
+        crate::model_sweep::register(Arc::new(sweep::KitRenameSweep(Arc::clone(&installer))));
         self.service
             .set(service)
             .map_err(|_| anyhow::anyhow!("studio-kits already initialized"))?;

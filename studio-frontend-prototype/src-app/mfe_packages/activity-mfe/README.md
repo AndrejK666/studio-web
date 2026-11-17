@@ -1,7 +1,7 @@
 # activity-mfe — the Activity kit
 
 Project › Activity and Project › Timeline, carried over from the prototype
-(ADR-0069). Activity is the `project-activity` kit's and Timeline the
+(ADR-0069). Activity is the `project-git` kit (Git collaboration, ADR-0071 step 5)'s and Timeline the
 `project-lifecycle` kit's (ADR-0071 §6, step 4): built-in kits (ADR-0068
 §7) and, until a platform administrator removes them, base kits (ADR-0069 §4).
 

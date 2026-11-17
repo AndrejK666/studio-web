@@ -4,7 +4,7 @@
 # check that they agree, so keep them in step when either changes.
 #
 # Two project sections, each of its own kit (ADR-0071 §6): Activity, the
-# `project-activity` kit's, and the Timeline, the `project-lifecycle` kit's,
+# `project-git` kit (Git collaboration, ADR-0071 step 5)'s, and the Timeline, the `project-lifecycle` kit's,
 # which brings the `milestone` it shows (so it needs no other kit's type).
 gdl_version = "1.5"
 

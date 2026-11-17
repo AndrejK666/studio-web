@@ -26,6 +26,7 @@ export {
   type ScreenAvailability,
   type ShellTab,
 } from './host/screens';
+export { KIT_ALIASES, kitIn, resolveKit } from './host/kitAliases';
 export { STUDIO_MFE_ENTRY_IFRAME } from './host/hostTypes';
 export {
   STUDIO_ACTION_CONTEXT_PUBLISH,

@@ -31,6 +31,7 @@ import {
 // eslint-disable-next-line @typescript-eslint/no-restricted-imports -- a test reaching the check itself, not app code
 import { validateContract } from '@gears-frontx/mfes';
 import { helloKitManifest } from '@frontx-test-utils/helloKitManifest';
+import { KIT_ALIASES } from '@constructor-studio/mfe-shared';
 import { SHELL_SCHEMAS } from './schemas';
 import { buildStudioOverlayDomain, buildStudioScreenDomain, buildStudioSidebarDomain } from './bootstrap';
 import { toManifestConfig } from './runtimeKits';
@@ -260,6 +261,15 @@ describe('generated MFE manifest', () => {
       expect(declared.filter(({ need }) => typeof need !== 'string' || !GTS_TYPE.test(need))).toEqual([]);
     });
 
+    it("names no retired kit slug (ADR-0071 §8): every screen's kit is a current one", () => {
+      const retired = Object.keys(KIT_ALIASES);
+      expect(
+        extensions
+          .filter((ext) => retired.includes(ext.presentation?.kit ?? ''))
+          .map((ext) => `${ext.id}: ${ext.presentation?.kit}`)
+      ).toEqual([]);
+    });
+
     it("declares the Tests tab's open pull requests section on project-git's pull-request", () => {
       const tests = extensions.find((ext) => ext.presentation?.route === '/tests');
       expect((tests?.presentation as { sectionNeeds?: string[] } | undefined)?.sectionNeeds).toEqual([
@@ -459,7 +469,7 @@ describe('generated MFE manifest', () => {
         // The Tests kit's own screen (ADR-0069), between the shell's sections.
         'Tests',
         // The Product kit's two (product-mfe): Product and the project's
-        // Components, both product-releases' since ADR-0071 step 4, after Tests
+        // Components, both project-product's since ADR-0071 step 5, after Tests
         // as in the prototype.
         'Product',
         'Components',

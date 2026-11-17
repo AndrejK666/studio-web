@@ -252,11 +252,15 @@ ADR-0069 §4); an agent installs one the way a person does.
 **A tool that comes with a kit.** Most tools above belong to a kit, which
 claims them (ADR-0071 §4; `kits_describe` lists them under `gears`): the
 `project_domain_model_*` tools and `project_capabilities`, `project_findings`,
-`project_plan`, `project_requirements` are Project domain model's;
-`review_requests`, `review_verdict`, `spec_check` and `spec_check_result`
-Specs'; `project_phase*` Project lifecycle's; the `product_*` tools,
-`gdl_file`, `build_list` and the environments tools Product & Releases';
-`research_*` Constructor Research's. The kit library, the Studio domain
+`project_plan`, `project_requirements` are the Project model's
+(`project-domain-model`); `review_requests`, `review_verdict`, `spec_check`
+and `spec_check_result` Specs'; `project_phase*` Planning's
+(`project-lifecycle`); the `product_*` tools and `gdl_file` Product's
+(`project-product`); `build_list` and every environments tool but
+`research_*` Builds, releases & environments' (`delivery`, which
+`constructor-research` requires); `research_*` Constructor Research's
+(ADR-0071 §6; until step 5 the last three were `product-releases` and
+`org-infrastructure`, now aliases of these for one release). The kit library, the Studio domain
 model, a project's creation, status and sources, connections, the Inbox and
 runs are the shell's and always answer. Where the claiming kit does not apply
 to the project (`project_id`) or organization the call acts in, the tool

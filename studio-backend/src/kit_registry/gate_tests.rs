@@ -113,9 +113,9 @@ async fn a_claimed_call_is_checked_where_it_acts() {
     // The caller's own organization.
     assert_eq!(check(Named::default(), "org-costs").await, Ok(()));
     assert_eq!(
-        check(Named::default(), "product-releases").await,
+        check(Named::default(), "delivery").await,
         Err(KitRefusal::NotInstalled {
-            kit: "product-releases".into()
+            kit: "delivery".into()
         })
     );
     // A project the call names, and the caller reaches: its kits decide.
@@ -132,7 +132,7 @@ async fn a_claimed_call_is_checked_where_it_acts() {
         project: Some(ELSEWHERE),
         ..Named::default()
     };
-    assert_eq!(check(elsewhere, "product-releases").await, Ok(()));
+    assert_eq!(check(elsewhere, "delivery").await, Ok(()));
     // No studio-kits in the assembly: nothing to install, nothing held back.
     assert_eq!(
         claimed_call(None, None, &caller(), "anything", &Named::default()).await,
@@ -251,7 +251,7 @@ async fn a_claimed_tool_answers_kit_not_installed() {
     assert_eq!(
         refused,
         KitRefusal::NotInstalled {
-            kit: "product-releases".into()
+            kit: "delivery".into()
         }
     );
     // The shell's tools always answer.
@@ -259,7 +259,7 @@ async fn a_claimed_tool_answers_kit_not_installed() {
         tool_refusal(&hub, &caller(), "kits_catalog", &args).await,
         None
     );
-    kits.install(ORG, "product-releases");
+    kits.install(ORG, "delivery");
     assert_eq!(
         tool_refusal(&hub, &caller(), "deploy_request", &args).await,
         None

@@ -10,7 +10,7 @@
     "project"
   ],
   "requires": [
-    "org-infrastructure"
+    "delivery"
   ],
   "inbox": [
     {

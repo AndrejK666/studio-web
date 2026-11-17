@@ -473,13 +473,13 @@ fn every_signal_and_step_names_the_kit_whose_tab_it_opens() {
         kit_of,
         [
             ("refused", None),
-            ("build", Some(RELEASES_KIT)),
+            ("build", Some(DELIVERY_KIT)),
             ("findings", Some(DOMAIN_MODEL_KIT)),
             ("specs", Some(SPECS_KIT)),
             ("stuck", Some(GIT_KIT)),
             ("nobody", Some(GIT_KIT)),
-            ("threads", Some(ACTIVITY_KIT)),
-            ("quiet", Some(ACTIVITY_KIT)),
+            ("threads", Some(GIT_KIT)),
+            ("quiet", Some(GIT_KIT)),
         ]
     );
     let steps: Vec<(&str, Option<&str>)> = project_path(&path())
@@ -493,8 +493,8 @@ fn every_signal_and_step_names_the_kit_whose_tab_it_opens() {
             ("types", Some(SPECS_KIT)),
             ("model", Some(DOMAIN_MODEL_KIT)),
             ("findings", Some(DOMAIN_MODEL_KIT)),
-            ("product", Some(RELEASES_KIT)),
-            ("build", Some(RELEASES_KIT)),
+            ("product", Some(PRODUCT_KIT)),
+            ("build", Some(DELIVERY_KIT)),
         ]
     );
 }
@@ -512,7 +512,7 @@ fn a_signal_of_a_kit_not_installed_is_left_out_and_the_verdict_is_the_rest_s() {
     // the specs once the blocking ones' kits are gone too.
     let no_git = project_signals_for(
         &f,
-        &only(&[SPECS_KIT, DOMAIN_MODEL_KIT, RELEASES_KIT, ACTIVITY_KIT]),
+        &only(&[SPECS_KIT, DOMAIN_MODEL_KIT, PRODUCT_KIT, DELIVERY_KIT]),
     );
     assert!(no_git.iter().all(|s| s.kit != Some(GIT_KIT)));
     let mut calm = f.clone();
@@ -553,7 +553,7 @@ fn a_step_of_a_kit_not_installed_is_never_current() {
     f.specs = Some(SpecQueues::default());
     f.product = Some(ProductFacts::default());
     assert_eq!(next_step(&project_path(&f)).map(|s| s.id), Some("types"));
-    let kits = only(&[DOMAIN_MODEL_KIT, RELEASES_KIT]);
+    let kits = only(&[DOMAIN_MODEL_KIT, PRODUCT_KIT, DELIVERY_KIT]);
     let steps = project_path_for(&f, &kits);
     assert!(steps.iter().all(|s| s.id != "types"));
     assert_eq!(next_step(&steps).map(|s| s.id), Some("product"));

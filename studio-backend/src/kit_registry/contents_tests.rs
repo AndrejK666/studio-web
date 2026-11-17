@@ -50,14 +50,12 @@ fn the_builtin_screens_are_today_s_tabs() {
         )]
     );
     assert_eq!(
-        screens("project-activity"),
-        [
-            ("Activity".to_owned(), Some("/projects/activity".to_owned())),
-        ]
+        screens("project-git"),
+        [("Activity".to_owned(), Some("/projects/activity".to_owned()))]
     );
-    // Moved inside today's kits (ADR-0071 step 4): Issues to the Project
-    // model, as Open questions; Timeline to Planning, with no `needs`.
-    assert_eq!(screens("project-issues"), []);
+    // Issues went to the Project model, as Open questions; Timeline to
+    // Planning, with no `needs` (ADR-0071 step 4); Activity to Git
+    // collaboration (step 5).
     assert_eq!(
         screens("project-domain-model"),
         [
@@ -142,19 +140,17 @@ fn the_builtin_screens_are_today_s_tabs() {
         ]
     );
     assert_eq!(
-        levels("org-infrastructure"),
-        [at(
-            "organization",
-            "Infrastructure",
-            Some("/infrastructure")
-        )]
+        levels("delivery"),
+        [
+            at("organization", "Infrastructure", Some("/infrastructure")),
+            at("project", "Releases", Some("/releases"))
+        ]
     );
     assert_eq!(
-        levels("product-releases"),
+        levels("project-product"),
         [
             at("project", "Product", Some("/product")),
-            at("project", "Components", Some("/project-components")),
-            at("project", "Releases", Some("/releases"))
+            at("project", "Components", Some("/project-components"))
         ]
     );
     assert_eq!(
