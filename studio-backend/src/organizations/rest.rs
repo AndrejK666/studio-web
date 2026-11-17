@@ -1425,22 +1425,22 @@ async fn get_project_status(
                 .with_detail("studio-mcp is not running here, so the other gears cannot be read")
                 .create()
         })?;
+    // This project's line of the overview, computed for it alone: building
+    // the organization's whole overview for one line took 5.5 s on Dev.
     let health = async {
         let overview = overview.as_ref()?;
-        let answer = overview
-            .answer(&ctx, org?, time::OffsetDateTime::now_utc())
+        let line = overview
+            .project_health(&ctx, org?, &rollup, time::OffsetDateTime::now_utc())
             .await
             .ok()?;
-        let line = answer
-            .workspaces
-            .into_iter()
-            .flat_map(|w| w.projects)
-            .find(|p| p.id == id.to_string())?;
         Some(status::Health {
-            refused: line.reasons.iter().any(|r| r.kind == "refused"),
-            quiet_days: line.reasons.iter().find(|r| r.kind == "quiet").map(|r| {
-                r.value
-                    .map_or(line.quiet_days.unwrap_or(0), |v| v.round() as u32)
+            refused: line
+                .reasons
+                .iter()
+                .any(|r| matches!(r, super::overview::Reason::Refused)),
+            quiet_days: line.reasons.iter().find_map(|r| match r {
+                super::overview::Reason::Quiet(d) => Some(*d),
+                _ => None,
             }),
             specs_failing: line.specs_failing,
             stuck: line.stuck,
