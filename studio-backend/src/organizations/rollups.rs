@@ -198,18 +198,17 @@ impl Sources {
         // Each parent's workspaces, a few parents at once. Every workspace
         // under one parent shares its organization, so the team basis is
         // read once for all of them, beside the listing.
-        let groups: Vec<ParentWorkspaces> =
-            futures_util::stream::iter(parents)
-                .map(|parent| async move {
-                    let (workspaces, team) = tokio::join!(
-                        self.children_of(ctx, parent, WORKSPACE_TENANT_TYPE),
-                        self.team_basis(ctx, Some(parent))
-                    );
-                    (team, workspaces)
-                })
-                .buffered(PARALLEL_WORKSPACES)
-                .collect()
-                .await;
+        let groups: Vec<ParentWorkspaces> = futures_util::stream::iter(parents)
+            .map(|parent| async move {
+                let (workspaces, team) = tokio::join!(
+                    self.children_of(ctx, parent, WORKSPACE_TENANT_TYPE),
+                    self.team_basis(ctx, Some(parent))
+                );
+                (team, workspaces)
+            })
+            .buffered(PARALLEL_WORKSPACES)
+            .collect()
+            .await;
         // Then the workspaces themselves, a few at once and in the order they
         // were listed, as `organization_with` reads them: one after the other
         // they made a platform administrator's portfolio the sum of every
