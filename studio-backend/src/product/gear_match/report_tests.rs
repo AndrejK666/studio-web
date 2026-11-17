@@ -159,7 +159,7 @@ fn an_answer_goes_after_its_requirement_and_only_into_the_copy() {
         vec!["cpt-examples-todo-app-fr-changes-feed".to_owned()]
     );
     let feed = text.find("real time").unwrap();
-    let answer = text.find("**Answered in Studio**").unwrap();
+    let answer = text.find("Answered in Studio").unwrap();
     let next = text.find("#### Sign In").unwrap();
     assert!(feed < answer && answer < next, "{text}");
     assert!(text.contains("Changes reach other devices within 2 s."));
@@ -171,6 +171,12 @@ fn an_answer_goes_after_its_requirement_and_only_into_the_copy() {
             .text
             .contains("Answered in Studio")
     );
+    // Before a Rationale line: the matcher's statement stops there.
+    let with_rationale = "- [x] **ID**: `cpt-a-fr-x`\n\nThe system MUST x.\n\n**Rationale**: y\n";
+    let (text, _) = with_answers(with_rationale, &[("cpt-a-fr-x".into(), "z".into())]);
+    let answer = text.find("Answered in Studio").unwrap();
+    assert!(answer < text.find("**Rationale**").unwrap(), "{text}");
+    assert!(text.find("MUST x").unwrap() < answer);
     // An id the text does not have is not applied.
     let (same, none) = with_answers(PRD, &[("cpt-x".into(), "y".into())]);
     assert_eq!(same, PRD);

@@ -144,6 +144,20 @@ fn block_end(lines: &[&str], at: usize) -> usize {
     end
 }
 
+/// A line that ends a requirement's statement for the matcher
+/// (`gears-matcher/src/gears_matcher/spec/markdown.py`).
+fn is_label_line(line: &str) -> bool {
+    const LABELS: [&str; 5] = [
+        "**Rationale**",
+        "**Actors**",
+        "**Threshold**",
+        "**Verification Method**",
+        "**Architecture Allocation**",
+    ];
+    let t = line.trim_start();
+    LABELS.iter().any(|l| t.starts_with(l))
+}
+
 /// The passage a requirement was read from.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Passage {
@@ -183,7 +197,7 @@ pub fn passage(docs: &[(String, String)], id: &str) -> Option<Passage> {
 }
 
 /// `text` with each answer put after the block of the requirement it answers
-/// (`(requirement id, answer)`), as a quoted line the matcher reads with the
+/// (`(requirement id, answer)`), as a paragraph of its statement (before its Rationale), which the matcher reads with the
 /// requirement; and the ids it found. The document itself is not changed:
 /// only the copy sent.
 pub fn with_answers(text: &str, answers: &[(String, String)]) -> (String, Vec<String>) {
@@ -198,15 +212,21 @@ pub fn with_answers(text: &str, answers: &[(String, String)]) -> (String, Vec<St
         let Some(at) = id_line(&borrowed, id) else {
             continue;
         };
+        // A paragraph of the statement itself: the matcher reads a
+        // requirement's statement up to its first labelled line (Rationale,
+        // Actors, ...) and nothing after it.
+        let said = format!(
+            "Answered in Studio (a question the gear match asked about this requirement): {answer}"
+        );
         let end = block_end(&borrowed, at);
-        let insert = vec![
-            String::new(),
-            format!(
-                "> **Answered in Studio** (a question the gear match asked about this requirement): {answer}"
-            ),
-            String::new(),
-        ];
-        lines.splice(end..end, insert);
+        match (at + 1..end).find(|&i| is_label_line(borrowed[i])) {
+            Some(label) => {
+                lines.splice(label..label, [said, String::new()]);
+            }
+            None => {
+                lines.splice(end..end, [String::new(), said]);
+            }
+        }
         applied.push(id.clone());
     }
     let mut out = lines.join("\n");
