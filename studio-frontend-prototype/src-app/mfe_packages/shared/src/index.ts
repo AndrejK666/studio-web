@@ -18,6 +18,7 @@ export {
 export {
   isAvailableScreens,
   kitAvailable,
+  typeAvailable,
   routeAvailable,
   shellTabsOf,
   useScreenAvailability,

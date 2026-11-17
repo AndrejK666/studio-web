@@ -10,7 +10,8 @@
         "gts.frontx.mfes.comm.shared_property.v1~frontx.mfes.comm.theme.v1~",
         "gts.frontx.mfes.comm.shared_property.v1~frontx.mfes.comm.language.v1~",
         "gts.frontx.mfes.comm.shared_property.v1~constructor_studio.context.project.selected.v1~",
-        "gts.frontx.mfes.comm.shared_property.v1~constructor_studio.context.workspace.selected.v1~"
+        "gts.frontx.mfes.comm.shared_property.v1~constructor_studio.context.workspace.selected.v1~",
+        "gts.frontx.mfes.comm.shared_property.v1~constructor_studio.context.screens.available.v1~"
       ],
       "actions": [],
       "domainActions": [
@@ -32,7 +33,8 @@
         "order": 33,
         "level": "project",
         "experimental": true,
-        "kit": "project-tests"
+        "kit": "project-tests",
+        "sectionNeeds": ["gts.cf.studio.domain.pull_request.v1~"]
       }
     }
   ]

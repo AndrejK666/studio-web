@@ -181,6 +181,24 @@ fn person(subject: Uuid) -> SecurityContext {
         .unwrap()
 }
 
+/// Take `kit` out of the base kits, and first the base kits that require it
+/// (ADR-0071 §5: the Project model requires Specs).
+async fn uninstall_base_with_dependents(installer: &KitInstaller, kit: &str) {
+    match installer.uninstall_base(&platform(), kit).await {
+        Ok(()) => {}
+        Err(Refusal::RequiredBy { by, .. }) => {
+            for dependent in by {
+                installer
+                    .uninstall_base(&platform(), &dependent)
+                    .await
+                    .unwrap();
+            }
+            installer.uninstall_base(&platform(), kit).await.unwrap();
+        }
+        Err(other) => panic!("{other:?}"),
+    }
+}
+
 fn platform() -> SecurityContext {
     SecurityContext::builder()
         .subject_id(PLATFORM_ADMIN)
@@ -489,10 +507,7 @@ async fn a_new_organization_has_a_moved_type_only_while_its_kit_is_installed() {
     // Without the kit: absent for everybody, and the query says which kit.
     for kit in owners().into_iter().filter(|k| is_base(k)) {
         let org = Org::with_base_kits().await;
-        org.installer
-            .uninstall_base(&platform(), &kit)
-            .await
-            .unwrap();
+        uninstall_base_with_dependents(&org.installer, &kit).await;
         org.reconcile_tolerant().await;
         let member = org.types(MEMBER, false).await;
         let admin = org.types(ADMIN, true).await;
@@ -611,10 +626,7 @@ async fn an_uninstalled_kit_leaves_its_inhabited_types_dormant_and_a_reinstall_a
         }
 
         // The platform removes the base kit.
-        org.installer
-            .uninstall_base(&platform(), &kit)
-            .await
-            .unwrap();
+        uninstall_base_with_dependents(&org.installer, &kit).await;
         org.reconcile_tolerant().await;
         for (t, ids) in &objects {
             assert_eq!(org.dormant(t).await.as_deref(), Some(kit.as_str()), "{t}");
@@ -634,10 +646,7 @@ async fn an_uninstalled_kit_leaves_its_inhabited_types_dormant_and_a_reinstall_a
         }
 
         // The same through the organization's own installation.
-        org.installer
-            .uninstall_base(&platform(), &kit)
-            .await
-            .unwrap();
+        uninstall_base_with_dependents(&org.installer, &kit).await;
         org.reconcile_tolerant().await;
         org.installer
             .install_for_organization(&person(ADMIN), ORG, &kit, None)
@@ -702,10 +711,7 @@ async fn a_project_installs_a_model_kit_only_as_screens_over_the_organization_s_
 
         // It does not: refused, the model is the organization's.
         let org = Org::with_base_kits().await;
-        org.installer
-            .uninstall_base(&platform(), &kit)
-            .await
-            .unwrap();
+        uninstall_base_with_dependents(&org.installer, &kit).await;
         org.reconcile_tolerant().await;
         let refused = org
             .installer

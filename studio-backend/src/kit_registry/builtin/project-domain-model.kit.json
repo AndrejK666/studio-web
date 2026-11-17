@@ -8,6 +8,9 @@
   "levels": [
     "project"
   ],
+  "requires": [
+    "project-specs"
+  ],
   "model": {
     "properties": [
       {

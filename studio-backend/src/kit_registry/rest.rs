@@ -11,7 +11,7 @@ use uuid::Uuid;
 use super::bundles::{KitBundles, KitMfeManifest};
 use super::contents::{KitDetail, KitNamed};
 use super::installed::{
-    BASE_KIT, InstalledKit, KitInstaller, NOT_A_PROJECT_KIT, ORGANIZATION_KIT, Refusal,
+    BASE_KIT, InstalledKit, KIT_REQUIRED_BY, KIT_REQUIRES_KIT, KitInstaller, NOT_A_PROJECT_KIT, ORGANIZATION_KIT, Refusal,
 };
 use super::models::{KIT_MODEL_CONFLICT, MODEL_KIT_NOT_FOR_PROJECT};
 use super::phase::NO_SUCH_TRANSITION;
@@ -340,6 +340,9 @@ pub struct KitContentsDto {
     /// The built micro-frontends it carries (`mfe/<package>`), served to the
     /// shell at run time (`GET /mfe-manifests`).
     pub mfe: Vec<String>,
+    /// The kits it cannot work without (ADR-0071 §5): installing it where one
+    /// of them does not apply is refused (`KIT_REQUIRES_KIT`).
+    pub requires: Vec<String>,
     /// What its model adds beside its own types: fields and relations on
     /// other types, and the tabs it shows.
     pub model: KitModelDto,
@@ -627,6 +630,7 @@ impl From<KitDetail> for KitDetailDto {
                 kinds: c.kinds,
                 docs: c.docs,
                 mfe: c.mfe,
+                requires: c.requires,
                 model: KitModelDto {
                     fields: c.model.fields.into_iter().map(Into::into).collect(),
                     relations: c
@@ -1001,11 +1005,60 @@ fn refused(refusal: Refusal) -> CanonicalError {
             .create(),
         // The one shared answer (ADR-0071 §4), as every gear gives it.
         Refusal::KitNotInstalled(kit) => super::gate::KitRefusal::NotInstalled { kit }.problem(),
+        // One violation per kit involved, its slug as the subject, so a client
+        // can offer to install (or uninstall) them together (ADR-0071 §5).
+        Refusal::RequiresKits { kit, missing } => violations(
+            missing
+                .iter()
+                .map(|m| {
+                    (
+                        m.clone(),
+                        format!(
+                            "`{kit}` requires the kit `{m}`, which does not apply here: \
+                             install `{m}` first, or both together"
+                        ),
+                    )
+                })
+                .collect(),
+            KIT_REQUIRES_KIT,
+        ),
+        Refusal::RequiredBy { kit, by } => violations(
+            by.iter()
+                .map(|b| {
+                    (
+                        b.clone(),
+                        format!(
+                            "`{b}` requires `{kit}` and still applies here: uninstall \
+                             `{b}` first, or both together"
+                        ),
+                    )
+                })
+                .collect(),
+            KIT_REQUIRED_BY,
+        ),
         Refusal::NoSuchTransition(detail) => KitRegistryError::failed_precondition()
             .with_precondition_violation("phase", detail, NO_SUCH_TRANSITION)
             .create(),
         Refusal::Internal(error) => internal(error),
     }
+}
+
+/// One `failed_precondition` with a violation per `(subject, description)`,
+/// all of `kind`.
+fn violations(items: Vec<(String, String)>, kind: &'static str) -> CanonicalError {
+    let mut items = items.into_iter();
+    let (subject, description) = items
+        .next()
+        .unwrap_or_else(|| ("kit".to_owned(), kind.to_owned()));
+    let mut problem = KitRegistryError::failed_precondition().with_precondition_violation(
+        subject,
+        description,
+        kind,
+    );
+    for (subject, description) in items {
+        problem = problem.with_precondition_violation(subject, description, kind);
+    }
+    problem.create()
 }
 
 /// What applies where the query points: a project named wins, and answers

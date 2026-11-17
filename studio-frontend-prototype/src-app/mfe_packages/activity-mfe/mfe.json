@@ -47,7 +47,7 @@
         "level": "project",
         "section": "timeline",
         "kit": "project-activity",
-        "needs": ["milestone"]
+        "needs": ["gts.cf.studio.domain.milestone.v1~"]
       }
     }
   ]

@@ -8,7 +8,7 @@
  *
  * And the domain types installed for the organization (ADR-0070 §2): a
  * section that shows another kit's type declares it in `presentation.needs`
- * (project-activity's Timeline needs project-lifecycle's `milestone`), and
+ * by its GTS id (`gts.cf.studio.domain.milestone.v1~`, ADR-0071 §5), and
  * shows only where every type it needs is installed. The same rule: unknown
  * hides nothing.
  */
@@ -82,14 +82,34 @@ export function screenIcon(
   return { declared: kit?.icon ?? undefined, url: kit?.url ?? undefined };
 }
 
-/** The domain types a screen needs to show (`presentation.needs`); empty for most. */
+function gtsList(value: unknown): readonly string[] {
+  return Array.isArray(value) ? value.filter((n): n is string => typeof n === 'string' && n !== '') : [];
+}
+
+/** The domain types (GTS ids) a screen needs to show (`presentation.needs`); empty for most. */
 export function typesNeeded(screen: StudioScreenExtension): readonly string[] {
-  const needs = screen.presentation.needs;
-  return Array.isArray(needs) ? needs.filter((n): n is string => typeof n === 'string' && n !== '') : [];
+  return gtsList(screen.presentation.needs);
+}
+
+/** The domain types (GTS ids) a section inside the screen needs (`presentation.sectionNeeds`). */
+export function sectionTypesNeeded(screen: StudioScreenExtension): readonly string[] {
+  return gtsList(screen.presentation.sectionNeeds);
 }
 
 /**
- * The organization's installed domain types, by id, or `null` while unknown.
+ * The GTS id a domain type is named by in `needs`: the one the model records
+ * (`meta.gts`), else `gts.cf.studio.domain.<id>.v1~` with `-`, `.` and
+ * spaces as `_`, as the backend derives it.
+ */
+export function typeGtsId(entity: { id?: string; meta?: { gts?: unknown } | null }): string | null {
+  const own = entity.meta?.gts;
+  if (typeof own === 'string' && own !== '') return own;
+  if (typeof entity.id !== 'string' || entity.id === '') return null;
+  return `gts.cf.studio.domain.${entity.id.replace(/[-. ]/g, '_')}.v1~`;
+}
+
+/**
+ * The organization's installed domain types, by GTS id, or `null` while unknown.
  * Read only when `wanted` (some screen on the level needs a type), so a level
  * without such a screen costs no request.
  */
@@ -104,7 +124,7 @@ export function useInstalledTypes(wanted: boolean): ReadonlySet<string> | null {
   return useMemo(
     () =>
       entities
-        ? new Set(entities.map((e) => e.id).filter((id): id is string => typeof id === 'string'))
+        ? new Set(entities.map(typeGtsId).filter((id): id is string => id !== null))
         : null,
     [entities]
   );

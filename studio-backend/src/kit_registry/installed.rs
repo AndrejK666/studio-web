@@ -172,6 +172,12 @@ pub enum Refusal {
     KitNotInstalled(String),
     /// 400 `failed_precondition`: a lifecycle does not declare the move.
     NoSuchTransition(String),
+    /// 400 `failed_precondition`: the kit requires kits that would not apply
+    /// where it is installed (ADR-0071 §5): `kit`, and what is `missing`.
+    RequiresKits { kit: String, missing: Vec<String> },
+    /// 400 `failed_precondition`: kits that would still apply require the
+    /// kit being uninstalled (ADR-0071 §5): `kit`, and the kits that need it.
+    RequiredBy { kit: String, by: Vec<String> },
     Internal(anyhow::Error),
 }
 
@@ -191,6 +197,12 @@ pub const ORGANIZATION_KIT: &str = "ORGANIZATION_KIT";
 /// The `failed_precondition` kind for installing in a project a kit whose
 /// `levels` do not name `project`.
 pub const NOT_A_PROJECT_KIT: &str = "NOT_A_PROJECT_KIT";
+/// The `failed_precondition` kind for installing a kit where a kit it
+/// requires does not apply (ADR-0071 §5).
+pub const KIT_REQUIRES_KIT: &str = "KIT_REQUIRES_KIT";
+/// The `failed_precondition` kind for uninstalling a kit another kit that
+/// still applies requires (ADR-0071 §5).
+pub const KIT_REQUIRED_BY: &str = "KIT_REQUIRED_BY";
 
 /// Where the documents are kept.
 #[async_trait]
@@ -427,6 +439,17 @@ impl KitInstaller {
                 return Err(Refusal::ModelKitNotForProject(slug));
             }
         }
+        // What it requires must apply to the project once it is installed
+        // (ADR-0071 §5).
+        let above = self.installed(ctx, project).await?;
+        let mut doc = self
+            .store
+            .read(&service_context(project)?, project)
+            .await?;
+        install_project(&mut doc, record.clone());
+        let after = effective(&above.effective, &project_kits(&doc, &self.catalogue));
+        self.check_requires(org, &slug, &record.version, &after)
+            .await?;
         let installed = self
             .store
             .update(project, &mut |doc| {
@@ -455,6 +478,14 @@ impl KitInstaller {
         let slug = normalize_slug(slug).map_err(|e| Refusal::Invalid(e.to_string()))?;
         let org = self.require_project_admin(ctx, project).await?;
         let above = self.installed(ctx, project).await?;
+        let mut doc = self
+            .store
+            .read(&service_context(project)?, project)
+            .await?;
+        if uninstall_project(&mut doc, &slug, &above.base, &above.organization).is_ok() {
+            let after = effective(&above.effective, &project_kits(&doc, &self.catalogue));
+            self.check_required_by(org, &slug, &after).await?;
+        }
         self.store
             .update(project, &mut |doc| {
                 uninstall_project(doc, &slug, &above.base, &above.organization).map(|()| None)
@@ -512,6 +543,16 @@ impl KitInstaller {
             )));
         }
         let record = record_for(&kit, version, ctx, now_rfc3339()?)?;
+        // A base kit applies to every organization: what it requires must be
+        // a base kit too (ADR-0071 §5).
+        let mut root = self
+            .store
+            .read(&service_context(PLATFORM_TENANT)?, PLATFORM_TENANT)
+            .await?;
+        install_base(&mut root, record.clone());
+        let after = base_kits(&root, &self.catalogue);
+        self.check_requires(PLATFORM_TENANT, &slug, &record.version, &after)
+            .await?;
         let installed = self
             .store
             .update(PLATFORM_TENANT, &mut |doc| {
@@ -535,6 +576,15 @@ impl KitInstaller {
         let slug = normalize_slug(slug).map_err(|e| Refusal::Invalid(e.to_string()))?;
         self.require_platform_admin(ctx).await?;
         let catalogue = &self.catalogue;
+        let mut root = self
+            .store
+            .read(&service_context(PLATFORM_TENANT)?, PLATFORM_TENANT)
+            .await?;
+        if uninstall_base(&mut root, &slug, catalogue).is_ok() {
+            let after = base_kits(&root, catalogue);
+            self.check_required_by(PLATFORM_TENANT, &slug, &after)
+                .await?;
+        }
         self.store
             .update(PLATFORM_TENANT, &mut |doc| {
                 uninstall_base(doc, &slug, catalogue).map(|()| None)
@@ -562,6 +612,20 @@ impl KitInstaller {
         let org = self.require_org_admin(ctx, tenant).await?;
         let kit = self.kit_for(org, &slug).await?;
         let record = record_for(&kit, version, ctx, now_rfc3339()?)?;
+        // What it requires must apply to the organization once it is
+        // installed (ADR-0071 §5), before anything changes.
+        let root = self
+            .store
+            .read(&service_context(PLATFORM_TENANT)?, PLATFORM_TENANT)
+            .await?;
+        let mut doc = self.store.read(&service_context(org)?, org).await?;
+        install_organization(&mut doc, record.clone());
+        let after = effective(
+            &base_kits(&root, &self.catalogue),
+            &organization_kits(&doc, &self.catalogue),
+        );
+        self.check_requires(org, &slug, &record.version, &after)
+            .await?;
         // The model first: a conflict refuses the install, and nothing is
         // recorded (ADR-0067 §6).
         self.apply_model(org, &kit, &record.version).await?;
@@ -597,6 +661,11 @@ impl KitInstaller {
             .read(&service_context(PLATFORM_TENANT)?, PLATFORM_TENANT)
             .await?;
         let base = base_kits(&root, &self.catalogue);
+        let mut doc = self.store.read(&service_context(org)?, org).await?;
+        if uninstall_organization(&mut doc, &slug, &base).is_ok() {
+            let after = effective(&base, &organization_kits(&doc, &self.catalogue));
+            self.check_required_by(org, &slug, &after).await?;
+        }
         self.store
             .update(org, &mut |doc| {
                 uninstall_organization(doc, &slug, &base).map(|()| None)

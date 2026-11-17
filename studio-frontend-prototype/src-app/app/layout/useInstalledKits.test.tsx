@@ -40,7 +40,7 @@ vi.mock('@gears-frontx/react', async (importOriginal) => ({
   },
 }));
 
-import { screenShows, useInstalledKits, useInstalledTypes } from './useInstalledKits';
+import { screenShows, typeGtsId, useInstalledKits, useInstalledTypes } from './useInstalledKits';
 
 const answer = (organization_id: string, project_id: string | null, kits: string[]): InstalledKitsSummary => ({
   organization_id,
@@ -105,8 +105,8 @@ describe('screenShows while the new scope is unknown', () => {
   it('hides a kit’s screen only once the kits are known, and a needing screen only once the types are', () => {
     expect(screenShows(kitScreen('project-team'), null)).toBe(true);
     expect(screenShows(kitScreen('project-team'), new Set())).toBe(false);
-    expect(screenShows(kitScreen('project-activity', ['milestone']), new Set(['project-activity']), null)).toBe(true);
-    expect(screenShows(kitScreen('project-activity', ['milestone']), new Set(['project-activity']), new Set())).toBe(false);
+    expect(screenShows(kitScreen('project-activity', ['gts.cf.studio.domain.milestone.v1~']), new Set(['project-activity']), null)).toBe(true);
+    expect(screenShows(kitScreen('project-activity', ['gts.cf.studio.domain.milestone.v1~']), new Set(['project-activity']), new Set())).toBe(false);
   });
 });
 
@@ -117,5 +117,16 @@ describe('useInstalledTypes across a switch', () => {
     state.org = 'o-2';
     renderHook(() => useInstalledTypes(true));
     expect(lastQuery()).toEqual({ key: ['types', { organizationId: 'o-2' }], enabled: true });
+  });
+});
+
+describe('typeGtsId', () => {
+  it("names a type as `needs` does: the model's own GTS id, else derived from its id (ADR-0071 §5)", () => {
+    expect(typeGtsId({ id: 'pull-request' })).toBe('gts.cf.studio.domain.pull_request.v1~');
+    expect(typeGtsId({ id: 'milestone', meta: null })).toBe('gts.cf.studio.domain.milestone.v1~');
+    expect(
+      typeGtsId({ id: 'project-lifecycle-phase', meta: { gts: 'gts.cf.studio.kit.project_lifecycle.phase.v1~' } })
+    ).toBe('gts.cf.studio.kit.project_lifecycle.phase.v1~');
+    expect(typeGtsId({})).toBeNull();
   });
 });

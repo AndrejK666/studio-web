@@ -61,6 +61,8 @@ pub struct KitContents {
     pub docs: Vec<String>,
     /// The built micro-frontends it carries, `mfe/<package>`.
     pub mfe: Vec<String>,
+    /// The kits it cannot work without (ADR-0071 §5).
+    pub requires: Vec<String>,
     /// What its model overlay adds beside its own types: fields and
     /// relations on other types, and the tabs the model shows.
     pub model: KitModel,
@@ -211,6 +213,7 @@ pub fn describe(kit: KitDescriptor) -> KitDetail {
                     contents.inbox.extend(more.inbox);
                     contents.mcp_tools.extend(more.mcp_tools);
                     contents.gears.extend(more.gears);
+                    contents.requires.extend(more.requires);
                     contents.rules.extend(more.rules);
                     contents.functions.extend(more.functions);
                     contents.permissions.reads.extend(more.permissions.reads);
@@ -299,9 +302,22 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
             ..KitContents::default()
         },
         // `tests-mfe`: CI runs, the repositories and their open pull
-        // requests, document checks and spec-to-code conformance.
+        // requests, document checks and spec-to-code conformance. Its open
+        // pull requests section shows project-git's `pull-request` and
+        // `needs` it (ADR-0071 §5): without that type the tab shows the CI
+        // runs and the conformance and no pull request.
         "project-tests" => KitContents {
-            screens: vec![project_tab("Tests", Some("/tests"))],
+            screens: vec![
+                project_tab("Tests", Some("/tests")),
+                KitScreen {
+                    kind: "section",
+                    level: "project".to_owned(),
+                    label: "Open pull requests".to_owned(),
+                    route: Some("/tests".to_owned()),
+                    slot: Some("tests".to_owned()),
+                    needs: vec![super::manifest::domain_type_gts("pull-request")],
+                },
+            ],
             ..KitContents::default()
         },
         // A section of `projects-mfe` today: the project's ingested
@@ -313,14 +329,14 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
         // `activity-mfe`: the project's Activity (the checks and comments
         // studio-artifact-ingest keeps) and its Timeline, which shows
         // project-lifecycle's `milestone` objects (ADR-0070 §2, §7). The
-        // Timeline's extension declares `needs: ["milestone"]`, so the portal
-        // hides it where that type is not installed; Activity needs no other
-        // kit.
+        // Timeline's extension declares `needs` on that type by its GTS id
+        // (ADR-0071 §5), so the portal hides it where the type is not
+        // installed; Activity needs no other kit.
         "project-activity" => KitContents {
             screens: vec![
                 project_tab("Activity", Some("/projects/activity")),
                 KitScreen {
-                    needs: vec!["milestone".to_owned()],
+                    needs: vec![super::manifest::domain_type_gts("milestone")],
                     ..project_tab("Timeline", Some("/projects/timeline"))
                 },
             ],

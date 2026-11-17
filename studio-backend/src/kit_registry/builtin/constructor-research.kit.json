@@ -9,6 +9,9 @@
     "organization",
     "project"
   ],
+  "requires": [
+    "org-infrastructure"
+  ],
   "inbox": [
     {
       "id": "deploy-failed",

@@ -19,6 +19,7 @@ mod manifest;
 mod mcp;
 mod models;
 mod phase;
+mod requires;
 pub mod port;
 mod rest;
 pub(crate) mod service;

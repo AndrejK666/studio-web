@@ -10,7 +10,7 @@ import { BaseApiService, RestEndpointProtocol, RestProtocol } from '@gears-front
 
 /** The part of `GET /studio-domain-model/v1/types` the shell reads. */
 export interface ModelTypesSummary {
-  ontology: { entities?: { id?: string }[] };
+  ontology: { entities?: { id?: string; meta?: { gts?: unknown } | null }[] };
 }
 
 export class ModelTypesApiService extends BaseApiService {

@@ -36,7 +36,11 @@ fn the_builtin_screens_are_today_s_tabs() {
     };
     assert_eq!(
         screens("project-tests"),
-        [("Tests".to_owned(), Some("/tests".to_owned()))]
+        [
+            ("Tests".to_owned(), Some("/tests".to_owned())),
+            // Its open pull requests section, which needs project-git's type.
+            ("Open pull requests".to_owned(), Some("/tests".to_owned()))
+        ]
     );
     assert_eq!(
         screens("project-artifacts"),

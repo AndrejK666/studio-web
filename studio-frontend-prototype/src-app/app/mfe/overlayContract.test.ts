@@ -247,6 +247,27 @@ describe('generated MFE manifest', () => {
     });
   });
 
+  describe("a screen's needs (ADR-0071 §5)", () => {
+    const GTS_TYPE = /^gts\.cf\.studio\.(domain|kit\.[a-z0-9_]+)\.[a-z0-9_]+\.v1~$/;
+    const declared = extensions.flatMap((ext) => {
+      const p = (ext.presentation ?? {}) as { needs?: unknown; sectionNeeds?: unknown };
+      return [p.needs, p.sectionNeeds].flatMap((list) =>
+        Array.isArray(list) ? list.map((need) => ({ id: ext.id, need })) : []
+      );
+    });
+
+    it('names every needed type by its GTS id, never a bare entity id', () => {
+      expect(declared.filter(({ need }) => typeof need !== 'string' || !GTS_TYPE.test(need))).toEqual([]);
+    });
+
+    it("declares the Tests tab's open pull requests section on project-git's pull-request", () => {
+      const tests = extensions.find((ext) => ext.presentation?.route === '/tests');
+      expect((tests?.presentation as { sectionNeeds?: string[] } | undefined)?.sectionNeeds).toEqual([
+        'gts.cf.studio.domain.pull_request.v1~',
+      ]);
+    });
+  });
+
   describe('docked kit panels (sidebar)', () => {
     const docked = extensions.filter((ext) => ext.domain === sidebarDomain.id);
     const assistant = docked.find((ext) => ext.presentation?.kit === 'assistant');

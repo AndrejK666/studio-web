@@ -86,11 +86,25 @@ This README is what you need to work in the directory.
   asks for its CI runs and jobs, build outputs and releases). Every built-in
   claim leaves the flag off today, so every gear writes as before; a kit
   that sets it says so in `GET /catalog/{slug}` (`gears[].note`).
+- Declared dependencies between kits (ADR-0071 §5, step 3), `requires.rs`:
+  a manifest's `requires` names the kits it cannot work without
+  (`constructor-research` → `org-infrastructure`, `project-domain-model` →
+  `project-specs`). Each install (base, organization, project) computes
+  what would apply afterwards on its level and refuses a kit whose
+  requirement is not among it (400 `failed_precondition`,
+  `KIT_REQUIRES_KIT`, one violation per missing kit); each uninstall refuses
+  where a kit that still applies on that level requires it
+  (`KIT_REQUIRED_BY`, one violation per requiring kit). Nothing is
+  installed or uninstalled for the caller: the client offers both. A
+  screen's `needs` is a domain type's GTS id
+  (`gts.cf.studio.domain.<type>.v1~`, `manifest::needs_id_ok`); a bare
+  entity id is refused when a manifest is read. The Tests tab's open pull
+  requests section `needs` `pull-request`; Timeline `milestone`.
 - What is inside a kit before anyone installs it (ADR-0068 §4), `contents.rs`:
   `GET /studio-kits/v1/catalog/{kit_slug}` (any signed-in user; 404 for a
   slug the library does not hold) answers `{kit, contents, manifest}`;
   `contents` holds every section of a kit manifest (`screens`, `types`,
-  `rules`, `functions`, `services`, `inbox`, `mcp_tools`, `gears`,
+  `rules`, `functions`, `services`, `inbox`, `mcp_tools`, `gears`, `requires`,
   `permissions`, `material`, `kinds`, `docs`), each present and possibly
   empty (`gears[].note` says when a claim's data starts from the next sync
   after an install). The kit

@@ -340,7 +340,8 @@ slot?}`), `model` (the overlay, §3.10), `rules` and `services` and
 wasm|agent, description?}`), `inbox` (`{id, label, kind?: query|endpoint,
 query?, path?, title?, workspace_field?}`, §3.11), `permissions` (`{reads,
 writes, listens}`), `material` (`{path, description?}`), `kinds`, `docs`,
-and `gears` (ADR-0071 §2): per gear, `{gear, types?, mcp_tools?, routes?,
+`requires` (ADR-0071 §5: the slugs of the kits it cannot work without), and
+`gears` (ADR-0071 §2): per gear, `{gear, types?, mcp_tools?, routes?,
 sync_only_with_kit?}`, the gear's types, MCP tools and **write** routes the
 kit claims. A claimed route is `METHOD /<gear>/v1/…`, never a `GET`, and is
 also in `permissions.writes`; nothing is claimed twice in one manifest, and a
@@ -570,8 +571,24 @@ it"): `{route?, mcp_tool?}`, the kit's screen that answers an item (one of its
 each Inbox item carry it; without one an item opens the kit's workspace.
 
 A screen may say which domain types another kit brings it shows,
-`screens[].needs` (`["milestone"]` for Project activity's Timeline): the kit's
-detail lists it, and the shell hides the screen where one is not installed.
+`screens[].needs`, each by its GTS id (ADR-0071 §5:
+`gts.cf.studio.domain.<type>.v1~`, the type's id with `-` as `_`; a bare
+entity id is refused when the manifest is read): the kit's detail lists it,
+and the shell hides the screen where one is not installed. A section inside
+a screen that shows another kit's type declares it the same way (Tests'
+open pull requests section `needs` `gts.cf.studio.domain.pull_request.v1~`;
+in the portal, `presentation.sectionNeeds`): the screen stays, the section
+goes where the type is not installed.
+
+A kit that cannot work without another names it in **`requires`** (ADR-0071
+§5, ADR-0068 open question 2): `constructor-research` requires the delivery
+kit, `project-domain-model` requires `project-specs`. The installer refuses
+an install where a required kit would not apply (`KIT_REQUIRES_KIT`) and an
+uninstall that would leave a kit that still applies on that level without it
+(`KIT_REQUIRED_BY`), with one violation per kit involved, so a client can
+offer to install or uninstall both; it never does either on its own. A base
+kit's requirements are base kits; an organization's are met by base and
+organization kits; a project's by what applies to it.
 
 `GET /studio-user/v1/me/inbox?organization_id=` reads the organization on
 screen (its workspaces from the tenant tree, the walk `/rollups` makes but

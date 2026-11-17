@@ -23,6 +23,7 @@ describe('availableScreens', () => {
     expect(rest).toEqual({
       routes: ['/issues', '/organization/overview'],
       kits: ['project-issues'],
+      types: null,
     });
   });
 
@@ -31,7 +32,25 @@ describe('availableScreens', () => {
     expect(rest).toEqual({
       routes: ['/issues', '/organization/overview', '/releases'],
       kits: null,
+      types: null,
     });
+  });
+
+  it('publishes which declared types are installed, by GTS id (ADR-0071 §5)', () => {
+    const PR = 'gts.cf.studio.domain.pull_request.v1~';
+    const MS = 'gts.cf.studio.domain.milestone.v1~';
+    const withNeeds = [
+      screen('/tests', 'project-tests', { sectionNeeds: [PR] }),
+      screen('/projects/timeline', 'project-lifecycle', { needs: [MS] }),
+    ];
+    const known = availableScreens(withNeeds, new Set(['project-tests', 'project-lifecycle']), new Set([MS]));
+    // Only what a screen declares, and only what is installed.
+    expect(known.types).toEqual([MS]);
+    // A section need never hides its screen; a screen need does.
+    expect(known.routes).toEqual(['/projects/timeline', '/tests']);
+    const none = availableScreens(withNeeds, new Set(['project-tests', 'project-lifecycle']), new Set());
+    expect(none.routes).toEqual(['/tests']);
+    expect(none.types).toEqual([]);
   });
 
   it("lists every level's tabs, installed or not, for a kit's page", () => {

@@ -169,7 +169,12 @@ async fn studio_s_own_inbox_sources_come_and_go_with_their_kits() {
     );
     // Without project-specs there are no review requests; the pull requests
     // stay, and nothing is restarted for it.
+    // (The Project model requires Specs, ADR-0071 §5: it goes first.)
     let platform = caller(PLATFORM_ADMIN, PLATFORM_TENANT);
+    installer
+        .uninstall_base(&platform, "project-domain-model")
+        .await
+        .unwrap();
     installer
         .uninstall_base(&platform, "project-specs")
         .await

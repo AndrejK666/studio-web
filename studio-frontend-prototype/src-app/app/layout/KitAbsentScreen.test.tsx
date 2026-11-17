@@ -46,7 +46,7 @@ const activity = ext('activity.activity', 'entry.activity', {
   label: 'Activity', route: '/projects/activity', level: 'project', section: 'activity', kit: 'project-activity',
 });
 const timeline = ext('activity.timeline', 'entry.activity', {
-  label: 'Timeline', route: '/projects/timeline', level: 'project', section: 'timeline', kit: 'project-activity', needs: ['milestone'],
+  label: 'Timeline', route: '/projects/timeline', level: 'project', section: 'timeline', kit: 'project-activity', needs: ['gts.cf.studio.domain.milestone.v1~'],
 });
 
 afterEach(() => {
@@ -100,6 +100,6 @@ describe('KitAbsentScreen', () => {
     state.installed = new Set(['project-activity']);
     state.types = new Set(['project']);
     render(<KitAbsentScreen />);
-    expect(screen.getByRole('alert').textContent).toContain('screen_needs_types:Timeline,milestone');
+    expect(screen.getByRole('alert').textContent).toContain('screen_needs_types:Timeline,gts.cf.studio.domain.milestone.v1~');
   });
 });

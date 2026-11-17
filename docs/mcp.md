@@ -270,12 +270,12 @@ The tool list itself does not change with the kits.
 | `kits_describe` | one kit and what is inside it before install: screens, types, rules, functions, services, inbox, MCP tools (with descriptions), gear claims, permissions, material, kinds, docs, its `kind`, and the manifest it was read from |
 | `kit_gdl` | one kit's manifest as `kit.gdl` text (GDL 1.7, ADR-0068 §3): authored, or rendered by Studio from the manifest it read, which its first line says |
 | `kits_installed` | an organization's kits, or a project's with `project_id`: `base`, the organization's, the project's, and `effective` |
-| `kit_base_install` | *changes:* installs a kit for every organization (platform administrators) |
-| `kit_base_uninstall` | *changes:* stops a kit being a base kit (platform administrators) |
-| `kit_organization_install` | *changes:* installs a kit for one organization (its administrators) |
-| `kit_organization_uninstall` | *changes:* uninstalls the organization's own kit; a base kit is refused |
-| `kit_project_install` | *changes:* installs a kit for one project (the organization's kit administrators); only a kit whose levels include `project` |
-| `kit_project_uninstall` | *changes:* uninstalls the project's own kit; a base or organization kit is refused |
+| `kit_base_install` | *changes:* installs a kit for every organization (platform administrators); a kit whose required kits (`requires`, ADR-0071 §5) are not base kits is refused (`KIT_REQUIRES_KIT`) |
+| `kit_base_uninstall` | *changes:* stops a kit being a base kit (platform administrators); refused while another base kit requires it (`KIT_REQUIRED_BY`) |
+| `kit_organization_install` | *changes:* installs a kit for one organization (its administrators); refused where a kit it requires does not apply (`KIT_REQUIRES_KIT`, naming it) |
+| `kit_organization_uninstall` | *changes:* uninstalls the organization's own kit; a base kit is refused, and so is a kit another applying kit requires (`KIT_REQUIRED_BY`) |
+| `kit_project_install` | *changes:* installs a kit for one project (the organization's kit administrators); only a kit whose levels include `project`, and only where what it requires applies (`KIT_REQUIRES_KIT`) |
+| `kit_project_uninstall` | *changes:* uninstalls the project's own kit; a base or organization kit is refused, and so is one another of the project's kits requires (`KIT_REQUIRED_BY`) |
 | `kits_shelf` | the kits an organization added from its own repositories, each with its `origin` (connection, repository, directory, ref, pinned commit) |
 | `kit_shelf_preview` | reads a kit from a repository through the organization's connection without adding it (kit administrators) |
 | `kit_shelf_add` | *changes:* adds a kit from a repository to the organization's shelf, pinned to a commit (kit administrators); a slug Studio's library has is refused (`KIT_SLUG_TAKEN`) |
