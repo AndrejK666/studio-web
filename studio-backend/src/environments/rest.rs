@@ -1512,7 +1512,11 @@ async fn get_project_targets(
     Query(q): Query<ProjectQuery>,
 ) -> ApiResult<JsonBody<ProjectTargetsDto>> {
     let t = envs.0.targets(&ctx, q.project_id).await.map_err(problem)?;
-    Ok(Json(ProjectTargetsDto {
+    Ok(Json(targets_dto(t)))
+}
+
+fn targets_dto(t: super::service::Targets) -> ProjectTargetsDto {
+    ProjectTargetsDto {
         organization_id: t.organization_id,
         project_name: t.project_name,
         environments: t
@@ -1532,7 +1536,7 @@ async fn get_project_targets(
                 key: s.key,
             })
             .collect(),
-    }))
+    }
 }
 
 async fn start_build(

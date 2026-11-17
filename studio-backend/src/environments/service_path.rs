@@ -33,6 +33,11 @@ pub struct PathView {
     pub research_kit: bool,
     /// The caller's sign-in; `None` where the kit does not apply.
     pub research: Option<ResearchSignIn>,
+    /// The targets and the project's deploys the path was decided from:
+    /// what `/targets` and `/deployments` answer, so the Releases tab need
+    /// not ask for them again (`?include=`).
+    pub targets: super::Targets,
+    pub deployments: Vec<crate::environments::model::Deployment>,
 }
 
 impl EnvironmentService {
@@ -77,59 +82,74 @@ impl EnvironmentService {
     pub async fn project_path(&self, ctx: &SecurityContext, project: Uuid) -> Result<PathView> {
         let targets = self.targets(ctx, project).await?;
         let org = targets.organization_id;
-        let research_kit = self.research_kit_applies(ctx, project).await?;
-        let research = if research_kit {
-            Some(self.research_sign_in(ctx, org, project).await)
-        } else {
-            None
+        // Everything below needs only the organization: read side by side
+        // (seven reads in turn were 7.7 s on Dev). A refusal is said in the
+        // order they used to be read in.
+        let research = async {
+            let research_kit = self.research_kit_applies(ctx, project).await?;
+            let research = if research_kit {
+                Some(self.research_sign_in(ctx, org, project).await)
+            } else {
+                None
+            };
+            Ok::<_, Refusal>((research_kit, research))
         };
-
-        let builds = match self
-            .hub
-            .get::<dyn crate::artifact_ingest::port::BuildRecords>()
-        {
-            Ok(records) => records
-                .builds(ctx, &project.to_string(), PATH_BUILDS)
-                .await
-                .map_err(|e| Refusal::Internal(format!("the builds could not be read: {e:#}")))?,
-            Err(_) => Vec::new(),
-        };
-        let product_revision = match self.hub.get::<dyn crate::product::port::ProjectProducts>() {
-            Ok(products) => {
-                let latest = products
-                    .latest_description(ctx, project)
+        let builds = async {
+            match self
+                .hub
+                .get::<dyn crate::artifact_ingest::port::BuildRecords>()
+            {
+                Ok(records) => records
+                    .builds(ctx, &project.to_string(), PATH_BUILDS)
                     .await
-                    .map_err(|e| {
-                        Refusal::Internal(format!(
-                            "the product description could not be read: {e:#}"
-                        ))
-                    })?;
-                match latest {
-                    Some(d) => Some(d.revision.max(1)),
-                    None => products
-                        .saved_description(ctx, &project.to_string())
-                        .await
-                        .ok()
-                        .flatten()
-                        .map(|_| 0),
-                }
+                    .map_err(|e| Refusal::Internal(format!("the builds could not be read: {e:#}"))),
+                Err(_) => Ok(Vec::new()),
             }
-            Err(_) => None,
         };
+        let product_revision = async {
+            match self.hub.get::<dyn crate::product::port::ProjectProducts>() {
+                Ok(products) => {
+                    let latest = products
+                        .latest_description(ctx, project)
+                        .await
+                        .map_err(|e| {
+                            Refusal::Internal(format!(
+                                "the product description could not be read: {e:#}"
+                            ))
+                        })?;
+                    Ok::<_, Refusal>(match latest {
+                        Some(d) => Some(d.revision.max(1)),
+                        None => products
+                            .saved_description(ctx, &project.to_string())
+                            .await
+                            .ok()
+                            .flatten()
+                            .map(|_| 0),
+                    })
+                }
+                Err(_) => Ok(None),
+            }
+        };
+        let deployments = self.deployments(ctx, org, Some(project), None);
+        let (research, builds, product_revision, deployments) =
+            tokio::join!(research, builds, product_revision, deployments);
+        let (research_kit, research) = research?;
+        let builds = builds?;
+        let product_revision: Option<i64> = product_revision?;
+        let deployments = deployments?;
         // A product built before Studio kept its description is one.
         let product_revision = product_revision.or((!builds.is_empty()).then_some(0));
 
         let mut environments: Vec<PathEnvironment> = targets
             .environments
-            .into_iter()
+            .iter()
             .filter(|(e, _)| research_kit || e.kind != EnvironmentKind::Research)
             .map(|(env, _namespace)| PathEnvironment {
                 bound: targets.bindings.iter().any(|b| b.environment_id == env.id),
-                env,
+                env: env.clone(),
                 missing_secrets: Vec::new(),
             })
             .collect();
-        let deployments = self.deployments(ctx, org, Some(project), None).await?;
         // The secrets are read for the environment the path is about only:
         // each read reads the description.
         if let Some(target) = path::target_environment(&environments, &deployments)
@@ -156,6 +176,8 @@ impl EnvironmentService {
             path: path::project_path(&facts),
             research_kit,
             research,
+            targets,
+            deployments: facts.deployments,
         })
     }
 
