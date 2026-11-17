@@ -53,19 +53,30 @@ fn the_builtin_screens_are_today_s_tabs() {
         screens("project-activity"),
         [
             ("Activity".to_owned(), Some("/projects/activity".to_owned())),
-            ("Timeline".to_owned(), Some("/projects/timeline".to_owned()))
+        ]
+    );
+    // Moved inside today's kits (ADR-0071 step 4): Issues to the Project
+    // model, as Open questions; Timeline to Planning, with no `needs`.
+    assert_eq!(screens("project-issues"), []);
+    assert_eq!(
+        screens("project-domain-model"),
+        [
+            (
+                "Project domain model".to_owned(),
+                Some("/domain-model".to_owned())
+            ),
+            ("Open questions".to_owned(), Some("/issues".to_owned())),
         ]
     );
     assert_eq!(
-        screens("project-issues"),
-        [("Issues".to_owned(), Some("/issues".to_owned()))]
-    );
-    assert_eq!(
         screens("project-lifecycle"),
-        [(
-            "Project templates".to_owned(),
-            Some("/project-templates".to_owned())
-        )]
+        [
+            (
+                "Project templates".to_owned(),
+                Some("/project-templates".to_owned())
+            ),
+            ("Timeline".to_owned(), Some("/projects/timeline".to_owned())),
+        ]
     );
     assert_eq!(
         screens("project-specs"),
@@ -128,7 +139,6 @@ fn the_builtin_screens_are_today_s_tabs() {
                 Some("/platform/publication-requests")
             ),
             at("organization", "Components", Some("/components")),
-            at("project", "Components", Some("/project-components")),
         ]
     );
     assert_eq!(
@@ -143,12 +153,16 @@ fn the_builtin_screens_are_today_s_tabs() {
         levels("product-releases"),
         [
             at("project", "Product", Some("/product")),
+            at("project", "Components", Some("/project-components")),
             at("project", "Releases", Some("/releases"))
         ]
     );
     assert_eq!(
         levels("project-domain-model"),
-        [at("project", "Project domain model", Some("/domain-model"))]
+        [
+            at("project", "Project domain model", Some("/domain-model")),
+            at("project", "Open questions", Some("/issues"))
+        ]
     );
     // Constructor Research: one organization tab, and the MCP tools that
     // make a Research environment.

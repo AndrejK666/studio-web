@@ -46,8 +46,7 @@
         "order": 50,
         "level": "project",
         "section": "timeline",
-        "kit": "project-activity",
-        "needs": ["gts.cf.studio.domain.milestone.v1~"]
+        "kit": "project-lifecycle"
       }
     }
   ]

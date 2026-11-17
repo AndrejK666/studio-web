@@ -86,6 +86,21 @@ This README is what you need to work in the directory.
   asks for its CI runs and jobs, build outputs and releases). Every built-in
   claim leaves the flag off today, so every gear writes as before; a kit
   that sets it says so in `GET /catalog/{slug}` (`gears[].note`).
+- Who brings a piece of the model now (ADR-0071 §6, §8), `owners.rs`:
+  `KitOwners::builtin()` reads every built-in kit's overlay and claims
+  into one table (type, field/relation/tab, lifecycle → kit). The
+  `kit-rename` sweep (`DomainObjects::rename_kit_marks`,
+  `domain_model/kit_rename.rs`) runs first and last in every kit
+  reconciliation (`models.rs`): a `meta.kit`, `left_by.kit` or a
+  property's `kit` of Studio's own kits that names a kit which no longer
+  brings the piece moves to the kit that does, with its property source
+  and the organization's overrides, as one model version `op = "kit-rename"`
+  with no inverse; an organization's own kit is never touched. The ADR-0070
+  §5 equality check compares marks as the sweep would leave them. Step 4
+  moved, inside today's kits: Issues (now "Open questions", `/issues`),
+  `finding`, `project.issues`, `kit.introduces_type_22` →
+  `project-domain-model`; Timeline → `project-lifecycle` (no `needs`);
+  project Components and `project.parts` → `product-releases`.
 - Declared dependencies between kits (ADR-0071 §5, step 3), `requires.rs`:
   a manifest's `requires` names the kits it cannot work without
   (`constructor-research` → `org-infrastructure`, `project-domain-model` →

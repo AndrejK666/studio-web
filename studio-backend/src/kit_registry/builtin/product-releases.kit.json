@@ -33,6 +33,18 @@
           "relationLabel": "Releases",
           "description": "A tab of the project: what it shows."
         }
+      },
+      {
+        "on": "project",
+        "property": {
+          "name": "parts",
+          "type": "gear",
+          "relation": "gear",
+          "extends": "edge",
+          "relationType": "shows",
+          "relationLabel": "Components",
+          "description": "A tab of the project: what it shows."
+        }
       }
     ]
   },

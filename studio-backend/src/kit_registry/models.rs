@@ -255,9 +255,15 @@ impl KitInstaller {
         org: Uuid,
         effective: &[InstalledKit],
     ) -> Result<Vec<String>, Refusal> {
+        let mut problems = Vec::new();
+        // The kit-rename sweep first (ADR-0071 §8): a mark that names a kit
+        // which no longer brings the piece would otherwise be left dormant by
+        // that kit and refused to the one that brings it now.
+        if let Err(e) = port.rename_kit_marks(ctx).await {
+            problems.push(format!("kit-rename: {e:#}"));
+        }
         let carried = port.kit_models(ctx).await.map_err(Refusal::Internal)?;
         let mut keep: Vec<String> = Vec::new();
-        let mut problems = Vec::new();
         for kit in effective {
             let Ok(descriptor) = self.kit_for(org, &kit.kit_slug).await else {
                 continue;
@@ -283,6 +289,11 @@ impl KitInstaller {
             if let Err(e) = port.sync_kit_model(ctx, slug, "", None).await {
                 problems.push(format!("{slug}: {e:#}"));
             }
+        }
+        // Once more: what a retired kit just left dormant names the kit (or
+        // Studio) that stands for it now.
+        if let Err(e) = port.rename_kit_marks(ctx).await {
+            problems.push(format!("kit-rename: {e:#}"));
         }
         for p in &problems {
             tracing::warn!(organization_id = %org, problem = %p, "studio-kits: a kit's model was not applied");

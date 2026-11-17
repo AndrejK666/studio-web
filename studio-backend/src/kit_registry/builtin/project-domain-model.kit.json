@@ -24,6 +24,179 @@
           "relationLabel": "Domain model",
           "description": "A tab of the project: what it shows."
         }
+      },
+      {
+        "on": "project",
+        "property": {
+          "name": "issues",
+          "type": "finding",
+          "relation": "finding",
+          "extends": "edge",
+          "relationType": "shows",
+          "relationLabel": "Issues",
+          "description": "A tab of the project: what it shows."
+        }
+      },
+      {
+        "on": "kit",
+        "property": {
+          "name": "introduces_type_22",
+          "type": "Finding",
+          "description": "",
+          "relation": "security-finding",
+          "relationType": "references",
+          "relationLabel": "packages",
+          "required": false,
+          "extends": "link"
+        }
+      }
+    ],
+    "types": [
+      {
+        "name": "finding",
+        "id": "finding",
+        "label": "Finding",
+        "description": "Observed issue over the graph: gap, drift, staleness, contradiction, duplicate, ownership hole or review/scan result.",
+        "entity": {
+          "id": "finding",
+          "bucket": "automation",
+          "name": "Finding",
+          "kind": "graph issue or signal",
+          "description": "Observed issue over the graph: gap, drift, staleness, contradiction, duplicate, ownership hole or review/scan result.",
+          "meta": {
+            "relationship": "control-loop",
+            "priority": "P2",
+            "level": 4,
+            "badge": "From MaxV",
+            "note": "Added as the generic observed graph issue and signal object. · model.md §6.1",
+            "badge-style": "green",
+            "profiles": [
+              "Arch",
+              "Dev",
+              "QA",
+              "Sec",
+              "StudioAdmin"
+            ],
+            "links": [
+              {
+                "kind": "see-also",
+                "target": "security-finding",
+                "note": "Kit specialization of the generic Finding; renamed to Security Finding to clear the name collision"
+              }
+            ]
+          },
+          "properties": [
+            {
+              "name": "id",
+              "type": "FindingId",
+              "required": true,
+              "description": "",
+              "relationLabel": "",
+              "override": true
+            },
+            {
+              "name": "title",
+              "type": "string",
+              "required": true,
+              "description": "",
+              "relationLabel": "",
+              "override": true
+            },
+            {
+              "name": "finding_kind",
+              "type": "gap | drift | stale | contradiction | duplicate | ownership_hole | review | scan | cost_optimization | bloat",
+              "required": true,
+              "description": "",
+              "relationLabel": ""
+            },
+            {
+              "name": "provenance_kind",
+              "type": "mirrored | computed | authored",
+              "required": true,
+              "description": "",
+              "relationLabel": ""
+            },
+            {
+              "name": "subject_refs",
+              "type": "EntityRef[]",
+              "description": "",
+              "relationLabel": ""
+            },
+            {
+              "name": "status",
+              "type": "detected | acknowledged | triaged | accepted | dismissed | auto_resolved",
+              "required": true,
+              "description": "",
+              "relationLabel": ""
+            },
+            {
+              "name": "provenance_ref",
+              "type": "ProvenanceId?",
+              "description": "",
+              "relationLabel": "",
+              "override": true
+            },
+            {
+              "name": "may_produce",
+              "type": "ActionRun",
+              "description": "",
+              "relation": "action-run",
+              "relationType": "derives",
+              "relationLabel": "may produce",
+              "required": false,
+              "cardinality": "1:N",
+              "extends": "link"
+            },
+            {
+              "name": "may_produce_opportunity",
+              "type": "ManagedObject",
+              "description": "",
+              "relation": "managed-object",
+              "relationType": "derives",
+              "relationLabel": "may produce opportunity",
+              "required": false,
+              "extends": "edge"
+            },
+            {
+              "name": "accepted_as",
+              "type": "Opportunity",
+              "description": "",
+              "relation": "opportunity",
+              "relationType": "derives",
+              "relationLabel": "accepted as",
+              "required": false,
+              "extends": "edge"
+            }
+          ],
+          "methods": [
+            {
+              "name": "acknowledge",
+              "description": "",
+              "input": "actor",
+              "result": "void"
+            },
+            {
+              "name": "accept",
+              "description": "",
+              "input": "actor",
+              "result": "ActionRun"
+            },
+            {
+              "name": "auto_resolve",
+              "description": "",
+              "input": "",
+              "result": "void"
+            }
+          ],
+          "examples": [
+            "Capability gap",
+            "Stale artifact",
+            "Security finding"
+          ],
+          "layer": "product",
+          "abstract": false,
+          "extends": "managed-object"
+        }
       }
     ]
   },
@@ -44,7 +217,10 @@
       "GET /studio-spec-mapping/v1/plan",
       "GET /studio-kits/v1/projects/{project_id}/installations",
       "GET /studio-user/v1/organizations/{org_id}/members",
-      "GET /studio-user/v1/organizations/{org_id}/members/{user_id}/identities"
+      "GET /studio-user/v1/organizations/{org_id}/members/{user_id}/identities",
+      "GET /studio-documents/v1/project-domain-model/issues",
+      "GET /studio-documents/v1/project-domain-model/readiness",
+      "GET /studio-documents/v1/project-domain-model/doc-quality"
     ],
     "writes": [
       "POST /studio-documents/v1/project-domain-model/builds",
@@ -112,6 +288,12 @@
         "project_findings",
         "project_plan",
         "project_requirements"
+      ]
+    },
+    {
+      "gear": "studio-artifact-ingest",
+      "types": [
+        "finding"
       ]
     }
   ]

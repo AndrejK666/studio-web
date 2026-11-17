@@ -442,9 +442,11 @@ describe('generated MFE manifest', () => {
       const tabs = resolveLevelMenu(screens as StudioScreenExtension[], 'project');
       expect(tabs.map((ext) => ext.presentation.label)).toEqual([
         'Overview',
-        // The Issues kit's screen (issues-mfe, order 15): right after Overview,
-        // where the prototype put it — what to decide comes before the work.
-        'Issues',
+        // The Project model's open questions (issues-mfe, order 15; the
+        // prototype's Issues, renamed with its move to project-domain-model,
+        // ADR-0071 step 4): right after Overview, where the prototype put it —
+        // what to decide comes before the work.
+        'Open questions',
         'Artifacts',
         // The editor (space-mfe, order 25): the project's IDE, right after the
         // artifacts it opens (#1074).
@@ -456,8 +458,9 @@ describe('generated MFE manifest', () => {
         'Project domain model',
         // The Tests kit's own screen (ADR-0069), between the shell's sections.
         'Tests',
-        // The Product kit's two (product-mfe): Product (product-releases) and
-        // the project's Components (components), after Tests as in the prototype.
+        // The Product kit's two (product-mfe): Product and the project's
+        // Components, both product-releases' since ADR-0071 step 4, after Tests
+        // as in the prototype.
         'Product',
         'Components',
         'Sources',

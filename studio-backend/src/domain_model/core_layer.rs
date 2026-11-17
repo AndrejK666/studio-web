@@ -37,7 +37,14 @@ const ENTITY: &str = "entity";
 const PROPERTY: &str = "property:";
 
 /// Marks the layers write on a field; never the core's content.
-const FIELD_MARKS: &[&str] = &["origin", "kit", "kit_version", "left_by", "held_by"];
+const FIELD_MARKS: &[&str] = &[
+    "origin",
+    "kit",
+    "kit_version",
+    "left_by",
+    "held_by",
+    "adopted_from",
+];
 /// What other layers keep in a type's `meta`: never the core's content.
 const RUNTIME_META: &[&str] = &[
     "origin",
@@ -459,7 +466,42 @@ fn without_claimed_kit(id: &str, e: Option<&Value>) -> Option<Value> {
     if is_claim && let Some(meta) = e.get_mut("meta").and_then(Value::as_object_mut) {
         meta.remove("kit");
     }
+    renamed_kits(id, &mut e);
     Some(e)
+}
+
+/// Kit marks as the `kit-rename` sweep would leave them (ADR-0071 §8): a
+/// `meta.kit`, `left_by.kit` or a property's `kit` that names a kit which no
+/// longer brings the piece compares as the kit that does, so a slug rename
+/// or a move between built-in kits is not a difference.
+fn renamed_kits(id: &str, e: &mut Value) {
+    use crate::kit_registry::port::{KitOwners, MarkOn, Rehome};
+    let owners = KitOwners::builtin();
+    let rename = |v: &mut Value, on: MarkOn<'_>| {
+        for pointer in ["/kit", "/left_by/kit"] {
+            let Some(kit) = v.pointer(pointer).and_then(Value::as_str).map(str::to_owned) else {
+                continue;
+            };
+            if let Some(Rehome::Kit(to)) = owners.rehome(&kit, id, on)
+                && let Some(slot) = v.pointer_mut(pointer)
+            {
+                *slot = json!(to);
+            }
+        }
+    };
+    if let Some(meta) = e.get_mut("meta") {
+        rename(meta, MarkOn::Type);
+    }
+    if let Some(props) = e.get_mut("properties").and_then(Value::as_array_mut) {
+        for p in props {
+            let name = p
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned();
+            rename(p, MarkOn::Property(&name));
+        }
+    }
 }
 
 fn differing(a: &Ontology, b: &Ontology) -> Vec<String> {

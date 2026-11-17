@@ -5,6 +5,7 @@
 //! desired installations; `cfs` remains the only component that materializes
 //! kit files into a checkout.
 
+mod aliases;
 mod archive;
 mod bundles;
 mod claims;
@@ -18,6 +19,7 @@ mod kind;
 mod manifest;
 mod mcp;
 mod models;
+mod owners;
 mod phase;
 mod requires;
 pub mod port;

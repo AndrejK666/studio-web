@@ -26,8 +26,8 @@
 //!
 //! EVERY SIGNAL AND STEP NAMES THE KIT whose tab it opens (ADR-0070 §7,
 //! `docs/design/domain-model-split.md` §7): pull requests are project-git's,
-//! specs project-specs', findings project-issues', the project domain model
-//! project-domain-model's, the product, builds and deploys product-releases',
+//! specs project-specs', findings (Open questions) and the project domain model
+//! project-domain-model's (ADR-0071 step 4), the product, builds and deploys product-releases',
 //! comment threads and quiet projects project-activity's. A signal or step
 //! whose kit does not apply to the project is left out ([`Kits`]) and the
 //! verdict is computed from the rest; the repository connection and the IDE
@@ -39,7 +39,6 @@ pub const QUIET_DAYS: u32 = 7;
 /// The kits a project's status reads for (`kit_registry/builtin`).
 pub const GIT_KIT: &str = "project-git";
 pub const SPECS_KIT: &str = "project-specs";
-pub const ISSUES_KIT: &str = "project-issues";
 pub const DOMAIN_MODEL_KIT: &str = "project-domain-model";
 pub const RELEASES_KIT: &str = "product-releases";
 pub const ACTIVITY_KIT: &str = "project-activity";
@@ -183,7 +182,7 @@ pub fn step_kit(id: &str) -> Option<&'static str> {
     match id {
         "types" => Some(SPECS_KIT),
         "model" => Some(DOMAIN_MODEL_KIT),
-        "findings" => Some(ISSUES_KIT),
+        "findings" => Some(DOMAIN_MODEL_KIT),
         "kind" | "product" | "build" => Some(RELEASES_KIT),
         _ => None,
     }
@@ -554,7 +553,7 @@ pub fn signal_kit(key: &str) -> Option<&'static str> {
     match key {
         "stuck" | "nobody" => Some(GIT_KIT),
         "specs" => Some(SPECS_KIT),
-        "findings" => Some(ISSUES_KIT),
+        "findings" => Some(DOMAIN_MODEL_KIT),
         "product" | "build" | "deploy" => Some(RELEASES_KIT),
         "threads" | "quiet" => Some(ACTIVITY_KIT),
         _ => None,

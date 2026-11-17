@@ -272,13 +272,15 @@ fn project_tab(label: &str, route: Option<&str>) -> KitScreen {
 fn builtin_contents(slug: &str) -> Option<KitContents> {
     let contents = match slug {
         // Project status and phases, which have no screen of their own yet;
-        // and the project templates a workspace offers (`project-templates-mfe`).
+        // the project templates a workspace offers (`project-templates-mfe`);
+        // and the project's Timeline (`activity-mfe`, section `timeline`),
+        // which shows this kit's `milestone`, so it needs no other kit
+        // (moved from `project-activity`, ADR-0071 step 4).
         "project-lifecycle" => KitContents {
-            screens: vec![tab(
-                "workspace",
-                "Project templates",
-                Some("/project-templates"),
-            )],
+            screens: vec![
+                tab("workspace", "Project templates", Some("/project-templates")),
+                project_tab("Timeline", Some("/projects/timeline")),
+            ],
             ..KitContents::default()
         },
         // The project's Specs section of `projects-mfe`, and the document types
@@ -295,12 +297,10 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
             screens: vec![tab("organization", "Reports", Some("/reports"))],
             ..KitContents::default()
         },
-        // The Issues tab: what a project has to decide before it builds from
-        // its documents, computed by studio-documents.
-        "project-issues" => KitContents {
-            screens: vec![project_tab("Issues", Some("/issues"))],
-            ..KitContents::default()
-        },
+        // A project's Git tracker issues (`work-item`), no screen of its
+        // own: the Issues tab showed the project domain model's open
+        // questions and moved to `project-domain-model` (ADR-0071 step 4).
+        "project-issues" => KitContents::default(),
         // `tests-mfe`: CI runs, the repositories and their open pull
         // requests, document checks and spec-to-code conformance. Its open
         // pull requests section shows project-git's `pull-request` and
@@ -327,19 +327,10 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
             ..KitContents::default()
         },
         // `activity-mfe`: the project's Activity (the checks and comments
-        // studio-artifact-ingest keeps) and its Timeline, which shows
-        // project-lifecycle's `milestone` objects (ADR-0070 §2, §7). The
-        // Timeline's extension declares `needs` on that type by its GTS id
-        // (ADR-0071 §5), so the portal hides it where the type is not
-        // installed; Activity needs no other kit.
+        // studio-artifact-ingest keeps). Its Timeline is project-lifecycle's
+        // (ADR-0071 step 4).
         "project-activity" => KitContents {
-            screens: vec![
-                project_tab("Activity", Some("/projects/activity")),
-                KitScreen {
-                    needs: vec![super::manifest::domain_type_gts("milestone")],
-                    ..project_tab("Timeline", Some("/projects/timeline"))
-                },
-            ],
+            screens: vec![project_tab("Activity", Some("/projects/activity"))],
             ..KitContents::default()
         },
         // `costs-mfe`: the organization's costs, its price list and budgets
@@ -370,12 +361,12 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
         },
         // `components-mfe` (ADR-0042, ADR-0046): the platform's catalogue,
         // its gear repositories and the publication requests it answers;
-        // the organization's catalogue and registry; and a project's
-        // inventory, which has no screen in the new portal yet. The routes
-        // are the ones the old prototype's screens call
+        // and the organization's catalogue and registry. A project's
+        // inventory (Components) is product-releases' since ADR-0071 step 4.
+        // The routes are the ones the old prototype's screens call
         // (`components-catalog`, `component-registry`,
         // `catalogue-levels-view`, `platform-sources`,
-        // `publication-requests`, `project-components-view`).
+        // `publication-requests`).
         "components" => KitContents {
             screens: vec![
                 tab("platform", "Components", Some("/platform/components")),
@@ -386,7 +377,6 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
                     Some("/platform/publication-requests"),
                 ),
                 tab("organization", "Components", Some("/components")),
-                project_tab("Components", Some("/project-components")),
             ],
             ..KitContents::default()
         },
@@ -412,8 +402,11 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
         // part), `releases-tab`, `builds-tab`, `deploy-actions`,
         // `project-images` and `ProjectEnvironments` call.
         "product-releases" => KitContents {
+            // The project's Components (its inventory, `product-mfe`) moved
+            // here from `components` with `project.parts` (ADR-0071 step 4).
             screens: vec![
                 project_tab("Product", Some("/product")),
+                project_tab("Components", Some("/project-components")),
                 project_tab("Releases", Some("/releases")),
             ],
             ..KitContents::default()
@@ -482,8 +475,15 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
         // screen of its own yet; its Inbox source and status signal follow
         // with #1039. The model comes from its `kit.json`.
         "project-git" => KitContents::default(),
+        // Its open questions (`issues-mfe`, the prototype's Issues tab, at
+        // `/issues`) moved here from `project-issues` with `finding`: they
+        // are what the project's documents leave to decide (ADR-0071 step 4,
+        // open question 2: the tab is "Open questions").
         "project-domain-model" => KitContents {
-            screens: vec![project_tab("Project domain model", Some("/domain-model"))],
+            screens: vec![
+                project_tab("Project domain model", Some("/domain-model")),
+                project_tab("Open questions", Some("/issues")),
+            ],
             ..KitContents::default()
         },
         _ => return None,

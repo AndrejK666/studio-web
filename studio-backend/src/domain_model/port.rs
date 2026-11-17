@@ -242,6 +242,13 @@ pub trait DomainObjects: Send + Sync {
         anyhow::bail!("kit models are not offered here")
     }
 
+    /// The `kit-rename` sweep (ADR-0071 §8): move the caller's
+    /// organization's kit marks of Studio's own kits to the kits that bring
+    /// the pieces now, as one version with no inverse. Answers what moved.
+    async fn rename_kit_marks(&self, _ctx: &SecurityContext) -> anyhow::Result<Vec<String>> {
+        Ok(Vec::new())
+    }
+
     /// The kits the caller's organization's model carries, with the version
     /// each overlay was applied at.
     async fn kit_models(
@@ -489,6 +496,10 @@ impl DomainObjects for Objects {
         self.0.sync_kit_model(ctx, slug, version, overlay).await
     }
 
+    async fn rename_kit_marks(&self, ctx: &SecurityContext) -> anyhow::Result<Vec<String>> {
+        self.0.rename_kit_marks(ctx).await
+    }
+
     async fn kit_models(
         &self,
         ctx: &SecurityContext,
@@ -699,6 +710,10 @@ impl DomainObjects for KeptByGear {
         self.0
             .sync_kit_model(&as_gear(ctx)?, slug, version, overlay)
             .await
+    }
+
+    async fn rename_kit_marks(&self, ctx: &SecurityContext) -> anyhow::Result<Vec<String>> {
+        self.0.rename_kit_marks(&as_gear(ctx)?).await
     }
 
     async fn kit_models(
