@@ -145,6 +145,25 @@ async fn an_installed_kit_s_inbox_sources_apply_to_the_organization() {
     assert_eq!(research(&after), ["deploy-failed", "sign-in-expires"]);
 }
 
+/// A platform administrator's home is the platform's tenant, where no kit's
+/// overlay is applied: the lifecycle's query would be refused there, and the
+/// Inbox said "not everything could be read" for it.
+#[tokio::test]
+async fn the_platform_tenant_lists_no_kit_query_sources() {
+    let (installer, _) = setup();
+    let platform = caller(PLATFORM_ADMIN, PLATFORM_TENANT);
+    let sources = installer
+        .inbox_sources(&platform, PLATFORM_TENANT)
+        .await
+        .unwrap();
+    assert!(
+        sources
+            .iter()
+            .all(|s| matches!(s.source.kind(), "endpoint" | "studio")),
+        "{sources:?}"
+    );
+}
+
 #[tokio::test]
 async fn studio_s_own_inbox_sources_come_and_go_with_their_kits() {
     let (installer, _) = setup();
