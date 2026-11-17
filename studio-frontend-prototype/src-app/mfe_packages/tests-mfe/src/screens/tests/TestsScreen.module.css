@@ -110,12 +110,37 @@
   background: var(--destructive);
 }
 
-.clickable {
-  cursor: pointer;
+/* A run's jobs, opened under the list. */
+.jobs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 0.375rem);
+}
+
+.jobsTitle {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.jobList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
 }
 
 .job {
-  background: var(--muted);
+  font-size: 0.875rem;
+}
+
+.block {
+  display: block;
 }
 
 .nowrap {
