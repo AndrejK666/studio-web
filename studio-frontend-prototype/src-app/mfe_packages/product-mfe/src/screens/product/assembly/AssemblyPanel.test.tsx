@@ -156,13 +156,19 @@ describe('AssemblyPanel', () => {
     });
     const complete = vi
       .spyOn(api, 'completeProduct')
-      .mockResolvedValue({ gears: ['api-gateway', 'authn-resolver', 'tenant-resolver'], changes: [{ gear: 'tenant-resolver', added: true, reason: 'needed' }], config: {} });
+      .mockResolvedValue({ gears: ['api-gateway', 'authn-resolver', 'tenant-resolver'], changes: [
+        { gear: 'tenant-resolver', added: true, reason: 'needed' },
+        { gear: 'authn-resolver', added: false, reason: 'needs configuration', needs: ['issuer'] },
+      ], config: {} });
     const save = vi.spyOn(api, 'saveProjectProduct').mockResolvedValue({} as never);
     const changed = draw();
     fireEvent.click(await found('[data-product-assembly-propose]'));
     await found('[data-product-assembly-proposal="authn-resolver"]');
     expect(complete).toHaveBeenCalledWith('', ['api-gateway', 'authn-resolver'], {});
     expect(save).not.toHaveBeenCalled();
+    // What the completion changed is said with its reason; a gear still wanting settings is flagged.
+    expect(document.querySelector('[data-product-assembly-change="tenant-resolver"]')).toBeTruthy();
+    expect(document.querySelector('[data-product-assembly-needs="authn-resolver"]')).toBeTruthy();
     fireEvent.click(document.querySelector('[data-product-assembly-confirm]')!);
     await waitFor(() => expect(changed).toHaveBeenCalled());
     expect(save.mock.calls[0][2]).toMatchObject({ product_id: 'todo-app', gears: ['api-gateway', 'authn-resolver', 'tenant-resolver'] });

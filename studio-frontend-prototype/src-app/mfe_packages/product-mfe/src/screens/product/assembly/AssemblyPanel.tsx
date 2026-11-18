@@ -195,7 +195,11 @@ export function AssemblyPanel({ round, onChanged }: { round: number; onChanged: 
       disabled: !offered && projectChoice(a) !== 'gears_matcher',
     },
   ];
-  const added = pending?.changes.filter((c) => c.added && !pending.items.some((p) => p.gear === c.gear)) ?? [];
+  // What the completion did beyond the proposals, with the engine's reason,
+  // and which gears it kept that still want settings: confirming saves them
+  // as they are, and the product will not resolve until they are given.
+  const added = pending?.changes.filter((c) => c.added && !c.needs?.length) ?? [];
+  const needs = pending?.changes.filter((c) => c.needs?.length) ?? [];
 
   return (
     <div className={page.card} data-product-assembly={a.strategy}>
@@ -251,11 +255,16 @@ export function AssemblyPanel({ round, onChanged }: { round: number; onChanged: 
               <span className={`${page.small} ${page.muted}`}>{p.answers.join(', ')}</span>
             </span>
           ))}
-          {added.length > 0 && (
-            <span className={`${page.small} ${page.muted}`}>
-              {t('completion_adds', { gears: added.map((c) => c.gear).join(', ') })}
+          {added.map((c) => (
+            <span key={c.gear} className={`${page.small} ${page.muted}`} data-product-assembly-change={c.gear}>
+              {t('completion_adds', { gear: c.gear, reason: c.reason })}
             </span>
-          )}
+          ))}
+          {needs.map((c) => (
+            <span key={c.gear} className={`${page.small} ${page.error}`} data-product-assembly-needs={c.gear}>
+              {t('completion_needs', { gear: c.gear, settings: (c.needs ?? []).join(', ') })}
+            </span>
+          ))}
           <span className={page.row}>
             <Button type="button" size="sm" onClick={() => void confirm()} disabled={busy !== null} data-product-assembly-confirm>
               {busy === 'confirm' ? t('adding') : t('confirm', { count: String(pending.items.length) })}
