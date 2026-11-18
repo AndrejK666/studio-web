@@ -238,6 +238,20 @@ describe('LevelTabs (the level navigation)', () => {
     expect(tab('Connections').getAttribute('aria-current')).toBeNull();
   });
 
+  it('draws no row over a screen of the product menu (Docs & API)', () => {
+    const docs = {
+      id: 'ext.api-docs',
+      domain: SCREEN_DOMAIN,
+      entry: 'entry.api-docs',
+      presentation: { label: 'Docs & API', route: '/api-docs', order: 10, level: 'organization', placement: 'product' },
+    };
+    registered.value = [settings, connections, people, docs];
+    mounted.value = [docs];
+    render(<LevelTabs />);
+    expect(screen.queryByRole('navigation', { name: 'level_tabs' })).toBeNull();
+    expect(tabLabels()).toEqual([]);
+  });
+
   it('draws the row at a level with a single tab', () => {
     level.value = 'workspace';
     mounted.value = [projects];

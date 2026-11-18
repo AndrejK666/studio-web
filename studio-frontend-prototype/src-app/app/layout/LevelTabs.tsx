@@ -26,6 +26,7 @@ import { APP_CONTEXT_SLICE_KEY, type AppContextState } from '@/app/slices/appCon
 import {
   offeredTo,
   parentSectionOf,
+  placementOf,
   resolveLevelMenu,
   sectionOf,
   type StudioScreenExtension,
@@ -151,6 +152,11 @@ export const LevelTabs: React.FC = () => {
     const row = e.currentTarget.closest('nav');
     requestAnimationFrame(() => row?.querySelector<HTMLElement>(`[data-tab="${id}"]`)?.focus());
   };
+
+  // A screen of the product menu (Docs & API) is a product of its own, not a
+  // tab of the level it was opened from: no level's tabs over it (walks of
+  // 2026-11-17 and 2026-11-18 found the Platform's row above Docs & API).
+  if (mounted && placementOf(mounted) === 'product') return null;
 
   if (items.length === 0) {
     return bootstrapStatus === 'pending' ? (
