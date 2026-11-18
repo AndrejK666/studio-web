@@ -1224,6 +1224,7 @@ impl EnvironmentService {
     pub async fn test_environment(
         &self,
         ctx: &SecurityContext,
+        caller: &SecurityContext,
         org: Uuid,
         id: Uuid,
         project: Option<Uuid>,
@@ -1247,7 +1248,7 @@ impl EnvironmentService {
                 .map(|r| r.project.clone())
                 .unwrap_or_default();
             let projects = self
-                .own_research_api(ctx, org, project_tenant)
+                .own_research_api(caller, org, project_tenant)
                 .await?
                 .projects()
                 .await
@@ -3061,12 +3062,19 @@ impl EnvironmentService {
     pub async fn research_projects(
         &self,
         ctx: &SecurityContext,
+        caller: &SecurityContext,
         org: Uuid,
         connection_id: Uuid,
     ) -> Result<Vec<crate::connectors::sdk::research::Project>> {
         self.require_manage(ctx, org).await?;
         self.require_research_kit(ctx, org).await?;
-        self.research_api(ctx, org, connection_id)
+        // The token is read as the member, not as the organization the
+        // request acts in: a personal sign-in's secret is kept under the
+        // person's own tenant (studio-connector writes it with the caller's
+        // own context), which a context acting in another organization -- a
+        // platform administrator's, a member of several organizations' --
+        // cannot read.
+        self.research_api(caller, org, connection_id)
             .await?
             .projects()
             .await
@@ -3079,13 +3087,14 @@ impl EnvironmentService {
     pub async fn research_hardware(
         &self,
         ctx: &SecurityContext,
+        caller: &SecurityContext,
         org: Uuid,
         connection_id: Uuid,
         project: &str,
     ) -> Result<Vec<crate::connectors::sdk::research::Hardware>> {
         self.require_manage(ctx, org).await?;
         self.require_research_kit(ctx, org).await?;
-        self.research_api(ctx, org, connection_id)
+        self.research_api(caller, org, connection_id)
             .await?
             .hardware(project)
             .await
@@ -3614,6 +3623,7 @@ impl EnvironmentService {
     pub async fn status(
         &self,
         ctx: &SecurityContext,
+        caller: &SecurityContext,
         org: Uuid,
         id: Uuid,
     ) -> Result<(Deployment, Rollout)> {
@@ -3622,7 +3632,9 @@ impl EnvironmentService {
             .project_environment(ctx, org, d.project_id, d.environment_id)
             .await?;
         if let (EnvironmentKind::Research, Some(target)) = (env.kind, &env.research) {
-            let api = self.own_research_api(ctx, org, Some(d.project_id)).await?;
+            let api = self
+                .own_research_api(caller, org, Some(d.project_id))
+                .await?;
             let rollout = research::rollout(&api, &target.project, &d.namespace)
                 .await
                 .map_err(|e| {
@@ -3655,6 +3667,7 @@ impl EnvironmentService {
     pub async fn logs(
         &self,
         ctx: &SecurityContext,
+        caller: &SecurityContext,
         org: Uuid,
         id: Uuid,
         lines: i64,
@@ -3664,7 +3677,9 @@ impl EnvironmentService {
             .project_environment(ctx, org, d.project_id, d.environment_id)
             .await?;
         if let (EnvironmentKind::Research, Some(target)) = (env.kind, &env.research) {
-            let api = self.own_research_api(ctx, org, Some(d.project_id)).await?;
+            let api = self
+                .own_research_api(caller, org, Some(d.project_id))
+                .await?;
             let lines = usize::try_from(lines.clamp(1, deploy::LOG_LINES_MAX)).unwrap_or(200);
             return research::logs(&api, &target.project, &d.namespace, lines)
                 .await
@@ -3713,6 +3728,13 @@ impl EnvironmentService {
         // says why, and is the whole log.
         if let Some(log) = start_failure_log(&record) {
             return Ok(log);
+        }
+        // A Research build runs on this server and in Research, never in an
+        // environment's cluster: its log is what its record keeps, and the
+        // environments are not asked (a Research environment's connection is
+        // a member's sign-in, not a cluster).
+        if record.r#where.as_deref() == Some("research") {
+            return Ok(research_build_log(&record));
         }
         let org = self.organization_of_project(ctx, project).await?;
         let mut unreachable = None;
@@ -3786,6 +3808,45 @@ fn start_failure_log(record: &crate::artifact_ingest::port::BuildRecord) -> Opti
                 .unwrap_or_else(|| "the build failed before it reached the cluster".into()),
         }],
     })
+}
+
+/// The log of a build that ran in Constructor Research, from its record: the
+/// step it failed in with the reason, or what it built. Its live progress is
+/// its Background work run's.
+fn research_build_log(record: &crate::artifact_ingest::port::BuildRecord) -> BuildLog {
+    let (step, log) = match (record.status.as_str(), &record.failure) {
+        ("failed", failure) => (
+            record
+                .failure_step
+                .clone()
+                .unwrap_or_else(|| "build".into()),
+            failure
+                .clone()
+                .unwrap_or_else(|| "the build failed in Constructor Research".into()),
+        ),
+        ("passed", _) => (
+            "images".into(),
+            record
+                .images
+                .iter()
+                .map(|(key, reference)| format!("{key}: {reference}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        ),
+        (status, _) => (
+            "images".into(),
+            format!("{status} in Constructor Research; its progress is in Background work"),
+        ),
+    };
+    BuildLog {
+        environment: record.place.environment.clone().unwrap_or_default(),
+        namespace: record.place.namespace.clone().unwrap_or_default(),
+        steps: vec![build::StepLog {
+            step,
+            state: record.status.clone(),
+            log,
+        }],
+    }
 }
 
 /// A build's steps, read from its pod.
@@ -4020,6 +4081,48 @@ mod tests {
             };
             assert!(start_failure_log(&other).is_none(), "{status}");
         }
+    }
+
+    #[test]
+    fn a_research_build_logs_its_record_not_a_cluster_pod() {
+        use crate::artifact_ingest::port::{BuildPlace, BuildRecord};
+        let failed = BuildRecord {
+            build_id: "research-8219ed83a9ca".into(),
+            r#where: Some("research".into()),
+            status: "failed".into(),
+            failure: Some("the product's repository could not be cloned".into()),
+            failure_step: Some("prepare".into()),
+            place: BuildPlace {
+                environment: Some("research-example-project-71c6fd".into()),
+                namespace: Some("studioweb-research-example-project-71c6fd".into()),
+                ..BuildPlace::default()
+            },
+            ..BuildRecord::default()
+        };
+        let log = research_build_log(&failed);
+        assert_eq!(log.environment, "research-example-project-71c6fd");
+        assert_eq!(log.steps.len(), 1);
+        assert_eq!(log.steps[0].step, "prepare");
+        assert_eq!(log.steps[0].state, "failed");
+        assert!(log.steps[0].log.contains("could not be cloned"));
+
+        let passed = BuildRecord {
+            status: "passed".into(),
+            failure: None,
+            failure_step: None,
+            images: vec![("api".into(), "registry/api@sha256:1".into())],
+            ..failed.clone()
+        };
+        let log = research_build_log(&passed);
+        assert_eq!(log.steps[0].state, "passed");
+        assert_eq!(log.steps[0].log, "api: registry/api@sha256:1");
+
+        let running = BuildRecord {
+            status: "running".into(),
+            ..passed
+        };
+        let log = research_build_log(&running);
+        assert!(log.steps[0].log.contains("Background work"));
     }
 
     #[test]
