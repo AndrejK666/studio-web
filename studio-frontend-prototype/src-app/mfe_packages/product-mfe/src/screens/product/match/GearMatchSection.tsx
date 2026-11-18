@@ -21,6 +21,7 @@ import { Badge, Button, Input, Skeleton, Textarea } from '@gears-frontx/ui-kit';
 import { isNotFound, responseStatus } from '@constructor-studio/mfe-shared';
 import { productApi } from '../../../api/client';
 import {
+  actionLabel,
   addability,
   byAction,
   coverageTone,
@@ -419,7 +420,7 @@ function RequirementCard({
           {shortId(r.requirement_id)}
         </code>
         <StatusChip tone={coverageTone(r.coverage)}>{t(`coverage_${r.coverage}`)}</StatusChip>
-        {r.action !== 'none' && <span className={page.muted}>{t(`action_${r.action}`)}</span>}
+        {r.action !== 'none' && <span className={page.muted}>{t(`action_${actionLabel(r, picks, catalogue)}`)}</span>}
         {r.action === 'create_gear' && (
           <Button type="button" size="sm" variant="outline" onClick={() => onCreateGear(r)} data-gear-match-create>
             {t('create_gear')}

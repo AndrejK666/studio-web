@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  actionLabel,
   failureHint,
   addability,
   byAction,
@@ -88,5 +89,14 @@ describe('gear match', () => {
     expect(failureHint('the gears-matcher service did not answer: connection refused')).toBe('unreachable');
     expect(failureHint('the gears-matcher service answered 500: boom')).toBeNull();
     expect(failureHint(null)).toBeNull();
+  });
+
+  it('does not ask to add a gear that is in the product or cannot be picked', () => {
+    const r = req('x', 'partial', 'propose', { candidates: [cand('a'), cand('b'), cand('c', { proposed: false })] });
+    const cat = new Set(['a', 'b', 'c']);
+    expect(actionLabel(r, ['a'], cat)).toBe('propose');
+    expect(actionLabel(r, ['a', 'b'], cat)).toBe('proposed_in_product');
+    expect(actionLabel(r, ['a'], new Set(['a']))).toBe('proposed_not_pickable');
+    expect(actionLabel(req('y', 'gap', 'create_gear'), [], cat)).toBe('create_gear');
   });
 });

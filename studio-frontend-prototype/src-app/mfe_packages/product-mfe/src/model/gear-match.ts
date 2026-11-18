@@ -216,3 +216,22 @@ export function failureHint(error: string | null | undefined): FailureHint | nul
   if (/did not answer/.test(error)) return 'unreachable';
   return null;
 }
+
+/**
+ * What a requirement's card says it asks of the person. The matcher's
+ * `propose` means "a gear could be added"; once every gear it proposes is in
+ * the product, or none can be picked from the catalogue the product reads,
+ * there is nothing to add, and the card says which.
+ */
+export function actionLabel(
+  r: GearMatchRequirement,
+  picks: readonly string[],
+  catalogue: ReadonlySet<string> | null
+): string {
+  if (r.action !== 'propose') return r.action;
+  const proposed = r.candidates.filter((c) => c.proposed);
+  if (proposed.length === 0) return r.action;
+  const can = proposed.map((c) => addability(c, picks, catalogue));
+  if (can.includes('add')) return r.action;
+  return can.every((a) => a === 'in') ? 'proposed_in_product' : 'proposed_not_pickable';
+}
