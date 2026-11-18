@@ -96,6 +96,17 @@ export const GEAR_PREFIX = 'gmg.';
 const REQUIREMENT_ADDRESS = [VERDICT_FILTER];
 const GEAR_ADDRESS = [GEAR_FILTER];
 
+/**
+ * The root load's search, filter and order, into the address. With the tree
+ * plugin every load carries `tree` (`parentId` null for the root), which
+ * `writeGridAddress` reads as a branch and skips: only a branch is left out here.
+ */
+function writeAddress(context: DataGridLoadContext, prefix: string, keys: readonly string[]): void {
+  const parent = (context.tree as { parentId?: string | number | null } | undefined)?.parentId;
+  if (parent !== undefined && parent !== null) return;
+  writeGridAddress({ ...context, tree: undefined }, prefix, keys);
+}
+
 const verdictRank = (v: string) => {
   const i = (VERDICTS as readonly string[]).indexOf(v);
   return i < 0 ? VERDICTS.length : i;
@@ -408,7 +419,7 @@ const GearConfidenceCell: React.FC<{ item: GearRow }> = ({ item }) => (
 
 const InProductCell: React.FC<{ item: GearRow }> = ({ item }) => {
   const { t, picks, catalogue } = useMatchCells();
-  if (item.kind === 'answer') return <StatusChip tone={coverageTone(item.r.coverage)}>{t(`coverage_${item.r.coverage}`)}</StatusChip>;
+  if (item.kind === 'answer') return null;
   const standing = gearStanding(item, picks, catalogue);
   return (
     <StatusChip tone={standing === 'in' ? 'ok' : standing === 'add' ? 'warn' : 'neutral'} data-gear-match-standing={standing}>
@@ -472,7 +483,7 @@ export const RequirementGrid: React.FC<MatchReportGridProps> = ({ match, cells }
     current.current = rows;
   });
   const load = useCallback(async (context: DataGridLoadContext) => {
-    writeGridAddress(context, REQUIREMENT_PREFIX, REQUIREMENT_ADDRESS);
+    writeAddress(context, REQUIREMENT_PREFIX, REQUIREMENT_ADDRESS);
     const page = requirementGridLoad(current.current, context);
     context.signal?.throwIfAborted();
     return page;
@@ -481,11 +492,11 @@ export const RequirementGrid: React.FC<MatchReportGridProps> = ({ match, cells }
   const columns = useMemo<DataGridTableColumn<RequirementRow>[]>(
     () => [
       { id: 'requirement', label: t('col_requirement'), component: RequirementCell },
-      { id: 'verdict', label: t('col_verdict'), component: VerdictCell, width: 132 },
-      { id: 'gear', label: t('col_best_gear'), component: BestGearCell, width: 200 },
-      { id: 'confidence', label: t('col_confidence'), component: ConfidenceCell, width: 112 },
-      { id: 'passage', label: t('col_passage'), component: PassageCell, width: 220 },
-      { id: 'action', label: t('col_action'), component: RequirementActionCell, width: 220 },
+      { id: 'verdict', label: t('col_verdict'), component: VerdictCell, width: 120 },
+      { id: 'gear', label: t('col_best_gear'), component: BestGearCell, width: 176 },
+      { id: 'confidence', label: t('col_confidence'), component: ConfidenceCell, width: 104 },
+      { id: 'passage', label: t('col_passage'), component: PassageCell, width: 196 },
+      { id: 'action', label: t('col_action'), component: RequirementActionCell, width: 196 },
     ],
     [t]
   );
@@ -520,7 +531,7 @@ export const RequirementGrid: React.FC<MatchReportGridProps> = ({ match, cells }
         empty={RequirementEmpty}
         unsortable={['action']}
         defaultOrder={{ id: 'verdict', direction: 'asc' }}
-        minWidth="72rem"
+        minWidth="60rem"
       >
         <GridAddress prefix={REQUIREMENT_PREFIX} filterKeys={REQUIREMENT_ADDRESS} />
         {/* Before the tree: a new page size or new rows replace the list, not append to it. */}
@@ -543,7 +554,7 @@ export const GearGrid: React.FC<MatchReportGridProps> = ({ match, cells }) => {
     current.current = { rows, options };
   });
   const load = useCallback(async (context: DataGridLoadContext) => {
-    writeGridAddress(context, GEAR_PREFIX, GEAR_ADDRESS);
+    writeAddress(context, GEAR_PREFIX, GEAR_ADDRESS);
     const page = gearGridLoad(current.current.rows, context, current.current.options);
     context.signal?.throwIfAborted();
     return page;

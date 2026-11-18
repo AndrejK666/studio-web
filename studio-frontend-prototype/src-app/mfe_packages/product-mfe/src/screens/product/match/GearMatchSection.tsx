@@ -325,6 +325,40 @@ export function GearMatchSection() {
           <div className={styles.main}>
             {match && <MatchHeader match={match} t={t} />}
             {diff && <DiffView diff={diff} history={history} t={t} />}
+          </div>
+          <aside className={styles.history} data-gear-match-history>
+            <b>{t('history')}</b>
+            {history.map((h) => {
+              // The run on screen is read every few seconds; its row says what that read says.
+              const live = match?.summary.match_id === h.match_id ? match.summary : h;
+              return (
+                <button
+                  key={h.match_id}
+                  type="button"
+                  className={styles.run}
+                  data-on={h.match_id === shown}
+                  onClick={() => {
+                    setSelected(h.match_id);
+                    setDiff(null);
+                    setAnswering(null);
+                  }}
+                >
+                  <span>{new Date(h.created_at).toLocaleString()}</span>
+                  <span className={page.small}>
+                    {t(`state_${live.state}`)}
+                    {live.totals ? ` · ${t('totals', { requirements: String(live.totals.requirements) })}` : ''}
+                  </span>
+                </button>
+              );
+            })}
+            {match && !running && history.length > 1 && (
+              <Button type="button" variant="outline" size="sm" onClick={() => void compare()} data-gear-match-compare>
+                {t('compare')}
+              </Button>
+            )}
+          </aside>
+          {/* The report spans the page under the header and the runs: the grid needs the width. */}
+          <div className={styles.full}>
             {report && (
               <Segmented
                 label={t('view_label')}
@@ -365,37 +399,6 @@ export function GearMatchSection() {
               </div>
             )}
           </div>
-          <aside className={styles.history} data-gear-match-history>
-            <b>{t('history')}</b>
-            {history.map((h) => {
-              // The run on screen is read every few seconds; its row says what that read says.
-              const live = match?.summary.match_id === h.match_id ? match.summary : h;
-              return (
-                <button
-                  key={h.match_id}
-                  type="button"
-                  className={styles.run}
-                  data-on={h.match_id === shown}
-                  onClick={() => {
-                    setSelected(h.match_id);
-                    setDiff(null);
-                    setAnswering(null);
-                  }}
-                >
-                  <span>{new Date(h.created_at).toLocaleString()}</span>
-                  <span className={page.small}>
-                    {t(`state_${live.state}`)}
-                    {live.totals ? ` · ${t('totals', { requirements: String(live.totals.requirements) })}` : ''}
-                  </span>
-                </button>
-              );
-            })}
-            {match && !running && history.length > 1 && (
-              <Button type="button" variant="outline" size="sm" onClick={() => void compare()} data-gear-match-compare>
-                {t('compare')}
-              </Button>
-            )}
-          </aside>
         </div>
       )}
       {scaffold && <ScaffoldDialogFor r={scaffold} onClose={() => setScaffold(null)} />}

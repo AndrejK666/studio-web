@@ -155,7 +155,7 @@
 
 .actions {
   display: inline-flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: var(--space-1);
 }
@@ -187,4 +187,13 @@
   font-size: var(--text-meta-size, 0.8125rem);
   color: var(--foreground);
   overflow-wrap: anywhere;
+}
+
+/* Under the header and the runs, across both columns: the grid needs the width. */
+.full {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
 }

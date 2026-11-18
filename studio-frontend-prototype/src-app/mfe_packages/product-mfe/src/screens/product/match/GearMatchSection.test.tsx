@@ -218,6 +218,14 @@ describe('GearMatchSection', () => {
     expect(window.location.search).not.toContain('gmv.f.view');
   });
 
+  it('keeps the search in the address, though the grid has a tree', async () => {
+    draw();
+    await found('[data-gear-match-requirement="cpt-x-fr-sign-in"]');
+    fireEvent.change(screen.getByPlaceholderText('search_requirements'), { target: { value: 'offline' } });
+    await waitFor(() => expect(window.location.search).toContain('gm.q=offline'));
+    await waitFor(() => expect(document.querySelectorAll('[data-gear-match-requirement]').length).toBe(1));
+  });
+
   it('opens on the view the address names', async () => {
     window.history.replaceState(null, '', '/?gmv.f.view=gear');
     draw();
