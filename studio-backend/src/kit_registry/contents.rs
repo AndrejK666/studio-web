@@ -410,6 +410,25 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
             )],
             ..KitContents::default()
         },
+        // What the gears-matcher service reads in a project's specifications
+        // (ADR-0072, docs/design/product-gear-match.md). Not a base kit by
+        // default (`OPT_IN_BUILTIN`); requires project-product, whose product
+        // its proposals go into. Its screens are `product-mfe`'s second entry:
+        // Project › Gear match (was a section of Project › Product) and
+        // Organization › Gears matcher, where the organization's default way
+        // of assembling a product is set. The code stays in studio-product;
+        // the kit claims its gear-match writes and tools, so they answer
+        // `KIT_NOT_INSTALLED` where it does not apply, and the product's
+        // `gears_matcher` assembly strategy is offered only where it does.
+        "gears-matcher" => KitContents {
+            // Its Inbox source, MCP tools and claims are in its compiled-in
+            // kit.json (`builtin/gears-matcher.kit.json`).
+            screens: vec![
+                project_tab("Gear match", Some("/gear-match")),
+                tab("organization", "Gears matcher", Some("/gears-matcher")),
+            ],
+            ..KitContents::default()
+        },
         // `assistant-mfe`: Studio AI, docked in the shell's sidebar beside
         // whatever screen is open (the old prototype's `studio-ai.tsx`). No
         // route: it is not a tab. It answers through studio-llm-proxy on the

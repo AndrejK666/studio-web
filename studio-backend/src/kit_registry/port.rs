@@ -9,7 +9,8 @@
 //! - [`KitPresence`]: whether a kit applies to an organization or a project --
 //!   what a gear asks before it does what only a kit brings (ADR-0070 §7,
 //!   decision 5: `KIT_NOT_INSTALLED`). studio-environments asks for the
-//!   Constructor Research kit ([`CONSTRUCTOR_RESEARCH_KIT`]).
+//!   Constructor Research kit ([`CONSTRUCTOR_RESEARCH_KIT`]), studio-product
+//!   for the Gears matcher kit ([`GEARS_MATCHER_KIT`]).
 
 use std::sync::Arc;
 
@@ -23,8 +24,8 @@ pub use super::gate::{
 };
 use super::installed::KitInstaller;
 pub use super::owners::{KitOwners, MarkOn, Rehome};
-pub use super::service::CONSTRUCTOR_RESEARCH_KIT;
 use super::service::KitRegistryService;
+pub use super::service::{CONSTRUCTOR_RESEARCH_KIT, GEARS_MATCHER_KIT};
 
 #[async_trait]
 pub trait ProjectKitRequests: Send + Sync + 'static {

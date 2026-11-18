@@ -107,6 +107,11 @@ fn the_built_in_kits_declare_the_adr_s_two_requirements() {
                 vec!["project-specs".to_owned()]
             ),
             (RESEARCH.to_owned(), vec![DELIVERY.to_owned()]),
+            // ADR-0072: the matcher's proposals go into the product.
+            (
+                "gears-matcher".to_owned(),
+                vec!["project-product".to_owned()]
+            ),
         ]
     );
     // Every required kit is one of the library's built-in kits.

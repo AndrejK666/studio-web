@@ -34,15 +34,15 @@ This README is what you need to work in the directory.
   §6): `project-specs` (Specs), `project-domain-model` (Project model),
   `project-lifecycle` (Planning), `project-git` (Git collaboration),
   `project-tests` (Tests), `project-product` (Product), `delivery` (Builds,
-  releases & environments), `constructor-research`, `components`
-  (Catalogue), `org-costs`, `org-reports`, `studio-api-docs` (level
+  releases & environments), `constructor-research`, `gears-matcher`
+  (Gears matcher, ADR-0072), `components` (Catalogue), `org-costs`, `org-reports`, `studio-api-docs` (level
   `platform`) and `assistant`
   (Studio AI, the chat panel the shell docks in its sidebar; no route, its
   permissions are studio-llm-proxy's client settings and chat completions) and
   `constructor-research`. Every built-in kit is a base kit by default except
-  those in `OPT_IN_BUILTIN` (`service.rs`): `constructor-research` applies only
-  where an organization installs it (or a platform administrator makes it a
-  base kit). A feature ported into the portal is added here,
+  those in `OPT_IN_BUILTIN` (`service.rs`): `constructor-research` and
+  `gears-matcher` apply only where an organization (or one project) installs
+  them (or a platform administrator makes one a base kit). A feature ported into the portal is added here,
   with its screens in `contents.rs` (a route only once the portal has one)
   and everything else in its compiled-in `builtin/<slug>.kit.json` — every
   built-in kit has one, `studio-api-docs` too: its model, what it claims
@@ -127,7 +127,7 @@ This README is what you need to work in the directory.
 - Declared dependencies between kits (ADR-0071 §5, step 3), `requires.rs`:
   a manifest's `requires` names the kits it cannot work without
   (`constructor-research` → `delivery`, `project-domain-model` →
-  `project-specs`). Each install (base, organization, project) computes
+  `project-specs`, `gears-matcher` → `project-product`). Each install (base, organization, project) computes
   what would apply afterwards on its level and refuses a kit whose
   requirement is not among it (400 `failed_precondition`,
   `KIT_REQUIRES_KIT`, one violation per missing kit); each uninstall refuses
@@ -256,7 +256,11 @@ This README is what you need to work in the directory.
   Research projects/hardware listing (400 `failed_precondition`,
   `KIT_NOT_INSTALLED`, through `port::require_kit`); status, logs, uninstall
   and removal stay. Design:
-  `docs/design/studio-kits.md` §3.13.
+  `docs/design/studio-kits.md` §3.13. studio-product asks it for
+  `gears-matcher` (ADR-0072): a project choosing the `gears_matcher` assembly
+  strategy, and the strategy read, which falls back to `spec_mapping` where
+  the kit does not apply. The gear-match writes and tools that kit claims
+  answer `KIT_NOT_INSTALLED` through the shared check.
 - `project-lifecycle` is the first built-in kit with a model: the type
   `project-lifecycle-phase`, `project.phase` / `phase_owner` / `phase_since`,
   the tab `project.phases` and the phase lifecycle. Its function is

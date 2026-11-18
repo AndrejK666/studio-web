@@ -74,7 +74,7 @@ pub const SHELF_BUILTIN: &str = "builtin";
 /// only where someone asks for them"). An organization installs one for
 /// itself, or a platform administrator makes it a base kit for every
 /// organization; until then it is in the library and applies nowhere.
-pub const OPT_IN_BUILTIN: &[&str] = &[CONSTRUCTOR_RESEARCH_KIT];
+pub const OPT_IN_BUILTIN: &[&str] = &[CONSTRUCTOR_RESEARCH_KIT, GEARS_MATCHER_KIT];
 
 /// The Constructor Research kit (`docs/design/studio-kits.md` §3.13): building
 /// a project's product in Constructor Research and running it there as one of
@@ -82,6 +82,12 @@ pub const OPT_IN_BUILTIN: &[&str] = &[CONSTRUCTOR_RESEARCH_KIT];
 /// Research environment is added or changed, or a build, deploy or rollback
 /// to one starts.
 pub const CONSTRUCTOR_RESEARCH_KIT: &str = "constructor-research";
+
+/// The Gears matcher kit (ADR-0072): which gears cover a project's
+/// specifications, as the gears-matcher service reads them, and a product
+/// assembled from what it proposes. studio-product asks for it before a
+/// project's product is assembled by the `gears_matcher` strategy.
+pub const GEARS_MATCHER_KIT: &str = "gears-matcher";
 
 /// Is `slug` a built-in kit only where somebody installs it?
 pub fn is_opt_in_builtin(slug: &str) -> bool {
@@ -789,6 +795,7 @@ pub const BUILTIN_ICONS: &[(&str, &str)] = &[
     ("project-product", "lucide:package"),
     ("project-domain-model", "lucide:shapes"),
     (CONSTRUCTOR_RESEARCH_KIT, "lucide:atom"),
+    (GEARS_MATCHER_KIT, "lucide:scan-search"),
     ("assistant", "lucide:sparkles"),
     ("project-git", "lucide:git-pull-request"),
 ];
@@ -886,6 +893,14 @@ pub fn builtin_catalogue() -> Vec<KitDescriptor> {
             CONSTRUCTOR_RESEARCH_KIT,
             "Constructor Research",
             "Build a project's product in Constructor Research and run it there as one of its applications: the Research projects, their hardware, and the deploys, rollbacks and addresses of what runs there. For the whole organization, or for one project.",
+            &["organization", "project"],
+        ),
+        // Not a base kit by default either (ADR-0072): an organization that
+        // has the gears-matcher service and wants its paid reading installs it.
+        kit(
+            GEARS_MATCHER_KIT,
+            "Gears matcher",
+            "Which gears of the catalogue cover a project's specifications, as the gears-matcher service reads them requirement by requirement, and a product assembled from what it proposes. For the whole organization, or for one project.",
             &["organization", "project"],
         ),
         kit(
@@ -1240,6 +1255,7 @@ mod tests {
                 "project-product",
                 "project-domain-model",
                 "constructor-research",
+                "gears-matcher",
                 "assistant",
                 "project-git"
             ]

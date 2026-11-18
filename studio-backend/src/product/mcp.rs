@@ -298,6 +298,22 @@ pub fn tools() -> Vec<Tool> {
             run: Run::Get("/studio-product/v1/gdl-file"),
         },
         Tool {
+            name: "product_assembly_strategy",
+            description: "How the project's product is assembled (ADR-0072): `strategy` is the \
+                one used, `spec_mapping` (the gears the spec plan offers for the capabilities \
+                the specifications name: instant, free, deterministic) or `gears_matcher` (the \
+                gears the latest gear match proposes: paid, varies between runs; see \
+                `project_gear_match`). `chosen` and `source` say what the settings ask for and \
+                whether that is the project's choice, the organization's default or Studio's; \
+                `fallback` says why the chosen one is not used (the Gears matcher kit is not \
+                installed, or the service is not configured). Either only proposes gears: \
+                your person confirms them into the product.",
+            input_schema: project_only,
+            effect: Effect::Read,
+            experimental: true,
+            run: Run::Get("/studio-product/v1/project-assembly-strategy"),
+        },
+        Tool {
             name: "project_gear_match",
             description: "Ask the gears-matcher service which gears of the catalogue cover the \
                 project's specifications: its PRDs by default, or the documents of its domain \
@@ -503,6 +519,14 @@ mod tests {
             json!({"project_id": "p", "gear": "api-gateway"}),
         );
         assert_eq!(r.path, "/studio-product/v1/gdl-file");
+        let s = request_of(
+            &all,
+            "product_assembly_strategy",
+            json!({"project_id": "p"}),
+        );
+        assert_eq!(s.method, Method::Get);
+        assert_eq!(s.path, "/studio-product/v1/project-assembly-strategy");
+        assert_eq!(s.query, vec![("project_id".to_owned(), "p".to_owned())]);
         assert_eq!(
             r.query,
             vec![

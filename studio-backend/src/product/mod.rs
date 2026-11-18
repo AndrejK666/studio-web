@@ -14,6 +14,7 @@
 //! `gear.gdl` says) and a project's gear repository, both through
 //! [`port`].
 
+mod assembly;
 mod description_edit;
 mod descriptions;
 mod explanations;
@@ -78,6 +79,9 @@ pub struct StudioProductGear {
     /// specifications (`gear_match`); its routes answer 503 without the
     /// service or the database.
     matches: OnceLock<Arc<gear_match::GearMatches>>,
+    /// How a project's product is assembled (ADR-0072); `None` without a
+    /// database, and every product follows Studio's default.
+    strategies: OnceLock<Option<Arc<assembly::StrategyStore>>>,
 }
 
 impl DatabaseCapability for StudioProductGear {
@@ -93,9 +97,11 @@ impl Gear for StudioProductGear {
         // The descriptions stand down without a database, rather than the
         // whole gear: previews, writes and the corpus need none.
         let mut match_store = None;
+        let mut strategies = None;
         let store = match ctx.db_required() {
             Ok(db) => {
                 match_store = Some(Arc::new(gear_match::store::MatchStore::new(db.db())));
+                strategies = Some(Arc::new(assembly::StrategyStore::new(db.db())));
                 Some(Arc::new(descriptions::DescriptionStore::new(db.db())))
             }
             Err(e) => {
@@ -108,6 +114,7 @@ impl Gear for StudioProductGear {
             }
         };
         let _ = self.descriptions.set(store);
+        let _ = self.strategies.set(strategies);
 
         // The gears-matcher service: optional, and said so when it is off.
         let config: gear_match::config::ProductConfig = ctx.config_or_default()?;
@@ -252,6 +259,10 @@ impl RestApiCapability for StudioProductGear {
         let router = rest::register_routes(router, openapi, service, ctx.client_hub(), gearbox);
         let router = match self.matches.get() {
             Some(m) => router.layer(axum::Extension(Arc::clone(m))),
+            None => router,
+        };
+        let router = match self.strategies.get().cloned().flatten() {
+            Some(s) => router.layer(axum::Extension(s)),
             None => router,
         };
         // The platform's gear repositories, read on the way in (ADR-0046).
