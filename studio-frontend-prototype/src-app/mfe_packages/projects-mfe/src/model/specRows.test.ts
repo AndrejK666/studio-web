@@ -175,6 +175,17 @@ describe('Filter specs', () => {
     expect(kept('type_confirmed')).toEqual([0, 1, 5, 6]);
   });
 
+  it('keeps the settled specs whose verdict does not conform as failing, as the Overview counts them', () => {
+    const verdicts = rowsOf(
+      dto({ conforms: false }), // 0 failing, no findings recorded
+      dto({ conforms: true, findings: 1 }), // 1 conforms
+      dto({ state: 'detected', conforms: false }), // 2 type not settled
+      authored({ conforms: false }), // 3 failing
+      dto({ state: 'not_a_document', conforms: false }) // 4 not a specification
+    );
+    expect(filterSpecRows(verdicts, { ...ALL, filter: 'failing' }).map((row) => verdicts.indexOf(row))).toEqual([0, 3]);
+  });
+
   it('keeps nothing under With findings and Check needed while verdicts are unread', () => {
     const unread = buildSpecRows([dto({ findings: 2 }), dto({ checked_at: null })], UNREAD, TYPES);
     expect(filterSpecRows(unread, { ...ALL, filter: 'with_findings' })).toEqual([]);
