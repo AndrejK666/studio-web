@@ -328,6 +328,9 @@ pub async fn run(
             }
             Err(e) => {
                 record.set(&key, "failed", e.text().to_string());
+                // The poll reads the run's last report: the step that stopped
+                // it shows as stopped, not as still waiting.
+                report(&key, &record);
                 return (record, Err(e));
             }
         }
