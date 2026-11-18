@@ -201,3 +201,18 @@ export function gapDraft(r: GearMatchRequirement): { name: string; problem: stri
     .trim();
   return { name: slug, problem: passage || r.reason };
 }
+
+/**
+ * What a person can do about a failed match, read off the server's sentence
+ * (the matcher's problem code is kept in it): `null` when there is nothing
+ * more to say than the sentence itself.
+ */
+export type FailureHint = 'not_a_template' | 'unreachable' | 'unauthorized';
+
+export function failureHint(error: string | null | undefined): FailureHint | null {
+  if (!error) return null;
+  if (/\bnot_a_template\b/.test(error)) return 'not_a_template';
+  if (/\b401\b|\bunauthorized\b/i.test(error)) return 'unauthorized';
+  if (/did not answer/.test(error)) return 'unreachable';
+  return null;
+}

@@ -24,6 +24,7 @@ import {
   addability,
   byAction,
   coverageTone,
+  failureHint,
   filtered,
   gapDraft,
   isRunning,
@@ -316,6 +317,7 @@ function ScaffoldDialogFor({ r, onClose }: { r: GearMatchRequirement; onClose: (
 function MatchHeader({ match, t }: { match: GearMatch; t: T }) {
   const s = match.summary;
   const progress = progressOf(s);
+  const hint = s.state === 'failed' ? failureHint(s.error) : null;
   return (
     <div className={page.card} data-gear-match-summary={s.state}>
       <div className={styles.head}>
@@ -341,6 +343,11 @@ function MatchHeader({ match, t }: { match: GearMatch; t: T }) {
         )}
       </div>
       {s.error && <p className={page.error}>{t('failed', { error: s.error })}</p>}
+      {hint && (
+        <p className={page.small} data-gear-match-hint={hint}>
+          {t(`hint_${hint}`)}
+        </p>
+      )}
       <div className={`${page.row} ${page.small} ${page.muted}`}>
         <span>{t('documents')}</span>
         {match.documents.map((d) => (

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  failureHint,
   addability,
   byAction,
   coverageTone,
@@ -79,5 +80,13 @@ describe('gear match', () => {
       })
     );
     expect(d).toEqual({ name: 'offline-support', problem: 'Works offline.' });
+  });
+
+  it('says what to do about a failure it recognises', () => {
+    expect(failureHint('the gears-matcher service answered 422 not_a_template: the documents are not in the spec format')).toBe('not_a_template');
+    expect(failureHint('the gears-matcher service answered 401 unauthorized: missing or wrong secret')).toBe('unauthorized');
+    expect(failureHint('the gears-matcher service did not answer: connection refused')).toBe('unreachable');
+    expect(failureHint('the gears-matcher service answered 500: boom')).toBeNull();
+    expect(failureHint(null)).toBeNull();
   });
 });
