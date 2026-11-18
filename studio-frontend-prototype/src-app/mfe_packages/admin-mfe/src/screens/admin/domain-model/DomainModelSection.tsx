@@ -15,7 +15,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiRegistry } from '@gears-frontx/react';
 import { Button, Card, CardContent, Input, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@gears-frontx/ui-kit';
-import { useOrganization, useStudioEventRefresh, type OrganizationRef, type StudioEvent } from '@constructor-studio/mfe-shared';
+import { screenView, useOrganization, useStudioEventRefresh, type OrganizationRef, type StudioEvent } from '@constructor-studio/mfe-shared';
 import { AdminApiService } from '../../../api/AdminApiService';
 import { fieldsOfModel, modelOf, type DomainModel, type ModelField } from '../../../model/domain-runtime';
 import { ORIGIN_ORDER, originOf, type OriginKey } from '../../../model/domain-origin';
@@ -48,7 +48,10 @@ function DomainModelAdmin({ org }: { org: OrganizationRef }) {
   const api = apiRegistry.getService(AdminApiService);
   const [model, setModel] = useState<DomainModel | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<string>(FIRST_TYPE);
+  const [selected, setSelected] = useState(() => {
+    const view = screenView(window.location.search);
+    return view?.endsWith('-fields') ? view.slice(0, -'-fields'.length) : FIRST_TYPE;
+  });
   const [query, setQuery] = useState('');
   const [originFilter, setOriginFilter] = useState<OriginKey | 'all'>('all');
   const [kitFilter, setKitFilter] = useState<string | null>(null);

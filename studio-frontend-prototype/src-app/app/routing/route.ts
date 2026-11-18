@@ -28,13 +28,14 @@ export interface ShellRoute {
   workspace?: string;
   project?: string;
   section?: string;
+  view?: string;
   artifact?: string;
   repository?: string;
   path?: string;
   kind?: string;
 }
 
-const PARAM_ORDER = ['org', 'workspace', 'project', 'section', 'artifact', 'repository', 'path', 'kind'] as const;
+const PARAM_ORDER = ['org', 'workspace', 'project', 'section', 'view', 'artifact', 'repository', 'path', 'kind'] as const;
 type RouteParam = (typeof PARAM_ORDER)[number];
 
 export function routeToParams(route: ShellRoute): Param[] {

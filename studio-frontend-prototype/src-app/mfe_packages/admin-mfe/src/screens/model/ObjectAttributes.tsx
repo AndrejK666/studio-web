@@ -20,6 +20,7 @@ import {
   attributesWrite,
   domainChanged,
   inputValue,
+  openScreen,
   readableFields,
   responseStatus,
   selfQuery,
@@ -48,7 +49,7 @@ export function ObjectAttributes({
   /** Called after this card changed the model (made the level's type). */
   onModelChanged?: () => void;
 }) {
-  const { t } = useAdmin();
+  const { t, bridge } = useAdmin();
   const type = level;
   const known = model.byId.has(type);
   const fields = useMemo(() => readableFields(model, type), [model, type]);
@@ -122,9 +123,10 @@ export function ObjectAttributes({
   };
   // The type's own fields, and any field that holds something, come first;
   // what a base type declares for the model's machinery waits behind a toggle.
-  const primary = fields.filter((f) => f.declaredBy === type || filledField(f) || f.name in facts);
+  const primary = fields.filter((f) => !['parent_tenant_id', 'hidden_tabs'].includes(f.name)
+    && (f.declaredBy === type || filledField(f) || f.name in facts));
   const listed = showAll ? fields : primary;
-  const filled = fields.filter(filledField);
+  const filled = listed.filter(filledField);
   const empty = listed.filter((f) => !filled.includes(f));
   const behind = fields.length - primary.length;
 
@@ -199,7 +201,12 @@ export function ObjectAttributes({
     <>
       <Header
         title={t('model_attributes_title')}
-        info={t('model_attributes_about', { level: t(`model_level_${level}`) })}
+        info={<>
+          <p>{t('model_attributes_about', { level: t(`model_level_${level}`) })}</p>
+          {model.canEdit && <Button size="sm" variant="outline" onClick={() => openScreen(bridge, '/admin/domain-model', `${type}-fields`)}>
+            {t('model_manage_fields')}
+          </Button>}
+        </>}
         status={<Badge variant="outline">{t('model_attributes_fields', { count: String(fields.length), type })}</Badge>}
         action={
           !editing && !forbidden ? (

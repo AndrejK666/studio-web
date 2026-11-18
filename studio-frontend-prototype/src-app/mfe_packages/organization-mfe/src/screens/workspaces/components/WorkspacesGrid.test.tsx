@@ -149,6 +149,20 @@ describe('the workspaces grid', () => {
     expect(toggleOf('w2')).toBeNull();
   });
 
+  it('opens either the project or its failing specs from the expanded row', async () => {
+    const onOpenProject = vi.fn();
+    const { onOpen } = renderGrid({ onOpenProject });
+    await screen.findByText('Platform');
+    fireEvent.click(toggleOf('w0')!);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'api' }));
+    fireEvent.click(screen.getByRole('button', { name: /api: .*failing specs/ }));
+
+    expect(onOpenProject).toHaveBeenNthCalledWith(1, 'w0', 'p1');
+    expect(onOpenProject).toHaveBeenNthCalledWith(2, 'w0', 'p1', true);
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
   // Walk 2026-11-18: each page size picked, and each new overview, appended the list again.
   it('shows each workspace once after a new page size or new rows, keeping an open one open', async () => {
     const count = () => document.querySelectorAll('[data-workspace-row]').length;

@@ -39,6 +39,7 @@ import {
   setSpecsSearch,
 } from '../../../../slices/specsFilterSlice';
 import { UploadDocumentsButton } from '../../upload/UploadDocumentsButton';
+import { screenView } from '@constructor-studio/mfe-shared';
 import { UploadPanel } from '../../upload/UploadPanel';
 import { SpecsCellsContext, specsColumns, type SpecsCells } from './specsColumns';
 import styles from './SpecsTable.module.css';
@@ -62,7 +63,10 @@ const FiltersFromSlice: React.FC<{ read: boolean }> = ({ read }) => {
     throw new Error('FiltersFromSlice must come after DataGridTextSearchPlugin and DataGridFiltersPlugin');
   }
   const dispatch = useAppDispatch();
-  const [seed] = useState(useAppSelector((state) => state[SPECS_FILTER_SLICE_KEY]));
+  const saved = useAppSelector((state) => state[SPECS_FILTER_SLICE_KEY]);
+  const [seed] = useState(() => screenView(window.location.search) === 'failing-specs'
+    ? { search: '', filter: 'failing' as const, documentType: null }
+    : saved);
   const seeding = useRef(seed.search !== '' || seed.filter !== 'all' || seed.documentType !== null);
   const query = search.useQuery();
   const filter = tagGroupChoice(filters.useState(SPECS_FILTER_KEYS.filter));

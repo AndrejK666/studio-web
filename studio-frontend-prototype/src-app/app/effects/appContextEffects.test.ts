@@ -159,6 +159,15 @@ describe('registerAppContextEffects', () => {
     );
   });
 
+  it('can open a focused section in a project outside the current workspace', async () => {
+    await emit('app/context/place/requested', {
+      organizationId: 'o2', workspaceId: 'w9', projectId: 'p7', route: '/projects/artifacts', view: 'focused',
+    });
+    expect(handle.navigation.navigate).toHaveBeenCalledWith(
+      { token: 'projects', org: 'o2', workspace: 'w9', project: 'p7', section: 'artifacts', view: 'focused' }, 'push'
+    );
+  });
+
   it('a tab the Studio domain model adds opens its generic screen at the section it names', async () => {
     await emit('app/context/screen/requested', { extensionId: 'model.types', section: 'type:vendors' });
     expect(handle.navigation.navigate).toHaveBeenCalledWith(

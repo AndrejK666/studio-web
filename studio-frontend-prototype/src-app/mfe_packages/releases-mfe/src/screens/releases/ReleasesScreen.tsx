@@ -369,6 +369,8 @@ function Releases({ projectId, onOrganization }: { projectId: string; onOrganiza
             ) : noEnvironment ? (
               <section className={styles.card}>
                 <p className={styles.muted}>{t(noEnvironmentKey)}</p>
+                {noEnvironmentKey === 'no_environment' && <Button size="sm" variant="outline"
+                  onClick={() => openScreen(bridge, ROUTES.infrastructure)}>{t('open_build_infrastructure')}</Button>}
               </section>
             ) : (
               <ReleaseLadder

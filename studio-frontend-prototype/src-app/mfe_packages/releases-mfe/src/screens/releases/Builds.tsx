@@ -12,7 +12,7 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { Badge, Button, NativeSelect, NativeSelectOption } from '@gears-frontx/ui-kit';
-import { isNotFound, runWhenVisible, usePollWhileVisible, useScreenAvailability } from '@constructor-studio/mfe-shared';
+import { isNotFound, openScreen, runWhenVisible, usePollWhileVisible, useScreenAvailability } from '@constructor-studio/mfe-shared';
 import type { BuildLog, Deployment, DeployEnvironment, ProjectBuildConfig, ProjectImage } from '../../api/types';
 import {
   buildWorkflowOf,
@@ -77,7 +77,7 @@ export function ProjectBuilds({
   /** A build runs: ask Releases to read again. */
   onFollow: () => void;
 }) {
-  const { t, projectId } = useReleases();
+  const { t, projectId, bridge } = useReleases();
   const api = useApi();
   const [config, setConfig] = useState<ProjectBuildConfig | null>(null);
   // The CI runs of the project's repositories, and what the repositories say
@@ -143,6 +143,11 @@ export function ProjectBuilds({
   return (
     <section className={styles.stack} data-release-builds>
       <NextLine hint={hint} />
+      {builds.length === 0 && screens.route(ROUTES.infrastructure) && (
+        <Button size="sm" variant="outline" onClick={() => openScreen(bridge, ROUTES.infrastructure)}>
+          {t('open_build_infrastructure')}
+        </Button>
+      )}
       <section className={styles.card} data-build-in-ci>
         <h2 className={styles.cardTitle}>{t('build_in_ci_title')}</h2>
         <InCi

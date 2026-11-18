@@ -143,6 +143,8 @@ function keptBy(filter: SpecsFilter, row: SpecRow): boolean {
       return true;
     case 'with_findings':
       return row.review.kind === 'findings';
+    case 'failing':
+      return keptBy('type_confirmed', row) && row.review.kind === 'findings';
     case 'check_needed':
       return row.review.kind === 'check_needed';
     case 'type_not_set':

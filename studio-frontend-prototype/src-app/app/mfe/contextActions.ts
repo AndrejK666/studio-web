@@ -99,8 +99,8 @@ const nonEmpty = (value: unknown): value is string => typeof value === 'string' 
 /** The place-open payload, or `null` when it is not one: a project needs its workspace. */
 export function placeRequestOf(
   payload: Record<string, unknown> | undefined
-): { organizationId: string; workspaceId?: string; projectId?: string } | null {
-  const { organizationId, workspaceId, projectId } = payload ?? {};
+): { organizationId: string; workspaceId?: string; projectId?: string; route?: string; view?: string } | null {
+  const { organizationId, workspaceId, projectId, route, view } = payload ?? {};
   if (!nonEmpty(organizationId)) return null;
   if (projectId !== undefined && (!nonEmpty(projectId) || !nonEmpty(workspaceId))) return null;
   if (workspaceId !== undefined && !nonEmpty(workspaceId)) return null;
@@ -108,6 +108,8 @@ export function placeRequestOf(
     organizationId,
     ...(nonEmpty(workspaceId) ? { workspaceId } : {}),
     ...(nonEmpty(projectId) ? { projectId } : {}),
+    ...(typeof route === 'string' && route.startsWith('/') ? { route } : {}),
+    ...(typeof view === 'string' && /^[a-z][a-z0-9-]*$/.test(view) ? { view } : {}),
   };
 }
 

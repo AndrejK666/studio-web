@@ -1072,6 +1072,10 @@ pub struct OrganizationOverviewDto {
     /// Who the stuck pull requests wait on, longest queue first. Null when no
     /// pull request could be read.
     pub waiting_on: Option<Vec<OverviewQueueDto>>,
+    /// The stuck pull requests in the queue without a reviewer.
+    pub pulls_without_reviewers: Option<Vec<OverviewPullDto>>,
+    /// Failures from the same recent runs used to compute the alert.
+    pub recent_failures: Option<Vec<OverviewRunFailureDto>>,
     /// The component registry's open decisions. Null when it could not be read.
     pub decisions: Option<OverviewDecisionsDto>,
     /// The kits installed for the whole organization that the answer was
@@ -1080,6 +1084,26 @@ pub struct OrganizationOverviewDto {
     /// counts, `waiting_on`, each place's `stuck`) are null or zero. Null when
     /// the installed kits could not be read, and nothing was left out.
     pub kits: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone)]
+#[toolkit_macros::api_dto(response)]
+pub struct OverviewPullDto {
+    pub id: String,
+    pub number: i64,
+    pub title: String,
+    pub url: Option<String>,
+    pub project: Option<String>,
+    pub quiet_days: u32,
+}
+
+#[derive(Debug, Clone)]
+#[toolkit_macros::api_dto(response)]
+pub struct OverviewRunFailureDto {
+    pub id: String,
+    pub tenant_id: String,
+    pub task_type: String,
+    pub created_at: String,
 }
 
 /// One thing that waits on the organization's leaders. `kind` says which
@@ -1121,6 +1145,7 @@ pub struct OverviewNeedDto {
 #[toolkit_macros::api_dto(response)]
 pub struct OverviewSpendDto {
     pub currency: String,
+    pub has_prices: bool,
     pub current: f64,
     pub previous: f64,
     /// Where this month ends at its pace so far.

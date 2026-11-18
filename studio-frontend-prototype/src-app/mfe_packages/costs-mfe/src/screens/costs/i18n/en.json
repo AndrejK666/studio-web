@@ -15,7 +15,7 @@
   "tabs_label": "Costs",
   "tab_report": "Report",
   "tab_prices": "Price list",
-  "no_prices_title": "No prices set: usage is counted, cost shows $0",
+  "no_prices_title": "Cost is unavailable until prices are set",
   "set_prices": "Set prices",
   "period": "Period",
   "period_this-month": "This month",

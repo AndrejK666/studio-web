@@ -250,12 +250,13 @@ pub fn broken_connections(runs: &[RunSummary]) -> Vec<Broken> {
     out
 }
 
-/// Failed runs that are not a refused connection: counted, never listed.
+fn is_other_failure(run: &RunSummary) -> bool {
+    run.state == "failed" && refusal(run.last_error.as_deref()).is_none()
+}
+
+/// Failed runs other than refused connections.
 pub fn other_failures(runs: &[RunSummary]) -> u32 {
-    let n = runs
-        .iter()
-        .filter(|r| r.state == "failed" && refusal(r.last_error.as_deref()).is_none())
-        .count();
+    let n = runs.iter().filter(|r| is_other_failure(r)).count();
     u32::try_from(n).unwrap_or(u32::MAX)
 }
 
@@ -312,7 +313,7 @@ pub fn waiting_on(stuck: &[&OpenPull], member: &dyn Fn(&str) -> Option<Member>) 
     };
     for p in stuck {
         let days = idle_days(p);
-        if p.waiting_on.is_empty() {
+        if p.waiting == "nobody" {
             add(None, None, days);
         }
         for login in &p.waiting_on {
@@ -1239,7 +1240,8 @@ impl Overview {
 use super::rest::{
     OrganizationOverviewDto, OverviewDecisionsDto, OverviewDeliveryDto, OverviewMoneyDto,
     OverviewMoneyRowDto, OverviewNeedDto, OverviewPeopleDto, OverviewPersonDto, OverviewProjectDto,
-    OverviewQueueDto, OverviewReasonDto, OverviewSpecsDto, OverviewSpendDto, OverviewWorkspaceDto,
+    OverviewPullDto, OverviewQueueDto, OverviewReasonDto, OverviewRunFailureDto, OverviewSpecsDto,
+    OverviewSpendDto, OverviewWorkspaceDto,
 };
 
 const GROUPS: [(GroupBy, &str); 5] = [
@@ -1406,6 +1408,7 @@ pub fn compose(org: Uuid, read: &Read, now: OffsetDateTime) -> OrganizationOverv
         let who = attribute(&s.current, &subjects);
         OverviewSpendDto {
             currency: s.current.currency.clone(),
+            has_prices: s.current.has_prices(),
             current: current.total,
             previous,
             forecast: forecast(month, w.elapsed_days, w.month_days),
@@ -1436,7 +1439,7 @@ pub fn compose(org: Uuid, read: &Read, now: OffsetDateTime) -> OrganizationOverv
                 .count(),
         )
     };
-    let undecided = states("candidate") + states("declared");
+    let undecided = states("candidate");
     let needs = needs(&NeedInputs {
         broken: &broken,
         project_names: &places,
@@ -1598,6 +1601,35 @@ pub fn compose(org: Uuid, read: &Read, now: OffsetDateTime) -> OrganizationOverv
                     who: q.who,
                     count: q.count,
                     oldest_days: q.oldest_days,
+                })
+                .collect()
+        }),
+        pulls_without_reviewers: read.pulls.as_ref().filter(|_| git).map(|_| {
+            let mut rows: Vec<_> = stuck_pulls
+                .iter()
+                .filter(|p| p.waiting == "nobody")
+                .map(|p| OverviewPullDto {
+                    id: p.id.clone(),
+                    number: p.number,
+                    title: p.title.clone(),
+                    url: p.url.clone(),
+                    project: p.project_id.as_ref().and_then(|id| places.get(id)).cloned(),
+                    quiet_days: idle_days(p),
+                })
+                .collect();
+            rows.sort_by_key(|p| std::cmp::Reverse(p.quiet_days));
+            rows
+        }),
+        recent_failures: read.runs.as_ref().map(|runs| {
+            let mut recent: Vec<_> = runs.iter().filter(|r| is_other_failure(r)).collect();
+            recent.sort_by_key(|r| std::cmp::Reverse(r.created_at));
+            recent
+                .into_iter()
+                .map(|r| OverviewRunFailureDto {
+                    id: r.id.to_string(),
+                    tenant_id: r.tenant_id.to_string(),
+                    task_type: r.task_type.clone(),
+                    created_at: rfc3339(r.created_at),
                 })
                 .collect()
         }),

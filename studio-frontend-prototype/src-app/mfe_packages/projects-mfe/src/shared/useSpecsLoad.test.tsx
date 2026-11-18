@@ -19,7 +19,10 @@ vi.mock('@gears-frontx/react', async (importOriginal) => ({
     }),
   },
 }));
-vi.mock('@gears-frontx/ui-kit', () => ({ useDataGrid: () => ({ triggerLoad }) }));
+vi.mock('@gears-frontx/ui-kit', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@gears-frontx/ui-kit')>(),
+  useDataGrid: () => ({ triggerLoad }),
+}));
 vi.mock('../api/DocumentsApiService', () => ({ DocumentsApiService: class {} }));
 
 import { eventBus } from '@gears-frontx/react';

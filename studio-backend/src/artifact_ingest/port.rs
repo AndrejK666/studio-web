@@ -409,6 +409,10 @@ pub trait DeliveryEvidence: Send + Sync + 'static {
 /// reads them as people itself.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct OpenPull {
+    pub id: String,
+    pub number: i64,
+    pub title: String,
+    pub url: Option<String>,
     /// The project whose sync wrote it.
     pub project_id: Option<String>,
     pub author: Option<String>,
