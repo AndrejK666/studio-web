@@ -137,6 +137,9 @@ export function GearMatchSection() {
   const start = async () => {
     setStarting(true);
     setError(null);
+    // The run on screen gives way to the new one: its failure must not read
+    // as the new run's while it starts.
+    setMatch(null);
     try {
       const list = paths
         .split(',')
@@ -258,7 +261,10 @@ export function GearMatchSection() {
           </div>
           <aside className={styles.history} data-gear-match-history>
             <b>{t('history')}</b>
-            {history.map((h) => (
+            {history.map((h) => {
+              // The run on screen is read every few seconds; its row says what that read says.
+              const live = match?.summary.match_id === h.match_id ? match.summary : h;
+              return (
               <button
                 key={h.match_id}
                 type="button"
@@ -271,11 +277,12 @@ export function GearMatchSection() {
               >
                 <span>{new Date(h.created_at).toLocaleString()}</span>
                 <span className={page.small}>
-                  {t(`state_${h.state}`)}
-                  {h.totals ? ` · ${t('totals', { requirements: String(h.totals.requirements) })}` : ''}
+                  {t(`state_${live.state}`)}
+                  {live.totals ? ` · ${t('totals', { requirements: String(live.totals.requirements) })}` : ''}
                 </span>
               </button>
-            ))}
+              );
+            })}
             {match && !running && history.length > 1 && (
               <Button type="button" variant="outline" size="sm" onClick={() => void compare()} data-gear-match-compare>
                 {t('compare')}
