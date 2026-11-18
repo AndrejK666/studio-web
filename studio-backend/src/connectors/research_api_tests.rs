@@ -878,3 +878,17 @@ async fn a_desk_that_just_started_is_asked_again_until_its_files_answer() {
         .unwrap_err();
     assert!(format!("{e:#}").contains("503"), "{e:#}");
 }
+
+#[test]
+fn a_gateway_page_is_said_in_its_own_words_not_only_its_status() {
+    let page = "<html><head><title>503</title></head><body><h1>503 Service Temporarily \
+                Unavailable</h1><hr><center>nginx</center></body></html>";
+    assert_eq!(
+        problem(reqwest::StatusCode::SERVICE_UNAVAILABLE, page),
+        "503 Service Unavailable: 503 503 Service Temporarily Unavailable nginx"
+    );
+    assert_eq!(
+        problem(reqwest::StatusCode::SERVICE_UNAVAILABLE, "  "),
+        "503 Service Unavailable"
+    );
+}

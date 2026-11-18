@@ -402,7 +402,38 @@ fn problem(status: reqwest::StatusCode, body: &str) -> String {
             .or_else(|| v.get("message").and_then(text))
             .or_else(|| v.get("msg").and_then(text))
     });
-    said.unwrap_or_else(|| status.to_string())
+    said.unwrap_or_else(|| {
+        // Not Research's own JSON: a gateway's or a proxy's page. Its words,
+        // short and without markup, say more than the status alone.
+        let plain = plain_text(body);
+        if plain.is_empty() {
+            status.to_string()
+        } else {
+            format!("{status}: {plain}")
+        }
+    })
+}
+
+/// `body` without markup, its whitespace folded, at most 200 characters.
+fn plain_text(body: &str) -> String {
+    let mut out = String::new();
+    let mut in_tag = false;
+    for c in body.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' if in_tag => {
+                in_tag = false;
+                out.push(' ');
+            }
+            _ if !in_tag => out.push(c),
+            _ => {}
+        }
+    }
+    let folded = out.split_whitespace().collect::<Vec<_>>().join(" ");
+    match folded.char_indices().nth(200) {
+        Some((at, _)) => format!("{}…", &folded[..at]),
+        None => folded,
+    }
 }
 
 enum Body<'b> {
