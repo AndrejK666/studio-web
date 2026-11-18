@@ -42,6 +42,7 @@ import {
 import { useMatchTranslations } from '../../../i18n';
 import { EmptyState, errText, Segmented, StatusChip, useScope } from '../../common';
 import { ScaffoldDialog } from '../../components/ScaffoldDialog';
+import { catalogueNames, pickNames } from '../../../model/product-configurator';
 import { useGearCatalogue } from '../catalogue';
 import styles from './match.module.css';
 import page from '../../product.module.css';
@@ -69,10 +70,10 @@ export function GearMatchSection() {
   const [planGears, setPlanGears] = useState<Set<string>>(new Set());
   const [scaffold, setScaffold] = useState<GearMatchRequirement | null>(null);
   const catalogue = useGearCatalogue(true, projectId);
-  const catalogueNames = useMemo(
-    () => (catalogue && 'index' in catalogue ? new Set(catalogue.index.gears.map((g) => catalogue.index.name(g))) : null),
-    [catalogue]
-  );
+  const index = catalogue && 'index' in catalogue ? catalogue.index : null;
+  const knownNames = useMemo(() => (index ? catalogueNames(index) : null), [index]);
+  // The product's picks under every spelling the catalogue has (id or crate).
+  const pickedNames = useMemo(() => pickNames(picks, index), [picks, index]);
 
   // The history and the product's picks; the spec plan, to say where the two agree.
   useEffect(() => {
@@ -243,8 +244,8 @@ export function GearMatchSection() {
                 r={r}
                 match={match!}
                 question={byRequirement.get(r.requirement_id)}
-                picks={picks}
-                catalogue={catalogueNames}
+                picks={pickedNames}
+                catalogue={knownNames}
                 planGears={planGears}
                 onPicks={setPicks}
                 onCreateGear={setScaffold}

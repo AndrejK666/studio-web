@@ -10,11 +10,13 @@ vi.mock('../../../i18n', () => ({
   }),
   useComponentsTranslations: () => ({ t: (key: string) => key, loading: false }),
 }));
-vi.mock('../catalogue', () => ({
-  useGearCatalogue: () => ({
-    index: { gears: [{ id: 'event-broker' }, { id: 'authn-resolver' }], name: (g: { id: string }) => g.id },
-  }),
-}));
+vi.mock('../catalogue', () => {
+  const gears = [{ id: 'event-broker' }, { id: 'authn-resolver' }];
+  const read = {
+    index: { gears, name: (g: { id: string }) => g.id, find: (n: string) => gears.find((g) => g.id === n) },
+  };
+  return { useGearCatalogue: () => read };
+});
 vi.mock('../../components/ScaffoldDialog', () => ({
   ScaffoldDialog: ({ capability, problem }: { capability: string; problem?: string }) => (
     <div data-testid="scaffold">{`${capability}|${problem}`}</div>

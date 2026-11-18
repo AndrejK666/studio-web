@@ -33,7 +33,7 @@ import {
 import { isRunning } from '../../../model/gear-match';
 import { useAssemblyTranslations } from '../../../i18n';
 import { errText, openTab, Segmented, StatusChip, useScope } from '../../common';
-import { indexCatalogue } from '../../../model/product-configurator';
+import { catalogueNames, indexCatalogue, pickNames } from '../../../model/product-configurator';
 import page from '../../product.module.css';
 
 /** What the strategy proposed, completed by the engine, waiting for the person. */
@@ -97,17 +97,17 @@ export function AssemblyPanel({ round, onChanged }: { round: number; onChanged: 
     try {
       // The catalogue the product reads: a gear outside it cannot be picked.
       // Unreadable, nothing is held back on its account.
-      const [record, names] = await Promise.all([
+      const [record, index] = await Promise.all([
         productApi.projectProduct(projectId),
         productApi
           .gearboxCatalogue()
-          .then((r) => {
-            const index = indexCatalogue(r.catalogue, r, projectId);
-            return new Set(index.gears.map((g) => index.name(g)));
-          })
+          .then((r) => indexCatalogue(r.catalogue, r, projectId))
           .catch(() => null),
       ]);
-      const picks = record?.gears ?? [];
+      const names = index ? catalogueNames(index) : null;
+      const saved = record?.gears ?? [];
+      // Compared under every spelling (id or crate); what is saved stays as it was.
+      const picks = pickNames(saved, index);
       let items: Proposal[];
       if (a.strategy === 'gears_matcher') {
         // The latest *finished* match (newest first): a run that is still
@@ -137,7 +137,7 @@ export function AssemblyPanel({ round, onChanged }: { round: number; onChanged: 
         setNote(t('nothing_to_propose'));
         return;
       }
-      const done = await productApi.completeProduct([...picks, ...items.map((p) => p.gear)], record?.config ?? {});
+      const done = await productApi.completeProduct([...saved, ...items.map((p) => p.gear)], record?.config ?? {});
       setPending({ strategy: a.strategy, items, record, gears: done.gears, config: done.config, changes: done.changes });
     } catch (e) {
       setErr(errText(e));
