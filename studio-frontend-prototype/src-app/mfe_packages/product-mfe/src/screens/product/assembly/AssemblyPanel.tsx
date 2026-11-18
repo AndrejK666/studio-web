@@ -17,7 +17,6 @@
 
 import { useEffect, useState } from 'react';
 import { Badge, Button } from '@gears-frontx/ui-kit';
-import { isNotFound } from '@constructor-studio/mfe-shared';
 import { productApi, type GearConfig, type ProductChange, type ProjectProduct } from '../../../api/client';
 import {
   isFinished,
@@ -31,6 +30,7 @@ import {
   type Proposal,
   type StrategyId,
 } from '../../../model/assembly';
+import { isRunning } from '../../../model/gear-match';
 import { useAssemblyTranslations } from '../../../i18n';
 import { errText, openTab, Segmented, StatusChip, useScope } from '../../common';
 import { indexCatalogue } from '../../../model/product-configurator';
@@ -110,19 +110,26 @@ export function AssemblyPanel({ round, onChanged }: { round: number; onChanged: 
       const picks = record?.gears ?? [];
       let items: Proposal[];
       if (a.strategy === 'gears_matcher') {
-        const match = await productApi.gearMatch(projectId, 'latest').catch((e: unknown) => {
-          if (isNotFound(e)) return null;
-          throw e;
-        });
-        if (!match) {
-          setNote(t('no_match'));
+        // The latest *finished* match (newest first): a run that is still
+        // going, failed or was stopped since does not hide the one before it.
+        const runs = (await productApi.gearMatches(projectId)).items;
+        const finished = runs.find((m) => isFinished(m.state));
+        if (!finished) {
+          setNote(
+            runs.length === 0
+              ? t('no_match')
+              : runs.some((m) => isRunning(m.state))
+                ? t('match_not_finished')
+                : t('no_finished_match', { state: t(`run_${runs[0].state}`) })
+          );
           return;
         }
-        if (!isFinished(match.summary.state)) {
-          setNote(t('match_not_finished'));
-          return;
-        }
+        const match = await productApi.gearMatch(projectId, finished.match_id);
         items = matcherProposals(match, picks, names);
+        if (items.length === 0) {
+          setNote(t('nothing_from_match', { date: new Date(finished.created_at).toLocaleString() }));
+          return;
+        }
       } else {
         items = specMappingProposals((await productApi.projectPlan(projectId)).items, picks, names);
       }

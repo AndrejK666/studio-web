@@ -172,7 +172,15 @@ describe('AssemblyPanel', () => {
     vi.spyOn(api, 'assemblyStrategy').mockResolvedValue(
       strategy({ strategy: 'gears_matcher', chosen: 'gears_matcher', source: 'project', project: 'gears_matcher' })
     );
-    vi.spyOn(api, 'gearMatch').mockResolvedValue(MATCH);
+    // The newest run failed; the proposals come from the finished one before it.
+    vi.spyOn(api, 'gearMatches').mockResolvedValue({
+      items: [
+        { match_id: 'm2', state: 'failed', requested_by: 'u', created_at: '2026-11-18T11:00:00Z' },
+        MATCH.summary,
+      ],
+      total: 2,
+    } as never);
+    const read = vi.spyOn(api, 'gearMatch').mockResolvedValue(MATCH);
     vi.spyOn(api, 'completeProduct').mockResolvedValue({ gears: ['api-gateway', 'authn-resolver'], changes: [], config: {} });
     vi.spyOn(api, 'saveProjectProduct').mockResolvedValue({} as never);
     const decide = vi.spyOn(api, 'putGearMatchDecision').mockResolvedValue({ subject: 'cpt-x-fr-sign-in' });
@@ -181,5 +189,21 @@ describe('AssemblyPanel', () => {
     fireEvent.click(await found('[data-product-assembly-confirm]'));
     await waitFor(() => expect(decide).toHaveBeenCalled());
     expect(decide.mock.calls[0][2]).toMatchObject({ gear_id: 'gears-rust/authn-resolver', decision: 'accepted' });
+    expect(read).toHaveBeenCalledWith('', 'p1', 'm1');
+  });
+
+  it('says when no gear match has finished, and why', async () => {
+    vi.spyOn(api, 'assemblyStrategy').mockResolvedValue(
+      strategy({ strategy: 'gears_matcher', chosen: 'gears_matcher', source: 'project', project: 'gears_matcher' })
+    );
+    vi.spyOn(api, 'gearMatches').mockResolvedValue({
+      items: [{ match_id: 'm2', state: 'failed', requested_by: 'u', created_at: '2026-11-18T11:00:00Z' }],
+      total: 1,
+    } as never);
+    const read = vi.spyOn(api, 'gearMatch');
+    draw();
+    fireEvent.click(await found('[data-product-assembly-propose]'));
+    await waitFor(() => expect(document.body.textContent).toContain('no_finished_match'));
+    expect(read).not.toHaveBeenCalled();
   });
 });
