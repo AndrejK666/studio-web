@@ -194,6 +194,13 @@ service_discovery = { package = "cf-gears-service-discovery", version = "=0.4.2"
 nodes_registry = { package = "cf-gears-nodes-registry", version = "=0.1.49" }
 types_registry = { package = "cf-gears-types-registry", version = "=0.6.2" }
 tenant_resolver = { package = "cf-gears-tenant-resolver", version = "=0.2.2" }
+# Not linked here (account-management's in-crate plugin resolves tenants in this
+# binary): pinned so the lock carries the Tenant Resolver plugin Studio's own
+# product description (products/studioweb) composes with. Without it Gearbox
+# builds rg-tr-plugin from the platform's source beside the crates.io toolkit
+# this lock pins -- two copies of the platform crates (GBX0714), and the
+# product's build refuses.
+rg_tr_plugin = { package = "cf-gears-rg-tr-plugin", version = "=0.2.2" }
 authn_resolver = { package = "cf-gears-authn-resolver", version = "=0.3.2" }
 authz_resolver = { package = "cf-gears-authz-resolver", version = "=0.4.2" }
 authz_resolver_sdk = { package = "cf-gears-authz-resolver-sdk", version = "=0.6.5" }

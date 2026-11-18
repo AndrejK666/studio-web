@@ -31,11 +31,18 @@ static SECRET: LazyLock<Regex> = LazyLock::new(|| {
     .expect("a valid pattern")
 });
 
+/// Gearbox's GBX0714: ``depends by path on `crate` at ..., which the build
+/// takes from crates.io``.
+static SECOND_COPY: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"depends by path on `([^`]+)`[^\n]*?two copies").expect("a valid pattern")
+});
+
 /// One thing to do about a failure.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FailureAction {
     /// `open_gear`, `retry`, `provide_secret`, `choose_hardware`,
-    /// `ask_organization`, `sign_in`, `check_environment`, `open_log`.
+    /// `ask_organization`, `sign_in`, `check_environment`, `open_log`,
+    /// `open_sources`.
     pub kind: &'static str,
     /// What the button says.
     pub label: String,
@@ -62,7 +69,7 @@ pub struct FailureCause {
     /// `GEAR_BUILD_FAILED`, `SECRET_MISSING`, `QUOTA_OR_HARDWARE_LIMIT`,
     /// `RESEARCH_SIGN_IN_EXPIRED`, `IMAGE_PULL_FAILED`,
     /// `CLUSTER_UNREACHABLE`, `CONNECTION_UNREADABLE`, `APP_CRASHED`,
-    /// `SOURCE_REF_MISSING`, `PRODUCT_NOT_COMPOSED`, `UNKNOWN`.
+    /// `SOURCE_REF_MISSING`, `PRODUCT_NOT_COMPOSED`, `RESEARCH_UNAVAILABLE`, `UNKNOWN`.
     pub code: &'static str,
     /// One sentence: what went wrong.
     pub summary: String,
@@ -274,10 +281,10 @@ pub fn explain(of: Of, text: &str, step: Option<&str>, research: bool) -> Failur
         return cause(
             "SOURCE_REF_MISSING",
             "The repository has no branch or tag the build asked for: the project's source \
-             names one that was deleted or renamed. Point the source at a branch that exists."
+             names one that was deleted or renamed. Point the source at a branch that exists \n             (Sources, Change branch)."
                 .to_owned(),
             vec![
-                FailureAction::new("open_log", "Open the log"),
+                FailureAction::new("open_sources", "Change the branch"),
                 FailureAction::new("retry", retry_label),
             ],
         );
@@ -290,11 +297,31 @@ pub fn explain(of: Of, text: &str, step: Option<&str>, research: bool) -> Failur
     // A diagnostic about one gear stays that gear's (below).
     let gearbox_refused = text.contains("[GBX") && !GEAR.is_match(text);
     if of == Of::Build && step == Some("prepare") && gearbox_refused {
-        return cause(
-            "PRODUCT_NOT_COMPOSED",
+        // GBX0714: a gear the product's Cargo.lock does not pin is built from
+        // the platform's source, beside the crates.io copies of the platform
+        // crates the lock does pin. Name them: they are what to pin.
+        let twice: Vec<&str> = SECOND_COPY
+            .captures_iter(text)
+            .filter_map(|c| c.get(1).map(|m| m.as_str()))
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let summary = if twice.is_empty() {
             "Gearbox could not compose the product from its description and sources; the \
              log names the GBX diagnostic and the gear or source it is about."
-                .to_owned(),
+                .to_owned()
+        } else {
+            format!(
+                "Two copies of {} would link: a gear the product's Cargo.lock does not pin \
+                 is built from the platform's source beside the crates.io ones. Add that \
+                 gear's crate to the product's own Cargo.toml so the lock pins it, or pick \
+                 a plugin it already pins.",
+                twice.join(", ")
+            )
+        };
+        return cause(
+            "PRODUCT_NOT_COMPOSED",
+            summary,
             vec![FailureAction::new("open_log", "Open the log")],
         );
     }
@@ -357,6 +384,36 @@ pub fn explain(of: Of, text: &str, step: Option<&str>, research: bool) -> Failur
                 "check_environment",
                 "Check the connections",
             )],
+        );
+    }
+
+    // Research's own services refused while running (a desk's file storage
+    // with "no healthy upstream", a gateway's 502/503/504): nothing in the
+    // product or in Studio is wrong, and nothing here fixes it but time or
+    // Research's team.
+    if research
+        && has(
+            text,
+            &[
+                "no healthy upstream",
+                "refused removing",
+                "502 bad gateway",
+                "503 service unavailable",
+                "504 gateway timeout",
+            ],
+        )
+        && has(text, &["constructor research refused"])
+    {
+        return cause(
+            "RESEARCH_UNAVAILABLE",
+            "Constructor Research's own service did not answer (its desk's file storage, or \
+             its gateway): nothing in the product is wrong. Try again later; if it keeps \
+             failing, tell the Research team which project and desk."
+                .to_owned(),
+            vec![
+                FailureAction::new("retry", retry_label),
+                FailureAction::new("open_log", "Open the log"),
+            ],
         );
     }
 
@@ -471,19 +528,35 @@ mod tests {
             true,
         );
         assert_eq!(c.code, "SOURCE_REF_MISSING");
-        assert_eq!(c.actions[0].kind, "open_log");
+        assert_eq!(c.actions[0].kind, "open_sources");
         assert_eq!(c.actions[1].kind, "retry");
         // Seen next, on main: the description does not compose.
         let gbx = explain(
             Of::Build,
             "the generated workspace would link two copies of a platform crate, and would not \
              compile:\nwarning [GBX0714] repo/Cargo.lock:1: a gear built from source depends by \
-             path on `cf-gears-toolkit`, which the build takes from crates.io at 0.13.1",
+             path on `cf-gears-toolkit`, which the build takes from crates.io at 0.13.1: two \
+             copies of it will link",
             Some("prepare"),
             true,
         );
         assert_eq!(gbx.code, "PRODUCT_NOT_COMPOSED");
+        assert!(
+            gbx.summary.contains("cf-gears-toolkit") && gbx.summary.contains("Cargo.toml"),
+            "{}",
+            gbx.summary
+        );
         assert_eq!(gbx.actions[0].kind, "open_log");
+        // Seen last: Research's desk storage was down.
+        let down = explain(
+            Of::Build,
+            "Constructor Research refused removing studio-build/research-1 from the desk: 503 \
+             Service Unavailable: no healthy upstream",
+            Some("images"),
+            true,
+        );
+        assert_eq!(down.code, "RESEARCH_UNAVAILABLE");
+        assert_eq!(down.actions[0].kind, "retry");
         // A deploy is never about a branch.
         assert_ne!(
             explain(Of::Deploy, "unknown revision", None, false).code,

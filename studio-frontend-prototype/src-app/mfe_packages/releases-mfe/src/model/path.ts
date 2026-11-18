@@ -50,6 +50,7 @@ export type Intent =
 /** The screens a step leads to, by their routes. */
 export const ROUTES = {
   specs: "/projects/specs",
+  sources: "/projects/sources",
   product: "/product",
   connections: "/connections",
   infrastructure: "/infrastructure",
@@ -59,6 +60,8 @@ export function intentOf(a: Pick<PathAction, "kind"> & Partial<PathAction>, depl
   switch (a.kind) {
     case "open_specs":
       return { kind: "screen", route: ROUTES.specs };
+    case "open_sources":
+      return { kind: "screen", route: ROUTES.sources };
     case "open_product":
     case "open_gear":
       return { kind: "screen", route: ROUTES.product };

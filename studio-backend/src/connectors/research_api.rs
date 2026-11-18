@@ -51,6 +51,16 @@ pub const STUDIO_DESK: &str = "studio";
 /// out of the project's git (`.git/info/exclude`) and removed after a build.
 pub const BUILD_FOLDER: &str = "studio-build";
 
+/// How often, and how far apart, a WebDAV call is asked again while a desk
+/// that just started does not serve its files yet: two minutes in all.
+const DAV_WARMUP_TRIES: u32 = 12;
+const DAV_WARMUP_WAIT: Duration = Duration::from_secs(10);
+
+/// A gateway's answer while the desk's file storage comes up.
+fn warming_up(status: reqwest::StatusCode) -> bool {
+    matches!(status.as_u16(), 502..=504)
+}
+
 /// Research's own public API, as one member reaches it.
 pub struct ResearchApi {
     http: reqwest::Client,
@@ -392,7 +402,38 @@ fn problem(status: reqwest::StatusCode, body: &str) -> String {
             .or_else(|| v.get("message").and_then(text))
             .or_else(|| v.get("msg").and_then(text))
     });
-    said.unwrap_or_else(|| status.to_string())
+    said.unwrap_or_else(|| {
+        // Not Research's own JSON: a gateway's or a proxy's page. Its words,
+        // short and without markup, say more than the status alone.
+        let plain = plain_text(body);
+        if plain.is_empty() {
+            status.to_string()
+        } else {
+            format!("{status}: {plain}")
+        }
+    })
+}
+
+/// `body` without markup, its whitespace folded, at most 200 characters.
+fn plain_text(body: &str) -> String {
+    let mut out = String::new();
+    let mut in_tag = false;
+    for c in body.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' if in_tag => {
+                in_tag = false;
+                out.push(' ');
+            }
+            _ if !in_tag => out.push(c),
+            _ => {}
+        }
+    }
+    let folded = out.split_whitespace().collect::<Vec<_>>().join(" ");
+    match folded.char_indices().nth(200) {
+        Some((at, _)) => format!("{}…", &folded[..at]),
+        None => folded,
+    }
 }
 
 enum Body<'b> {
@@ -752,19 +793,41 @@ impl ResearchApi {
 
     /// Remove a file or a folder and all in it; one not there is fine.
     pub async fn remove_path(&self, desk: &str, path: &str) -> anyhow::Result<()> {
+        self.remove_path_paced(desk, path, DAV_WARMUP_TRIES, DAV_WARMUP_WAIT)
+            .await
+    }
+
+    /// [`Self::remove_path`], asking again while the desk's file storage
+    /// answers 502/503/504: a desk Research reports `running` serves its
+    /// files a little later (seen on Research DEV, 2026-11-18: the first
+    /// DELETE after a start was a 503). `tries` asks at most, `wait` apart.
+    async fn remove_path_paced(
+        &self,
+        desk: &str,
+        path: &str,
+        tries: u32,
+        wait: Duration,
+    ) -> anyhow::Result<()> {
         let what = format!("removing {path} from the desk");
-        let res = self
-            .send(
-                reqwest::Method::DELETE,
-                &self.dav(desk, path),
-                Body::Empty,
-                &what,
-            )
-            .await?;
-        if res.status().is_success() || res.status() == reqwest::StatusCode::NOT_FOUND {
-            return Ok(());
+        let mut left = tries.max(1);
+        loop {
+            let res = self
+                .send(
+                    reqwest::Method::DELETE,
+                    &self.dav(desk, path),
+                    Body::Empty,
+                    &what,
+                )
+                .await?;
+            if res.status().is_success() || res.status() == reqwest::StatusCode::NOT_FOUND {
+                return Ok(());
+            }
+            left -= 1;
+            if left == 0 || !warming_up(res.status()) {
+                return Err(Self::refused(res, &what).await);
+            }
+            tokio::time::sleep(wait).await;
         }
-        Err(Self::refused(res, &what).await)
     }
 
     /* ── images ── */

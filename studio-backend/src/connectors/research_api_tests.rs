@@ -43,6 +43,8 @@ struct Fake {
     /// Service id -> service.
     services: BTreeMap<String, Value>,
     bodies: Vec<(String, Value)>,
+    /// How many WebDAV DELETEs answer 503 first, as a desk that just started.
+    dav_unavailable: u32,
 }
 
 impl Default for Fake {
@@ -66,6 +68,7 @@ impl Default for Fake {
             apps: Vec::new(),
             services: BTreeMap::new(),
             bodies: Vec::new(),
+            dav_unavailable: 0,
         }
     }
 }
@@ -151,6 +154,10 @@ async fn handle(
                 Some(b) => b.clone().into_response(),
                 None => StatusCode::NOT_FOUND.into_response(),
             },
+            "DELETE" if f.dav_unavailable > 0 => {
+                f.dav_unavailable -= 1;
+                StatusCode::SERVICE_UNAVAILABLE.into_response()
+            }
             "DELETE" => {
                 f.removed.push(rel.clone());
                 f.files.retain(|k, _| !k.starts_with(&rel));
@@ -844,4 +851,44 @@ async fn the_platform_saying_a_container_waits_to_start_is_a_restart() {
     assert_eq!(w.restarts, 1, "the first wait is the first start");
     assert_eq!(w.before, ["10:00 up", "10:01 exit 1"]);
     assert_eq!(w.lines, ["10:11 up"]);
+}
+
+#[tokio::test]
+async fn a_desk_that_just_started_is_asked_again_until_its_files_answer() {
+    // Seen on Research DEV, 2026-11-18: the first DELETE after a start was a 503.
+    let (url, fake) = serve(Fake {
+        dav_unavailable: 2,
+        ..Fake::default()
+    })
+    .await;
+    api(&url)
+        .remove_path_paced("d1", "studio-build/b1", 5, Duration::from_millis(1))
+        .await
+        .unwrap();
+    assert_eq!(fake.lock().unwrap().removed, ["studio-build/b1"]);
+
+    let (url, _) = serve(Fake {
+        dav_unavailable: 9,
+        ..Fake::default()
+    })
+    .await;
+    let e = api(&url)
+        .remove_path_paced("d1", "studio-build/b1", 2, Duration::from_millis(1))
+        .await
+        .unwrap_err();
+    assert!(format!("{e:#}").contains("503"), "{e:#}");
+}
+
+#[test]
+fn a_gateway_page_is_said_in_its_own_words_not_only_its_status() {
+    let page = "<html><head><title>503</title></head><body><h1>503 Service Temporarily \
+                Unavailable</h1><hr><center>nginx</center></body></html>";
+    assert_eq!(
+        problem(reqwest::StatusCode::SERVICE_UNAVAILABLE, page),
+        "503 Service Unavailable: 503 503 Service Temporarily Unavailable nginx"
+    );
+    assert_eq!(
+        problem(reqwest::StatusCode::SERVICE_UNAVAILABLE, "  "),
+        "503 Service Unavailable"
+    );
 }

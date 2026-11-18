@@ -3,15 +3,17 @@
 // @cpt-dod:cpt-studiofrontend-dod-project-sources-menu-sync:p1
 // @cpt-dod:cpt-studiofrontend-dod-project-sources-menu-specs:p1
 import { useCallback, useMemo } from 'react';
-import { eventBus, useAppDispatch, useMfeBridge } from '@gears-frontx/react';
+import { apiRegistry, eventBus, useAppDispatch, useMfeBridge, useQueryCache } from '@gears-frontx/react';
+import { AccountsApiService, PROJECT_CONFIG_TYPE, type ProjectConfig } from '@constructor-studio/mfe-shared';
 import { announceSection } from '../actions/projectsActions';
-import type { ShareMode } from '../model/projectSources';
+import { withBranch, type ShareMode } from '../model/projectSources';
 import type { SourceRow } from '../model/sourceRows';
 import { syncPlan } from '../model/syncRequest';
 import { showSourceSpecs } from '../slices/specsFilterSlice';
 import { cancelRepoSync, retryRepoSync } from './useArtifactImport';
 import { useSourceConnections } from './useConnections';
 import { useSourceDetach } from './useSourceDetach';
+import { projectConfigQuery } from './useProjectConfig';
 import '../events/artifactEvents';
 import '../events/sourcesConnectEvents';
 
@@ -24,6 +26,8 @@ export interface SourceRowActions {
   openUploads: () => void;
   /** Write how "Share with the team" lands edits in the row's repository. */
   changeShareMode: (row: SourceRow, mode: ShareMode) => void;
+  /** Check the row's repository out at `branch` from now on; rejects when the config cannot be written. */
+  changeBranch: (row: SourceRow, branch: string) => Promise<void>;
   /** Detach the row's repository from the project, as one backend run (#1042). */
   detach: (row: SourceRow) => void;
   /** Rows whose detach is running, by row id. */
@@ -89,6 +93,21 @@ export function useSourceRowActions(
     [projectId]
   );
 
+  const cache = useQueryCache();
+  const changeBranch = useCallback(
+    async (row: SourceRow, branch: string) => {
+      // The config is one value written whole: read fresh, change this
+      // entry's branch, write everything else back as it was.
+      const accounts = apiRegistry.getService(AccountsApiService);
+      const read = projectConfigQuery(accounts, projectId);
+      const config = (await read.fetch({ staleTime: 0 }))?.value ?? {};
+      const sources = withBranch(config.sources ?? [], { connection_id: row.connectionId, full_path: row.fullPath }, branch);
+      await accounts.putTenantMetadata<ProjectConfig>(projectId, PROJECT_CONFIG_TYPE).fetch({ ...config, sources });
+      void cache.invalidate(read);
+    },
+    [projectId, cache]
+  );
+
   const connectionsRead = !loading && !failed;
   return useMemo(
     () => ({
@@ -99,6 +118,7 @@ export function useSourceRowActions(
       openSpecs,
       openUploads,
       changeShareMode,
+      changeBranch,
       detach,
       detaching,
     }),
@@ -110,6 +130,7 @@ export function useSourceRowActions(
       openSpecs,
       openUploads,
       changeShareMode,
+      changeBranch,
       detach,
       detaching,
     ]
