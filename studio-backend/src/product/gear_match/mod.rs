@@ -191,8 +191,15 @@ impl GearMatches {
             limit("max_request_bytes", MAX_REQUEST_BYTES),
         );
 
-        let texts = self.spec_texts(ctx, project, &request).await?;
-        let mut docs = default_selection(texts, request.paths.is_empty() && request.glob.is_none());
+        let (texts, unread) = self.spec_texts(ctx, project, &request).await?;
+        let nothing_named = request.paths.is_empty() && request.glob.is_none();
+        if let Some(why) = unreadable_prds(&texts, &unread, nothing_named) {
+            return Err(Refusal::Invalid {
+                field: "paths",
+                why,
+            });
+        }
+        let mut docs = default_selection(texts, nothing_named);
         if docs.is_empty() {
             return Err(Refusal::Invalid {
                 field: "paths",
@@ -366,7 +373,7 @@ impl GearMatches {
         ctx: &SecurityContext,
         project: Uuid,
         request: &StartRequest,
-    ) -> Result<Vec<crate::documents::port::SpecText>, Refusal> {
+    ) -> Result<(Vec<crate::documents::port::SpecText>, Vec<String>), Refusal> {
         use crate::documents::port::{SpecTexts, SpecTextsRefused};
         let port = self.hub.get::<dyn SpecTexts>().map_err(|_| {
             Refusal::Unavailable(
@@ -394,11 +401,12 @@ impl GearMatches {
                 "studio-product: a gear match goes without the documents no checkout holds"
             );
         }
-        Ok(read
+        let documents = read
             .documents
             .into_iter()
             .filter(|d| !d.text.trim().is_empty())
-            .collect())
+            .collect();
+        Ok((documents, read.unread))
     }
 
     /// The match as it stands, with a run that stopped without telling it
@@ -525,6 +533,58 @@ fn key_ok(k: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '-'))
 }
 
+/// Whether a document is a PRD: typed so, under a `prd/` folder, or named
+/// `prd…`.
+fn is_prd(path: &str, doc_type: Option<&str>) -> bool {
+    let name = path
+        .rsplit(['/', ':'])
+        .next()
+        .unwrap_or(path)
+        .to_ascii_lowercase();
+    doc_type.is_some_and(|t| t.eq_ignore_ascii_case("prd"))
+        || path.to_ascii_lowercase().contains("/prd/")
+        || path.to_ascii_lowercase().starts_with("prd/")
+        || name.starts_with("prd")
+}
+
+/// With nothing named, the PRDs are what is read; when the project has PRDs
+/// but none of them could be read (no checkout holds them), why, naming
+/// them. Falling back to "everything readable" then sent another document
+/// in the PRD's place: on the local stand (2026-11-18) a 9 KB uploaded
+/// design note went instead of `docs/prd/constructor-studio.md`, whose
+/// repository's branch was gone, and the matcher refused it.
+fn unreadable_prds(
+    texts: &[crate::documents::port::SpecText],
+    unread: &[String],
+    nothing_named: bool,
+) -> Option<String> {
+    if !nothing_named || texts.iter().any(|d| is_prd(&d.path, d.doc_type.as_deref())) {
+        return None;
+    }
+    let prds: Vec<&str> = unread
+        .iter()
+        .filter(|p| is_prd(p, None))
+        .map(String::as_str)
+        .collect();
+    if prds.is_empty() {
+        return None;
+    }
+    let shown: Vec<&str> = prds.iter().take(3).copied().collect();
+    Some(format!(
+        "the project's PRD{} {}{} could not be read: the server holds no copy of {} repository \
+         (sync the source on the Sources tab, on a branch that exists), or name the documents \
+         to read",
+        if prds.len() == 1 { "" } else { "s" },
+        shown.join(", "),
+        if prds.len() > shown.len() {
+            format!(" and {} more", prds.len() - shown.len())
+        } else {
+            String::new()
+        },
+        if prds.len() == 1 { "its" } else { "their" },
+    ))
+}
+
 /// With nothing named: the project's PRDs when it has any, else everything.
 fn default_selection(
     texts: Vec<crate::documents::port::SpecText>,
@@ -533,19 +593,7 @@ fn default_selection(
     if !nothing_named {
         return texts;
     }
-    let is_prd = |d: &crate::documents::port::SpecText| {
-        let name = d
-            .path
-            .rsplit(['/', ':'])
-            .next()
-            .unwrap_or(&d.path)
-            .to_ascii_lowercase();
-        d.doc_type
-            .as_deref()
-            .is_some_and(|t| t.eq_ignore_ascii_case("prd"))
-            || d.path.to_ascii_lowercase().contains("/prd/")
-            || name.starts_with("prd")
-    };
+    let is_prd = |d: &crate::documents::port::SpecText| is_prd(&d.path, d.doc_type.as_deref());
     if texts.iter().any(is_prd) {
         texts.into_iter().filter(is_prd).collect()
     } else {
@@ -649,6 +697,26 @@ mod tests {
         assert_eq!(default_selection(all.clone(), false).len(), 3);
         let none = vec![doc("docs/design/x.md", Some("design"))];
         assert_eq!(default_selection(none, true).len(), 1);
+    }
+
+    #[test]
+    fn a_prd_no_checkout_holds_is_named_not_replaced_by_another_document() {
+        let read = vec![doc("studio:f8345044", Some("design"))];
+        let unread = vec![
+            "docs/adr/0001-identity-mapping.md".to_owned(),
+            "docs/prd/constructor-studio.md".to_owned(),
+        ];
+        let why = unreadable_prds(&read, &unread, true).expect("refused");
+        assert!(why.contains("docs/prd/constructor-studio.md"), "{why}");
+        assert!(why.contains("Sources"), "{why}");
+        // A PRD that was read, documents named, or no PRD anywhere: nothing to say.
+        let with_prd = vec![doc("upload:PRD.md", None)];
+        assert_eq!(unreadable_prds(&with_prd, &unread, true), None);
+        assert_eq!(unreadable_prds(&read, &unread, false), None);
+        assert_eq!(
+            unreadable_prds(&read, &["docs/adr/0001.md".to_owned()], true),
+            None
+        );
     }
 
     #[test]

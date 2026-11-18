@@ -53,6 +53,15 @@ impl std::fmt::Display for MatcherError {
                 code,
                 detail,
             } => match code {
+                // The matcher's own advice names its request option, which
+                // nobody in the portal can set: say it in this server's terms.
+                Some(code) if code == "not_a_template" => write!(
+                    f,
+                    "the gears-matcher service answered {status} {code}: {detail} -- the \
+                     documents are not in the Constructor Fabric spec format, and this server \
+                     does not let the matcher read free-form documents (studio-product \
+                     `gears_matcher.extract_max_calls` is not set)"
+                ),
                 Some(code) => write!(
                     f,
                     "the gears-matcher service answered {status} {code}: {detail}"
