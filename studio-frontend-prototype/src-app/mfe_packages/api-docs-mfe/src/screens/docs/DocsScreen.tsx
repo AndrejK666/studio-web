@@ -38,9 +38,17 @@ export const STORAGE_SHIM = [
 
 /** The frame's page: the viewer, and the grouped description inline. `</` is
  *  escaped so no string in the description can end the script early. */
-export function viewerPage(doc: OpenApiDoc, dark: boolean): string {
+export function viewerPage(doc: OpenApiDoc, dark: boolean, origin = ''): string {
+  // The description names its server relatively (`/cf`), and the frame has no
+  // origin to resolve it against: the viewer showed "null/cf" and its requests
+  // went nowhere. The portal's origin is the gateway's.
+  const servers = Array.isArray(doc.servers)
+    ? (doc.servers as { url?: unknown }[]).map((s) =>
+        typeof s?.url === 'string' && s.url.startsWith('/') ? { ...s, url: origin + s.url } : s
+      )
+    : doc.servers;
   const config = {
-    content: groupByComponent(doc),
+    content: groupByComponent(servers === undefined ? doc : { ...doc, servers }),
     // Collapsed: forty sections open at once is the flat list again.
     defaultOpenAllTags: false,
     hideClientButton: true,
@@ -101,7 +109,7 @@ export const DocsScreen: React.FC<{ bridge: ChildMfeBridge }> = ({ bridge }) => 
           // Scripts for the viewer; popups for its links out. No same-origin:
           // the page needs nothing of the portal's.
           sandbox="allow-scripts allow-popups"
-          srcDoc={viewerPage(doc, dark)}
+          srcDoc={viewerPage(doc, dark, window.location.origin)}
         />
       )}
     </div>

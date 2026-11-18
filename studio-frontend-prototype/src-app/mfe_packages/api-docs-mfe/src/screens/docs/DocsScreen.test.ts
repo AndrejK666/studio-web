@@ -22,6 +22,12 @@ describe("the viewer's page", () => {
 
   // A sandboxed frame has no origin, so its localStorage throws: the viewer read it while
   // loading and never defined window.Scalar (walk 2026-11-17).
+  // The frame has no origin, so the description's relative server read "null/cf" (walks 2026-11-17, -18).
+  it("names the server at the portal's origin", () => {
+    const page = viewerPage({ ...doc, servers: [{ url: '/cf' }] }, false, 'http://127.0.0.1:8081');
+    expect(page).toContain('"servers":[{"url":"http://127.0.0.1:8081/cf"}]');
+  });
+
   it('gives the frame storage before the viewer loads', () => {
     const page = viewerPage(doc, false);
     expect(page.indexOf(STORAGE_SHIM)).toBeGreaterThan(-1);
