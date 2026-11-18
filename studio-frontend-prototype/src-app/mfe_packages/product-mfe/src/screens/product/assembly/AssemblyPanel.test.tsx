@@ -117,6 +117,17 @@ describe('AssemblyPanel', () => {
     expect((document.querySelector('[data-product-assembly-choice="gears_matcher"]') as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it('says under the choice why the matcher is not offered, when nothing falls back', async () => {
+    vi.spyOn(api, 'assemblyStrategy').mockResolvedValue(
+      strategy({ gears_matcher: { kit_installed: false, configured: true, offered: false } })
+    );
+    draw();
+    const line = await found('[data-product-assembly-unavailable]');
+    expect(line.getAttribute('data-product-assembly-unavailable')).toBe('kit_not_installed');
+    expect(line.textContent).toContain('unavailable_kit_not_installed');
+    expect((document.querySelector('[data-product-assembly-choice="gears_matcher"]') as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it('keeps the project choice', async () => {
     vi.spyOn(api, 'assemblyStrategy').mockResolvedValue(strategy());
     const set = vi

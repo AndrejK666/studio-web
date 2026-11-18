@@ -22,6 +22,7 @@ import { productApi, type GearConfig, type ProductChange, type ProjectProduct } 
 import {
   isFinished,
   matcherProposals,
+  matcherUnavailable,
   organizationStrategy,
   projectChoice,
   specMappingProposals,
@@ -170,13 +171,19 @@ export function AssemblyPanel({ round, onChanged }: { round: number; onChanged: 
 
   const strategyLabel = (s: StrategyId) => t(`strategy_${s}`);
   const offered = a.gears_matcher.offered;
+  // Why the matcher cannot be chosen, said under the choice rather than only
+  // in the disabled button's tooltip, which a pointer-less reader never sees.
+  const unavailable = matcherUnavailable(a);
+  const unavailableText = unavailable
+    ? t(`unavailable_${unavailable}`, { reason: a.gears_matcher.missing ?? '' })
+    : null;
   const choices: { id: ProjectChoice; label: string; title?: string; disabled?: boolean }[] = [
     { id: 'default', label: t('choice_default', { strategy: strategyLabel(organizationStrategy(a)) }) },
     { id: 'spec_mapping', label: strategyLabel('spec_mapping'), title: t('hint_spec_mapping') },
     {
       id: 'gears_matcher',
       label: strategyLabel('gears_matcher'),
-      title: offered ? t('hint_gears_matcher') : (a.gears_matcher.missing ?? t('not_offered')),
+      title: offered ? t('hint_gears_matcher') : (unavailableText ?? t('not_offered')),
       // Not offered here: still shown, so the person sees it exists and why not.
       disabled: !offered && projectChoice(a) !== 'gears_matcher',
     },
@@ -222,6 +229,11 @@ export function AssemblyPanel({ round, onChanged }: { round: number; onChanged: 
           dataAttr="data-product-assembly-choice"
           items={choices.map((c) => ({ ...c, disabled: c.disabled || busy !== null }))}
         />
+      )}
+      {unavailableText && !a.fallback && (
+        <span className={`${page.small} ${page.muted}`} data-product-assembly-unavailable={unavailable ?? ''}>
+          {t('unavailable', { strategy: strategyLabel('gears_matcher'), reason: unavailableText })}
+        </span>
       )}
       {pending && (
         <div className={page.stack} data-product-assembly-pending>

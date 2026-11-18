@@ -50,6 +50,16 @@ export function projectChoice(a: AssemblyStrategy): ProjectChoice {
   return a.project ?? 'default';
 }
 
+/** Why the gears matcher cannot be chosen here, most basic first; null when it can. */
+export type MatcherUnavailable = 'kit_not_installed' | 'kit_unknown' | 'not_configured';
+
+export function matcherUnavailable(a: AssemblyStrategy): MatcherUnavailable | null {
+  if (a.gears_matcher.offered) return null;
+  if (a.gears_matcher.kit_installed === false) return 'kit_not_installed';
+  if (a.gears_matcher.kit_installed == null) return 'kit_unknown';
+  return a.gears_matcher.configured ? null : 'not_configured';
+}
+
 /** The strategy the organization's default stands for (Studio's when it has none). */
 export function organizationStrategy(a: AssemblyStrategy): StrategyId {
   return a.organization_default ?? 'spec_mapping';

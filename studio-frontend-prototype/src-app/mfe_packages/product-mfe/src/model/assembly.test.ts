@@ -3,6 +3,7 @@ import type { Candidate, PlanRow } from '../api/types';
 import {
   isFinished,
   matcherProposals,
+  matcherUnavailable,
   organizationStrategy,
   projectChoice,
   specMappingProposals,
@@ -82,6 +83,14 @@ describe('assembly strategy', () => {
     expect(projectChoice(strategy({ project: 'gears_matcher' }))).toBe('gears_matcher');
     expect(organizationStrategy(strategy())).toBe('spec_mapping');
     expect(organizationStrategy(strategy({ organization_default: 'gears_matcher' }))).toBe('gears_matcher');
+  });
+
+  it('says why the matcher cannot be chosen, the kit before the service', () => {
+    const m = (gears_matcher: AssemblyStrategy['gears_matcher']) => matcherUnavailable(strategy({ gears_matcher }));
+    expect(m({ kit_installed: true, configured: true, offered: true })).toBeNull();
+    expect(m({ kit_installed: false, configured: false, missing: 'no address', offered: false })).toBe('kit_not_installed');
+    expect(m({ kit_installed: null, configured: true, offered: false })).toBe('kit_unknown');
+    expect(m({ kit_installed: true, configured: false, missing: 'no address', offered: false })).toBe('not_configured');
   });
 
   it('proposes one strong, built gear per capability no pick answers', () => {
