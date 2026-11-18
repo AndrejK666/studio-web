@@ -3497,6 +3497,21 @@
     },
     {
       "method": "GET",
+      "path": "/studio-organizations/v1/project-creation-types",
+      "operation_id": "studio_organizations.list_project_creation_types",
+      "tag": "StudioOrganizations",
+      "summary": "Kits that define a project type",
+      "authenticated": true,
+      "responses": [
+        "ProjectTypeKitsDto"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-organizations/v1/project-creations/{run_id}",
       "operation_id": "studio_organizations.get_project_creation",
       "tag": "StudioOrganizations",

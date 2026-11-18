@@ -23,13 +23,13 @@ const RESEARCH: KitContents = {
       gear: 'studio-environments',
       types: ['research-project'],
       mcp_tools: ['research_projects'],
-      routes: ['POST /studio-environments/v1/research', 'POST /studio-environments/v1/research'],
+      routes: ['POST /studio-environments/v1/builds', 'POST /studio-environments/v1/builds'],
       sync_only_with_kit: false,
     },
   ],
   permissions: {
     reads: ['GET /studio-environments/v1/research/projects', 'GET /studio-usage/v1/costs', 'gts.cf.studio.project.v1~'],
-    writes: ['POST /studio-environments/v1/research'],
+    writes: ['POST /studio-environments/v1/builds'],
     listens: [],
   },
 };
@@ -47,7 +47,7 @@ describe('kit contents', () => {
 
   it('lists the claimed write routes once, with their gear', () => {
     expect(writeRoutes(RESEARCH)).toEqual([
-      { method: 'POST', path: '/studio-environments/v1/research', gear: 'studio-environments' },
+      { method: 'POST', path: '/studio-environments/v1/builds', gear: 'studio-environments' },
     ]);
     // A backend before ADR-0071 has no claims: none.
     expect(writeRoutes(EMPTY)).toEqual([]);

@@ -106,6 +106,11 @@ fn the_built_in_kits_declare_the_adr_s_two_requirements() {
                 "project-domain-model".to_owned(),
                 vec!["project-specs".to_owned()]
             ),
+            // A Gears project composes a product and ships it.
+            (
+                "gears-project".to_owned(),
+                vec!["project-product".to_owned(), DELIVERY.to_owned()]
+            ),
             (RESEARCH.to_owned(), vec![DELIVERY.to_owned()]),
             // ADR-0072: the matcher's proposals go into the product.
             (

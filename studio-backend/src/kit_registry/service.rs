@@ -1261,6 +1261,7 @@ mod tests {
                 "delivery",
                 "project-product",
                 "project-domain-model",
+                "gears-project",
                 "constructor-research",
                 "gears-matcher",
                 "assistant",
