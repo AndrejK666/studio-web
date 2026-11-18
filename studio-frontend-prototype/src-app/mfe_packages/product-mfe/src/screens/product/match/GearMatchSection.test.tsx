@@ -2,6 +2,10 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRef } from 'react';
 import type { ChildMfeBridge } from '@gears-frontx/react';
+import { stubResizeObserver } from '@frontx-test-utils/stubResizeObserver';
+
+// The kit's DataGrid measures its table.
+stubResizeObserver();
 
 vi.mock('../../../i18n', () => ({
   useMatchTranslations: () => ({
@@ -122,8 +126,15 @@ function draw() {
   );
 }
 
+/** A row of the grid, by the data attribute its first cell carries. */
+const rowOf = (selector: string) => document.querySelector(selector)?.closest('tr') ?? null;
+/** The tree's toggle, in the row's first cell. */
+const toggleOf = (selector: string) =>
+  (rowOf(selector)?.querySelector('td')?.querySelector('[data-grid-row-ignore-click] button') as HTMLButtonElement | null) ?? null;
+
 describe('GearMatchSection', () => {
   beforeEach(() => {
+    window.history.replaceState(null, '', '/');
     vi.spyOn(api, 'gearMatches').mockResolvedValue({
       items: [MATCH.summary, { ...MATCH.summary, match_id: 'm0', created_at: '2026-11-16T10:00:00Z' }],
       total: 2,
@@ -137,44 +148,95 @@ describe('GearMatchSection', () => {
     vi.restoreAllMocks();
   });
 
-  it('shows each requirement with what can be done about it', async () => {
+  it('lists the requirements on the grid, covered first, with what to do about each', async () => {
     draw();
-    await screen.findByText('fr-sign-in');
-    expect(document.querySelector('[data-gear-match-requirement="cpt-x-fr-sign-in"]')?.getAttribute('data-action')).toBe('propose');
-    expect(document.querySelector('[data-gear-match-add]')).toBeTruthy();
-    expect(document.querySelector('[data-gear-match-create]')).toBeTruthy();
-    expect(document.querySelector('[data-gear-match-question="cpt-x-fr-feed"]')).toBeTruthy();
-    expect(screen.getAllByText('resolves a bearer').length).toBeGreaterThan(0);
+    await found('[data-gear-match-requirement="cpt-x-fr-sign-in"]');
+    const ids = [...document.querySelectorAll('[data-gear-match-requirement]')].map((e) => e.getAttribute('data-gear-match-requirement'));
+    expect(ids).toEqual(['cpt-x-fr-sign-in', 'cpt-x-fr-offline', 'cpt-x-fr-feed']);
+    const signIn = rowOf('[data-gear-match-requirement="cpt-x-fr-sign-in"]')!;
+    expect(signIn.textContent).toContain('upload:PRD.md:3');
+    expect(signIn.textContent).toContain('authn-resolver');
+    expect(document.querySelector('[data-gear-match-create="cpt-x-fr-offline"]')).toBeTruthy();
+    expect(document.querySelector('[data-gear-match-answer-open="cpt-x-fr-feed"]')).toBeTruthy();
+    // Candidates wait in the tree until the requirement is opened.
+    expect(document.querySelector('[data-gear-match-candidate]')).toBeNull();
   });
 
-  it('adds a proposed gear through the product completion and records the decision', async () => {
-    const complete = vi
-      .spyOn(api, 'completeProduct')
-      .mockResolvedValue({ gears: ['api-gateway', 'authn-resolver', 'tenant-resolver'], changes: [{ gear: 'tenant-resolver', added: true, reason: 'needed' }], config: {} });
+  it('opens a requirement into its passage and candidates, and adds one through the product completion', async () => {
+    const complete = vi.spyOn(api, 'completeProduct').mockResolvedValue({
+      gears: ['api-gateway', 'authn-resolver', 'tenant-resolver'],
+      changes: [{ gear: 'tenant-resolver', added: true, reason: 'needed' }],
+      config: {},
+    });
     const save = vi.spyOn(api, 'saveProjectProduct').mockResolvedValue({} as never);
     const decide = vi.spyOn(api, 'putGearMatchDecision').mockResolvedValue({ subject: 'cpt-x-fr-sign-in' });
     draw();
+    await found('[data-gear-match-requirement="cpt-x-fr-sign-in"]');
+    fireEvent.click(toggleOf('[data-gear-match-requirement="cpt-x-fr-sign-in"]')!);
+    expect((await found('[data-gear-match-passage="cpt-x-fr-sign-in"]')).textContent).toContain('Users sign in.');
+    expect((await found('[data-gear-match-candidate="gears-rust/authn-resolver"]')).textContent).toContain('resolves a bearer');
     fireEvent.click(await found('[data-gear-match-add]'));
     await waitFor(() => expect(decide).toHaveBeenCalled());
     expect(complete).toHaveBeenCalledWith('', ['api-gateway', 'authn-resolver'], {});
     expect(save.mock.calls[0][2]).toMatchObject({ product_id: 'todo-app', gears: ['api-gateway', 'authn-resolver', 'tenant-resolver'] });
-    expect(decide.mock.calls[0][2]).toMatchObject({ gear_id: 'gears-rust/authn-resolver', decision: 'accepted' });
+    expect(decide.mock.calls[0][2]).toMatchObject({ gear_id: 'gears-rust/authn-resolver', decision: 'accepted', match_id: 'm1' });
   });
 
   it('drafts a gear for a gap from its passage', async () => {
     draw();
-    fireEvent.click(await found('[data-gear-match-create]'));
+    fireEvent.click(await found('[data-gear-match-create="cpt-x-fr-offline"]'));
     expect((await screen.findByTestId('scaffold')).textContent).toBe('offline|Works offline.');
   });
 
-  it('keeps an answer to a question', async () => {
+  it('answers a question from its row', async () => {
     const answer = vi.spyOn(api, 'putGearMatchAnswer').mockResolvedValue({ subject: 'cpt-x-fr-feed' });
     draw();
+    fireEvent.click(await found('[data-gear-match-answer-open="cpt-x-fr-feed"]'));
     const form = await found('[data-gear-match-question="cpt-x-fr-feed"]');
     fireEvent.change(form.querySelector('textarea')!, { target: { value: 'within 2 s' } });
     fireEvent.click(form.querySelector('[data-gear-match-answer]')!);
     await waitFor(() => expect(answer).toHaveBeenCalled());
     expect(answer.mock.calls[0][2]).toMatchObject({ question_id: 'cpt-x-fr-feed', text: 'within 2 s', match_id: 'm1' });
+  });
+
+  it('shows the same report by gear, kept in the address, and opens a gear into the requirements it answers', async () => {
+    draw();
+    await found('[data-gear-match-requirement="cpt-x-fr-sign-in"]');
+    fireEvent.click(await found('[data-gear-match-view="gear"]'));
+    await found('[data-gear-match-gear="gears-rust/authn-resolver"]');
+    expect(window.location.search).toContain('gmv.f.view=gear');
+    // By coverage: the gear that covers a requirement before the one that covers none.
+    const gears = [...document.querySelectorAll('[data-gear-match-gear]')].map((e) => e.getAttribute('data-gear-match-gear'));
+    expect(gears).toEqual(['gears-rust/authn-resolver', 'gears-rust/event-broker']);
+    expect(document.querySelector('[data-gear-match-coverage="1/0"]')).toBeTruthy();
+    expect(document.querySelector('[data-gear-match-standing="add"]')).toBeTruthy();
+    fireEvent.click(toggleOf('[data-gear-match-gear="gears-rust/authn-resolver"]')!);
+    expect((await found('[data-gear-match-answer-row="cpt-x-fr-sign-in"]')).textContent).toContain('resolves a bearer');
+    // Back to requirements, and out of the address.
+    fireEvent.click(document.querySelector('[data-gear-match-view="requirement"]')!);
+    await found('[data-gear-match-requirement="cpt-x-fr-sign-in"]');
+    expect(window.location.search).not.toContain('gmv.f.view');
+  });
+
+  it('opens on the view the address names', async () => {
+    window.history.replaceState(null, '', '/?gmv.f.view=gear');
+    draw();
+    await found('[data-gear-match-gear="gears-rust/authn-resolver"]');
+  });
+
+  it('lists the documents read one a line, and keeps its facts apart', async () => {
+    vi.spyOn(api, 'gearMatch').mockResolvedValue({
+      ...MATCH,
+      usage: { calls: 127 },
+      documents: [
+        { ...MATCH.documents[0], path: 'docs/a.md', commit: 'c8163b4ae1b4' },
+        { ...MATCH.documents[0], path: 'docs/b.md', commit: 'c8163b4ae1b4' },
+      ],
+    });
+    draw();
+    const list = await found('[data-gear-match-documents]');
+    expect([...list.querySelectorAll('li')].map((li) => li.textContent)).toEqual(['docs/a.mdc8163b4', 'docs/b.mdc8163b4']);
+    expect(document.querySelector('[data-gear-match-facts]')?.textContent).toContain(' · ');
   });
 
   it('starts a match and compares two', async () => {

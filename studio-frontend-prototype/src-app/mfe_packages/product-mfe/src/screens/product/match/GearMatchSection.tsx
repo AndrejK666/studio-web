@@ -14,42 +14,68 @@
  *
  * Every run is kept (the matcher's results vary): the history lists them and
  * two can be compared.
+ *
+ * The report itself is on the kit's DataGrid (MatchReportGrids), by
+ * requirement or by gear; the view is kept in the address (`gmv.f.view`).
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Badge, Button, Input, Skeleton, Textarea } from '@gears-frontx/ui-kit';
-import { isNotFound, responseStatus } from '@constructor-studio/mfe-shared';
+import { Button, Input, Skeleton, Textarea } from '@gears-frontx/ui-kit';
+import { isNotFound, readListState, responseStatus, writeListState } from '@constructor-studio/mfe-shared';
 import { productApi } from '../../../api/client';
 import {
-  actionLabel,
-  addability,
-  byAction,
   coverageTone,
   failureHint,
-  filtered,
   gapDraft,
   isRunning,
   progressOf,
   shortId,
   specPlanGears,
   type GearMatch,
-  type GearMatchCandidate,
   type GearMatchDiff,
   type GearMatchItem,
   type GearMatchQuestion,
   type GearMatchRequirement,
 } from '../../../model/gear-match';
+import { MATCH_VIEWS, viewOf, type MatchView } from '../../../model/gear-match-grid';
 import { useMatchTranslations } from '../../../i18n';
 import { EmptyState, errText, Segmented, StatusChip, useScope } from '../../common';
 import { ScaffoldDialog } from '../../components/ScaffoldDialog';
 import { catalogueNames, pickNames } from '../../../model/product-configurator';
 import { useGearCatalogue } from '../catalogue';
+import { GearGrid, RequirementGrid, type MatchCells, type MatchDecision } from './MatchReportGrids';
 import styles from './match.module.css';
 import page from '../../product.module.css';
 
 const POLL_MS = 4000;
-const FILTERS = ['all', 'covered', 'partial', 'gap', 'clarification_needed', 'not_assessed'] as const;
-type Filter = (typeof FILTERS)[number];
+
+/** The address prefix the chosen view is kept under, as a list keeps its filters. */
+export const VIEW_PREFIX = 'gmv.';
+
+function replaceSearch(search: string): void {
+  if (search === window.location.search) return;
+  window.history.replaceState(window.history.state, '', `${window.location.pathname}${search}${window.location.hash}`);
+}
+
+/** The view the address names, and a setter that writes it back (taken out again when the screen goes). */
+function useAddressView(): [MatchView, (v: MatchView) => void] {
+  const [view, setView] = useState<MatchView>(() =>
+    typeof window === 'undefined' ? 'requirement' : viewOf(readListState(window.location.search, VIEW_PREFIX).filters.view)
+  );
+  const choose = useCallback((v: MatchView) => {
+    setView(v);
+    const state = readListState(window.location.search, VIEW_PREFIX);
+    const filters = { ...state.filters };
+    if (v === 'requirement') delete filters.view;
+    else filters.view = v;
+    replaceSearch(writeListState(window.location.search, { ...state, filters }, VIEW_PREFIX));
+  }, []);
+  useEffect(
+    () => () => replaceSearch(writeListState(window.location.search, readListState('', VIEW_PREFIX), VIEW_PREFIX)),
+    []
+  );
+  return [view, choose];
+}
 
 type T = (key: string, params?: Record<string, string>) => string;
 
@@ -63,7 +89,10 @@ export function GearMatchSection() {
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const [paths, setPaths] = useState('');
-  const [filter, setFilter] = useState<Filter>('all');
+  const [view, setView] = useAddressView();
+  const [answering, setAnswering] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [status, setStatus] = useState<{ ok: boolean; text: string } | null>(null);
   const [diff, setDiff] = useState<GearMatchDiff | 'none' | null>(null);
   const [round, setRound] = useState(0);
   const [picks, setPicks] = useState<string[]>([]);
@@ -185,12 +214,85 @@ export function GearMatchSection() {
 
   const refresh = useCallback(() => setRound((n) => n + 1), []);
 
+  // Add to product: the product's own completion with the pick added, then its
+  // save, as the configurator does; the decisions it answers are accepted.
+  const add = useCallback(
+    async (key: string, pick: string, decisions: MatchDecision[]) => {
+      if (!match) return;
+      setBusy(`add:${key}`);
+      setStatus(null);
+      try {
+        const record = await productApi.projectProduct(projectId);
+        const current = record?.gears ?? [];
+        const done = await productApi.completeProduct([...current, pick], record?.config ?? {});
+        await productApi.saveProjectProduct(projectId, {
+          product_id: record?.product_id ?? match.product,
+          name: record?.name,
+          gears: done.gears,
+          config: done.config,
+        });
+        await Promise.all(
+          decisions.map((d) =>
+            productApi.putGearMatchDecision(projectId, { ...d, decision: 'accepted', match_id: match.summary.match_id })
+          )
+        );
+        setPicks(done.gears);
+        const changes = done.changes.filter((x) => x.gear !== pick).map((x) => `${x.added ? '+' : '−'}${x.gear}`);
+        setStatus({
+          ok: true,
+          text: changes.length ? t('added', { gear: pick, changes: changes.join(', ') }) : t('added_plain', { gear: pick }),
+        });
+        refresh();
+      } catch (e) {
+        setStatus({ ok: false, text: errText(e) });
+      } finally {
+        setBusy(null);
+      }
+    },
+    [match, projectId, t, refresh]
+  );
+
+  const decide = useCallback(
+    async (key: string, decisions: MatchDecision[], decision: 'rejected' | 'undecided') => {
+      if (!match) return;
+      setBusy(`decide:${key}`);
+      setStatus(null);
+      try {
+        await Promise.all(
+          decisions.map((d) => productApi.putGearMatchDecision(projectId, { ...d, decision, match_id: match.summary.match_id }))
+        );
+        refresh();
+      } catch (e) {
+        setStatus({ ok: false, text: errText(e) });
+      } finally {
+        setBusy(null);
+      }
+    },
+    [match, projectId, refresh]
+  );
+
+  const cells = useMemo<MatchCells>(
+    () => ({
+      t,
+      picks: pickedNames,
+      catalogue: knownNames,
+      planGears,
+      busy,
+      add: (key, pick, decisions) => void add(key, pick, decisions),
+      decide: (key, decisions, decision) => void decide(key, decisions, decision),
+      createGear: setScaffold,
+      answer: (r) => setAnswering(r.requirement_id),
+    }),
+    [t, pickedNames, knownNames, planGears, busy, add, decide]
+  );
+
   if (history === null) return <Skeleton className={page.skeleton} />;
 
   const running = match ? isRunning(match.summary.state) : false;
-  const reqs = match ? byAction(filtered(match.requirements, filter)) : [];
   const byRequirement = new Map((match?.questions ?? []).filter((q) => q.requirement_id).map((q) => [q.requirement_id!, q]));
   const general = (match?.questions ?? []).filter((q) => !q.requirement_id);
+  const question = answering ? byRequirement.get(answering) : undefined;
+  const report = match && !running && match.requirements.length > 0;
 
   return (
     <div className={styles.section} data-gear-match>
@@ -220,44 +322,45 @@ export function GearMatchSection() {
         <EmptyState title={t('none_title')} body={t('none_body')} />
       ) : (
         <div className={styles.layout}>
-          <div className={styles.section}>
+          <div className={styles.main}>
             {match && <MatchHeader match={match} t={t} />}
             {diff && <DiffView diff={diff} history={history} t={t} />}
-            {match && !running && match.requirements.length > 0 && (
+            {report && (
               <Segmented
-                label={t('filter_label')}
-                value={filter}
-                onChange={setFilter}
-                dataAttr="data-gear-match-filter"
-                items={FILTERS.map((f) => ({
-                  id: f,
-                  label:
-                    f === 'all'
-                      ? t('filter_all')
-                      : `${t(`coverage_${f}`)} ${match.requirements.filter((r) => r.coverage === f).length}`,
-                }))}
+                label={t('view_label')}
+                value={view}
+                onChange={setView}
+                dataAttr="data-gear-match-view"
+                items={MATCH_VIEWS.map((v) => ({ id: v, label: t(`view_${v}`) }))}
               />
             )}
-            {reqs.map((r) => (
-              <RequirementCard
-                key={r.requirement_id}
-                r={r}
-                match={match!}
-                question={byRequirement.get(r.requirement_id)}
-                picks={pickedNames}
-                catalogue={knownNames}
-                planGears={planGears}
-                onPicks={setPicks}
-                onCreateGear={setScaffold}
-                onChanged={refresh}
-                t={t}
-              />
-            ))}
-            {general.length > 0 && (
+            {status && (
+              <p className={status.ok ? page.small : page.error} data-gear-match-status>
+                {status.text}
+              </p>
+            )}
+            {report &&
+              (view === 'gear' ? (
+                <GearGrid key={`gear:${match.summary.match_id}`} match={match} cells={cells} />
+              ) : (
+                <RequirementGrid key={`req:${match.summary.match_id}`} match={match} cells={cells} />
+              ))}
+            {question && match && (
+              <div className={page.card} data-gear-match-answering={question.requirement_id ?? ''}>
+                <div className={page.row}>
+                  <code className={styles.id}>{shortId(question.requirement_id ?? question.topic)}</code>
+                  <Button type="button" size="sm" variant="ghost" onClick={() => setAnswering(null)}>
+                    {t('answer_close')}
+                  </Button>
+                </div>
+                <QuestionForm key={question.id} q={question} matchId={match.summary.match_id} t={t} />
+              </div>
+            )}
+            {general.length > 0 && match && (
               <div className={page.card}>
                 <b>{t('report_questions')}</b>
                 {general.map((q) => (
-                  <QuestionForm key={q.id} q={q} matchId={match!.summary.match_id} t={t} />
+                  <QuestionForm key={q.id} q={q} matchId={match.summary.match_id} t={t} />
                 ))}
               </div>
             )}
@@ -268,22 +371,23 @@ export function GearMatchSection() {
               // The run on screen is read every few seconds; its row says what that read says.
               const live = match?.summary.match_id === h.match_id ? match.summary : h;
               return (
-              <button
-                key={h.match_id}
-                type="button"
-                className={styles.run}
-                data-on={h.match_id === shown}
-                onClick={() => {
-                  setSelected(h.match_id);
-                  setDiff(null);
-                }}
-              >
-                <span>{new Date(h.created_at).toLocaleString()}</span>
-                <span className={page.small}>
-                  {t(`state_${live.state}`)}
-                  {live.totals ? ` · ${t('totals', { requirements: String(live.totals.requirements) })}` : ''}
-                </span>
-              </button>
+                <button
+                  key={h.match_id}
+                  type="button"
+                  className={styles.run}
+                  data-on={h.match_id === shown}
+                  onClick={() => {
+                    setSelected(h.match_id);
+                    setDiff(null);
+                    setAnswering(null);
+                  }}
+                >
+                  <span>{new Date(h.created_at).toLocaleString()}</span>
+                  <span className={page.small}>
+                    {t(`state_${live.state}`)}
+                    {live.totals ? ` · ${t('totals', { requirements: String(live.totals.requirements) })}` : ''}
+                  </span>
+                </button>
               );
             })}
             {match && !running && history.length > 1 && (
@@ -294,9 +398,7 @@ export function GearMatchSection() {
           </aside>
         </div>
       )}
-      {scaffold && (
-        <ScaffoldDialogFor r={scaffold} onClose={() => setScaffold(null)} />
-      )}
+      {scaffold && <ScaffoldDialogFor r={scaffold} onClose={() => setScaffold(null)} />}
     </div>
   );
 }
@@ -316,10 +418,15 @@ function ScaffoldDialogFor({ r, onClose }: { r: GearMatchRequirement; onClose: (
   );
 }
 
+
 function MatchHeader({ match, t }: { match: GearMatch; t: T }) {
   const s = match.summary;
   const progress = progressOf(s);
   const hint = s.state === 'failed' ? failureHint(s.error) : null;
+  const facts = [
+    match.catalogue_commit ? t('catalogue', { commit: match.catalogue_commit.slice(0, 8) }) : null,
+    match.usage?.calls != null ? t('usage', { calls: String(match.usage.calls) }) : null,
+  ].filter((f): f is string => !!f);
   return (
     <div className={page.card} data-gear-match-summary={s.state}>
       <div className={styles.head}>
@@ -350,17 +457,24 @@ function MatchHeader({ match, t }: { match: GearMatch; t: T }) {
           {t(`hint_${hint}`)}
         </p>
       )}
-      <div className={`${page.row} ${page.small} ${page.muted}`}>
-        <span>{t('documents')}</span>
-        {match.documents.map((d) => (
-          <code key={d.path} className={page.code} title={`${d.sha256}${d.commit ? ` @ ${d.commit}` : ''}`}>
-            {d.path}
-            {d.commit ? `@${d.commit.slice(0, 7)}` : ''}
-          </code>
-        ))}
-        {match.catalogue_commit && <span>{t('catalogue', { commit: match.catalogue_commit.slice(0, 8) })}</span>}
-        {match.usage?.calls != null && <span>{t('usage', { calls: String(match.usage.calls) })}</span>}
-      </div>
+      {match.documents.length > 0 && (
+        <div className={styles.documents}>
+          <span className={`${page.small} ${page.muted}`}>{t('documents')}</span>
+          <ul className={styles.docList} data-gear-match-documents>
+            {match.documents.map((d) => (
+              <li key={d.path} title={d.sha256}>
+                <code className={styles.docPath}>{d.path}</code>
+                {d.commit && <code className={styles.meta}>{d.commit.slice(0, 7)}</code>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {facts.length > 0 && (
+        <p className={`${page.small} ${page.muted}`} data-gear-match-facts>
+          {facts.join(' · ')}
+        </p>
+      )}
     </div>
   );
 }
@@ -391,213 +505,6 @@ function DiffView({ diff, history, t }: { diff: GearMatchDiff | 'none'; history:
   );
 }
 
-function RequirementCard({
-  r,
-  match,
-  question,
-  picks,
-  catalogue,
-  planGears,
-  onPicks,
-  onCreateGear,
-  onChanged,
-  t,
-}: {
-  r: GearMatchRequirement;
-  match: GearMatch;
-  question?: GearMatchQuestion;
-  picks: string[];
-  catalogue: Set<string> | null;
-  planGears: Set<string>;
-  onPicks: (p: string[]) => void;
-  onCreateGear: (r: GearMatchRequirement) => void;
-  onChanged: () => void;
-  t: T;
-}) {
-  return (
-    <div className={styles.requirement} data-gear-match-requirement={r.requirement_id} data-action={r.action}>
-      <div className={styles.head}>
-        <code className={styles.id} title={r.requirement_id}>
-          {shortId(r.requirement_id)}
-        </code>
-        <StatusChip tone={coverageTone(r.coverage)}>{t(`coverage_${r.coverage}`)}</StatusChip>
-        {r.action !== 'none' && <span className={page.muted}>{t(`action_${actionLabel(r, picks, catalogue)}`)}</span>}
-        {r.action === 'create_gear' && (
-          <Button type="button" size="sm" variant="outline" onClick={() => onCreateGear(r)} data-gear-match-create>
-            {t('create_gear')}
-          </Button>
-        )}
-      </div>
-      {r.reason && <span className={page.small}>{r.reason}</span>}
-      {r.passage ? (
-        <details>
-          <summary className={page.small}>{t('passage', { path: r.passage.path, line: String(r.passage.line) })}</summary>
-          <pre className={styles.passage}>{r.passage.text}</pre>
-        </details>
-      ) : (
-        <span className={`${page.small} ${page.muted}`}>{t('no_passage')}</span>
-      )}
-      {r.candidates.length > 0 &&
-        r.candidates
-          .filter((c) => c.verdict !== 'none' || r.candidates.length === 1)
-          .map((c) => (
-            <CandidateRow
-              key={c.gear_id}
-              c={c}
-              r={r}
-              match={match}
-              picks={picks}
-              catalogue={catalogue}
-              inPlan={planGears.has(c.pick)}
-              onPicks={onPicks}
-              onChanged={onChanged}
-              t={t}
-            />
-          ))}
-      {question && <QuestionForm q={question} matchId={match.summary.match_id} t={t} />}
-    </div>
-  );
-}
-
-function CandidateRow({
-  c,
-  r,
-  match,
-  picks,
-  catalogue,
-  inPlan,
-  onPicks,
-  onChanged,
-  t,
-}: {
-  c: GearMatchCandidate;
-  r: GearMatchRequirement;
-  match: GearMatch;
-  picks: string[];
-  catalogue: Set<string> | null;
-  inPlan: boolean;
-  onPicks: (p: string[]) => void;
-  onChanged: () => void;
-  t: T;
-}) {
-  const { projectId } = useScope();
-  const [busy, setBusy] = useState(false);
-  const [note, setNote] = useState<string | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const can = addability(c, picks, catalogue);
-
-  const decide = (decision: 'accepted' | 'rejected' | 'undecided') =>
-    productApi.putGearMatchDecision(projectId, {
-      requirement_id: r.requirement_id,
-      gear_id: c.gear_id,
-      decision,
-      match_id: match.summary.match_id,
-    });
-
-  // The product's own completion with the pick added, then its save: what the
-  // configurator does when a gear is picked.
-  const add = async () => {
-    setBusy(true);
-    setErr(null);
-    try {
-      const record = await productApi.projectProduct(projectId);
-      const current = record?.gears ?? [];
-      const done = await productApi.completeProduct([...current, c.pick], record?.config ?? {});
-      await productApi.saveProjectProduct(projectId, {
-        product_id: record?.product_id ?? match.product,
-        name: record?.name,
-        gears: done.gears,
-        config: done.config,
-      });
-      await decide('accepted');
-      onPicks(done.gears);
-      const changes = done.changes.filter((x) => x.gear !== c.pick).map((x) => `${x.added ? '+' : '−'}${x.gear}`);
-      setNote(changes.length ? t('added', { gear: c.pick, changes: changes.join(', ') }) : t('added_plain', { gear: c.pick }));
-      onChanged();
-    } catch (e) {
-      setErr(errText(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const reject = async (decision: 'rejected' | 'undecided') => {
-    setBusy(true);
-    try {
-      await decide(decision);
-      onChanged();
-    } catch (e) {
-      setErr(errText(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className={styles.candidate} data-gear-match-candidate={c.gear_id}>
-      <div className={styles.head}>
-        <b>{c.name ?? c.pick}</b>
-        <code className={page.small}>{c.gear_id}</code>
-        <Badge variant={c.verdict === 'covered' ? 'success' : c.verdict === 'partial' ? 'warning' : 'secondary'}>{c.verdict}</Badge>
-        {c.confidence != null && <span className={page.small}>{t('confidence', { value: c.confidence.toFixed(2) })}</span>}
-        {c.in_code === false && <Badge variant="secondary">{t('future_part')}</Badge>}
-        {inPlan && <Badge variant="info">{t('in_spec_plan')}</Badge>}
-        {c.decision === 'accepted' && <Badge variant="success">{t('accepted')}</Badge>}
-        {c.decision === 'rejected' && <Badge variant="secondary">{t('rejected')}</Badge>}
-        {c.proposed && (
-          <>
-            {can === 'in' ? (
-              <span className={page.muted}>{t('in_product')}</span>
-            ) : can === 'add' ? (
-              <Button type="button" size="sm" onClick={() => void add()} disabled={busy} data-gear-match-add>
-                {busy ? t('adding') : t('add')}
-              </Button>
-            ) : (
-              <span className={page.muted}>{t('not_in_catalogue')}</span>
-            )}
-            {c.decision ? (
-              <Button type="button" size="sm" variant="ghost" onClick={() => void reject('undecided')} disabled={busy}>
-                {t('undo')}
-              </Button>
-            ) : (
-              <Button type="button" size="sm" variant="outline" onClick={() => void reject('rejected')} disabled={busy} data-gear-match-reject>
-                {t('reject')}
-              </Button>
-            )}
-          </>
-        )}
-      </div>
-      <dl className={styles.facts}>
-        {c.evidence && (
-          <>
-            <dt>{t('evidence')}</dt>
-            <dd>{c.evidence}</dd>
-          </>
-        )}
-        {c.covers && (
-          <>
-            <dt>{t('covers')}</dt>
-            <dd>{c.covers}</dd>
-          </>
-        )}
-        {c.missing && (
-          <>
-            <dt>{t('missing')}</dt>
-            <dd>{c.missing}</dd>
-          </>
-        )}
-        {c.rationale && (
-          <>
-            <dt>{t('rationale')}</dt>
-            <dd>{c.rationale}</dd>
-          </>
-        )}
-      </dl>
-      {note && <span className={page.small}>{note}</span>}
-      {err && <span className={page.error}>{err}</span>}
-    </div>
-  );
-}
 
 function QuestionForm({ q, matchId, t }: { q: GearMatchQuestion; matchId: string; t: T }) {
   const { projectId } = useScope();

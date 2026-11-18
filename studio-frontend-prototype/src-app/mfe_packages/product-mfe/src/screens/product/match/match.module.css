@@ -111,3 +111,80 @@
   display: grid;
   gap: var(--space-2);
 }
+
+/* The report's column: the grid scrolls sideways inside it, never the page. */
+.main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.cellStack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.name {
+  min-width: 0;
+  font-weight: 500;
+  color: var(--foreground);
+  overflow-wrap: anywhere;
+}
+
+.meta {
+  min-width: 0;
+  font-size: var(--text-meta-size, 0.8125rem);
+  line-height: var(--text-meta-line-height, 1.25rem);
+  color: var(--muted-foreground);
+  overflow-wrap: anywhere;
+}
+
+.badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.count {
+  font-variant-numeric: tabular-nums;
+  color: var(--foreground);
+}
+
+.actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* "Read from": one document a line, its path and the commit it was read at. */
+.documents {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.docList {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.docList li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.docPath {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--text-meta-size, 0.8125rem);
+  color: var(--foreground);
+  overflow-wrap: anywhere;
+}
