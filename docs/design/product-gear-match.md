@@ -15,16 +15,29 @@ files and answers a verified coverage report: per requirement a verdict
 (`covered`, `partial`, `gap`, `clarification_needed`, `not_assessed`) and the
 candidate gears of the gears-rust catalogue with the evidence for each. This
 document is how Studio asks for one, keeps it, and turns it into decisions a
-person takes. The code is `studio-backend/src/product/gear_match/` and
-`gear_match_rest.rs`; the screen is the Product kit's (`product-mfe`, Project ›
-Product › Gear match).
+person takes, and how a product is assembled with it or without it (§8). The
+code is `studio-backend/src/product/gear_match/` and `gear_match_rest.rs`; the
+screens are the **Gears matcher** kit's (`gears-matcher`, ADR-0072), the second
+entry of `product-mfe`: Project › Gear match and Organization › Gears matcher.
 
 ## 1. Where it lives
 
-In **studio-product**, the gear that owns a project's product: the report is
-advice about the product's picks, and the product's own completion is what
-applies it. Not a gear of its own: it has no data that outlives the product,
-and a second gear would need a port back into the product for every action.
+The **code** is in **studio-product**, the gear that owns a project's product:
+the report is advice about the product's picks, and the product's own
+completion is what applies it. Not a gear of its own: it has no data that
+outlives the product, and a second gear would need a port back into the product
+for every action.
+
+The **kit** is its own (ADR-0072): `gears-matcher`, a built-in kit that is not
+a base kit by default (`OPT_IN_BUILTIN`), levels organization and project,
+`requires: ["project-product"]`. It claims (ADR-0071 §1) the gear-match write
+routes and the two MCP tools of §5, and brings the Inbox source and the two
+screens. Where it does not apply, the claimed writes and tools answer
+`KIT_NOT_INSTALLED` naming it, the screens are not shown, and the product is
+assembled by `spec_mapping` (§8). The reads stay open, as every gear's do. The
+Product kit claimed all of this until ADR-0072; nothing was renamed, so no
+alias or `renamed` report is involved, and the matches already kept stay in
+the gear's database and show again once the kit is installed.
 
 - `config.rs` — `studio-product`'s `config.gears_matcher`: `base_url` (or the
   variable `base_url_env`, `STUDIO_GEARS_MATCHER_URL`) and the variable holding
@@ -91,7 +104,7 @@ Nothing is applied silently. Each verdict becomes something a person decides:
 | `covered` / `partial`, a candidate judged `covered`/`partial` that has code | **propose**: "Add to product" per candidate | the product's own completion (`POST /gearbox/complete`) with the pick added, then the product's save — exactly what the configurator does; the member's accept or reject is kept (`PUT gear-match-decisions`) and shown on every later match |
 | `covered` / `partial` with only future parts (no code) | **review** | shown, not addable |
 | `gap` | **create a gear** | the existing "Create a gear" scaffold (`POST /projects/{project_id}/scaffold`, the Components tab's `ScaffoldDialog`), drafted from the requirement's id and passage |
-| `clarification_needed`, and the report's own `clarifications` | **answer** | a question form; `PUT gear-match-answers` keeps the answer; the question is an **Inbox** item (`endpoint` source `gear-match-questions` of the Product kit, `GET /inbox/gear-match-questions`) for whoever asked the match until answered; the next match sends the answer beside the requirement it answers (a paragraph of its statement, before its Rationale, in the copy sent only — the document is not changed) |
+| `clarification_needed`, and the report's own `clarifications` | **answer** | a question form; `PUT gear-match-answers` keeps the answer; the question is an **Inbox** item (`endpoint` source `gear-match-questions` of the Gears matcher kit, `GET /inbox/gear-match-questions`) for whoever asked the match until answered; the next match sends the answer beside the requirement it answers (a paragraph of its statement, before its Rationale, in the copy sent only — the document is not changed) |
 | `not_assessed` (a `partial` run) | **re-run** | a new match; replies already received are cached by the matcher |
 
 The Inbox was chosen over the project domain model's issue queue: a question
@@ -110,7 +123,8 @@ lists each requirement whose coverage or proposed gears changed.
 
 ## 4. Relation to studio-spec-mapping
 
-**Decision: side by side, neither replaces nor feeds the other (for now).**
+**Decision: side by side, neither replaces nor feeds the other; a project
+chooses which one assembles its product (§8).**
 
 - *spec-mapping* infers capabilities from Functional Requirements by words
   and contracts, instantly, for free, deterministically, on every read; its
@@ -124,13 +138,18 @@ other would need a mapping neither has. Replacing spec-mapping would lose the
 instant plan the Components tab and the product map draw from. So the report
 view marks a candidate that spec-mapping's plan also names ("also in the
 spec plan"), which is where they agree, and leaves both decision stores as
-they are. Revisit when the matcher's results are stable enough to be the
-plan's source: then the matcher's verdicts could become mapping decisions
+they are.
+
+Since ADR-0072 the two are also the two **assembly strategies** of a product
+(§8): each proposes picks, and a project uses one, by its own choice or its
+organization's default. They still do not feed each other. Revisit when the
+matcher's results are stable enough to be the plan's source: then the
+matcher's verdicts could become mapping decisions
 (`artifact_ingest::port::MappingDecisionStore`) with `source: matcher`.
 
 ## 5. Interfaces
 
-REST, all `?project_id=` (the Product kit claims the writes):
+REST, all `?project_id=` (the Gears matcher kit claims the writes):
 
 | Method | Path | |
 |---|---|---|
@@ -143,7 +162,19 @@ REST, all `?project_id=` (the Product kit claims the writes):
 | `PUT` | `/studio-product/v1/gear-match-answers` | answer a question |
 | `GET` | `/studio-product/v1/inbox/gear-match-questions` | the Inbox source |
 
-MCP: `project_gear_match` (start) and `project_gear_match_report` (read).
+MCP: `project_gear_match` (start) and `project_gear_match_report` (read), both
+the Gears matcher kit's.
+
+The assembly strategy (§8):
+
+| Method | Path | |
+|---|---|---|
+| `GET` | `/studio-product/v1/project-assembly-strategy` | the strategy used, where it comes from, why it falls back |
+| `PUT` | `/studio-product/v1/project-assembly-strategy` | the project's choice, or `null` for the organization's default (the Product kit's) |
+| `GET` | `/studio-product/v1/assembly-strategy` | the organization's default (`?organization_id=`) |
+| `PUT` | `/studio-product/v1/assembly-strategy` | set it; `kit.manage` (the Gears matcher kit's) |
+
+MCP: `product_assembly_strategy` (the read; the Product kit's).
 
 ## 6. Deployment
 
@@ -160,3 +191,38 @@ MCP: `project_gear_match` (start) and `project_gear_match_report` (read).
   catalogue are not filled in automatically.
 - An answer is sent with the next match only; writing it into the
   specification is the domain model's sentence proposal, by hand.
+
+## 8. Assembly strategies
+
+How a project's product is assembled (ADR-0072). Two strategies, each of which
+only **proposes** gears; the engine's completion and the person's confirmation
+stay the one way they enter the product (§3: nothing applied silently).
+
+| Strategy | What it proposes | Needs |
+|---|---|---|
+| `spec_mapping` | per capability the specifications name that no pick answers yet, the first gear spec-mapping's plan offers with a contract, a declaration or a member's confirmation behind it, built and in the catalogue the product reads | nothing: instant, free, deterministic. Studio's default |
+| `gears_matcher` | every gear the project's latest finished match proposes (`covered`/`partial` with code) that nobody rejected and the catalogue holds; on confirmation each one's decision is kept `accepted`, as "Add to product" does | the Gears matcher kit where the project is, and the service configured |
+
+**Which one.** The project's choice, else the organization's default, else
+Studio's (`spec_mapping`). The organization's default is set on Organization ›
+Gears matcher by an organization or platform administrator (`kit.manage`); the
+project's choice ("organization default", `spec_mapping`, `gears_matcher`) on
+Project › Product, beside the header's action. Both are rows of
+`studio_product_assembly_strategies` (`m0004`, `assembly.rs`): `scope_id` is the
+organization for its default, the project for its choice; keyed by the
+organization the project hangs under.
+
+**Fallback.** `gears_matcher` chosen where it cannot be used is not used: the
+product is assembled by `spec_mapping`, and the read says why —
+`KIT_NOT_INSTALLED` (the kit does not apply), `KIT_UNKNOWN` (the installed kits
+could not be read) or `MATCHER_NOT_CONFIGURED` (the 503 sentence of §1). A
+project cannot choose `gears_matcher` where the kit does not apply
+(`KIT_NOT_INSTALLED`); it can where the service is down, and falls back until
+it answers.
+
+**On the page.** Project › Product shows the strategy used, where it comes from
+and any fallback, the project's choice (`gears_matcher` shown but disabled, with
+the reason, where it is not offered), and **Propose gears**: the proposals,
+what the completion adds with them, and **Add N to the product**. With
+`gears_matcher` and no finished match it says so and links to Project › Gear
+match, which runs one.
