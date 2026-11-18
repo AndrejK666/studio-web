@@ -117,6 +117,15 @@ Per requirement the view shows the matcher's evidence, covers, missing and
 rationale per candidate, and the **source passage** (`report::passage`: the
 requirement's heading and block in the text sent, found by its id).
 
+The report is a list grid (ListGrid, #1076) in two views of the same report,
+kept in the address (`gmv.f.view`): **by requirement** (id, verdict, best gear,
+confidence, where it is said, what to do; a row opens into its passage and
+candidates) and **by gear** (a row per gear the run named: how many
+requirements it covers fully and partly, best confidence, in the product,
+has code; sorted by coverage; a row opens into the requirements it answers,
+and Add / Reject act on all its proposals). A gear is found in the catalogue
+by its engine id or its crate, whichever the report or the picks spell.
+
 The matcher is not deterministic. Every match is kept; the view lists the
 history, and `GET …/gear-matches/{id}/diff` (default: against the match before)
 lists each requirement whose coverage or proposed gears changed.
