@@ -1418,13 +1418,23 @@ async fn get_project_status(
             .and_then(|w| w.parent_id.map(|p| p.0)),
         None => None,
     };
-    let rollup = sources.one_project(&ctx, id).await.ok_or_else(not_found)?;
     let api = crate::mcp::api_as(headers.get(axum::http::header::AUTHORIZATION).cloned())
         .ok_or_else(|| {
             CanonicalError::service_unavailable()
                 .with_detail("studio-mcp is not running here, so the other gears cannot be read")
                 .create()
         })?;
+    let project = id.to_string();
+    // The project's rollup row beside the other gears' reads, not before
+    // them: the project was just read as the caller, and one after the other
+    // the status waited for the rollup (2-3 s on the local stand) and then
+    // for the slowest read (2026-11-18).
+    let (rollup, mut read) = tokio::join!(
+        sources.one_project(&ctx, id),
+        super::status_read::read(&api, &project, None)
+    );
+    let rollup = rollup.ok_or_else(not_found)?;
+    read.path.repositories = rollup.repos;
     // This project's line of the overview, computed for it alone: building
     // the organization's whole overview for one line took 5.5 s on Dev.
     let health = async {
@@ -1446,9 +1456,8 @@ async fn get_project_status(
             stuck: line.stuck,
         })
     };
-    let project = id.to_string();
     // The kits installed for the project: what each signal and step belongs
-    // to (ADR-0070 §7). Read beside the facts; a kit that does not apply
+    // to (ADR-0070 §7). Read beside the health; a kit that does not apply
     // leaves its facts unread-and-unsaid rather than unknown.
     let kits = async {
         match overview.as_ref() {
@@ -1456,11 +1465,7 @@ async fn get_project_status(
             None => status::Kits::All,
         }
     };
-    let (read, health, kits) = tokio::join!(
-        super::status_read::read(&api, &project, rollup.repos),
-        health,
-        kits
-    );
+    let (health, kits) = tokio::join!(health, kits);
     let mut unread = Vec::new();
     for (name, missing, kit) in [
         ("repositories", read.path.repositories.is_none(), None),
