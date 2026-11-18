@@ -1663,6 +1663,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "cf-gears-rg-tr-plugin"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4fd64069fa0757c5b72013d7ce2c43e29f5a0dc2a0cf65b03979ac6382fd9191"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "cf-gears-resource-group",
+ "cf-gears-resource-group-sdk",
+ "cf-gears-tenant-resolver-sdk",
+ "cf-gears-toolkit",
+ "cf-gears-toolkit-macros",
+ "cf-gears-toolkit-odata",
+ "cf-gears-toolkit-security",
+ "cf-gears-types-registry-sdk",
+ "inventory",
+ "serde",
+ "serde_json",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "cf-gears-service-discovery"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2577,6 +2600,7 @@ dependencies = [
  "cf-gears-oidc-authn-plugin",
  "cf-gears-resource-group",
  "cf-gears-resource-group-sdk",
+ "cf-gears-rg-tr-plugin",
  "cf-gears-service-discovery",
  "cf-gears-simple-user-settings",
  "cf-gears-static-authn-plugin",
