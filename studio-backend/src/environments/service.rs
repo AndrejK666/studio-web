@@ -3299,6 +3299,21 @@ impl EnvironmentService {
             commit = b.commit;
             lock_hash = b.lock_hash;
         }
+        // The revision Studio keeps, as the build took it (ADR-0053 §2): the
+        // chart is rendered from it. An uninstall renders nothing.
+        let description = match (
+            req.action,
+            self.hub.get::<dyn crate::product::port::ProjectProducts>(),
+        ) {
+            (DeploymentAction::Install, Ok(products)) => products
+                .latest_description(ctx, project)
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::warn!(%project, error = %format!("{e:#}"), "studio-environments: the description revision could not be read; the deploy renders the checkout's");
+                    None
+                }),
+            _ => None,
+        };
         let product = Self::release_name(&product)?;
         let project_name = self.project_name(ctx, project).await?;
         let namespace = model::namespace_for(&env.namespace_pattern, &project_name, &env.name)?;
@@ -3342,6 +3357,8 @@ impl EnvironmentService {
                 commit: commit.unwrap_or_default(),
                 requested_by: Some(research::Requester::of(ctx)),
                 sign_in: Some(self.own_research(ctx, org, Some(project)).await?),
+                description_revision: description.as_ref().map(|d| d.revision),
+                description_text: description.map(|d| d.text),
             }),
         };
         if d.action == DeploymentAction::Install {
