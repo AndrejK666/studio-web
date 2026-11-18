@@ -70,6 +70,13 @@ describe('the Constructor Research kit', () => {
     expect(ownResearchSignIn([conn({ id: 'personal' })])?.id).toBe('personal');
   });
 
+  it('takes the newest of several sign-ins, as the server does', () => {
+    const older = conn({ id: 'emulator', created_at_epoch_secs: 1794217719 });
+    const newer = conn({ id: 'dev', created_at_epoch_secs: 1794997712 });
+    expect(ownResearchSignIn([older, newer])?.id).toBe('dev');
+    expect(ownResearchSignIn([newer, older])?.id).toBe('dev');
+  });
+
   it('keeps the Research environments, by name', () => {
     const list = researchEnvironments([
       env({ id: 'b', name: 'staging' }),

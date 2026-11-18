@@ -18,9 +18,16 @@ export function researchKitApplies(installed: InstalledKits | null | undefined):
 
 /** The member's own sign-in to Constructor Research (ADR-0049 §1, §5): a
  *  `research` connection they made, kept personal. Every build and deploy to
- *  Research runs with it; nobody runs on another member's. */
+ *  Research runs with it; nobody runs on another member's. With several, the
+ *  newest: the one the server builds and deploys with (`own_connection`), so a
+ *  member who signed in again is not shown the sign-in they replaced. */
 export function ownResearchSignIn(connections: readonly Connection[]): Connection | null {
-  return connections.find((c) => c.provider === 'research' && (c.mine === true || c.scope === 'personal')) ?? null;
+  let newest: Connection | null = null;
+  for (const c of connections) {
+    if (c.provider !== 'research' || !(c.mine === true || c.scope === 'personal')) continue;
+    if (!newest || (c.created_at_epoch_secs ?? 0) > (newest.created_at_epoch_secs ?? 0)) newest = c;
+  }
+  return newest;
 }
 
 /** The organization's environments that are Research projects, by name. */
