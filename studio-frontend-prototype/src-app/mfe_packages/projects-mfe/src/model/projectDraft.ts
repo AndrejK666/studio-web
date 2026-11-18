@@ -76,6 +76,7 @@ export interface ProjectDraft {
   /** Keycloak `sub`. One owner, not a list. */
   readonly ownerId: string | null;
   readonly mode: ProjectMode | null;
+  readonly typeKit?: string;
   /** Empty for greenfield, and for modernize until a row is picked. */
   readonly sources: readonly RepositoryPick[];
 }

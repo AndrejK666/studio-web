@@ -388,6 +388,7 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
             ],
             ..KitContents::default()
         },
+        "gears-project" => KitContents::default(),
         // Building and running a product in Constructor Research (ADR-0049,
         // docs/design/studio-kits.md §3.13). Not a base kit by default
         // (`OPT_IN_BUILTIN`); installed for an organization or one project.

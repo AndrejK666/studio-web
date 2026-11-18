@@ -25,6 +25,8 @@ export interface OrgOverview {
   workspaces: OrgWorkspace[];
   money: OrgMoney[] | null;
   waiting_on: OrgQueue[] | null;
+  pulls_without_reviewers?: OrgPull[] | null;
+  recent_failures?: OrgRunFailure[] | null;
   decisions: { undecided: number; candidates: number; registered: number; published: number } | null;
   /**
    * The organization's kits the answer was computed for (ADR-0070 §7): without
@@ -53,8 +55,25 @@ export interface OrgNeed {
   kit?: string | null;
 }
 
+export interface OrgPull {
+  id: string;
+  number: number;
+  title: string;
+  url: string | null;
+  project: string | null;
+  quiet_days: number;
+}
+
+export interface OrgRunFailure {
+  id: string;
+  tenant_id: string;
+  task_type: string;
+  created_at: string;
+}
+
 export interface OrgSpend {
   currency: string;
+  has_prices?: boolean;
   current: number;
   previous: number;
   forecast: number;

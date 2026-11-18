@@ -39,6 +39,7 @@ pub fn tools() -> Vec<Tool> {
                         "brief": { "type": "string",
                             "description": "What is being built; also the PRD's first answer." },
                         "type": { "type": "string", "description": "The project type." },
+                        "project_type_kit": { "type": "string", "description": "The kit that defines the new project's type, from GET /studio-organizations/v1/project-creation-types." },
                         "owner_id": { "type": "string", "description": "You when absent." },
                         "sources": { "type": "array", "maxItems": 100, "items": { "type": "object",
                             "properties": {

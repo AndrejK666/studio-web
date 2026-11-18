@@ -3629,6 +3629,10 @@ fn open_pulls_of(nodes: Vec<GtsNode>, now: i64) -> Vec<super::port::OpenPull> {
                 }
             }
             super::port::OpenPull {
+                id: w.id,
+                number: w.number,
+                title: w.title,
+                url: w.url,
                 project_id: w.project_id,
                 author: w.facts.author,
                 waiting: w.verdict.waiting.as_str().to_owned(),

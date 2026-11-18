@@ -148,6 +148,12 @@ pub struct Plan {
     pub kits: Vec<KitPick>,
 }
 
+impl Plan {
+    fn project_type_kit(&self) -> Option<&str> {
+        self.config.get("project_type_kit").and_then(Value::as_str)
+    }
+}
+
 /// The steps a plan takes, in order.
 pub fn steps_of(plan: &Plan) -> Vec<&'static str> {
     let mut out = vec!["tenant", "config"];
@@ -163,7 +169,7 @@ pub fn steps_of(plan: &Plan) -> Vec<&'static str> {
     if plan.prd.is_some() {
         out.push("prd");
     }
-    if !plan.kits.is_empty() {
+    if !plan.kits.is_empty() || plan.project_type_kit().is_some() {
         out.push("kits");
     }
     out
@@ -706,6 +712,14 @@ impl Steps for InProcess {
             .get::<dyn ProjectKitRequests>()
             .map_err(|_| StepError::Fail("studio-kits is not in this deployment".to_string()))?;
         let ctx = service_ctx(plan.project_id)?;
+        if let Some(slug) = plan.project_type_kit() {
+            kits.install_project_type(&ctx, plan.project_id, plan.organization_id, slug)
+                .await
+                .map_err(|error| retry("the project type kit could not be installed", error))?;
+        }
+        if plan.kits.is_empty() {
+            return Ok("Project type kit installed".to_owned());
+        }
         let have = kits
             .requested(&ctx, plan.project_id)
             .await

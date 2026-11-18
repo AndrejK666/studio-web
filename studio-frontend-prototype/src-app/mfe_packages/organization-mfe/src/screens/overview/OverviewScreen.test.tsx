@@ -109,6 +109,34 @@ describe('OverviewScreen', () => {
     expect(requestWorkspace).toHaveBeenCalledWith(null, { id: 'w1', name: 'Main' }, 'o1');
   });
 
+  it('shows only the pull requests counted in the no-reviewer alert', () => {
+    const data: OrgOverview = {
+      ...overview,
+      waiting_on: [{ person_id: null, who: null, count: 1, oldest_days: 8 }],
+      pulls_without_reviewers: [{
+        id: 'pull-41', number: 41, title: 'Update checkout', url: 'https://github.com/acme/app/pull/41',
+        project: 'App', quiet_days: 8,
+      }],
+    };
+    query.mockReturnValue({ data });
+    render(<OverviewScreen />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'show_unreviewed_pulls' }));
+
+    const pull = screen.getByRole('link', { name: '#41 Update checkout' });
+    expect(pull.getAttribute('href')).toBe('https://github.com/acme/app/pull/41');
+    expect(openScreen).not.toHaveBeenCalled();
+  });
+
+  it('opens the Components decision view directly', () => {
+    query.mockReturnValue({ data: { ...overview, needs: [{ kind: 'components', tone: 'warn', projects: [], components: 2 }] } });
+    render(<OverviewScreen />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Decide' }));
+
+    expect(openScreen).toHaveBeenCalledWith(null, '/components', 'needs-decision');
+  });
+
   it('names the refused connection, the figures and the workspaces', () => {
     render(<OverviewScreen />);
     expect(screen.getByText('Acme')).toBeTruthy();

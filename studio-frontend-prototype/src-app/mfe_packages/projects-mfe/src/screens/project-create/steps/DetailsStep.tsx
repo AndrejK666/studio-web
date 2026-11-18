@@ -20,6 +20,7 @@ import { useProjectCreateText } from '../../../i18n';
 import { CREATE_SLICE_KEY, editDraft } from '../../../slices/createSlice';
 import { useCurrentUser } from '../../../shared/useCurrentUser';
 import { displayName } from '../../../model/project';
+import type { ProjectTypeKit } from '../../../api/ProjectStatusApiService';
 import type { ProjectMode } from '@constructor-studio/mfe-shared';
 import styles from '../NewProjectWizard.module.css';
 
@@ -89,11 +90,11 @@ const OwnerField: React.FC = () => {
 
 OwnerField.displayName = 'OwnerField';
 
-export const DetailsStep: React.FC = () => {
+export const DetailsStep: React.FC<{ projectTypes?: readonly ProjectTypeKit[] }> = ({ projectTypes = [] }) => {
   const t = useProjectCreateText();
   const dispatch = useAppDispatch();
   const draft = useAppSelector((state) => state[CREATE_SLICE_KEY].draft);
-  const ids = { name: useId(), goal: useId(), modeLabel: useId() };
+  const ids = { name: useId(), goal: useId(), modeLabel: useId(), typeLabel: useId() };
 
   return (
     <>
@@ -108,6 +109,19 @@ export const DetailsStep: React.FC = () => {
           autoFocus
         />
       </Field>
+
+      {projectTypes.length > 0 && <Field>
+        <FieldLabel className={styles.fieldLabel} id={ids.typeLabel}>{t('field_project_type')}</FieldLabel>
+        <RadioGroup aria-labelledby={ids.typeLabel} className={styles.modes} value={draft.typeKit ?? ''}
+          onValueChange={(typeKit) => dispatch(editDraft({ typeKit }))}>
+          {projectTypes.map((kit) => <label key={kit.slug} className={styles.modeCard}
+            data-selected={draft.typeKit === kit.slug ? '' : undefined}>
+            <RadioGroupItem className={styles.modeInput} value={kit.slug} />
+            <span className={styles.modeTitle}>{kit.name}</span>
+            <span className={styles.modeHint}>{kit.description}</span>
+          </label>)}
+        </RadioGroup>
+      </Field>}
 
       <Field>
         <FieldLabel className={styles.fieldLabel} htmlFor={ids.goal}>

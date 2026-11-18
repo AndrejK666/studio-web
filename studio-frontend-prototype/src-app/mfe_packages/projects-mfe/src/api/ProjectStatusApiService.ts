@@ -98,8 +98,15 @@ export interface CreateProjectBody {
   mode?: string;
   brief?: string;
   owner_id?: string;
+  project_type_kit?: string;
   sources?: { connection_id: string; full_path: string; clone_url: string; default_branch?: string }[];
   idempotency_key?: string;
+}
+
+export interface ProjectTypeKit {
+  slug: string;
+  name: string;
+  description: string;
 }
 
 /** One row of `GET /rollups` (`RollupDto`): the counts the projects list reads. Null means not asked, not zero. */
@@ -130,6 +137,10 @@ export class ProjectStatusApiService extends BaseApiService {
 
   readonly status = this.protocol(RestEndpointProtocol).queryWith<ProjectStatus, { projectId: string }>(
     ({ projectId }) => `/project-status?${new URLSearchParams({ project_id: projectId })}`
+  );
+
+  readonly projectTypeKits = this.protocol(RestEndpointProtocol).query<{ items: ProjectTypeKit[] }>(
+    '/project-creation-types'
   );
 
   /** Check a project's creation as the caller and queue it as one run (202). */

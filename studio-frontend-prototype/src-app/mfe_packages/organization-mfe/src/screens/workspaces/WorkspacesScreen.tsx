@@ -16,6 +16,7 @@ import {
 } from "@gears-frontx/react";
 import { Button, Skeleton } from "@gears-frontx/ui-kit";
 import {
+  openPlace,
   useOrganization,
   AccountsApiService,
   STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE,
@@ -109,6 +110,13 @@ const WorkspaceList: React.FC<{
     },
     [bridge, organization.id],
   );
+  const openProject = useCallback(
+    (workspaceId: string, projectId: string, failingSpecs = false) => openPlace(bridge, {
+      organizationId: organization.id, workspaceId, projectId,
+      ...(failingSpecs ? { route: '/projects/specs', view: 'failing-specs' } : {}),
+    }),
+    [bridge, organization.id],
+  );
 
   const rename = async (name: string) => {
     if (!renaming) return;
@@ -166,6 +174,7 @@ const WorkspaceList: React.FC<{
                 stuckDays={overview?.stuck_days ?? 7}
                 cash={cash}
                 onOpen={open}
+                onOpenProject={openProject}
                 onRename={setRenaming}
                 onDelete={setDeleting}
               />

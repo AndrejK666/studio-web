@@ -23,6 +23,7 @@ pub use super::gate::{
     KIT_NOT_INSTALLED, KitRefusal, require_kit, sync_wanted, tool_refusal, with_claimed_routes,
 };
 use super::installed::KitInstaller;
+pub(crate) use super::manifest::{project_type_kit, project_type_kits};
 pub use super::owners::{KitOwners, MarkOn, Rehome};
 use super::service::KitRegistryService;
 pub use super::service::{CONSTRUCTOR_RESEARCH_KIT, GEARS_MATCHER_KIT};
@@ -46,21 +47,45 @@ pub trait ProjectKitRequests: Send + Sync + 'static {
         kit_slug: &str,
         version: Option<&str>,
     ) -> anyhow::Result<()>;
+
+    /// Activate the chosen built-in type on the project a creation run just made.
+    async fn install_project_type(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+        organization: Uuid,
+        slug: &str,
+    ) -> anyhow::Result<()>;
 }
 
 /// studio-kits' [`ProjectKitRequests`].
 pub struct KitRequests {
     service: Arc<KitRegistryService>,
+    installer: Arc<KitInstaller>,
 }
 
 impl KitRequests {
-    pub(super) fn new(service: Arc<KitRegistryService>) -> Self {
-        Self { service }
+    pub(super) fn new(service: Arc<KitRegistryService>, installer: Arc<KitInstaller>) -> Self {
+        Self { service, installer }
     }
 }
 
 #[async_trait]
 impl ProjectKitRequests for KitRequests {
+    async fn install_project_type(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+        organization: Uuid,
+        slug: &str,
+    ) -> anyhow::Result<()> {
+        self.installer
+            .install_for_created_project(ctx, project, organization, slug)
+            .await
+            .map(|_| ())
+            .map_err(|failure| anyhow::anyhow!("{failure:?}"))
+    }
+
     async fn requested(
         &self,
         ctx: &SecurityContext,

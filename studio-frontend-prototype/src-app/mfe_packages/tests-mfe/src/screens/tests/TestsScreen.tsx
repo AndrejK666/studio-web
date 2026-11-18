@@ -313,7 +313,11 @@ function ProjectTests({
               {main && (
                 <>
                   <span className={styles.muted}>
-                    {main.run.workflow} · <code>{main.run.sha.slice(0, 7)}</code> ·{' '}
+                    {main.run.url && /^https?:\/\//i.test(main.run.url) ? (
+                      <a href={main.run.url} target="_blank" rel="noreferrer" className={styles.link}>
+                        {main.run.workflow}
+                      </a>
+                    ) : main.run.workflow} · <code>{main.run.sha.slice(0, 7)}</code> ·{' '}
                     {relTime(main.run.created_at, language, now)}
                   </span>
                   {main.failed.map((j) => (

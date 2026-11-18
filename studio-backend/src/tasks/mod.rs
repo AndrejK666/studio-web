@@ -199,6 +199,8 @@ pub trait RecentRuns: Send + Sync + 'static {
 /// One run, as [`RecentRuns`] answers it.
 #[derive(Debug, Clone)]
 pub struct RunSummary {
+    pub id: Uuid,
+    pub tenant_id: Uuid,
     pub task_type: String,
     /// `queued`, `running`, `succeeded`, `failed` or `cancelled`.
     pub state: String,
@@ -222,6 +224,8 @@ impl RecentRuns for TaskService {
         Ok(rows
             .into_iter()
             .map(|r| RunSummary {
+                id: r.id,
+                tenant_id: r.tenant_id,
                 task_type: r.task_type,
                 state: r.state,
                 payload: r.payload,

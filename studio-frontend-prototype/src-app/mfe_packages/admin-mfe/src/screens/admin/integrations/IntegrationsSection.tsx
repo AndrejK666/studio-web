@@ -126,7 +126,7 @@ export function Integrations({ org, personal = false }: { org: OrganizationRef; 
         </h3>
       ) : (
         <Header
-          title={t('int_title')}
+          title={personal ? t('int_personal_title') : t('int_organization_title')}
           info={
             <>
               <p>{t('int_about', { name: org.name })}</p>

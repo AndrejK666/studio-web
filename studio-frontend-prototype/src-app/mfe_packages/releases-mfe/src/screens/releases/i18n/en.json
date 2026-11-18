@@ -283,5 +283,6 @@
   "research_build_failed": "The build in Constructor Research failed.",
   "no_environment_admin": "No environment yet. Ask an organization administrator for one.",
   "status_build_outside": "What runs in {environment} was built outside Studio (the IDE or CI): Studio has no build of it on record.",
-  "build_outside_hint": "What runs in {environment} was built outside Studio's records (the IDE or CI). Build here, in the IDE or in CI to record the next one."
+  "build_outside_hint": "What runs in {environment} was built outside Studio's records (the IDE or CI). Build here, in the IDE or in CI to record the next one.",
+  "open_build_infrastructure": "Open organization infrastructure"
 }

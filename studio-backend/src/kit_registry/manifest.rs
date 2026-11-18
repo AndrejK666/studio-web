@@ -64,6 +64,9 @@ pub struct KitManifest {
     pub version: Option<String>,
     #[serde(default)]
     pub levels: Vec<String>,
+    /// This built-in kit can be selected as the project's type at creation.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub project_type: bool,
     /// The kit's icon (#1081): `lucide:<name>`, as a screen's `mfe.json`
     /// names one, or an SVG inside one of its bundles,
     /// `mfe/<package>/<file>.svg`, served through the kit bundle route
@@ -474,6 +477,10 @@ const BUILTIN_MANIFESTS: &[(&str, &str)] = &[
         "constructor-research",
         include_str!("builtin/constructor-research.kit.json"),
     ),
+    (
+        "gears-project",
+        include_str!("builtin/gears-project.kit.json"),
+    ),
     // What the gears-matcher service reads in a project's specifications
     // (ADR-0072): the gear-match screens, routes, tools and Inbox source,
     // out of project-product; opt-in.
@@ -491,6 +498,16 @@ const BUILTIN_MANIFESTS: &[(&str, &str)] = &[
 /// Built-in kit `slug`'s `kit.json`, when it has one.
 pub fn builtin_manifest(slug: &str) -> Option<KitManifest> {
     builtin_manifest_text(slug).map(|body| read_kit_json(body).expect("a built-in kit.json reads"))
+}
+
+pub(crate) fn project_type_kit(slug: &str) -> Option<KitManifest> {
+    builtin_manifest(slug).filter(|kit| kit.project_type)
+}
+
+pub(crate) fn project_type_kits() -> impl Iterator<Item = KitManifest> {
+    BUILTIN_MANIFESTS
+        .iter()
+        .filter_map(|(slug, _)| project_type_kit(slug))
 }
 
 /// Built-in kit `slug`'s compiled-in `kit.json` as written, for a kit's
@@ -561,6 +578,11 @@ fn check(m: &KitManifest) -> Result<(), String> {
                 ORGANIZATION_LEVELS.join(", ")
             ));
         }
+    }
+    if m.project_type && !m.levels.iter().any(|level| level == "project") {
+        return Err(format!(
+            "{KIT_JSON}: a project type must name the project level"
+        ));
     }
     for s in &m.screens {
         if !matches!(s.kind.as_str(), "tab" | "section") {

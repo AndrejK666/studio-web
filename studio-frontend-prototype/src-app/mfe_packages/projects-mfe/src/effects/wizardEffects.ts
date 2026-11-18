@@ -53,6 +53,7 @@ export function creationBody(workspaceId: string, draft: ProjectDraft, key: stri
   };
   if (draft.goal.trim()) body.brief = draft.goal.trim();
   if (draft.ownerId) body.owner_id = draft.ownerId;
+  if (draft.typeKit) body.project_type_kit = draft.typeKit;
   const sources = draft.sources.slice(0, MAX_SOURCES);
   if (sources.length > 0)
     body.sources = sources.map((s) => ({
