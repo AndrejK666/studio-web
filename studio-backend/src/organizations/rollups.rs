@@ -340,6 +340,20 @@ impl Sources {
         if projects.is_empty() {
             return ProjectCounts::default();
         }
+        // The counts live in the workspace's organization's model, whatever
+        // tenant the caller's token names. A platform administrator's home is
+        // the root: `/rollups?workspace_id=` read the root's model and the
+        // projects list said "0 open findings" beside an Overview with 213
+        // (walks of 2026-11-17 and 2026-11-18). The workspace was just listed
+        // as the caller, so the caller reaches it.
+        // A workspace whose organization cannot be read stays as the caller.
+        let org = crate::org_scope::org_of(self.am.as_ref(), ctx, workspace_id).await;
+        let in_org = if org != workspace_id && org != ctx.subject_tenant_id() {
+            crate::org_scope::acting_in(ctx, org).unwrap_or_else(|_| ctx.clone())
+        } else {
+            ctx.clone()
+        };
+        let ctx = &in_org;
         let ids: Vec<Uuid> = projects.iter().map(|(id, _)| *id).collect();
         let scopes: Vec<String> = ids.iter().map(Uuid::to_string).collect();
         let documents = async {
