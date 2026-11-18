@@ -6,6 +6,7 @@ import {
   pathSteps,
   researchEnvironmentFor,
   researchEnvironmentInput,
+  researchEnvironmentName,
   specsStep,
 } from "./path";
 
@@ -74,6 +75,18 @@ describe("the Research target", () => {
 
   it("makes one on the caller's own sign-in otherwise", () => {
     const input = researchEnvironmentInput("conn", { id: "rp", name: "ML team" }, "");
-    expect(input).toMatchObject({ kind: "research", connection_id: "conn", research_project: "rp", research_hardware: null, name: "Research ML team" });
+    expect(input).toMatchObject({ kind: "research", connection_id: "conn", research_project: "rp", research_hardware: null, name: "research-ml-team" });
+  });
+
+  it("names it as the server takes an environment name: a DNS label", () => {
+    const dns = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
+    expect(researchEnvironmentName({ id: "8fae8371", name: "Example project" }, "71c6fd80e5924b5daff0a3c04d3a7144")).toBe(
+      "research-example-project-71c6fd",
+    );
+    expect(researchEnvironmentName({ id: "8FAE8371", name: "" }, null)).toBe("research-8fae8371");
+    expect(researchEnvironmentName({ id: "x", name: "Проект" }, null)).toBe("research-x");
+    const long = researchEnvironmentName({ id: "x", name: "a".repeat(80) }, "gpu-large");
+    expect(long.length).toBeLessThanOrEqual(63);
+    expect(long).toMatch(dns);
   });
 });

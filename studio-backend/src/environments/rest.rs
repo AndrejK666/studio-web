@@ -1176,7 +1176,7 @@ async fn test_project_environment(
         .map_err(problem)?;
     let message = envs
         .0
-        .test_environment(&ctx, org, environment_id, Some(q.project_id))
+        .test_environment(&ctx, &ctx, org, environment_id, Some(q.project_id))
         .await
         .map_err(problem)?;
     Ok(Json(EnvironmentTestDto { message }))
@@ -1224,13 +1224,14 @@ async fn delete_environment(
 }
 
 async fn test_environment(
+    Extension(caller): Extension<SecurityContext>,
     OrgCtx(ctx): OrgCtx,
     Extension(envs): Extension<Environments>,
     Path(environment_id): Path<Uuid>,
 ) -> ApiResult<JsonBody<EnvironmentTestDto>> {
     let message = envs
         .0
-        .test_environment(&ctx, ctx.subject_tenant_id(), environment_id, None)
+        .test_environment(&ctx, &caller, ctx.subject_tenant_id(), environment_id, None)
         .await
         .map_err(problem)?;
     Ok(Json(EnvironmentTestDto { message }))
@@ -1274,13 +1275,14 @@ pub struct ResearchQuery {
 }
 
 async fn list_research_projects(
+    Extension(caller): Extension<SecurityContext>,
     OrgCtx(ctx): OrgCtx,
     Extension(envs): Extension<Environments>,
     Query(q): Query<ResearchQuery>,
 ) -> ApiResult<JsonBody<ResearchProjectListDto>> {
     let items = envs
         .0
-        .research_projects(&ctx, ctx.subject_tenant_id(), q.connection_id)
+        .research_projects(&ctx, &caller, ctx.subject_tenant_id(), q.connection_id)
         .await
         .map_err(problem)?;
     let items: Vec<ResearchProjectDto> = items
@@ -1297,6 +1299,7 @@ async fn list_research_projects(
 }
 
 async fn list_research_hardware(
+    Extension(caller): Extension<SecurityContext>,
     OrgCtx(ctx): OrgCtx,
     Extension(envs): Extension<Environments>,
     Path(project): Path<String>,
@@ -1304,7 +1307,13 @@ async fn list_research_hardware(
 ) -> ApiResult<JsonBody<ResearchHardwareListDto>> {
     let items = envs
         .0
-        .research_hardware(&ctx, ctx.subject_tenant_id(), q.connection_id, &project)
+        .research_hardware(
+            &ctx,
+            &caller,
+            ctx.subject_tenant_id(),
+            q.connection_id,
+            &project,
+        )
         .await
         .map_err(problem)?;
     let items: Vec<ResearchHardwareDto> = items
@@ -1838,19 +1847,21 @@ async fn decide_deployment(
 }
 
 async fn get_deployment_status(
+    Extension(caller): Extension<SecurityContext>,
     OrgCtx(ctx): OrgCtx,
     Extension(envs): Extension<Environments>,
     Path(deployment_id): Path<Uuid>,
 ) -> ApiResult<JsonBody<DeploymentStatusDto>> {
     let (d, r) = envs
         .0
-        .status(&ctx, ctx.subject_tenant_id(), deployment_id)
+        .status(&ctx, &caller, ctx.subject_tenant_id(), deployment_id)
         .await
         .map_err(problem)?;
     Ok(Json(status_dto(d, r)))
 }
 
 async fn get_deployment_logs(
+    Extension(caller): Extension<SecurityContext>,
     OrgCtx(ctx): OrgCtx,
     Extension(envs): Extension<Environments>,
     Path(deployment_id): Path<Uuid>,
@@ -1860,6 +1871,7 @@ async fn get_deployment_logs(
         .0
         .logs(
             &ctx,
+            &caller,
             ctx.subject_tenant_id(),
             deployment_id,
             super::deploy::log_lines(q.lines),
