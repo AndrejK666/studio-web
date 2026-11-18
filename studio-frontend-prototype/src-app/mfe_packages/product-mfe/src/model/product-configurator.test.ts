@@ -8,10 +8,12 @@ import { describe, expect, it } from "vitest";
 import type { GearCatalogue } from "./product-configurator";
 import {
   byCategory,
+  catalogueNames,
   choosePlugin,
   compose,
   indexCatalogue,
   offers,
+  pickNames,
   removePart,
   slotLabel,
   unsetFields,
@@ -333,5 +335,20 @@ describe("whose a part is", () => {
     );
     expect(two.origin(two.find("shop-orders"))).toBe("project");
     expect(two.origin(two.find("crm-leads"))).toBe("organization");
+  });
+});
+
+describe('names a gear goes by', () => {
+  it('knows a gear by its id and by its crate', () => {
+    const names = catalogueNames(index);
+    expect(names.has('api-gateway')).toBe(true);
+    expect(names.has('cf-gears-api-gateway')).toBe(true);
+    expect(names.has('durable-execution')).toBe(false);
+  });
+
+  it('spells the picks every way, and keeps what it does not know', () => {
+    expect(pickNames(['api-gateway', 'my-own'], index).sort()).toEqual(['api-gateway', 'cf-gears-api-gateway', 'my-own']);
+    expect(pickNames(['cf-gears-authn-resolver'], index)).toContain('authn-resolver');
+    expect(pickNames(['x'], null)).toEqual(['x']);
   });
 });

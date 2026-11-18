@@ -17,11 +17,11 @@
 
 import { useEffect, useState } from 'react';
 import { Badge, Button } from '@gears-frontx/ui-kit';
-import { isNotFound } from '@constructor-studio/mfe-shared';
 import { productApi, type GearConfig, type ProductChange, type ProjectProduct } from '../../../api/client';
 import {
   isFinished,
   matcherProposals,
+  matcherUnavailable,
   organizationStrategy,
   projectChoice,
   specMappingProposals,
@@ -30,9 +30,10 @@ import {
   type Proposal,
   type StrategyId,
 } from '../../../model/assembly';
+import { isRunning } from '../../../model/gear-match';
 import { useAssemblyTranslations } from '../../../i18n';
 import { errText, openTab, Segmented, StatusChip, useScope } from '../../common';
-import { indexCatalogue } from '../../../model/product-configurator';
+import { catalogueNames, indexCatalogue, pickNames } from '../../../model/product-configurator';
 import page from '../../product.module.css';
 
 /** What the strategy proposed, completed by the engine, waiting for the person. */
@@ -96,32 +97,39 @@ export function AssemblyPanel({ round, onChanged }: { round: number; onChanged: 
     try {
       // The catalogue the product reads: a gear outside it cannot be picked.
       // Unreadable, nothing is held back on its account.
-      const [record, names] = await Promise.all([
+      const [record, index] = await Promise.all([
         productApi.projectProduct(projectId),
         productApi
           .gearboxCatalogue()
-          .then((r) => {
-            const index = indexCatalogue(r.catalogue, r, projectId);
-            return new Set(index.gears.map((g) => index.name(g)));
-          })
+          .then((r) => indexCatalogue(r.catalogue, r, projectId))
           .catch(() => null),
       ]);
-      const picks = record?.gears ?? [];
+      const names = index ? catalogueNames(index) : null;
+      const saved = record?.gears ?? [];
+      // Compared under every spelling (id or crate); what is saved stays as it was.
+      const picks = pickNames(saved, index);
       let items: Proposal[];
       if (a.strategy === 'gears_matcher') {
-        const match = await productApi.gearMatch(projectId, 'latest').catch((e: unknown) => {
-          if (isNotFound(e)) return null;
-          throw e;
-        });
-        if (!match) {
-          setNote(t('no_match'));
+        // The latest *finished* match (newest first): a run that is still
+        // going, failed or was stopped since does not hide the one before it.
+        const runs = (await productApi.gearMatches(projectId)).items;
+        const finished = runs.find((m) => isFinished(m.state));
+        if (!finished) {
+          setNote(
+            runs.length === 0
+              ? t('no_match')
+              : runs.some((m) => isRunning(m.state))
+                ? t('match_not_finished')
+                : t('no_finished_match', { state: t(`run_${runs[0].state}`) })
+          );
           return;
         }
-        if (!isFinished(match.summary.state)) {
-          setNote(t('match_not_finished'));
-          return;
-        }
+        const match = await productApi.gearMatch(projectId, finished.match_id);
         items = matcherProposals(match, picks, names);
+        if (items.length === 0) {
+          setNote(t('nothing_from_match', { date: new Date(finished.created_at).toLocaleString() }));
+          return;
+        }
       } else {
         items = specMappingProposals((await productApi.projectPlan(projectId)).items, picks, names);
       }
@@ -129,7 +137,7 @@ export function AssemblyPanel({ round, onChanged }: { round: number; onChanged: 
         setNote(t('nothing_to_propose'));
         return;
       }
-      const done = await productApi.completeProduct([...picks, ...items.map((p) => p.gear)], record?.config ?? {});
+      const done = await productApi.completeProduct([...saved, ...items.map((p) => p.gear)], record?.config ?? {});
       setPending({ strategy: a.strategy, items, record, gears: done.gears, config: done.config, changes: done.changes });
     } catch (e) {
       setErr(errText(e));
@@ -170,18 +178,28 @@ export function AssemblyPanel({ round, onChanged }: { round: number; onChanged: 
 
   const strategyLabel = (s: StrategyId) => t(`strategy_${s}`);
   const offered = a.gears_matcher.offered;
+  // Why the matcher cannot be chosen, said under the choice rather than only
+  // in the disabled button's tooltip, which a pointer-less reader never sees.
+  const unavailable = matcherUnavailable(a);
+  const unavailableText = unavailable
+    ? t(`unavailable_${unavailable}`, { reason: a.gears_matcher.missing ?? '' })
+    : null;
   const choices: { id: ProjectChoice; label: string; title?: string; disabled?: boolean }[] = [
     { id: 'default', label: t('choice_default', { strategy: strategyLabel(organizationStrategy(a)) }) },
     { id: 'spec_mapping', label: strategyLabel('spec_mapping'), title: t('hint_spec_mapping') },
     {
       id: 'gears_matcher',
       label: strategyLabel('gears_matcher'),
-      title: offered ? t('hint_gears_matcher') : (a.gears_matcher.missing ?? t('not_offered')),
+      title: offered ? t('hint_gears_matcher') : (unavailableText ?? t('not_offered')),
       // Not offered here: still shown, so the person sees it exists and why not.
       disabled: !offered && projectChoice(a) !== 'gears_matcher',
     },
   ];
-  const added = pending?.changes.filter((c) => c.added && !pending.items.some((p) => p.gear === c.gear)) ?? [];
+  // What the completion did beyond the proposals, with the engine's reason,
+  // and which gears it kept that still want settings: confirming saves them
+  // as they are, and the product will not resolve until they are given.
+  const added = pending?.changes.filter((c) => c.added && !c.needs?.length) ?? [];
+  const needs = pending?.changes.filter((c) => c.needs?.length) ?? [];
 
   return (
     <div className={page.card} data-product-assembly={a.strategy}>
@@ -223,6 +241,11 @@ export function AssemblyPanel({ round, onChanged }: { round: number; onChanged: 
           items={choices.map((c) => ({ ...c, disabled: c.disabled || busy !== null }))}
         />
       )}
+      {unavailableText && !a.fallback && (
+        <span className={`${page.small} ${page.muted}`} data-product-assembly-unavailable={unavailable ?? ''}>
+          {t('unavailable', { strategy: strategyLabel('gears_matcher'), reason: unavailableText })}
+        </span>
+      )}
       {pending && (
         <div className={page.stack} data-product-assembly-pending>
           <span className={page.small}>{t('pending', { strategy: strategyLabel(pending.strategy) })}</span>
@@ -232,11 +255,16 @@ export function AssemblyPanel({ round, onChanged }: { round: number; onChanged: 
               <span className={`${page.small} ${page.muted}`}>{p.answers.join(', ')}</span>
             </span>
           ))}
-          {added.length > 0 && (
-            <span className={`${page.small} ${page.muted}`}>
-              {t('completion_adds', { gears: added.map((c) => c.gear).join(', ') })}
+          {added.map((c) => (
+            <span key={c.gear} className={`${page.small} ${page.muted}`} data-product-assembly-change={c.gear}>
+              {t('completion_adds', { gear: c.gear, reason: c.reason })}
             </span>
-          )}
+          ))}
+          {needs.map((c) => (
+            <span key={c.gear} className={`${page.small} ${page.error}`} data-product-assembly-needs={c.gear}>
+              {t('completion_needs', { gear: c.gear, settings: (c.needs ?? []).join(', ') })}
+            </span>
+          ))}
           <span className={page.row}>
             <Button type="button" size="sm" onClick={() => void confirm()} disabled={busy !== null} data-product-assembly-confirm>
               {busy === 'confirm' ? t('adding') : t('confirm', { count: String(pending.items.length) })}

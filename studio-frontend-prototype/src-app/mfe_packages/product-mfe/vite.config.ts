@@ -52,7 +52,15 @@ export default defineConfig({
     modulePreload: false,
     /** Default Vite prod behavior; MfeHandlerMF integration test asserts compatibility. */
     minify: true,
-    cssCodeSplit: true,
+    /*
+     * OFF with two exposes, as in projects-mfe: Rollup lifts what both entries
+     * share (product.module.css, the ui-kit rules) into a common chunk whose
+     * CSS `mf-manifest.json` credits to neither expose, and the handler never
+     * injects it into the shadow root. With the Gears matcher entry it was
+     * named after `assembly`, and Project › Product, Gear match and
+     * Organization › Gears matcher all rendered without their page styles.
+     */
+    cssCodeSplit: false,
     rollupOptions: {
       // Preserve bare specifiers for shared deps in the output chunks.
       // The handler rewrites these to blob URLs at runtime.

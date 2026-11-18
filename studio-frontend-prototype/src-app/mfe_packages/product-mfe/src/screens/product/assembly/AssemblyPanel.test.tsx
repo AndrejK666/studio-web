@@ -117,6 +117,17 @@ describe('AssemblyPanel', () => {
     expect((document.querySelector('[data-product-assembly-choice="gears_matcher"]') as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it('says under the choice why the matcher is not offered, when nothing falls back', async () => {
+    vi.spyOn(api, 'assemblyStrategy').mockResolvedValue(
+      strategy({ gears_matcher: { kit_installed: false, configured: true, offered: false } })
+    );
+    draw();
+    const line = await found('[data-product-assembly-unavailable]');
+    expect(line.getAttribute('data-product-assembly-unavailable')).toBe('kit_not_installed');
+    expect(line.textContent).toContain('unavailable_kit_not_installed');
+    expect((document.querySelector('[data-product-assembly-choice="gears_matcher"]') as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it('keeps the project choice', async () => {
     vi.spyOn(api, 'assemblyStrategy').mockResolvedValue(strategy());
     const set = vi
@@ -145,13 +156,19 @@ describe('AssemblyPanel', () => {
     });
     const complete = vi
       .spyOn(api, 'completeProduct')
-      .mockResolvedValue({ gears: ['api-gateway', 'authn-resolver', 'tenant-resolver'], changes: [{ gear: 'tenant-resolver', added: true, reason: 'needed' }], config: {} });
+      .mockResolvedValue({ gears: ['api-gateway', 'authn-resolver', 'tenant-resolver'], changes: [
+        { gear: 'tenant-resolver', added: true, reason: 'needed' },
+        { gear: 'authn-resolver', added: false, reason: 'needs configuration', needs: ['issuer'] },
+      ], config: {} });
     const save = vi.spyOn(api, 'saveProjectProduct').mockResolvedValue({} as never);
     const changed = draw();
     fireEvent.click(await found('[data-product-assembly-propose]'));
     await found('[data-product-assembly-proposal="authn-resolver"]');
     expect(complete).toHaveBeenCalledWith('', ['api-gateway', 'authn-resolver'], {});
     expect(save).not.toHaveBeenCalled();
+    // What the completion changed is said with its reason; a gear still wanting settings is flagged.
+    expect(document.querySelector('[data-product-assembly-change="tenant-resolver"]')).toBeTruthy();
+    expect(document.querySelector('[data-product-assembly-needs="authn-resolver"]')).toBeTruthy();
     fireEvent.click(document.querySelector('[data-product-assembly-confirm]')!);
     await waitFor(() => expect(changed).toHaveBeenCalled());
     expect(save.mock.calls[0][2]).toMatchObject({ product_id: 'todo-app', gears: ['api-gateway', 'authn-resolver', 'tenant-resolver'] });
@@ -161,7 +178,15 @@ describe('AssemblyPanel', () => {
     vi.spyOn(api, 'assemblyStrategy').mockResolvedValue(
       strategy({ strategy: 'gears_matcher', chosen: 'gears_matcher', source: 'project', project: 'gears_matcher' })
     );
-    vi.spyOn(api, 'gearMatch').mockResolvedValue(MATCH);
+    // The newest run failed; the proposals come from the finished one before it.
+    vi.spyOn(api, 'gearMatches').mockResolvedValue({
+      items: [
+        { match_id: 'm2', state: 'failed', requested_by: 'u', created_at: '2026-11-18T11:00:00Z' },
+        MATCH.summary,
+      ],
+      total: 2,
+    } as never);
+    const read = vi.spyOn(api, 'gearMatch').mockResolvedValue(MATCH);
     vi.spyOn(api, 'completeProduct').mockResolvedValue({ gears: ['api-gateway', 'authn-resolver'], changes: [], config: {} });
     vi.spyOn(api, 'saveProjectProduct').mockResolvedValue({} as never);
     const decide = vi.spyOn(api, 'putGearMatchDecision').mockResolvedValue({ subject: 'cpt-x-fr-sign-in' });
@@ -170,5 +195,21 @@ describe('AssemblyPanel', () => {
     fireEvent.click(await found('[data-product-assembly-confirm]'));
     await waitFor(() => expect(decide).toHaveBeenCalled());
     expect(decide.mock.calls[0][2]).toMatchObject({ gear_id: 'gears-rust/authn-resolver', decision: 'accepted' });
+    expect(read).toHaveBeenCalledWith('', 'p1', 'm1');
+  });
+
+  it('says when no gear match has finished, and why', async () => {
+    vi.spyOn(api, 'assemblyStrategy').mockResolvedValue(
+      strategy({ strategy: 'gears_matcher', chosen: 'gears_matcher', source: 'project', project: 'gears_matcher' })
+    );
+    vi.spyOn(api, 'gearMatches').mockResolvedValue({
+      items: [{ match_id: 'm2', state: 'failed', requested_by: 'u', created_at: '2026-11-18T11:00:00Z' }],
+      total: 1,
+    } as never);
+    const read = vi.spyOn(api, 'gearMatch');
+    draw();
+    fireEvent.click(await found('[data-product-assembly-propose]'));
+    await waitFor(() => expect(document.body.textContent).toContain('no_finished_match'));
+    expect(read).not.toHaveBeenCalled();
   });
 });
