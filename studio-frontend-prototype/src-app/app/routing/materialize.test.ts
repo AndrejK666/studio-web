@@ -488,6 +488,20 @@ describe('materialize', () => {
     expect(adapter.url()).toBe('/?screen=people;org=o1');
   });
 
+  it('keeps the view a link asked for on its section, and drops it with a section it does not open', () => {
+    const kept = setup('/?screen=projects;org=o1;workspace=w1;project=p1;section=artifacts;view=focused', {
+      ...ready, projects: [ATLAS],
+    });
+    kept.materialize();
+    expect(kept.adapter.url()).toBe('/?screen=projects;org=o1;workspace=w1;project=p1;section=artifacts;view=focused');
+    const screenWide = setup('/?screen=people;org=o1;view=focused', ready);
+    screenWide.materialize();
+    expect(screenWide.adapter.url()).toBe('/?screen=people;org=o1;view=focused');
+    const dropped = setup('/?screen=organization;org=o1;section=bogus;view=focused', ready);
+    dropped.materialize();
+    expect(dropped.adapter.url()).toBe('/?screen=organization;org=o1;section=workspaces');
+  });
+
   it('replaces an invalid section with the level\'s first one', () => {
     const { materialize, adapter } = setup('/?screen=organization;org=o1;section=bogus', ready);
     materialize();
