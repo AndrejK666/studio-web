@@ -3580,6 +3580,22 @@
     },
     {
       "method": "GET",
+      "path": "/studio-product/v1/assembly-strategy",
+      "operation_id": "studio_product.get_assembly_strategy",
+      "tag": "StudioProduct",
+      "summary": "How the organization's products are assembled by default",
+      "authenticated": true,
+      "responses": [
+        "AssemblyStrategyDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-product/v1/gdl-file",
       "operation_id": "studio_product.get_gdl_file",
       "tag": "StudioProduct",
@@ -3855,6 +3871,22 @@
       ],
       "errors": [
         "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-product/v1/project-assembly-strategy",
+      "operation_id": "studio_product.get_project_assembly_strategy",
+      "tag": "StudioProduct",
+      "summary": "How the project's product is assembled",
+      "authenticated": true,
+      "responses": [
+        "AssemblyStrategyDto"
+      ],
+      "errors": [
+        "401",
+        "404",
         "500"
       ]
     },
@@ -8401,6 +8433,24 @@
     },
     {
       "method": "PUT",
+      "path": "/studio-product/v1/assembly-strategy",
+      "operation_id": "studio_product.upsert_assembly_strategy",
+      "tag": "StudioProduct",
+      "summary": "Set how the organization's products are assembled by default",
+      "authenticated": true,
+      "request": "SetAssemblyStrategyRequest",
+      "responses": [
+        "AssemblyStrategyDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
       "path": "/studio-product/v1/gear-explanations/{gear_id}",
       "operation_id": "studio_product.update_gear_explanation",
       "tag": "StudioProduct",
@@ -8485,6 +8535,24 @@
       "errors": [
         "400",
         "401",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-product/v1/project-assembly-strategy",
+      "operation_id": "studio_product.upsert_project_assembly_strategy",
+      "tag": "StudioProduct",
+      "summary": "Choose how the project's product is assembled",
+      "authenticated": true,
+      "request": "SetAssemblyStrategyRequest",
+      "responses": [
+        "AssemblyStrategyDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
         "500"
       ]
     },

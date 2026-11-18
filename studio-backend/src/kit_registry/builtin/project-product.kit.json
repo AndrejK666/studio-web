@@ -55,6 +55,8 @@
       "POST /studio-product/v1/gearbox/brings",
       "POST /studio-product/v1/gearbox/config-schema",
       "GET /studio-product/v1/gear-explanations",
+      "GET /studio-product/v1/project-assembly-strategy",
+      "GET /studio-product/v1/assembly-strategy",
       "GET /studio-components-catalog/v1/components",
       "GET /studio-components-catalog/v1/profiles",
       "GET /studio-components-catalog/v1/sources",
@@ -71,12 +73,11 @@
       "GET /studio-spec-mapping/v1/requirements",
       "POST /studio-spec-mapping/v1/conformance",
       "GET /studio-product/v1/gear-matches",
-      "GET /studio-product/v1/gear-matches/{match_id}",
-      "GET /studio-product/v1/gear-matches/{match_id}/diff",
-      "GET /studio-product/v1/inbox/gear-match-questions"
+      "GET /studio-product/v1/gear-matches/{match_id}"
     ],
     "writes": [
       "PUT /studio-product/v1/projects/{project_id}/product",
+      "PUT /studio-product/v1/project-assembly-strategy",
       "POST /studio-product/v1/product-description-revisions",
       "PUT /studio-product/v1/product-infra",
       "PUT /studio-product/v1/product-kind",
@@ -84,11 +85,7 @@
       "POST /studio-product/v1/gear-explanations/{gear_id}/generations",
       "POST /studio-spec-mapping/v1/decisions",
       "POST /studio-components-catalog/v1/sync",
-      "PUT /studio-components-catalog/v1/sources",
-      "POST /studio-product/v1/gear-matches",
-      "POST /studio-product/v1/gear-matches/{match_id}/cancel",
-      "PUT /studio-product/v1/gear-match-decisions",
-      "PUT /studio-product/v1/gear-match-answers"
+      "PUT /studio-components-catalog/v1/sources"
     ]
   },
   "gears": [
@@ -113,20 +110,16 @@
         "product_kind",
         "product_kind_confirm",
         "gdl_file",
-        "project_gear_match",
-        "project_gear_match_report"
+        "product_assembly_strategy"
       ],
       "routes": [
         "PUT /studio-product/v1/projects/{project_id}/product",
+        "PUT /studio-product/v1/project-assembly-strategy",
         "POST /studio-product/v1/product-description-revisions",
         "PUT /studio-product/v1/product-infra",
         "PUT /studio-product/v1/product-kind",
         "PUT /studio-product/v1/gear-explanations/{gear_id}",
-        "POST /studio-product/v1/gear-explanations/{gear_id}/generations",
-        "POST /studio-product/v1/gear-matches",
-        "POST /studio-product/v1/gear-matches/{match_id}/cancel",
-        "PUT /studio-product/v1/gear-match-decisions",
-        "PUT /studio-product/v1/gear-match-answers"
+        "POST /studio-product/v1/gear-explanations/{gear_id}/generations"
       ]
     },
     {
@@ -140,14 +133,6 @@
       "routes": [
         "POST /studio-spec-mapping/v1/decisions"
       ]
-    }
-  ],
-  "inbox": [
-    {
-      "id": "gear-match-questions",
-      "label": "Questions your gear matches wait on",
-      "kind": "endpoint",
-      "path": "/studio-product/v1/inbox/gear-match-questions"
     }
   ]
 }

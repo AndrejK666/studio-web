@@ -14,6 +14,7 @@ impl MigratorTrait for Migrator {
             Box::new(m0001::Migration),
             Box::new(m0002::Migration),
             Box::new(m0003::Migration),
+            Box::new(m0004::Migration),
         ]
     }
 }
@@ -206,6 +207,57 @@ CREATE TABLE IF NOT EXISTS studio_product_gear_match_notes (
                     "DROP TABLE IF EXISTS studio_product_gear_match_notes; \
                      DROP TABLE IF EXISTS studio_product_gear_matches;",
                 )
+                .await?;
+            Ok(())
+        }
+    }
+}
+
+mod m0004 {
+    use toolkit_db::sea_orm_migration::prelude::*;
+    use toolkit_db::sea_orm_migration::sea_orm;
+    use toolkit_db::sea_orm_migration::sea_orm::ConnectionTrait;
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m0004_studio_product_assembly_strategies"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if manager.get_database_backend() != sea_orm::DatabaseBackend::Postgres {
+                return Err(DbErr::Custom(
+                    "studio-product migrations: only PostgreSQL is supported".to_owned(),
+                ));
+            }
+            manager
+                .get_connection()
+                .execute_unprepared(
+                    r"
+-- How a product is assembled (ADR-0072): the organization's default
+-- (scope_id = the organization) and each project's own choice over it.
+CREATE TABLE IF NOT EXISTS studio_product_assembly_strategies (
+    tenant_id     UUID   NOT NULL,
+    scope_id      UUID   NOT NULL,
+    strategy      TEXT   NOT NULL,
+    set_by        TEXT   NOT NULL,
+    updated_at_ms BIGINT NOT NULL,
+    PRIMARY KEY (tenant_id, scope_id)
+);
+                    ",
+                )
+                .await?;
+            Ok(())
+        }
+
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            manager
+                .get_connection()
+                .execute_unprepared("DROP TABLE IF EXISTS studio_product_assembly_strategies;")
                 .await?;
             Ok(())
         }

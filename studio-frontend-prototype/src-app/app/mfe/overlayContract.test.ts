@@ -484,6 +484,10 @@ describe('generated MFE manifest', () => {
         'Sources',
         // The Releases kit's screen (order 36, ADR-0056 §4): right after Sources (35).
         'Releases',
+        // The Gears matcher kit's Gear match (product-mfe's second entry,
+        // order 37, ADR-0072): after Releases; shown only where that opt-in
+        // kit is installed.
+        'Gear match',
         'Activity',
         'Timeline',
         // The project's People (team-mfe): the shell's since ADR-0071 step 6.

@@ -474,6 +474,13 @@ const BUILTIN_MANIFESTS: &[(&str, &str)] = &[
         "constructor-research",
         include_str!("builtin/constructor-research.kit.json"),
     ),
+    // What the gears-matcher service reads in a project's specifications
+    // (ADR-0072): the gear-match screens, routes, tools and Inbox source,
+    // out of project-product; opt-in.
+    (
+        "gears-matcher",
+        include_str!("builtin/gears-matcher.kit.json"),
+    ),
     // The API reference: a screen (`contents.rs`) and the route it reads.
     (
         "studio-api-docs",

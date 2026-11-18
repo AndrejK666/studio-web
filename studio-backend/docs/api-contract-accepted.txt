@@ -1252,6 +1252,7 @@ request	PUT /studio-organizations/v1/logo	data	String	required
 request	PUT /studio-organizations/v1/name	name	String	required
 request	PUT /studio-organizations/v1/project-types	phases	Vec<Value>	optional
 request	PUT /studio-organizations/v1/project-types	types	Vec<Value>	optional
+request	PUT /studio-product/v1/assembly-strategy	strategy	String	optional
 request	PUT /studio-product/v1/gear-explanations/{}	text	String	required
 request	PUT /studio-product/v1/gear-match-answers	match_id	Uuid	optional
 request	PUT /studio-product/v1/gear-match-answers	question_id	String	required
@@ -1264,6 +1265,7 @@ request	PUT /studio-product/v1/gear-match-decisions	requirement_id	String	requir
 request	PUT /studio-product/v1/product-infra	base_revision	i64	optional
 request	PUT /studio-product/v1/product-infra	items	Vec<Value>	required
 request	PUT /studio-product/v1/product-kind	kind	String	required
+request	PUT /studio-product/v1/project-assembly-strategy	strategy	String	optional
 request	PUT /studio-product/v1/projects/{}/product	config	Value	optional
 request	PUT /studio-product/v1/projects/{}/product	frontend	Value	optional
 request	PUT /studio-product/v1/projects/{}/product	gears	Vec<String>	optional
@@ -4945,6 +4947,24 @@ response	GET /studio-presence/v1/online	items.tenant_id	String	always
 response	GET /studio-presence/v1/online	items.user_id	String	always
 response	GET /studio-presence/v1/online	online_ttl_ms	i64	always
 response	GET /studio-presence/v1/online	total	u32	always
+response	GET /studio-product/v1/assembly-strategy	chosen	String	always
+response	GET /studio-product/v1/assembly-strategy	fallback	{}	optional
+response	GET /studio-product/v1/assembly-strategy	fallback.code	String	optional
+response	GET /studio-product/v1/assembly-strategy	fallback.reason	String	optional
+response	GET /studio-product/v1/assembly-strategy	gears_matcher	{}	always
+response	GET /studio-product/v1/assembly-strategy	gears_matcher.configured	bool	always
+response	GET /studio-product/v1/assembly-strategy	gears_matcher.kit_installed	bool	optional
+response	GET /studio-product/v1/assembly-strategy	gears_matcher.missing	String	optional
+response	GET /studio-product/v1/assembly-strategy	gears_matcher.offered	bool	always
+response	GET /studio-product/v1/assembly-strategy	may_set_default	bool	always
+response	GET /studio-product/v1/assembly-strategy	organization_default	String	optional
+response	GET /studio-product/v1/assembly-strategy	organization_id	String	always
+response	GET /studio-product/v1/assembly-strategy	project	String	optional
+response	GET /studio-product/v1/assembly-strategy	project_id	String	optional
+response	GET /studio-product/v1/assembly-strategy	settable	bool	always
+response	GET /studio-product/v1/assembly-strategy	source	String	always
+response	GET /studio-product/v1/assembly-strategy	strategies	Vec<String>	always
+response	GET /studio-product/v1/assembly-strategy	strategy	String	always
 response	GET /studio-product/v1/gdl-file	path	String	always
 response	GET /studio-product/v1/gdl-file	source	String	always
 response	GET /studio-product/v1/gdl-file	text	String	always
@@ -5199,6 +5219,24 @@ response	GET /studio-product/v1/product-kind	kinds.what	String	always
 response	GET /studio-product/v1/product-kind	proposed	String	always
 response	GET /studio-product/v1/product-kind	reasons	Vec<String>	always
 response	GET /studio-product/v1/product-kind	status	String	always
+response	GET /studio-product/v1/project-assembly-strategy	chosen	String	always
+response	GET /studio-product/v1/project-assembly-strategy	fallback	{}	optional
+response	GET /studio-product/v1/project-assembly-strategy	fallback.code	String	optional
+response	GET /studio-product/v1/project-assembly-strategy	fallback.reason	String	optional
+response	GET /studio-product/v1/project-assembly-strategy	gears_matcher	{}	always
+response	GET /studio-product/v1/project-assembly-strategy	gears_matcher.configured	bool	always
+response	GET /studio-product/v1/project-assembly-strategy	gears_matcher.kit_installed	bool	optional
+response	GET /studio-product/v1/project-assembly-strategy	gears_matcher.missing	String	optional
+response	GET /studio-product/v1/project-assembly-strategy	gears_matcher.offered	bool	always
+response	GET /studio-product/v1/project-assembly-strategy	may_set_default	bool	always
+response	GET /studio-product/v1/project-assembly-strategy	organization_default	String	optional
+response	GET /studio-product/v1/project-assembly-strategy	organization_id	String	always
+response	GET /studio-product/v1/project-assembly-strategy	project	String	optional
+response	GET /studio-product/v1/project-assembly-strategy	project_id	String	optional
+response	GET /studio-product/v1/project-assembly-strategy	settable	bool	always
+response	GET /studio-product/v1/project-assembly-strategy	source	String	always
+response	GET /studio-product/v1/project-assembly-strategy	strategies	Vec<String>	always
+response	GET /studio-product/v1/project-assembly-strategy	strategy	String	always
 response	GET /studio-product/v1/projects/{}/gear-repo	nodes	Vec<{}>	always
 response	GET /studio-product/v1/projects/{}/gear-repo	nodes.instance_id	String	always
 response	GET /studio-product/v1/projects/{}/gear-repo	nodes.type_id	String	always
@@ -8459,6 +8497,24 @@ response	PUT /studio-organizations/v1/logo	digest	String	always
 response	PUT /studio-organizations/v1/name	name	String	always
 response	PUT /studio-organizations/v1/name	tenant_id	String	always
 response	PUT /studio-organizations/v1/project-types	types	Vec<Value>	always
+response	PUT /studio-product/v1/assembly-strategy	chosen	String	always
+response	PUT /studio-product/v1/assembly-strategy	fallback	{}	optional
+response	PUT /studio-product/v1/assembly-strategy	fallback.code	String	optional
+response	PUT /studio-product/v1/assembly-strategy	fallback.reason	String	optional
+response	PUT /studio-product/v1/assembly-strategy	gears_matcher	{}	always
+response	PUT /studio-product/v1/assembly-strategy	gears_matcher.configured	bool	always
+response	PUT /studio-product/v1/assembly-strategy	gears_matcher.kit_installed	bool	optional
+response	PUT /studio-product/v1/assembly-strategy	gears_matcher.missing	String	optional
+response	PUT /studio-product/v1/assembly-strategy	gears_matcher.offered	bool	always
+response	PUT /studio-product/v1/assembly-strategy	may_set_default	bool	always
+response	PUT /studio-product/v1/assembly-strategy	organization_default	String	optional
+response	PUT /studio-product/v1/assembly-strategy	organization_id	String	always
+response	PUT /studio-product/v1/assembly-strategy	project	String	optional
+response	PUT /studio-product/v1/assembly-strategy	project_id	String	optional
+response	PUT /studio-product/v1/assembly-strategy	settable	bool	always
+response	PUT /studio-product/v1/assembly-strategy	source	String	always
+response	PUT /studio-product/v1/assembly-strategy	strategies	Vec<String>	always
+response	PUT /studio-product/v1/assembly-strategy	strategy	String	always
 response	PUT /studio-product/v1/gear-explanations/{}	gear_id	String	always
 response	PUT /studio-product/v1/gear-explanations/{}	source	String	always
 response	PUT /studio-product/v1/gear-explanations/{}	text	String	always
@@ -8501,6 +8557,24 @@ response	PUT /studio-product/v1/product-kind	kinds.what	String	always
 response	PUT /studio-product/v1/product-kind	proposed	String	always
 response	PUT /studio-product/v1/product-kind	reasons	Vec<String>	always
 response	PUT /studio-product/v1/product-kind	status	String	always
+response	PUT /studio-product/v1/project-assembly-strategy	chosen	String	always
+response	PUT /studio-product/v1/project-assembly-strategy	fallback	{}	optional
+response	PUT /studio-product/v1/project-assembly-strategy	fallback.code	String	optional
+response	PUT /studio-product/v1/project-assembly-strategy	fallback.reason	String	optional
+response	PUT /studio-product/v1/project-assembly-strategy	gears_matcher	{}	always
+response	PUT /studio-product/v1/project-assembly-strategy	gears_matcher.configured	bool	always
+response	PUT /studio-product/v1/project-assembly-strategy	gears_matcher.kit_installed	bool	optional
+response	PUT /studio-product/v1/project-assembly-strategy	gears_matcher.missing	String	optional
+response	PUT /studio-product/v1/project-assembly-strategy	gears_matcher.offered	bool	always
+response	PUT /studio-product/v1/project-assembly-strategy	may_set_default	bool	always
+response	PUT /studio-product/v1/project-assembly-strategy	organization_default	String	optional
+response	PUT /studio-product/v1/project-assembly-strategy	organization_id	String	always
+response	PUT /studio-product/v1/project-assembly-strategy	project	String	optional
+response	PUT /studio-product/v1/project-assembly-strategy	project_id	String	optional
+response	PUT /studio-product/v1/project-assembly-strategy	settable	bool	always
+response	PUT /studio-product/v1/project-assembly-strategy	source	String	always
+response	PUT /studio-product/v1/project-assembly-strategy	strategies	Vec<String>	always
+response	PUT /studio-product/v1/project-assembly-strategy	strategy	String	always
 response	PUT /studio-product/v1/projects/{}/product	instance_id	String	always
 response	PUT /studio-product/v1/projects/{}/product	type_id	String	always
 response	PUT /studio-product/v1/projects/{}/product	value	Value	always
@@ -9008,6 +9082,7 @@ route	GET /studio-organizations/v1/project-status
 route	GET /studio-organizations/v1/project-types
 route	GET /studio-organizations/v1/rollups
 route	GET /studio-presence/v1/online
+route	GET /studio-product/v1/assembly-strategy
 route	GET /studio-product/v1/gdl-file
 route	GET /studio-product/v1/gear-explanations
 route	GET /studio-product/v1/gear-matches
@@ -9026,6 +9101,7 @@ route	GET /studio-product/v1/product-description-revisions
 route	GET /studio-product/v1/product-description-revisions/{}
 route	GET /studio-product/v1/product-infra
 route	GET /studio-product/v1/product-kind
+route	GET /studio-product/v1/project-assembly-strategy
 route	GET /studio-product/v1/projects/{}/gear-repo
 route	GET /studio-product/v1/projects/{}/product
 route	GET /studio-reports/v1/reports
@@ -9295,11 +9371,13 @@ route	PUT /studio-organizations/v1/access-grants
 route	PUT /studio-organizations/v1/logo
 route	PUT /studio-organizations/v1/name
 route	PUT /studio-organizations/v1/project-types
+route	PUT /studio-product/v1/assembly-strategy
 route	PUT /studio-product/v1/gear-explanations/{}
 route	PUT /studio-product/v1/gear-match-answers
 route	PUT /studio-product/v1/gear-match-decisions
 route	PUT /studio-product/v1/product-infra
 route	PUT /studio-product/v1/product-kind
+route	PUT /studio-product/v1/project-assembly-strategy
 route	PUT /studio-product/v1/projects/{}/product
 route	PUT /studio-reports/v1/reports/{}/plan/lanes
 route	PUT /studio-reports/v1/reports/{}/plan/needs

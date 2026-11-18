@@ -212,8 +212,9 @@ without the portal; each step is the REST route the portal calls for it.
 | | `product_infra` | the infra services as the description says them, merged with the catalogue's passports and the environment's side |
 | | `product_kind` | what the product is: Studio's proposal from the specs with its reasons, and the confirmed kind |
 | | `product_kind_confirm` | *changes:* keeps the kind in the project's configuration |
-| | `project_gear_match` | *changes:* sends the project's specifications to the gears-matcher service as one background run (paid model calls); answers `match_id` and `run_id` |
-| | `project_gear_match_report` | a gear match (`latest` or by id): per requirement the verdict, candidate gears with evidence, the passage, and what Studio offers ([design](design/product-gear-match.md)) |
+| | `product_assembly_strategy` | how the product is assembled: `spec_mapping` or `gears_matcher`, whether that is the project's choice, the organization's default or Studio's, and why it falls back ([ADR-0072](adr/0072-gears-matcher-is-a-kit-and-a-product-is-assembled-by-a-strategy.md)) |
+| | `project_gear_match` | *changes:* (Gears matcher kit) sends the project's specifications to the gears-matcher service as one background run (paid model calls); answers `match_id` and `run_id` |
+| | `project_gear_match_report` | (Gears matcher kit) a gear match (`latest` or by id): per requirement the verdict, candidate gears with evidence, the passage, and what Studio offers ([design](design/product-gear-match.md)) |
 | Environments | `deploy_targets` | where the product can deploy, the bindings, the secret keys |
 | | `project_environments` | the project's own environments |
 | | `deploy_bindings_set` | *changes:* which profile each environment runs |
