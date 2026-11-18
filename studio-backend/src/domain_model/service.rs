@@ -254,6 +254,10 @@ pub struct Revision {
     pub undo: Value,
 }
 
+/// The largest model-version payload stored with its patches: graph-storage's
+/// `payload_max_bytes` (64 KiB) less room for the summary.
+const REVISION_PAYLOAD_MAX_BYTES: usize = 60 * 1024;
+
 impl Revision {
     fn new(version: u64, ctx: &SecurityContext, op: &str, target: &str, summary: String) -> Self {
         Self {
@@ -276,8 +280,13 @@ impl Revision {
         self
     }
 
+    /// The version node's payload. graph-storage refuses a node over
+    /// [`REVISION_PAYLOAD_MAX_BYTES`], and a kit's overlay coming or going
+    /// patches hundreds of KB: such a version keeps its summary and drops
+    /// its patches, so it is recorded and nothing is reverted past it (an
+    /// empty inverse, as for an import).
     fn payload(&self) -> Value {
-        json!({
+        let full = json!({
             "version": self.version,
             "at": self.at,
             "by": self.by,
@@ -286,6 +295,23 @@ impl Revision {
             "summary": self.summary,
             "patch": self.patch,
             "undo": self.undo,
+        });
+        if full.to_string().len() <= REVISION_PAYLOAD_MAX_BYTES {
+            return full;
+        }
+        json!({
+            "version": self.version,
+            "at": self.at,
+            "by": self.by,
+            "op": self.op,
+            "target": self.target,
+            "summary": format!(
+                "{} (too large to keep its patches: the model cannot be reverted past it)",
+                self.summary
+            ),
+            "patch": [],
+            "undo": [],
+            "patches_omitted": true,
         })
     }
 

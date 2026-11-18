@@ -1029,3 +1029,54 @@ async fn every_node_the_model_writes_fits_graph_storage() {
         );
     }
 }
+
+/// Taking a kit out of an organization's model records a model version whose
+/// patch and inverse name everything the kit brought: hundreds of KB for the
+/// larger kits. graph-storage refused that version node, nothing was stored,
+/// and the kit stayed in every organization's model (the local stand,
+/// 2026-11-18: every base kit uninstalled, `project-team` never left). The
+/// version is recorded without its patches when they do not fit, and cannot
+/// be reverted past.
+#[tokio::test]
+async fn removing_every_base_kit_writes_only_nodes_that_fit_graph_storage() {
+    use crate::domain_model::store::DomainStore;
+    const PAYLOAD_MAX_BYTES: usize = 65_536;
+    let org = Org::with_base_kits().await;
+    for kit in owners().into_iter().filter(|k| is_base(k)) {
+        if org
+            .installer
+            .installed(&platform(), ORG)
+            .await
+            .unwrap()
+            .base
+            .iter()
+            .any(|k| k.kit_slug == kit)
+        {
+            uninstall_base_with_dependents(&org.installer, &kit).await;
+        }
+    }
+    org.reconcile().await;
+    let nodes = org
+        .store
+        .list_objects(
+            &person(ADMIN),
+            &[
+                crate::domain_model::gts::META_MODEL.to_string(),
+                crate::domain_model::gts::META_OBJECT_TYPE.to_string(),
+                crate::domain_model::gts::META_MODEL_VERSION.to_string(),
+            ],
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    for n in &nodes {
+        let size = n.value.to_string().len();
+        assert!(
+            size <= PAYLOAD_MAX_BYTES,
+            "{} {} is {size} bytes, over graph-storage's {PAYLOAD_MAX_BYTES}",
+            n.type_id,
+            n.instance_id
+        );
+    }
+}
