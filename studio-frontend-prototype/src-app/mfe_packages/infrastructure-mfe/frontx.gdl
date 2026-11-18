@@ -20,7 +20,7 @@ mfe(
     version = "0.2.0-alpha.0",
 
     # The backend gears its screens call, by gear id.
-    requires = ["studio-environments", "studio-connector", "studio-kits", "account-management"],
+    requires = ["studio-environments", "studio-connector", "studio-kits", "studio-user", "account-management"],
 
     screens = ["Infrastructure", "Constructor Research"],
     mounts = ["/infrastructure", "/constructor-research"],

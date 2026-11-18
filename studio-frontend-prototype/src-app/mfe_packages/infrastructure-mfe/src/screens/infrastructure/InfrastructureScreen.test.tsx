@@ -110,6 +110,7 @@ function setUp({
   kits?: string[];
 } = {}) {
   calls.length = 0;
+  window.localStorage.clear();
   for (const k of Object.keys(service)) delete service[k];
   const list: EnvironmentList = { items: environments, total: environments.length, may_manage: mayManage, open_clusters: { connection_ids: [] } };
   Object.assign(service, {
@@ -119,7 +120,7 @@ function setUp({
       items: [conn({}), conn({ id: 'c-reg', provider: 'registry', label: 'ghcr', base_url: 'https://ghcr.io' })],
     }),
     deployments: read('deployments', { items: deployments, total: deployments.length }),
-    tenantUsers: read('tenantUsers', { items: [] }),
+    orgMembers: read('orgMembers', { items: [], total: 0 }),
     getWorkspaces: read('getWorkspaces', { items: [{ id: 'w1', name: 'Web' }] }),
     getProjects: read('getProjects', { items: [{ id: 'p1', name: 'Shop' }] }),
     testConnection: write('testConnection', {
@@ -157,6 +158,18 @@ describe('Organization › Infrastructure', () => {
     await waitFor(() => expect(calls.filter((c) => c.name === 'testConnection').map((c) => c.args[0])).toEqual(['c-k8s', 'c-reg']));
     const card = document.querySelector('[data-place="main cluster"]') as HTMLElement;
     await waitFor(() => expect(within(card).getByText(/may_not/).textContent).toContain('create namespaces'));
+  });
+
+  it('does not test the places again on a second visit within five minutes', async () => {
+    const first = renderScreen();
+    await waitFor(() => expect(calls.filter((c) => c.name === 'testConnection')).toHaveLength(2));
+    first.unmount();
+    calls.length = 0;
+    renderScreen();
+    await waitFor(() =>
+      expect(within(document.querySelector('[data-place="main cluster"]') as HTMLElement).getByText(/may_not/)).toBeTruthy()
+    );
+    expect(calls.filter((c) => c.name === 'testConnection')).toHaveLength(0);
   });
 
   it('says the deploys waiting for a decision, and an administrator approves one', async () => {

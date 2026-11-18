@@ -126,6 +126,43 @@ interface Health {
   text: string;
 }
 
+/**
+ * Each place's last answer, kept in localStorage this long: a test is a live call to the cluster or the registry, and
+ * every visit asked all of them again (walks 2026-11-16..18). Test asks again whenever wanted.
+ */
+const PLACE_HEALTH_TTL_MS = 5 * 60 * 1000;
+const PLACE_HEALTH_KEY = 'studio.infrastructure.place-health.v1';
+
+type StoredPlaceHealth = Health & { at: number };
+
+function readPlaceHealth(): Record<string, StoredPlaceHealth> {
+  try {
+    const raw = window.localStorage.getItem(PLACE_HEALTH_KEY);
+    return raw ? (JSON.parse(raw) as Record<string, StoredPlaceHealth>) : {};
+  } catch {
+    return {};
+  }
+}
+
+export function storedPlaceHealth(key: string, now = Date.now()): Health | null {
+  const h = readPlaceHealth()[key];
+  if (!h || (h.state !== 'ok' && h.state !== 'bad') || typeof h.at !== 'number' || now - h.at >= PLACE_HEALTH_TTL_MS) {
+    return null;
+  }
+  return { state: h.state, text: h.text };
+}
+
+export function storePlaceHealth(key: string, h: Health, now = Date.now()): void {
+  if (h.state === 'checking') return;
+  try {
+    // Expired answers go on every write, so the record never outgrows the live places.
+    const kept = Object.fromEntries(Object.entries(readPlaceHealth()).filter(([, e]) => now - e.at < PLACE_HEALTH_TTL_MS));
+    window.localStorage.setItem(PLACE_HEALTH_KEY, JSON.stringify({ ...kept, [key]: { ...h, at: now } }));
+  } catch {
+    // A private window or blocked storage: the answer lasts this page load only.
+  }
+}
+
 type Tab = 'ladder' | 'where' | 'namespaces' | 'retention';
 
 /** "Add a place ▾": the one way a place is added, whatever its kind. A
@@ -259,8 +296,8 @@ function OrgInfrastructure({ onOpenConnections, onOpenKits }: { onOpenConnection
   /** Bumped to read everything again. */
   const [round, setRound] = useState(0);
   const load = useCallback(() => setRound((n) => n + 1), []);
-  const { projects, workspaceIds } = useProjects(org.id);
-  const people = usePeople([org.id, ...workspaceIds]);
+  const { projects } = useProjects(org.id);
+  const people = usePeople(org.id);
   /** Whether the organization has the Constructor Research kit; null until
    *  read, or when studio-kits does not answer (then nothing is held back). */
   const [researchKit, setResearchKit] = useState<boolean | null>(null);
@@ -361,22 +398,35 @@ function OrgInfrastructure({ onOpenConnections, onOpenKits }: { onOpenConnection
         .catch((e: unknown): Health => ({ state: 'bad', text: errText(e) })),
     [api, org.id, t]
   );
-  // Every cluster and registry is asked once when the page opens, so the
-  // cards say at a glance which answer. A Research sign-in is a member's own
-  // and is tested from Connections.
+  // Every cluster and registry is asked when the page opens, so the cards say
+  // at a glance which answer; an answer younger than PLACE_HEALTH_TTL_MS is
+  // shown instead of asking again. A Research sign-in is a member's own and
+  // is tested from Connections.
   const testedIds = [...clusters, ...registries].map((c) => c.id).join(',');
   useEffect(() => {
     if (!testedIds) return;
     let live = true;
-    for (const id of testedIds.split(','))
-      void test(id).then((h) => live && setHealth((all) => ({ ...all, [id]: h })));
+    for (const id of testedIds.split(',')) {
+      const key = `${org.id}/${id}`;
+      const kept = storedPlaceHealth(key);
+      const answer = kept
+        ? Promise.resolve(kept)
+        : test(id).then((h) => {
+            storePlaceHealth(key, h);
+            return h;
+          });
+      void answer.then((h) => live && setHealth((all) => ({ ...all, [id]: h })));
+    }
     return () => {
       live = false;
     };
-  }, [testedIds, test]);
+  }, [testedIds, test, org.id]);
   const testAgain = (id: string) => {
     setHealth((all) => ({ ...all, [id]: { state: 'checking', text: t('checking') } }));
-    void test(id).then((h) => setHealth((all) => ({ ...all, [id]: h })));
+    void test(id).then((h) => {
+      storePlaceHealth(`${org.id}/${id}`, h);
+      setHealth((all) => ({ ...all, [id]: h }));
+    });
   };
   /** A place's answer: a cluster or registry not answered yet is being asked. */
   const healthOf = (p: Place): Health | null =>

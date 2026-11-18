@@ -26,7 +26,7 @@ its Kits.
   open clusters, deploys and decisions, status, logs, readiness, Research
   projects and hardware, namespace assignments, image retention, registries),
   `studio-connector` (the places: list, connect, test) and
-  `account-management` users (names in deploy lines).
+  `studio-user` organization members (names in deploy lines).
 - `src/assets/bootstrap.yaml` — a copy of the repository's
   `deploy/k8s/studio-environments/bootstrap.yaml`, shown by "Connect a
   cluster" (imported with `?raw`). The portal's image builds from

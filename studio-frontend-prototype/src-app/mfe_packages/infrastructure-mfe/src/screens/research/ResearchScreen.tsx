@@ -114,8 +114,8 @@ function OrgResearch({
   const [busy, setBusy] = useState<string | null>(null);
   const [round, setRound] = useState(0);
   const load = useCallback(() => setRound((n) => n + 1), []);
-  const { projects, workspaceIds } = useProjects(org.id);
-  const people = usePeople([org.id, ...workspaceIds]);
+  const { projects } = useProjects(org.id);
+  const people = usePeople(org.id);
 
   useEffect(() => {
     let live = true;
