@@ -23,6 +23,8 @@ mod project_create_rest;
 pub mod project_types;
 /// The logo document only this gear writes, for the PDP's gear-held list.
 pub use logo::LOGO_METADATA_TYPE;
+/// The subject the organization gear acts as (its project creation run, the logo).
+pub use logo::SERVICE_SUBJECT_ID;
 /// The project status tool (`crate::mcp`).
 pub(crate) use mcp::tools as mcp_tools;
 pub mod port;

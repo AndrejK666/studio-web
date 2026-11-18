@@ -451,7 +451,7 @@ impl KitInstaller {
         organization: Uuid,
         slug: &str,
     ) -> Result<InstalledKit, Refusal> {
-        if ctx.subject_id() != crate::organizations::logo::SERVICE_SUBJECT_ID
+        if ctx.subject_id() != crate::organizations::SERVICE_SUBJECT_ID
             || ctx.subject_tenant_id() != project
         {
             return Err(Refusal::Forbidden(KIT_ADMIN_REQUIRED));

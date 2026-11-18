@@ -138,6 +138,8 @@ pub struct ProjectTypeKitDto {
 #[toolkit_macros::api_dto(response)]
 pub struct ProjectTypeKitsDto {
     pub items: Vec<ProjectTypeKitDto>,
+    /// Every project type kit; the list is never paged.
+    pub total: u32,
 }
 
 async fn list_project_type_kits() -> ApiResult<JsonBody<ProjectTypeKitsDto>> {
@@ -149,7 +151,8 @@ async fn list_project_type_kits() -> ApiResult<JsonBody<ProjectTypeKitsDto>> {
         })
         .collect();
     items.sort_by(|a, b| a.name.cmp(&b.name));
-    Ok(Json(ProjectTypeKitsDto { items }))
+    let total = u32::try_from(items.len()).unwrap_or(u32::MAX);
+    Ok(Json(ProjectTypeKitsDto { items, total }))
 }
 
 /// One step of a creation.
@@ -716,6 +719,9 @@ pub fn register(
     let router = OperationBuilder::get("/studio-organizations/v1/project-creation-types")
         .operation_id("studio_organizations.list_project_creation_types")
         .summary("Kits that define a project type")
+        .description(
+            "The built-in kits marked `project_type` (Gears, Constructor Research), sorted by              name: the New project wizard offers one of them as the project's type, and              `POST project-creations` installs the chosen kit in the new project. The list is              compiled in, the same for every organization, and never paged.",
+        )
         .tag("StudioOrganizations")
         .authenticated()
         .require_license_features::<super::rest::License>([])
@@ -726,6 +732,7 @@ pub fn register(
             "Project type kits",
         )
         .error_401(openapi)
+        .error_500(openapi)
         .register(router, openapi);
     let router = OperationBuilder::post("/studio-organizations/v1/project-creations")
         .operation_id("studio_organizations.create_project")
