@@ -33,6 +33,8 @@ import type {
   RunState,
 } from './types';
 
+import type { StrategyId } from '../model/assembly';
+
 export * from './types';
 
 /** Fired with the project's id after its product record was written. */
@@ -220,6 +222,16 @@ export const api = {
     projectId: string,
     body: { question_id: string; text: string; topic?: string; match_id?: string }
   ) => svc().putGearMatchAnswer(projectId).fetch(body),
+  assemblyStrategy: (_token: string, projectId: string) => svc().assemblyStrategy({ projectId }).fetch(FRESH),
+  setAssemblyStrategy: (_token: string, projectId: string, strategy: StrategyId | null) =>
+    svc().setAssemblyStrategy(projectId).fetch({ strategy }),
+  organizationAssemblyStrategy: (_token: string, organizationId: string) =>
+    svc().organizationAssemblyStrategy({ organizationId }).fetch(FRESH),
+  setOrganizationAssemblyStrategy: (
+    _token: string,
+    organizationId: string,
+    strategy: StrategyId | null
+  ) => svc().setOrganizationAssemblyStrategy(organizationId).fetch({ strategy }),
   conformance: (_token: string, projectId: string, capabilities: string[], vocabulary: readonly Capability[]) => {
     const terms: Record<string, string[]> = {};
     const contracts: Record<string, string[]> = {};

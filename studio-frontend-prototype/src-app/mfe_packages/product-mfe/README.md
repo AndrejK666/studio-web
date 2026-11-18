@@ -11,6 +11,22 @@ One entry, two extensions switched on the shell's `section`:
 - **Components** (`/project-components`, kit `components`) — the project's
   inventory (`project-components-view.tsx`).
 
+Product also says how the product is assembled (ADR-0072,
+`src/screens/product/assembly/`): the strategy it uses (`spec_mapping` or
+`gears_matcher`), where that comes from, the project's choice, and "Propose
+gears", which goes through the engine's completion and the person's
+confirmation.
+
+A second entry (`./gearsMatcherLifecycle`, `GearsMatcherRoot.tsx`) is the
+Gears matcher kit's (`gears-matcher`, opt-in), shown only where it is
+installed:
+
+- **Gear match** (`/gear-match`, project) — what the gears-matcher service
+  read in the specs (`src/screens/product/match/`); it was a section of
+  Product.
+- **Gears matcher** (`/gears-matcher`, organization) — the service's state
+  and the organization's default strategy (`src/screens/matcher/`).
+
 Layout:
 
 - `src/model/` — the prototype's pure modules, unchanged but for import

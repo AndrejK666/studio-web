@@ -36,6 +36,5 @@
   "roles_pinned": "закреплён {commit}",
   "roles_not_saved": "не сохранено",
   "source_branch_gone": "Источник {repository} указывает на ветку {branch}, которой больше нет: подключите репозиторий заново на существующей ветке (Источники).",
-  "source_clone_failed": "Не удалось клонировать источник {repository}: {cause}",
-  "tab_match": "Подбор гиров"
+  "source_clone_failed": "Не удалось клонировать источник {repository}: {cause}"
 }
