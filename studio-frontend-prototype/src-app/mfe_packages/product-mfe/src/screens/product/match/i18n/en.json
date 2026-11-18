@@ -1,4 +1,5 @@
 {
+  "no_project": "Open a project to see its gear matches.",
   "title": "Gear match",
   "lead": "The gears-matcher service reads the project's specifications and says, per requirement, which gears of the catalogue cover it, with its evidence. Nothing goes into the product until you add it.",
   "start": "Match gears from the specs",

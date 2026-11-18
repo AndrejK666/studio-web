@@ -183,6 +183,36 @@ fn the_builtin_screens_are_today_s_tabs() {
     assert_eq!(tools, ["research_projects", "research_hardware"]);
     let mcp: Vec<&str> = crate::mcp::tools().iter().map(|t| t.name).collect();
     assert!(tools.iter().all(|t| mcp.contains(t)), "{tools:?}");
+    // Gears matcher (ADR-0072): the project's Gear match, out of Product,
+    // and the organization's page with its default assembly strategy.
+    assert_eq!(
+        levels("gears-matcher"),
+        [
+            at("project", "Gear match", Some("/gear-match")),
+            at("organization", "Gears matcher", Some("/gears-matcher"))
+        ]
+    );
+    let matcher = describe(
+        builtin_catalogue()
+            .into_iter()
+            .find(|kit| kit.slug == "gears-matcher")
+            .unwrap(),
+    );
+    let tools: Vec<&str> = matcher
+        .contents
+        .mcp_tools
+        .iter()
+        .map(|t| t.name.as_str())
+        .collect();
+    assert_eq!(tools, ["project_gear_match", "project_gear_match_report"]);
+    assert_eq!(matcher.contents.requires, ["project-product"]);
+    let inbox: Vec<&str> = matcher
+        .contents
+        .inbox
+        .iter()
+        .map(|s| s.id.as_str())
+        .collect();
+    assert_eq!(inbox, ["gear-match-questions"]);
 }
 
 #[test]

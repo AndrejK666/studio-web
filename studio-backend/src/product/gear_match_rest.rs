@@ -1068,7 +1068,7 @@ pub fn register(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .operation_id("studio_product.list_inbox_gear_match_questions")
         .summary("Questions the caller's gear matches wait on")
         .description(
-            "An Inbox `endpoint` source (the Product kit's): for each project the caller asked \
+            "An Inbox `endpoint` source (the Gears matcher kit's): for each project the caller asked \
              a gear match of, the latest finished match's questions nobody has answered yet. \
              An item is answered by `PUT gear-match-answers` and leaves.",
         )

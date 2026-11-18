@@ -1,5 +1,6 @@
 /**
- * Project › Product › Gear match (docs/design/product-gear-match.md): ask the
+ * Project › Gear match, the Gears matcher kit's (ADR-0072; it was a section
+ * of Project › Product), docs/design/product-gear-match.md: ask the
  * gears-matcher service which gears cover the project's specifications, and
  * act on what it says, requirement by requirement —
  *

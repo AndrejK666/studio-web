@@ -38,6 +38,9 @@ mod description_ops_rest;
 #[path = "gear_match_rest.rs"]
 mod gear_match_rest;
 
+#[path = "assembly_rest.rs"]
+mod assembly_rest;
+
 /// Errors attributable to a product resource.
 #[resource_error(gts_id!("cf.studio._.product.v1~"))]
 pub struct StudioProductError;
@@ -3052,6 +3055,7 @@ pub fn register_routes(
     let router = descriptions_rest::register(router, openapi);
     let router = description_ops_rest::register(router, openapi);
     let router = gear_match_rest::register(router, openapi);
+    let router = assembly_rest::register(router, openapi);
     let router = register_legacy_routes(router, openapi);
     router.layer(Extension(Product::new(service, hub, gearbox)))
 }

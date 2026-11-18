@@ -58,6 +58,7 @@ import type { GlossaryEntry, SpecModel } from '../model/spec-model';
 import type { GearCatalogue } from '../model/product-configurator';
 import type { GearBrings } from '../model/gear-brings';
 import type { GearMatch, GearMatchDiff, GearMatchItem } from '../model/gear-match';
+import type { AssemblyStrategy, StrategyId } from '../model/assembly';
 
 /** The tenant-metadata type a project's configuration is kept under. */
 export const PROJECT_CONFIG_TYPE = 'gts.cf.core.am.tenant_metadata.v1~cf.studio.project.config.v1~';
@@ -560,6 +561,35 @@ export class ProductApiService extends BaseApiService {
       { subject: string; value?: string | null },
       { question_id: string; text: string; topic?: string; match_id?: string }
     >('PUT', orgScoped(`/studio-product/v1/gear-match-answers?${project(projectId)}`));
+  }
+
+  /* ── how a product is assembled (studio-product, ADR-0072) ── */
+
+  /** The strategy the project's product is assembled by, where it comes from, and why it falls back. */
+  readonly assemblyStrategy = this.protocol(RestEndpointProtocol).queryWith<AssemblyStrategy, { projectId: string }>(
+    ({ projectId }) => orgScoped(`/studio-product/v1/project-assembly-strategy?${project(projectId)}`)
+  );
+
+  /** The project's own choice; `null` follows the organization's default. */
+  setAssemblyStrategy(projectId: string) {
+    return this.rest.mutation<AssemblyStrategy, { strategy: StrategyId | null }>(
+      'PUT',
+      orgScoped(`/studio-product/v1/project-assembly-strategy?${project(projectId)}`)
+    );
+  }
+
+  /** The organization's default (the organization on screen). */
+  readonly organizationAssemblyStrategy = this.protocol(RestEndpointProtocol).queryWith<
+    AssemblyStrategy,
+    { organizationId: string }
+  >(({ organizationId }) => orgScoped('/studio-product/v1/assembly-strategy', organizationId));
+
+  /** Set the organization's default; `null` goes back to Studio's. */
+  setOrganizationAssemblyStrategy(organizationId: string) {
+    return this.rest.mutation<AssemblyStrategy, { strategy: StrategyId | null }>(
+      'PUT',
+      orgScoped('/studio-product/v1/assembly-strategy', organizationId)
+    );
   }
 
   readonly artifactNodes = this.protocol(RestEndpointProtocol).queryWith<ArtifactNodePage, { query: string }>(

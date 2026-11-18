@@ -32,6 +32,10 @@ export default defineConfig({
       dts: false,
       exposes: {
         './lifecycle': './src/lifecycle.tsx',
+        // Second entry: the Gears matcher kit's screens (ADR-0072), Project ›
+        // Gear match and Organization › Gears matcher, shown only where that
+        // kit is installed (its own lifecycle: one singleton holds one root).
+        './gearsMatcherLifecycle': './src/gearsMatcherLifecycle.tsx',
       },
       // Empty shared config — MF 2.0's shared dep mechanism is bypassed.
       // Shared deps are externalized via rollupOptions.external and provided

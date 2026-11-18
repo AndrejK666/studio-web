@@ -14,6 +14,11 @@
  *   Frontend         the frontend constructor, or "Add a frontend"
  *   Parts            the project's inventory (the Components tab's screen)
  *
+ * Beside the header's action, how the product is assembled (ADR-0072): the
+ * strategy it uses and where that comes from, and "Propose gears". Gear match
+ * is not a part of this page any more: it is the Gears matcher kit's own tab
+ * (Project › Gear match), shown only where that kit is installed.
+ *
  * Backend here is the configurator itself. The prototype mounted its IDE kits
  * journey (`ProjectKits` from kits.tsx: the code report, suggested components,
  * Open on desktop, Build in the IDE) in that slot; that journey is not ported
@@ -48,7 +53,7 @@ import { ProductFrontend } from './frontend/ProductFrontend';
 import { ProductInfrastructure } from './infra/ProductInfrastructure';
 import { ProductMap } from './map/ProductMap';
 import { SourceRoles } from './SourceRoles';
-import { GearMatchSection } from './match/GearMatchSection';
+import { AssemblyPanel } from './assembly/AssemblyPanel';
 import styles from '../product.module.css';
 
 /** The section this member last looked at for the project; storage may be
@@ -69,10 +74,10 @@ function storeSection(projectId: string, id: PageSection) {
   }
 }
 
-/** A part's state as its tab's dot. */
-/** The page's parts, and Gear match: what the gears-matcher read in the specs. */
-type PageSection = ProductSectionId | 'match';
+/** The page's parts. */
+type PageSection = ProductSectionId;
 
+/** A part's state as its tab's dot. */
 const DOT: Record<FlowState, Tone> = {
   done: 'ok',
   todo: 'warn',
@@ -99,8 +104,9 @@ export function ProductPage() {
     // The map is Configure's overview: where the page opens unless this
     // member's last look says otherwise. (The prototype also honoured an old
     // address's `/…/frontend`; the portal's routes have no such suffix.)
+    // A section this page no longer has (Gear match, now its kit's own tab)
+    // opens as any section it does not know.
     const stored = storedSection(projectId);
-    if (stored === 'match') return 'match';
     return stored === null || stored === 'map' ? 'map' : openingSection(null, stored);
   });
   const [summary, setSummary] = useState<ProductSummary | null>(null);
@@ -197,7 +203,6 @@ export function ProductPage() {
     { id: 'backend', label: gears > 0 ? t('tab_backend_gears', { count: String(gears) }) : t('tab_backend') },
     { id: 'frontend', label: t('tab_frontend') },
     { id: 'parts', label: t('tab_parts') },
-    { id: 'match', label: t('tab_match') },
   ];
 
   return (
@@ -263,6 +268,7 @@ export function ProductPage() {
           }
         />
       </div>
+      <AssemblyPanel round={round} onChanged={() => setRound((r) => r + 1)} />
       {/* What the product is comes first: Studio proposes it from the specs
           and a member confirms it (product-kind.ts). */}
       <ProductKindStep />
@@ -301,7 +307,6 @@ export function ProductPage() {
       <div hidden={section !== 'backend'} data-product-section="backend">
         <ProductBackend />
       </div>
-      {section === 'match' && <GearMatchSection key={projectId} />}
       {section === 'frontend' && <ProductFrontend onChanged={() => setRound((r) => r + 1)} />}
     </>
   );
