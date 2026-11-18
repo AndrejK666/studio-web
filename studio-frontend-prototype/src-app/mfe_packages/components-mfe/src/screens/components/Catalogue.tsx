@@ -7,7 +7,7 @@
 
 import { useMemo, useRef, useState } from 'react';
 import { Button, Skeleton } from '@gears-frontx/ui-kit';
-import { catalogueComponentType, openScreen } from '@constructor-studio/mfe-shared';
+import { catalogueComponentType, openScreen, screenView } from '@constructor-studio/mfe-shared';
 import { GridFailed } from '@constructor-studio/mfe-shared/grid';
 import type { CatalogNode } from '../../api/types';
 import { nameOf, schemaFor } from '../../model/catalogue';
@@ -33,7 +33,7 @@ export function Catalogue({ tier }: { tier: 'platform' | 'organization' }) {
   const [days, setDays] = useState(90);
   const baselines = useBaselines(orgId, days);
   const [registry, setRegistry] = useState<RegistrySummary | null>(null);
-  const [decide, setDecide] = useState(false);
+  const [decide, setDecide] = useState(() => !platformLevel && screenView(window.location.search) === 'needs-decision');
   const readNow = useRef<(() => void) | null>(null);
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const sync = useCatalogueSync(orgId, reload);

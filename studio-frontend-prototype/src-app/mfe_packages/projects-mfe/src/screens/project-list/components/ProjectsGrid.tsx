@@ -16,7 +16,6 @@ import {
   GridEmpty,
   GridFooter,
   ListGrid,
-  NoData,
   createGridCells,
   useLocalGridLoad,
 } from '@constructor-studio/mfe-shared/grid';
@@ -90,7 +89,7 @@ const IssuesCell: React.FC<{ item: Tenant }> = ({ item }) => {
   const { t, rollups } = useProjectCells();
   const rollup = rollups[item.id];
   return rollup?.open_findings == null ? (
-    <NoData label={t('no_data')} />
+    <span>{t('data_unavailable')}</span>
   ) : (
     <span data-project-issues>{t.count('issues_open', rollup.open_findings)}</span>
   );
@@ -101,7 +100,7 @@ const MovementCell: React.FC<{ item: Tenant }> = ({ item }) => {
   const { t, rollups } = useProjectCells();
   const rollup = rollups[item.id];
   return rollup?.pulls_merged == null && rollup?.pulls_open == null ? (
-    <NoData label={t('no_data')} />
+    <span>{t('data_unavailable')}</span>
   ) : (
     <span data-project-movement>
       {t('movement_pulls', { merged: rollup.pulls_merged ?? '—', open: rollup.pulls_open ?? '—' })}

@@ -53,6 +53,7 @@ const actions: SourceRowActions = {
   openSpecs: vi.fn(),
   openUploads: vi.fn(),
   changeShareMode: vi.fn(),
+  changeBranch: vi.fn(async () => undefined),
   detach: vi.fn(),
   detaching: new Set<string>(),
 };

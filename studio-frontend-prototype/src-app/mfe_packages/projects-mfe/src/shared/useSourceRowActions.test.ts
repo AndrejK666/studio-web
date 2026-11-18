@@ -13,8 +13,10 @@ const { connections, emit, dispatch, bridge, announceSection, detachView } = vi.
   detachView: { detach: () => undefined, detaching: new Set<string>() },
 }));
 
+const queryCache = { invalidate: vi.fn() };
 vi.mock('@gears-frontx/react', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@gears-frontx/react')>()),
+  useQueryCache: () => queryCache,
   eventBus: { emit },
   useAppDispatch: () => dispatch,
   useMfeBridge: () => bridge,

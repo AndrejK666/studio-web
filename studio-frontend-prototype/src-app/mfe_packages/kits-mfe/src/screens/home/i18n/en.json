@@ -227,5 +227,7 @@
   "contents_gear_calls": "calls",
   "contents_inbox": "Inbox sources",
   "contents_rules": "Rules",
-  "contents_functions": "Functions"
+  "contents_functions": "Functions",
+  "inherited_from_platform": "Inherited from Platform",
+  "inherited_from_organization": "Inherited from {organization}"
 }

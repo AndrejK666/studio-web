@@ -440,6 +440,51 @@ impl KitInstaller {
     ) -> Result<InstalledKit, Refusal> {
         let slug = normalize_slug(slug).map_err(|e| Refusal::Invalid(e.to_string()))?;
         let org = self.require_project_admin(ctx, project).await?;
+        self.install_project_kit(ctx, project, org, slug, version)
+            .await
+    }
+
+    pub(super) async fn install_for_created_project(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+        organization: Uuid,
+        slug: &str,
+    ) -> Result<InstalledKit, Refusal> {
+        if ctx.subject_id() != crate::organizations::SERVICE_SUBJECT_ID
+            || ctx.subject_tenant_id() != project
+        {
+            return Err(Refusal::Forbidden(KIT_ADMIN_REQUIRED));
+        }
+        if super::manifest::project_type_kit(slug).is_none() {
+            return Err(Refusal::Invalid(format!(
+                "`{slug}` does not define a project type"
+            )));
+        }
+        let installed = self.installed_in_project(ctx, project).await?;
+        let org = installed.organization_id;
+        if org != organization || org == project {
+            return Err(Refusal::Forbidden(KIT_ADMIN_REQUIRED));
+        }
+        if let Some(kit) = installed
+            .project
+            .into_iter()
+            .find(|kit| kit.kit_slug == slug)
+        {
+            return Ok(kit);
+        }
+        self.install_project_kit(ctx, project, org, slug.to_owned(), None)
+            .await
+    }
+
+    async fn install_project_kit(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+        org: Uuid,
+        slug: String,
+        version: Option<&str>,
+    ) -> Result<InstalledKit, Refusal> {
         let kit = self.kit_for(org, &slug).await?;
         if !kit.levels.iter().any(|level| level == LEVEL_PROJECT) {
             return Err(Refusal::NotAProjectKit(slug));

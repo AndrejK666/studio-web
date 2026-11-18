@@ -26,6 +26,7 @@ import {
   type SyncDisabled,
 } from '../../../../model/sourceRowMenu';
 import type { SourceRowActions } from '../../../../shared/useSourceRowActions';
+import { BranchDialog } from './BranchDialog';
 import styles from './SourceRowMenu.module.css';
 
 export interface SourceRowMenuProps {
@@ -37,6 +38,7 @@ export interface SourceRowMenuProps {
 export const SourceRowMenu: React.FC<SourceRowMenuProps> = ({ row, actions, container }) => {
   const t = useSourcesText();
   const [confirming, setConfirming] = useState(false);
+  const [branching, setBranching] = useState(false);
   const detaching = actions.detaching.has(row.id);
 
   const disabledTitle = (disabled: SyncDisabled): string => {
@@ -109,6 +111,14 @@ export const SourceRowMenu: React.FC<SourceRowMenuProps> = ({ row, actions, cont
             {t('menu_open_in', { provider: actions.providerName(entry.provider) })}
           </DropdownMenuItem>
         );
+      case 'change_branch':
+        return (
+          row.kind === 'repository' && (
+            <DropdownMenuItem key="branch" onClick={() => setBranching(true)} data-source-change-branch>
+              {t('menu_change_branch')}
+            </DropdownMenuItem>
+          )
+        );
       case 'disconnect':
         return (
           <React.Fragment key="disconnect">
@@ -158,6 +168,14 @@ export const SourceRowMenu: React.FC<SourceRowMenuProps> = ({ row, actions, cont
         ).map(item)}
       </DropdownMenuContent>
     </DropdownMenu>
+    {row.kind === 'repository' && branching && (
+      <BranchDialog
+        row={row}
+        container={container}
+        onSave={(branch) => actions.changeBranch(row, branch)}
+        onClose={() => setBranching(false)}
+      />
+    )}
     {row.kind === 'repository' && (
       <AlertDialog open={confirming} onOpenChange={setConfirming}>
         <AlertDialogContent container={container ?? undefined}>

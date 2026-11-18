@@ -31,6 +31,10 @@ export function createScreenOpenHandler(screens: () => readonly StudioScreenExte
       console.warn('[shell] screen.open: no screen answers to', payload);
       return;
     }
-    eventBus.emit('app/context/screen/requested', { extensionId: target.id });
+    const view = payload?.view;
+    eventBus.emit('app/context/screen/requested', {
+      extensionId: target.id,
+      ...(typeof view === 'string' && /^[a-z][a-z0-9-]*$/.test(view) ? { view } : {}),
+    });
   });
 }

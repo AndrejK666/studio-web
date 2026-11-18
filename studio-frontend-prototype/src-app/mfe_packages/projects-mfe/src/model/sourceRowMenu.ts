@@ -18,6 +18,8 @@ export type SourceMenuItem =
   | { kind: 'open_specs' }
   | { kind: 'open_in'; url: string; provider: string }
   | { kind: 'open_uploads' }
+  /** The branch a session checks out and a build takes (`sources[].branch`). */
+  | { kind: 'change_branch' }
   /**
    * A repository detaches through the backend's one durable run (#1042);
    * the uploaded files are no source and cannot be.
@@ -84,6 +86,7 @@ export function sourceRowMenu(row: SourceRow, connectionsRead: boolean): SourceM
     items.push({ kind: 'open_in', url, provider: row.provider });
   }
   // @cpt-end:cpt-studiofrontend-algo-project-sources-row-menu:p2:inst-9
+  items.push({ kind: 'change_branch' });
   // @cpt-begin:cpt-studiofrontend-algo-project-sources-row-menu:p2:inst-10
   items.push({ kind: 'disconnect', disabled: false });
   // @cpt-end:cpt-studiofrontend-algo-project-sources-row-menu:p2:inst-10

@@ -5,12 +5,13 @@
 
 // @cpt-dod:cpt-studiofrontend-dod-project-create-steps:p1
 import React, { useEffect } from 'react';
-import { eventBus, useMfeBridge } from '@gears-frontx/react';
+import { apiRegistry, eventBus, useApiQuery, useMfeBridge } from '@gears-frontx/react';
 import { useAppDispatch, useAppSelector } from '@gears-frontx/react';
 import { Button, Skeleton } from '@gears-frontx/ui-kit';
 import {
   OrganizationProvider,
   WorkspaceProvider,
+  isNotFound,
   useEverLoaded,
   useHostChrome,
   useOrganization,
@@ -32,11 +33,12 @@ import { isFinalStep, nextStep, prevStep, stepFor, type WizardStepKey } from '..
 import { DetailsStep } from './steps/DetailsStep';
 import { RepositoriesStep } from './steps/RepositoriesStep';
 import { RepositoriesFooterNote } from './steps/RepositoriesFooterNote';
+import { ProjectStatusApiService, type ProjectTypeKit } from '../../api/ProjectStatusApiService';
 import frame from '../../components/OverlayFrame.module.css';
 import styles from './NewProjectWizard.module.css';
 
 /** One entry per step key. Adding a step touches this map and `WIZARD_STEPS`. */
-const STEP_BODIES: Record<WizardStepKey, React.FC> = {
+const STEP_BODIES: Record<WizardStepKey, React.FC<{ projectTypes: readonly ProjectTypeKit[] }>> = {
   details: DetailsStep,
   repositories: RepositoriesStep,
 };
@@ -61,6 +63,10 @@ const WizardBody: React.FC = () => {
   const { loading: orgLoading } = useOrganization();
   const { workspace, loading: workspaceLoading } = useWorkspace();
   const workspaceId = workspace?.id ?? null;
+  const types = useApiQuery(apiRegistry.getService(ProjectStatusApiService).projectTypeKits);
+  const projectTypes = types.data?.items ?? [];
+  const typeReadFailed = types.isError && !isNotFound(types.error);
+  const typeMissing = projectTypes.length > 0 && !projectTypes.some((kit) => kit.slug === draft.typeKit);
 
   useEffect(() => {
     dispatch(resetWizard());
@@ -139,7 +145,7 @@ const WizardBody: React.FC = () => {
             {!submitting && progress.state !== 'succeeded' && <p className={styles.progressHint}>{t('retry_hint')}</p>}
           </section>
         ) : (
-          <Body />
+          <Body projectTypes={projectTypes} />
         )}
       </div>
 
@@ -154,6 +160,11 @@ const WizardBody: React.FC = () => {
               : t('error_no_workspace')}
         </p>
       )}
+      {types.isLoading && <p role="status">{t('project_types_loading')}</p>}
+      {typeReadFailed && <p className={frame.error} role="alert">
+        {t('project_types_error')}{' '}
+        <Button type="button" variant="ghost" size="sm" onClick={() => void types.refetch()}>{t('project_types_retry')}</Button>
+      </p>}
 
       <div className={frame.footer}>
         <div className={frame.footerNote}>
@@ -170,6 +181,9 @@ const WizardBody: React.FC = () => {
               submitting ||
               orgLoading ||
               workspaceLoading ||
+              types.isLoading ||
+              typeReadFailed ||
+              typeMissing ||
               !step.isComplete(draft) ||
               (final && !workspaceId)
             }

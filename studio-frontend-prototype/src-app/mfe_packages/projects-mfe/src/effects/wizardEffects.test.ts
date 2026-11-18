@@ -45,4 +45,12 @@ describe('the project the server is asked to create', () => {
     expect(keyFor('w1', { ...draft, name: 'Other' })).not.toBe(first);
     expect(keyFor('w2', draft)).not.toBe(first);
   });
+
+  it('sends exactly one project type kit and gives another type its own creation key', () => {
+    const gears = { ...draft, typeKit: 'gears-project' };
+    const research = { ...draft, typeKit: 'constructor-research' };
+    expect(creationBody('w1', gears, 'k').project_type_kit).toBe('gears-project');
+    expect(creationBody('w1', research, 'k').project_type_kit).toBe('constructor-research');
+    expect(keyFor('w1', gears)).not.toBe(keyFor('w1', research));
+  });
 });

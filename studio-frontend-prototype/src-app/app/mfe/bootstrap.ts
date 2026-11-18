@@ -699,8 +699,10 @@ export async function bootstrapMFE(app: FrontXApp): Promise<void> {
 
   const currentThemeId = app.themeRegistry?.getCurrent()?.id ?? 'default';
   registry.updateSharedProperty(FRONTX_SHARED_PROPERTY_THEME, currentThemeId);
-  const derivedLanguage = app.i18nRegistry.getLanguage();
-  registry.updateSharedProperty(FRONTX_SHARED_PROPERTY_LANGUAGE, derivedLanguage ?? 'en');
+  // Studio has English and Russian dictionaries. Its other dictionary files
+  // fall back to English, so use that locale for dates and numbers as well.
+  const derivedLanguage = app.i18nRegistry.getLanguage() === 'ru' ? 'ru' : 'en';
+  registry.updateSharedProperty(FRONTX_SHARED_PROPERTY_LANGUAGE, derivedLanguage);
   publishStudioContext(app);
   // No page before a session: the editor's session publishes its address once
   // it is ready (effects/editorSessionEffects.ts). `null`, never `undefined`,

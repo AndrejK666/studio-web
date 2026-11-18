@@ -44,6 +44,10 @@ export class BackgroundApiService extends BaseApiService {
     runsPath
   );
 
+  readonly run = this.protocol(RestEndpointProtocol).queryWith<TaskRun, { id: string; tenant: string }>(
+    ({ id, tenant }) => `/studio-tasks/v1/runs/${encodeURIComponent(id)}${tenantQuery(tenant)}`
+  );
+
   readonly taskTypes = this.protocol(RestEndpointProtocol).query<{ items: string[] }>('/studio-tasks/v1/task-types');
 
   readonly schedules = this.protocol(RestEndpointProtocol).query<{ items: TaskSchedule[] }>(

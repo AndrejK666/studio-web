@@ -454,12 +454,12 @@ function KitControls({
         {kit.shelf && <Badge variant="secondary">{t('shelf_' + kit.shelf)}</Badge>}
         {base && (
           <Badge variant="success" dot>
-            {base.by_default ? t('base_default') : t('base')}
+            {scope === 'platform' ? t(base.by_default ? 'base_default' : 'base') : t('inherited_from_platform')}
           </Badge>
         )}
         {own && (
           <Badge variant="info" dot>
-            {t('installed_for', { organization: name })}
+            {t(scope === 'project' ? 'inherited_from_organization' : 'installed_for', { organization: name })}
           </Badge>
         )}
         {mine && (

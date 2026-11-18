@@ -227,5 +227,7 @@
   "contents_gear_calls": "вызывает",
   "contents_inbox": "Источники Inbox",
   "contents_rules": "Правила",
-  "contents_functions": "Функции"
+  "contents_functions": "Функции",
+  "inherited_from_platform": "Унаследовано от платформы",
+  "inherited_from_organization": "Унаследовано от организации {organization}"
 }

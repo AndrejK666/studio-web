@@ -29,6 +29,7 @@ import { apiRegistry, useMfeBridge } from '@gears-frontx/react';
 import { Badge, Button } from '@gears-frontx/ui-kit';
 import {
   errorMessage,
+  openScreen,
   reportInboxCount,
   responseStatus,
   useScreenAvailability,
@@ -237,6 +238,12 @@ export function InboxGroup({
                 <>
                   {t('inbox_nothing')}{' '}
                   <span title={t('inbox_why')}>{myEmptyMessage({ membersKnown: true, workspaces })}</span>
+                  {workspaces > 0 && (
+                    <button type="button" className={styles.linklike}
+                      onClick={() => openScreen(bridge, '/profile', 'github-reviews')}>
+                      {t('inbox_review_account')}
+                    </button>
+                  )}
                 </>
               )}
         </p>

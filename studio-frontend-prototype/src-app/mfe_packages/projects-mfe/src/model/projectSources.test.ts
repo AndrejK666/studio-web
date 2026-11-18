@@ -4,6 +4,8 @@ import {
   repositoryKey,
   repositoryWebUrl,
   supportsPullRequests,
+  branchNameProblem,
+  withBranch,
   withShareMode,
   withSources,
   withoutSource,
@@ -105,5 +107,28 @@ describe('supportsPullRequests', () => {
     expect(supportsPullRequests('github')).toBe(true);
     expect(supportsPullRequests('gitlab')).toBe(false);
     expect(supportsPullRequests(null)).toBe(false);
+  });
+});
+
+describe('withBranch', () => {
+  it("changes the one entry's branch, trimmed, and nothing else", () => {
+    expect(withBranch([API, WEB], { connection_id: 'c-1', full_path: 'acme/api' }, ' main ')).toEqual([
+      { ...API, branch: 'main' },
+      WEB,
+    ]);
+    expect(withBranch([API], { connection_id: 'c-2', full_path: 'acme/api' }, 'main')).toEqual([API]);
+  });
+});
+
+describe('branchNameProblem', () => {
+  it('takes what git takes as a branch name', () => {
+    for (const ok of ['main', 'AndrejK666/studioweb-research-build', 'release/2026.11', 'v1']) {
+      expect(branchNameProblem(ok)).toBeNull();
+    }
+    expect(branchNameProblem('  ')).toBe('empty');
+    const bad = ['a b', 'a..b', '-x', '/x', 'x/', 'x.', 'x.lock', 'a~1', 'a^', 'a:b', 'a?', 'a*', 'a[b'];
+    for (const name of [...bad, 'a\\b', 'a@{1}', 'a//b', '@']) {
+      expect(branchNameProblem(name)).toBe('invalid');
+    }
   });
 });

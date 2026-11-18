@@ -126,6 +126,7 @@ interface WorkspaceCells {
   stuckDays: number;
   cash: (value: number) => string;
   onOpen: (row: Tenant) => void;
+  onOpenProject?: (workspaceId: string, projectId: string, failingSpecs?: boolean) => void;
   onRename: (row: Tenant) => void;
   onDelete: (row: Tenant) => void;
 }
@@ -138,7 +139,7 @@ const Dash: React.FC = () => {
 };
 
 const NameCell: React.FC<{ item: WorkspaceGridRow }> = ({ item }) => {
-  const { t, stuckDays } = useWorkspaceCells();
+  const { t, stuckDays, onOpenProject } = useWorkspaceCells();
   if (item.kind === 'project') {
     const reasons = item.project.reasons;
     return (
@@ -147,7 +148,12 @@ const NameCell: React.FC<{ item: WorkspaceGridRow }> = ({ item }) => {
           <FolderGit2 size={16} strokeWidth={1.3} />
         </span>
         <span className={styles.nameStack}>
-          <span className={styles.name}>{item.project.name}</span>
+          {onOpenProject ? (
+            <button type="button" className={styles.projectLink} data-grid-row-ignore-click
+              onClick={() => onOpenProject(item.workspaceId, item.project.id)}>
+              {item.project.name}
+            </button>
+          ) : <span className={styles.name}>{item.project.name}</span>}
           <span className={styles.summary}>
             {reasons.length > 0 ? reasonLine(reasons, stuckDays) : t('project_fine')}
           </span>
@@ -193,7 +199,13 @@ const DeltaCell: React.FC<{ item: WorkspaceGridRow }> = ({ item }) => {
 };
 
 const FailingCell: React.FC<{ item: WorkspaceGridRow }> = ({ item }) => {
+  const { onOpenProject, t } = useWorkspaceCells();
   const failing = failingOf(item);
+  if (failing > 0 && item.kind === 'project' && onOpenProject) {
+    return <button type="button" className={styles.projectLink} data-grid-row-ignore-click
+      aria-label={`${item.project.name}: ${t('fact_failing', { count: failing })}`}
+      onClick={() => onOpenProject(item.workspaceId, item.project.id, true)}>{failing}</button>;
+  }
   return failing ? <Count value={failing} /> : <Dash />;
 };
 
@@ -255,6 +267,7 @@ export interface WorkspacesGridProps {
   stuckDays: number;
   cash: (value: number) => string;
   onOpen: (row: Tenant) => void;
+  onOpenProject?: WorkspaceCells['onOpenProject'];
   onRename: (row: Tenant) => void;
   onDelete: (row: Tenant) => void;
 }
@@ -265,6 +278,7 @@ export const WorkspacesGrid: React.FC<WorkspacesGridProps> = ({
   stuckDays,
   cash,
   onOpen,
+  onOpenProject,
   onRename,
   onDelete,
 }) => {
@@ -310,8 +324,8 @@ export const WorkspacesGrid: React.FC<WorkspacesGridProps> = ({
   );
   const open = useCallback((row: WorkspaceGridRow) => row.kind === 'workspace' && onOpen(row.tenant), [onOpen]);
   const cells = useMemo<WorkspaceCells>(
-    () => ({ t, formatRelative, stuckDays, cash, onOpen, onRename, onDelete }),
-    [t, formatRelative, stuckDays, cash, onOpen, onRename, onDelete]
+    () => ({ t, formatRelative, stuckDays, cash, onOpen, onOpenProject, onRename, onDelete }),
+    [t, formatRelative, stuckDays, cash, onOpen, onOpenProject, onRename, onDelete]
   );
 
   return (

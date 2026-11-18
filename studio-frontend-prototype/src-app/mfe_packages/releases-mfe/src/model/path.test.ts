@@ -30,6 +30,7 @@ describe("the path's Specs step", () => {
 
 describe("what a step's action does", () => {
   it("opens the screen, tab, dialog or deploy it names", () => {
+    expect(intentOf({ kind: "open_sources" })).toEqual({ kind: "screen", route: "/projects/sources" });
     expect(intentOf({ kind: "open_product" })).toEqual({ kind: "screen", route: "/product" });
     expect(intentOf({ kind: "open_gear", gear: "billing" })).toEqual({ kind: "screen", route: "/product" });
     expect(intentOf({ kind: "build" })).toEqual({ kind: "tab", tab: "build" });

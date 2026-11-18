@@ -1,0 +1,11 @@
+{
+  "manifest_version": "1",
+  "slug": "gears-project",
+  "name": "Gears",
+  "description": "Compose a product from Gears, configure its components and ship it through Releases.",
+  "publisher": "Constructor Fabric",
+  "icon": "lucide:boxes",
+  "levels": ["project"],
+  "project_type": true,
+  "requires": ["project-product", "delivery"]
+}

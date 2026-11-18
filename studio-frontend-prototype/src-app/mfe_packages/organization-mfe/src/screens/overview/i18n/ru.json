@@ -7,6 +7,13 @@
   "tile_spend": "Расходы за 30 дней",
   "tile_spend_hidden": "Расходы от вас скрыты",
   "tile_spend_unreadable": "Расходы не удалось прочитать",
+  "tile_spend_unpriced": "Часть использования без тарифа",
+  "show_unreviewed_pulls": "Открыть PR без ревьюера",
+  "show_recent_failures": "Показать недавние сбои",
+  "open_all_runs": "Открыть все фоновые запуски",
+  "pull_idle_days": "Дней без обновлений: {days}",
+  "inbox_review_account": "Проверить аккаунт GitHub для ревью",
+  "open_failing_specs": "Найти спецификации с ошибками",
   "tile_spend_sub": "{growth} к прошлому периоду · к концу месяца около {forecast}",
   "tile_delivery": "Поставка",
   "tile_delivery_value": "смёрджено: {merged}",
@@ -71,5 +78,7 @@
   "open_costs": "Затраты →",
   "open_workspaces": "Рабочие пространства →",
   "open_people": "Люди →",
-  "open_workspace": "Открыть"
+  "open_workspace": "Открыть",
+  "project_failing_specs": "Спецификаций с ошибками: {count}",
+  "tile_spend_prices_missing": "Тарифы не настроены"
 }

@@ -6,7 +6,6 @@ import { useUserById } from '../../../shared/users';
 import type { ProjectConfigState } from '../../../shared/useProjectConfig';
 import { useProjectListText } from '../../../i18n';
 import { LoadFailed } from './LoadFailed';
-import { NoData } from '@constructor-studio/mfe-shared/grid';
 import styles from '../ProjectListScreen.module.css';
 
 /**
@@ -19,7 +18,8 @@ export const OwnerInline: React.FC<{ state: ProjectConfigState }> = ({ state }) 
   if (state.loading || orgLoading) return <Skeleton className={styles.cellSkeleton} />;
   if (state.failed) return <LoadFailed label={t('load_failed')} />;
   const ownerId = state.config?.owner_id;
-  if (!ownerId || !org) return <NoData label={t('no_owner')} />;
+  if (!ownerId) return <span>{t('owner_unassigned')}</span>;
+  if (!org) return <span>{t('no_owner')}</span>;
   return <OwnerName tenantId={org.id} userId={ownerId} />;
 };
 
@@ -33,7 +33,7 @@ const OwnerName: React.FC<{ tenantId: string; userId: string }> = ({ tenantId, u
   if (loading) return <Skeleton className={styles.cellSkeleton} />;
   if (failed) return <LoadFailed label={t('load_failed')} />;
 
-  if (!user) return <NoData label={t('no_owner')} />;
+  if (!user) return <span>{t('no_owner')}</span>;
 
   return <span className={styles.ownerName}>{displayName(user)}</span>;
 };

@@ -11,7 +11,7 @@
  * docs/parity.md (the Profile row).
  */
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { apiRegistry } from '@gears-frontx/react';
 import {
   Badge,
@@ -22,7 +22,7 @@ import {
   NativeSelect,
   NativeSelectOption,
 } from '@gears-frontx/ui-kit';
-import { AccountsApiService, useOrganization, type Me } from '@constructor-studio/mfe-shared';
+import { AccountsApiService, openScreen, screenView, useOrganization, type Me } from '@constructor-studio/mfe-shared';
 import { AdminApiService } from '../../api/AdminApiService';
 import type { AliasWrite, MyMembership, PersonAlias, PersonEmail, PersonLogin, StudioProfile } from '../../api/types';
 import { initials } from '../../model/members';
@@ -233,7 +233,9 @@ function PersonCard({ memberships }: { memberships: MyMembership[] | null }) {
 }
 
 function IdentitiesCard() {
-  const { t, language } = useAdmin();
+  const { t, language, bridge } = useAdmin();
+  const [fromInbox] = useState(() => screenView(window.location.search) === 'github-reviews');
+  const reviewAccounts = useRef<HTMLElement>(null);
   const api = apiRegistry.getService(AdminApiService);
   const accounts = apiRegistry.getService(AccountsApiService);
   const [logins, setLogins] = useState<PersonLogin[] | null>(null);
@@ -245,6 +247,11 @@ function IdentitiesCard() {
   const [busy, setBusy] = useState(false);
   const [kind, setKind] = useState<string>('github');
   const [account, setAccount] = useState('');
+  const aliasesReady = aliases !== null;
+
+  useEffect(() => {
+    if (fromInbox && aliasesReady) reviewAccounts.current?.focus();
+  }, [fromInbox, aliasesReady]);
 
   useEffect(() => {
     let live = true;
@@ -350,8 +357,14 @@ function IdentitiesCard() {
         )}
 
         {aliases && (
-          <section>
+          <section ref={reviewAccounts} tabIndex={fromInbox ? -1 : undefined} aria-label={fromInbox ? t('prof_identities') : undefined}>
             <h4 className={styles.name}>{t.count('prof_aliases', aliases.length)}</h4>
+            {fromInbox && <div>
+              <p className={styles.muted}>{t('prof_github_reviews_hint')}</p>
+              <Button size="sm" variant="ghost" onClick={() => openScreen(bridge, '/inbox')}>
+                {t('prof_back_to_inbox')}
+              </Button>
+            </div>}
             {aliases.length === 0 && (
               <p className={styles.muted} data-profile-no-aliases>
                 {t('prof_no_aliases')}

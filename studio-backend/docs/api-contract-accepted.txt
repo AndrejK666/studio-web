@@ -868,6 +868,7 @@ request	POST /studio-organizations/v1/project-creations	mode	String	optional
 request	POST /studio-organizations/v1/project-creations	name	String	required
 request	POST /studio-organizations/v1/project-creations	owner_id	String	optional
 request	POST /studio-organizations/v1/project-creations	prd	bool	optional
+request	POST /studio-organizations/v1/project-creations	project_type_kit	String	optional
 request	POST /studio-organizations/v1/project-creations	repository	{}	optional
 request	POST /studio-organizations/v1/project-creations	repository.clone_url	String	optional
 request	POST /studio-organizations/v1/project-creations	repository.connection_id	Uuid	optional
@@ -4820,7 +4821,19 @@ response	GET /studio-organizations/v1/overview	period_from	String	always
 response	GET /studio-organizations/v1/overview	period_to	String	always
 response	GET /studio-organizations/v1/overview	previous_from	String	always
 response	GET /studio-organizations/v1/overview	previous_to	String	always
+response	GET /studio-organizations/v1/overview	pulls_without_reviewers	Vec<{}>	optional
+response	GET /studio-organizations/v1/overview	pulls_without_reviewers.id	String	optional
+response	GET /studio-organizations/v1/overview	pulls_without_reviewers.number	i64	optional
+response	GET /studio-organizations/v1/overview	pulls_without_reviewers.project	String	optional
+response	GET /studio-organizations/v1/overview	pulls_without_reviewers.quiet_days	u32	optional
+response	GET /studio-organizations/v1/overview	pulls_without_reviewers.title	String	optional
+response	GET /studio-organizations/v1/overview	pulls_without_reviewers.url	String	optional
 response	GET /studio-organizations/v1/overview	quiet_days	u32	always
+response	GET /studio-organizations/v1/overview	recent_failures	Vec<{}>	optional
+response	GET /studio-organizations/v1/overview	recent_failures.created_at	String	optional
+response	GET /studio-organizations/v1/overview	recent_failures.id	String	optional
+response	GET /studio-organizations/v1/overview	recent_failures.task_type	String	optional
+response	GET /studio-organizations/v1/overview	recent_failures.tenant_id	String	optional
 response	GET /studio-organizations/v1/overview	specs	{}	always
 response	GET /studio-organizations/v1/overview	specs.failing	u32	optional
 response	GET /studio-organizations/v1/overview	specs.open_findings	u32	optional
@@ -4830,6 +4843,7 @@ response	GET /studio-organizations/v1/overview	spend.attributed	f64	optional
 response	GET /studio-organizations/v1/overview	spend.currency	String	optional
 response	GET /studio-organizations/v1/overview	spend.current	f64	optional
 response	GET /studio-organizations/v1/overview	spend.forecast	f64	optional
+response	GET /studio-organizations/v1/overview	spend.has_prices	bool	optional
 response	GET /studio-organizations/v1/overview	spend.own_keys	f64	optional
 response	GET /studio-organizations/v1/overview	spend.previous	f64	optional
 response	GET /studio-organizations/v1/overview	spend.sessions	f64	optional
@@ -4864,6 +4878,11 @@ response	GET /studio-organizations/v1/overview	workspaces.score	u32	always
 response	GET /studio-organizations/v1/overview	workspaces.specs_failing	u32	always
 response	GET /studio-organizations/v1/overview	workspaces.spend	f64	optional
 response	GET /studio-organizations/v1/overview	workspaces.stuck	u32	always
+response	GET /studio-organizations/v1/project-creation-types	items	Vec<{}>	always
+response	GET /studio-organizations/v1/project-creation-types	items.description	String	always
+response	GET /studio-organizations/v1/project-creation-types	items.name	String	always
+response	GET /studio-organizations/v1/project-creation-types	items.slug	String	always
+response	GET /studio-organizations/v1/project-creation-types	total	u32	always
 response	GET /studio-organizations/v1/project-creations/{}	error	String	optional
 response	GET /studio-organizations/v1/project-creations/{}	name	String	always
 response	GET /studio-organizations/v1/project-creations/{}	organization_id	String	always
@@ -9077,6 +9096,7 @@ route	GET /studio-organizations/v1/logo
 route	GET /studio-organizations/v1/metrics
 route	GET /studio-organizations/v1/organization-requests
 route	GET /studio-organizations/v1/overview
+route	GET /studio-organizations/v1/project-creation-types
 route	GET /studio-organizations/v1/project-creations/{}
 route	GET /studio-organizations/v1/project-status
 route	GET /studio-organizations/v1/project-types
