@@ -28,6 +28,7 @@ use super::project_create::{
 };
 use super::rest::OrganizationError;
 use super::sdk::{ORGANIZATION_TENANT_TYPE, WORKSPACE_TENANT_TYPE};
+use crate::kit_registry::port::{KitPresence, project_type_kit, project_type_kits};
 
 /// What the routes need: account-management, and the hub for the task
 /// queue and the connectors, resolved per request.
@@ -107,6 +108,8 @@ pub struct CreateProjectRequest {
     pub brief: Option<String>,
     /// The project type (`project.config` `type`).
     pub r#type: Option<String>,
+    /// The built-in kit that defines the project's type.
+    pub project_type_kit: Option<String>,
     /// The owner's subject id; the caller when absent.
     pub owner_id: Option<String>,
     /// Repositories to take as the project's sources.
@@ -121,6 +124,32 @@ pub struct CreateProjectRequest {
     /// The same key makes the same project once: a resend answers the run
     /// the first request queued.
     pub idempotency_key: Option<String>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ProjectTypeKitDto {
+    pub slug: String,
+    pub name: String,
+    pub description: String,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ProjectTypeKitsDto {
+    pub items: Vec<ProjectTypeKitDto>,
+}
+
+async fn list_project_type_kits() -> ApiResult<JsonBody<ProjectTypeKitsDto>> {
+    let mut items: Vec<_> = project_type_kits()
+        .map(|kit| ProjectTypeKitDto {
+            slug: kit.slug,
+            name: kit.name,
+            description: kit.description,
+        })
+        .collect();
+    items.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(Json(ProjectTypeKitsDto { items }))
 }
 
 /// One step of a creation.
@@ -290,6 +319,38 @@ async fn approve(
         ));
     }
     let organization_id = workspace_and_org(c.am.as_ref(), ctx, body.workspace_id).await?;
+    let type_kit = body
+        .project_type_kit
+        .as_deref()
+        .map(|slug| {
+            project_type_kit(slug).ok_or_else(|| {
+                invalid(
+                    "project_type_kit",
+                    "Choose a kit that defines a project type",
+                )
+            })
+        })
+        .transpose()?;
+    if let Some(kit) = &type_kit {
+        let presence = c
+            .hub
+            .get::<dyn KitPresence>()
+            .map_err(|_| unavailable("studio-kits is unavailable"))?;
+        let effective = presence
+            .effective(ctx, body.workspace_id)
+            .await
+            .map_err(|_| unavailable("The organization's kits could not be read"))?;
+        if let Some(required) = kit
+            .requires
+            .iter()
+            .find(|required| !effective.contains(required))
+        {
+            return Err(invalid(
+                "project_type_kit",
+                format!("{} requires the `{required}` kit", kit.name),
+            ));
+        }
+    }
     let mode = body
         .mode
         .as_deref()
@@ -426,6 +487,15 @@ async fn approve(
 
     let mut kits = Vec::new();
     for (i, k) in body.kits.unwrap_or_default().into_iter().enumerate() {
+        if type_kit.is_some() && project_type_kit(&k.slug).is_some() {
+            if type_kit.as_ref().is_some_and(|kind| kind.slug == k.slug) {
+                continue;
+            }
+            return Err(invalid(
+                &format!("kits[{i}].slug"),
+                "Choose the project type through project_type_kit",
+            ));
+        }
         if !slug_ok(&k.slug) {
             return Err(invalid(
                 &format!("kits[{i}].slug"),
@@ -443,6 +513,9 @@ async fn approve(
     let mut config = Map::new();
     config.insert("mode".into(), json!(mode));
     config.insert("status".into(), json!("draft"));
+    if let Some(kit) = type_kit {
+        config.insert("project_type_kit".into(), json!(kit.slug));
+    }
     config.insert(
         "stages".into(),
         Value::Array(required_stages(headers, body.workspace_id).await),
@@ -640,6 +713,20 @@ pub fn register(
     openapi: &dyn OpenApiRegistry,
     creations: Option<Creations>,
 ) -> Router {
+    let router = OperationBuilder::get("/studio-organizations/v1/project-creation-types")
+        .operation_id("studio_organizations.list_project_creation_types")
+        .summary("Kits that define a project type")
+        .tag("StudioOrganizations")
+        .authenticated()
+        .require_license_features::<super::rest::License>([])
+        .handler(list_project_type_kits)
+        .json_response_with_schema::<ProjectTypeKitsDto>(
+            openapi,
+            StatusCode::OK,
+            "Project type kits",
+        )
+        .error_401(openapi)
+        .register(router, openapi);
     let router = OperationBuilder::post("/studio-organizations/v1/project-creations")
         .operation_id("studio_organizations.create_project")
         .summary("Create a project, as one background run")

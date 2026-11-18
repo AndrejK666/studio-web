@@ -98,9 +98,10 @@ impl Gear for StudioKitsGear {
         // The kits a new project asked for, for its creation run
         // (studio-organizations, `organizations.project_create`).
         ctx.client_hub()
-            .register::<dyn port::ProjectKitRequests>(Arc::new(port::KitRequests::new(Arc::clone(
-                &service,
-            )))
+            .register::<dyn port::ProjectKitRequests>(Arc::new(port::KitRequests::new(
+                Arc::clone(&service),
+                Arc::clone(&installer),
+            ))
                 as Arc<dyn port::ProjectKitRequests>);
         // Whether a kit applies to an organization, for the gears that act
         // only where a kit is installed (studio-environments: Research).

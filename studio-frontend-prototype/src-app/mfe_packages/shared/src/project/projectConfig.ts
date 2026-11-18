@@ -32,6 +32,7 @@ export interface ProjectSource {
  */
 export interface ProjectConfig {
   mode?: ProjectMode;
+  project_type_kit?: string;
   stages?: string[];
   status?: ProjectStatus;
   sources?: ProjectSource[];

@@ -10,11 +10,15 @@ import {
 
 /** The wizard's frame around its steps: the first-load skeleton and the failure. */
 
-const { translations } = vi.hoisted(() => ({
+const { translations, projectTypes } = vi.hoisted(() => ({
   translations: { current: { isLoaded: true, error: null as Error | null } },
+  projectTypes: { items: [] as { slug: string; name: string; description: string }[] },
 }));
 
-vi.mock('@gears-frontx/react', (importOriginal) => withOwnQueryCache(importOriginal));
+vi.mock('@gears-frontx/react', async (importOriginal) => ({
+  ...await withOwnQueryCache(importOriginal),
+  useApiQuery: () => ({ data: projectTypes, isLoading: false, isError: false }),
+}));
 
 vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@constructor-studio/mfe-shared')>()),
@@ -56,6 +60,21 @@ async function mountWizard() {
 
 beforeEach(() => {
   translations.current = { isLoaded: true, error: null };
+  projectTypes.items = [];
+});
+
+it('requires a project type when kits supply a choice', async () => {
+  projectTypes.items = [
+    { slug: 'gears-project', name: 'Gears', description: '' },
+    { slug: 'constructor-research', name: 'Constructor Research', description: '' },
+  ];
+  const { app } = await mountWizard();
+  const { editDraft } = await import('../../slices/createSlice');
+  act(() => { app.store.dispatch(editDraft({ name: 'Shop', mode: 'greenfield' })); });
+  const create = screen.getByRole<HTMLButtonElement>('button', { name: 'create' });
+  expect(create.disabled).toBe(true);
+  act(() => { app.store.dispatch(editDraft({ typeKit: 'constructor-research' })); });
+  expect(create.disabled).toBe(false);
 });
 
 describe('the wizard behind its first-load skeleton', () => {

@@ -74,7 +74,7 @@ pub const SHELF_BUILTIN: &str = "builtin";
 /// only where someone asks for them"). An organization installs one for
 /// itself, or a platform administrator makes it a base kit for every
 /// organization; until then it is in the library and applies nowhere.
-pub const OPT_IN_BUILTIN: &[&str] = &[CONSTRUCTOR_RESEARCH_KIT, GEARS_MATCHER_KIT];
+pub const OPT_IN_BUILTIN: &[&str] = &[CONSTRUCTOR_RESEARCH_KIT, GEARS_MATCHER_KIT, "gears-project"];
 
 /// The Constructor Research kit (`docs/design/studio-kits.md` §3.13): building
 /// a project's product in Constructor Research and running it there as one of
@@ -796,6 +796,7 @@ pub const BUILTIN_ICONS: &[(&str, &str)] = &[
     ("project-domain-model", "lucide:shapes"),
     (CONSTRUCTOR_RESEARCH_KIT, "lucide:atom"),
     (GEARS_MATCHER_KIT, "lucide:scan-search"),
+    ("gears-project", "lucide:boxes"),
     ("assistant", "lucide:sparkles"),
     ("project-git", "lucide:git-pull-request"),
 ];
@@ -885,6 +886,12 @@ pub fn builtin_catalogue() -> Vec<KitDescriptor> {
             "project-domain-model",
             "Project model",
             "What a project's documents say the application is, and the open questions they leave to decide (not the Studio domain model).",
+            &["project"],
+        ),
+        kit(
+            "gears-project",
+            "Gears",
+            "Compose a product from Gears, configure its components and ship it through Releases.",
             &["project"],
         ),
         // Not a base kit by default (`OPT_IN_BUILTIN`): an organization that

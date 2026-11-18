@@ -37,6 +37,20 @@ fn plan() -> Plan {
     }
 }
 
+#[test]
+fn a_typed_project_schedules_kit_installation_without_material_kits() {
+    let mut plan = plan();
+    plan.kits.clear();
+    assert!(!steps_of(&plan).contains(&"kits"));
+    for slug in ["gears-project", "constructor-research"] {
+        plan.config.insert("project_type_kit".into(), json!(slug));
+        assert_eq!(plan.project_type_kit(), Some(slug));
+        assert_eq!(steps_of(&plan).last(), Some(&"kits"));
+        assert!(crate::kit_registry::port::project_type_kit(slug).is_some());
+    }
+    assert!(crate::kit_registry::port::project_type_kit("delivery").is_none());
+}
+
 /// Steps that succeed, except the ones told to fail, and remember what ran.
 #[derive(Default)]
 struct Fake {
