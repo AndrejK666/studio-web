@@ -18,3 +18,4 @@ export {
 export { TEXT_SEARCH_FILTER_KEY, listChoices, searchQuery, tagGroupChoice } from './lists/grid/dataGridFilters';
 export { useThemedRoot } from './lists/grid/useThemedRoot';
 export { GridAddress, writeGridAddress } from './lists/grid/GridAddress';
+export { GridTreeReplace } from './lists/grid/GridTreeReplace';

@@ -24,6 +24,7 @@ import type { Tenant } from '@constructor-studio/mfe-shared';
 import {
   GridClearFilters,
   GridEmpty,
+  GridTreeReplace,
   ListGrid,
   NoData,
   createGridCells,
@@ -327,6 +328,8 @@ export const WorkspacesGrid: React.FC<WorkspacesGridProps> = ({
         minWidth="64rem"
       >
         <DataGridRowClickPlugin<WorkspaceGridRow> click={open} />
+        {/* Before the tree: a new page size or new rows replace the list, not append to it. */}
+        <GridTreeReplace />
         <DataGridTableTreePlugin<WorkspaceGridRow> expandable={opensProjects} />
         <DataGridRowActionsPlugin<WorkspaceGridRow> component={RowActions} />
         {reloadBridge}

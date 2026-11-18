@@ -148,6 +148,34 @@ describe('the workspaces grid', () => {
     // A workspace the overview has no projects for has nothing to open.
     expect(toggleOf('w2')).toBeNull();
   });
+
+  // Walk 2026-11-18: each page size picked, and each new overview, appended the list again.
+  it('shows each workspace once after a new page size or new rows, keeping an open one open', async () => {
+    const count = () => document.querySelectorAll('[data-workspace-row]').length;
+    const projects = () => document.querySelectorAll('[data-workspace-project="p1"]').length;
+    const props = { health, stuckDays: 7, cash: (v: number) => `$${v}`, onOpen: vi.fn(), onRename: vi.fn(), onDelete: vi.fn() };
+    const view = render(
+      <div data-theme="light">
+        <WorkspacesGrid workspaces={WORKSPACES} {...props} />
+      </div>
+    );
+    await screen.findByText('Platform');
+    fireEvent.click(toggleOf('w0') as HTMLButtonElement);
+    await waitFor(() => expect(projects()).toBe(1));
+
+    for (const size of ['50', '100', '25']) {
+      fireEvent.click(screen.getByRole('button', { name: size }));
+      await waitFor(() => expect(count()).toBe(3));
+    }
+    view.rerender(
+      <div data-theme="light">
+        <WorkspacesGrid workspaces={[...WORKSPACES]} {...props} />
+      </div>
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await waitFor(() => expect(count()).toBe(3));
+    await waitFor(() => expect(projects()).toBe(1));
+  });
 });
 
 describe('workspaceGridLoad', () => {
