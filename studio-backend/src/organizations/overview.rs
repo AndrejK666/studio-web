@@ -992,18 +992,9 @@ impl Overview {
                             return None;
                         }
                         let source = self.hub.get::<dyn OpenPullRequests>().ok()?;
+                        // One read for every project, not one per project.
                         let scopes: Vec<String> = projects.iter().map(Uuid::to_string).collect();
-                        let reads = futures_util::future::join_all(
-                            scopes.iter().map(|scope| source.open_pulls(ctx, scope)),
-                        )
-                        .await;
-                        Some(
-                            reads
-                                .into_iter()
-                                .filter_map(Result::ok)
-                                .flatten()
-                                .collect::<Vec<_>>(),
-                        )
+                        Some(source.open_pulls_in(ctx, &scopes).await)
                     }
                     .await;
                     let accounts = self

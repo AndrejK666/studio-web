@@ -31,7 +31,7 @@
 //! asked for a single row and reports how many there are. Fetching the rows to
 //! count them reads a project's whole document set to render one cell.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use account_management_sdk::AccountManagementClient;
@@ -41,7 +41,7 @@ use uuid::Uuid;
 
 use crate::access_config::AccessConfig;
 use crate::artifact_ingest::port::{ArtifactCounter, ProjectSignalSource, ProjectSignals};
-use crate::documents::port::{DocumentCounter, SpecSummary};
+use crate::documents::port::{DocumentCounter, ProjectDocumentCounts, SpecSummary};
 use crate::user_profile::{OrganizationRoster, RosterMember};
 
 /// Tenant type of a workspace, as account-management records it.
@@ -296,18 +296,59 @@ impl Sources {
             u32::try_from(projects.len()).unwrap_or(u32::MAX),
             icon_in(settings.as_ref()),
         )];
-        // A workspace's projects at once: each row is a handful of independent
-        // reads, and a table waiting on them one after another is the slowness
-        // this endpoint exists to remove.
-        out.extend(
-            futures_util::future::join_all(
-                projects.into_iter().map(|(project_id, name)| {
-                    self.project(ctx, workspace_id, project_id, name, team)
-                }),
-            )
-            .await,
-        );
+        // A workspace's projects at once: what they count is asked once for
+        // all of them, and each one's configuration beside it.
+        out.extend(self.projects(ctx, workspace_id, projects, team).await);
         out
+    }
+
+    /// What every project of one workspace counts, asked of each source once
+    /// for all of them: a few statements per workspace, whatever its size.
+    ///
+    /// Asking per project is what made this endpoint slow once the counts
+    /// moved into the domain model (studio-web#1077): each project's read
+    /// went through every row of its type in the organization, so a
+    /// workspace of 19 projects read the organization's documents 19 times
+    /// over, several times each.
+    async fn counts(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Uuid,
+        projects: &[(Uuid, String)],
+    ) -> ProjectCounts {
+        if projects.is_empty() {
+            return ProjectCounts::default();
+        }
+        let ids: Vec<Uuid> = projects.iter().map(|(id, _)| *id).collect();
+        let scopes: Vec<String> = ids.iter().map(Uuid::to_string).collect();
+        let documents = async {
+            match &self.documents {
+                Some(counter) => counter.project_documents(ctx, workspace_id, &ids).await,
+                None => HashMap::new(),
+            }
+        };
+        let findings = async {
+            match &self.artifacts {
+                Some(counter) => {
+                    counter
+                        .count_nodes_in_projects(ctx, FINDING_TYPE_LEAF, &scopes)
+                        .await
+                }
+                None => HashMap::new(),
+            }
+        };
+        let signals = async {
+            match &self.signals {
+                Some(source) => source.project_signals_in(ctx, &scopes, ACTIVITY_DAYS).await,
+                None => HashMap::new(),
+            }
+        };
+        let (documents, findings, signals) = tokio::join!(documents, findings, signals);
+        ProjectCounts {
+            documents,
+            findings,
+            signals,
+        }
     }
 
     /// One project, for a screen that shows a project rather than a portfolio.
@@ -322,10 +363,14 @@ impl Sources {
             Err(_) => None,
         };
         let team = self.team_basis(ctx, organization).await;
-        Some(
-            self.project(ctx, workspace_id, project_id, tenant.name, team.as_ref())
-                .await,
+        self.projects(
+            ctx,
+            workspace_id,
+            vec![(project_id, tenant.name)],
+            team.as_ref(),
         )
+        .await
+        .pop()
     }
 
     /// The organization's roster and access config, or `None` when either is
@@ -376,87 +421,26 @@ impl Sources {
             .unwrap_or_default()
     }
 
-    /// One project's row, every part settled on its own.
-    async fn project(
+    /// Every project's configuration and what its workspace counted, read
+    /// side by side, then one row per project.
+    async fn projects(
         &self,
         ctx: &SecurityContext,
         workspace_id: Uuid,
-        project_id: Uuid,
-        name: String,
+        projects: Vec<(Uuid, String)>,
         team: Option<&TeamBasis>,
-    ) -> Rollup {
-        let documents = async {
-            match &self.documents {
-                Some(counter) => counter
-                    .count_bindings(ctx, workspace_id, project_id)
-                    .await
-                    .ok(),
-                None => None,
-            }
-        };
-        let scope = project_id.to_string();
-        let findings = async {
-            match &self.artifacts {
-                Some(counter) => counter
-                    .count_nodes(ctx, FINDING_TYPE_LEAF, &scope)
-                    .await
-                    .ok(),
-                None => None,
-            }
-        };
-        let specs = async {
-            match &self.documents {
-                Some(counter) => counter
-                    .spec_summary(ctx, workspace_id, project_id)
-                    .await
-                    .ok(),
-                None => None,
-            }
-        };
-        let signals = async {
-            match &self.signals {
-                Some(source) => source
-                    .project_signals(ctx, &scope, ACTIVITY_DAYS)
-                    .await
-                    .ok(),
-                None => None,
-            }
-        };
-        let team = team.map(|basis| team_of(basis, &scope));
-        let (documents, findings, specs, signals, config) = tokio::join!(
-            documents,
-            findings,
-            specs,
-            signals,
-            self.config(ctx, project_id),
+    ) -> Vec<Rollup> {
+        let (counts, configs) = tokio::join!(
+            self.counts(ctx, workspace_id, &projects),
+            futures_util::future::join_all(projects.iter().map(|(id, _)| self.config(ctx, *id))),
         );
-        let repos = repos_in(config.as_ref());
-        let text = |key: &str| {
-            config
-                .as_ref()
-                .and_then(|c| c.get(key))
-                .and_then(serde_json::Value::as_str)
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(str::to_owned)
-        };
-        Rollup {
-            id: project_id,
-            name,
-            kind: RollupKind::Project,
-            parent_id: Some(workspace_id),
-            projects: None,
-            documents,
-            findings,
-            repos,
-            project_kind: text("kind"),
-            brief: text("brief"),
-            attributes: attributes_in(config.as_ref()),
-            specs,
-            signals,
-            team,
-            icon: icon_in(config.as_ref()),
-        }
+        projects
+            .into_iter()
+            .zip(configs)
+            .map(|((project_id, name), config)| {
+                project(workspace_id, project_id, name, team, &counts, config)
+            })
+            .collect()
     }
 
     /// The project's own configuration, or `None` when it has none or it
@@ -467,6 +451,61 @@ impl Sources {
             .await
             .ok()
             .map(|e| e.value)
+    }
+}
+
+/// What a workspace's projects count, keyed by project: see
+/// [`Sources::counts`]. A project missing from a map is unknown there.
+#[derive(Default)]
+struct ProjectCounts {
+    documents: HashMap<Uuid, ProjectDocumentCounts>,
+    findings: HashMap<String, u32>,
+    signals: HashMap<String, ProjectSignals>,
+}
+
+/// One project's row, every part settled on its own: its counts out of what
+/// its workspace counted, its configuration as read.
+fn project(
+    workspace_id: Uuid,
+    project_id: Uuid,
+    name: String,
+    team: Option<&TeamBasis>,
+    counts: &ProjectCounts,
+    config: Option<serde_json::Value>,
+) -> Rollup {
+    let scope = project_id.to_string();
+    let docs = counts.documents.get(&project_id);
+    let documents = docs.and_then(|d| d.bindings);
+    let specs = docs.and_then(|d| d.specs);
+    let findings = counts.findings.get(&scope).copied();
+    let signals = counts.signals.get(&scope).cloned();
+    let team = team.map(|basis| team_of(basis, &scope));
+    let repos = repos_in(config.as_ref());
+    let text = |key: &str| {
+        config
+            .as_ref()
+            .and_then(|c| c.get(key))
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+    };
+    Rollup {
+        id: project_id,
+        name,
+        kind: RollupKind::Project,
+        parent_id: Some(workspace_id),
+        projects: None,
+        documents,
+        findings,
+        repos,
+        project_kind: text("kind"),
+        brief: text("brief"),
+        attributes: attributes_in(config.as_ref()),
+        specs,
+        signals,
+        team,
+        icon: icon_in(config.as_ref()),
     }
 }
 
@@ -658,6 +697,10 @@ fn flatten_projects(tree: Vec<(Tenant, Vec<Tenant>)>) -> Vec<OrgProject> {
         })
         .collect()
 }
+
+#[cfg(test)]
+#[path = "rollups_tests.rs"]
+mod counting_tests;
 
 #[cfg(test)]
 mod tests {

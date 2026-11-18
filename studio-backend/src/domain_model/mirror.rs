@@ -74,8 +74,9 @@ fn is_relation_type(type_id: &str) -> bool {
 /// The root of a query, compiled: what the SQL executor asks for.
 pub struct RootSelect {
     pub type_ids: Vec<String>,
-    /// `_scope` equality, as `GET /objects?scope=` has it.
-    pub scope: Option<String>,
+    /// `_scope` is one of these, as `GET /objects?scope=` has it for one.
+    /// Served by the `(tenant_id, type_id, scope)` index.
+    pub scopes: Option<Vec<String>>,
     pub filter: Option<Condition>,
     /// Sort keys in order; the executor appends the id tie-break.
     pub order: Vec<(Expr, Order)>,
@@ -326,8 +327,8 @@ impl DomainMirror {
     fn root_condition(q: &RootSelect) -> Condition {
         let mut cond =
             Condition::all().add(object::Column::TypeId.is_in(q.type_ids.iter().cloned()));
-        if let Some(s) = &q.scope {
-            cond = cond.add(object::Column::Scope.eq(s.clone()));
+        if let Some(s) = &q.scopes {
+            cond = cond.add(object::Column::Scope.is_in(s.iter().cloned()));
         }
         if let Some(owners) = &q.owners {
             cond = cond.add(object::Column::OwnerId.is_in(owners.iter().copied()));
@@ -339,16 +340,18 @@ impl DomainMirror {
     }
 
     /// Who owns the objects a query could return, before the PDP narrows:
-    /// the few tenants whose admission is then asked once each.
+    /// the few tenants whose admission is then asked once each. Narrowed by
+    /// the query's scopes, so a read of one project asks about its owner, not
+    /// about every project of the organization.
     pub async fn owners(
         &self,
         tenant: Uuid,
         type_ids: &[String],
-        scope: Option<&str>,
+        scopes: Option<&[String]>,
     ) -> anyhow::Result<Vec<Uuid>> {
         let mut cond = Condition::all().add(object::Column::TypeId.is_in(type_ids.iter().cloned()));
-        if let Some(s) = scope {
-            cond = cond.add(object::Column::Scope.eq(s));
+        if let Some(s) = scopes {
+            cond = cond.add(object::Column::Scope.is_in(s.iter().cloned()));
         }
         let conn = self.db.conn()?;
         let rows: Vec<OwnerRow> = object::Entity::find()
@@ -416,8 +419,17 @@ impl DomainMirror {
         Ok((rows.into_iter().map(to_node).collect(), total))
     }
 
-    /// Counts per distinct `key` (a `jsonb_build_array` of the grouped
-    /// fields) over a query's root.
+    /// How many objects match a query's root: one `COUNT`, no page.
+    pub async fn count(&self, tenant: Uuid, q: &RootSelect) -> anyhow::Result<u64> {
+        let conn = self.db.conn()?;
+        Ok(object::Entity::find()
+            .secure()
+            .scope_with(&AccessScope::for_tenant(tenant))
+            .filter(Self::root_condition(q))
+            .count(&conn)
+            .await?)
+    }
+
     /// How many objects of each type the tenant holds, by stored type id.
     pub async fn counts_by_type(&self, tenant: Uuid) -> anyhow::Result<Vec<(String, u64)>> {
         let conn = self.db.conn()?;
@@ -438,6 +450,8 @@ impl DomainMirror {
             .collect())
     }
 
+    /// Counts per distinct `key` (a `jsonb_build_array` of the grouped
+    /// fields) over a query's root.
     pub async fn groups(
         &self,
         tenant: Uuid,

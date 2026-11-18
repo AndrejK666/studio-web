@@ -12,6 +12,7 @@ import type {
   ReconcileRequest,
   ReconcileResponse,
   SourceActivityListDto,
+  SourceCloneStatusListDto,
   SyncBody,
   SyncEnqueuedDto,
 } from './artifactTypes';
@@ -94,6 +95,12 @@ export class ArtifactIngestApiService extends BaseApiService {
     SourceActivityListDto,
     { scope: string }
   >(({ scope }) => `/source-activity?${new URLSearchParams({ scope })}`);
+
+  /** Whether each of the project's sources could be cloned, and why not (#1071). */
+  readonly cloneStatus = this.protocol(RestEndpointProtocol).queryWith<
+    SourceCloneStatusListDto,
+    { project_id: string }
+  >(({ project_id }) => `/sources/clone-status?${new URLSearchParams({ project_id })}`);
 
   /**
    * Takes a source out of the project and forgets what was synced from it, as

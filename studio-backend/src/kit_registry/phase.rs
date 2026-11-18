@@ -159,7 +159,7 @@ impl KitInstaller {
         let (org, at) = self.org_ctx(ctx, project).await?;
         // The model may not carry the kit's fields yet (a base kit is applied
         // when an organization is first read): make it.
-        self.reconcile_models(org).await?;
+        self.models_in_step(org).await?;
         let object = self.project_object(&at, project).await?;
         let payload = object.map(|(_, p)| p).unwrap_or(Value::Null);
         let phase = text(&payload, "phase");
@@ -261,7 +261,7 @@ impl KitInstaller {
         if !applies {
             return Ok((false, Vec::new()));
         }
-        self.reconcile_models(org).await?;
+        self.models_in_step(org).await?;
         let Some(port) = self.models() else {
             return Ok((true, Vec::new()));
         };

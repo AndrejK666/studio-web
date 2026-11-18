@@ -103,12 +103,112 @@ fn a_person_s_pull_requests_wait_on_their_review_first_then_longest_quiet() {
     assert_eq!(ids, ["r2", "r1", "a"]);
 }
 
-#[test]
-fn the_workspaces_are_the_rollups_workspace_rows() {
-    let r = json!({"items": [
-        {"kind": "workspace", "id": "w1", "name": "One"},
-        {"kind": "project", "id": "p1", "name": "P"}]});
-    assert_eq!(workspaces(&r), [("w1".to_string(), "One".to_string())]);
+/// The backend's routes as the Inbox calls them, recording each path:
+/// two workspaces, a review and a pull request in each, a kit source.
+async fn backend() -> (Api, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+    use axum::extract::Request;
+    let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let seen = calls.clone();
+    let app = axum::Router::new().fallback(move |req: Request| {
+        let seen = seen.clone();
+        async move {
+            let path = req.uri().path().to_string();
+            let query = req.uri().query().unwrap_or_default().to_string();
+            seen.lock().unwrap().push(path.clone());
+            let ws = if query.contains("workspace_id=w2") {
+                "w2"
+            } else {
+                "w1"
+            };
+            let body = match path.as_str() {
+                "/studio-kits/v1/inbox-sources" => json!({"items": [
+                    studio_source("project-specs", REVIEW_REQUESTS),
+                    studio_source("project-git", PULL_REQUESTS),
+                    {"kit_slug": "project-lifecycle", "kit_name": "Project lifecycle",
+                     "kit_version": "1.0.0", "kind": "query", "id": "phase-waiting",
+                     "label": "Phases", "query": {"type": "project"}, "destination": null},
+                ]}),
+                "/studio-documents/v1/review-requests" => {
+                    json!({"items": [review(&format!("r-{ws}"), None, false)]})
+                }
+                "/studio-artifact-ingest/v1/open-pull-requests" => json!({
+                    "items": [pull(&format!("p-{ws}"))], "total": 1, "members_known": true}),
+                "/studio-tasks/v1/runs" => json!({"items": []}),
+                "/studio-domain-model/v1/query" => json!({"items": []}),
+                _ => {
+                    return (
+                        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                        axum::Json(json!({"detail": "not expected"})),
+                    );
+                }
+            };
+            (axum::http::StatusCode::OK, axum::Json(body))
+        }
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let api = Api::new(reqwest::Client::new(), &format!("http://{addr}"), None);
+    (api, calls)
+}
+
+/// What Dev showed (#1077): the Inbox asked `GET /rollups` -- every
+/// project's counts, 10 s at the median -- for the workspace list alone.
+/// It is handed the list now, and calls no route of the organizations gear.
+#[tokio::test]
+async fn the_inbox_reads_its_sources_without_asking_for_rollups() {
+    let (api, calls) = backend().await;
+    let spaces = vec![
+        ("w1".to_string(), "One".to_string()),
+        ("w2".to_string(), "Two".to_string()),
+    ];
+    let read = read(&api, "u-7", Some("org-1"), async { Ok(spaces) }).await;
+    assert!(read.unread.is_empty(), "{:?}", read.unread);
+    assert_eq!(read.workspaces, 2);
+    let keys: Vec<(&str, &str)> = read
+        .items
+        .iter()
+        .map(|i| (i.source.as_str(), i.workspace_id.as_str()))
+        .collect();
+    // In the order the portal put them: every workspace's reviews, then
+    // every workspace's pull requests.
+    assert_eq!(
+        keys,
+        [
+            (REVIEW_REQUESTS, "w1"),
+            (REVIEW_REQUESTS, "w2"),
+            (PULL_REQUESTS, "w1"),
+            (PULL_REQUESTS, "w2"),
+        ]
+    );
+    let calls = calls.lock().unwrap().clone();
+    assert!(
+        !calls
+            .iter()
+            .any(|p| p.starts_with("/studio-organizations/")),
+        "{calls:?}"
+    );
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|p| p.as_str() == "/studio-domain-model/v1/query")
+            .count(),
+        1,
+        "the kit's source is read once"
+    );
+}
+
+/// A workspace list that could not be read is named, and the rest is still
+/// read.
+#[tokio::test]
+async fn workspaces_that_could_not_be_listed_are_named_not_shown_as_none() {
+    let (api, _) = backend().await;
+    let read = read(&api, "u-7", None, async {
+        Err("account-management: unavailable".to_string())
+    })
+    .await;
+    assert_eq!(read.workspaces, 0);
+    assert_eq!(read.unread, ["workspaces: account-management: unavailable"]);
 }
 
 #[test]

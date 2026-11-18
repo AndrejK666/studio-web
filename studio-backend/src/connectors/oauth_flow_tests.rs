@@ -134,7 +134,7 @@ impl ConnectorDriver for SignedIn {
 type Row = (String, SharingMode, Vec<u8>);
 
 #[derive(Default)]
-struct Secrets {
+pub(super) struct Secrets {
     /// By reference.
     rows: Mutex<HashMap<String, Row>>,
 }
@@ -241,8 +241,18 @@ impl CredStoreClientV1 for Secrets {
 /* ── account-management: one catalogue document per tenant ── */
 
 #[derive(Default)]
-struct Catalogues {
-    docs: Mutex<HashMap<Uuid, Value>>,
+pub(super) struct Catalogues {
+    pub(super) docs: Mutex<HashMap<Uuid, Value>>,
+    /// Each tenant's parent; one not listed has none.
+    pub(super) parents: HashMap<Uuid, Uuid>,
+    /// Every account-management call made, by method name, in order.
+    pub(super) calls: Mutex<Vec<&'static str>>,
+}
+
+impl Catalogues {
+    fn called(&self, method: &'static str) {
+        self.calls.lock().unwrap().push(method);
+    }
 }
 
 fn entry(value: Value) -> MetadataEntry {
@@ -263,8 +273,26 @@ impl AccountManagementClient for Catalogues {
     ) -> Result<Tenant, CanonicalError> {
         unimplemented!()
     }
-    async fn get_tenant(&self, _: &SecurityContext, _: Uuid) -> Result<Tenant, CanonicalError> {
-        unimplemented!()
+    async fn get_tenant(&self, _: &SecurityContext, id: Uuid) -> Result<Tenant, CanonicalError> {
+        self.called("get_tenant");
+        let now = OffsetDateTime::now_utc();
+        Ok(Tenant {
+            id: account_management_sdk::TenantId(id),
+            name: "t".to_owned(),
+            status: account_management_sdk::TenantStatus::Active,
+            tenant_type: None,
+            parent_id: self
+                .parents
+                .get(&id)
+                .copied()
+                .map(account_management_sdk::TenantId),
+            self_managed: false,
+            depth: 1,
+            child_count: 0,
+            created_at: now,
+            updated_at: now,
+            deleted_at: None,
+        })
     }
     async fn list_children(
         &self,
@@ -374,6 +402,7 @@ impl AccountManagementClient for Catalogues {
         tenant: Uuid,
         _: GtsTypeId,
     ) -> Result<MetadataEntry, CanonicalError> {
+        self.called("get_metadata");
         self.docs
             .lock()
             .unwrap()
@@ -388,7 +417,18 @@ impl AccountManagementClient for Catalogues {
         tenant: Uuid,
         _: GtsTypeId,
     ) -> Result<Option<MetadataEntry>, CanonicalError> {
-        Ok(self.docs.lock().unwrap().get(&tenant).cloned().map(entry))
+        self.called("resolve_metadata");
+        // The nearest row wins whole, as account-management resolves it: one
+        // call, however far up it looks.
+        let docs = self.docs.lock().unwrap();
+        let mut at = Some(tenant);
+        while let Some(t) = at {
+            if let Some(doc) = docs.get(&t) {
+                return Ok(Some(entry(doc.clone())));
+            }
+            at = self.parents.get(&t).copied();
+        }
+        Ok(None)
     }
     async fn list_metadata(
         &self,
@@ -588,6 +628,7 @@ async fn a_signed_in_provider_takes_no_pasted_credential() {
         .svc
         .create(
             &person(1),
+            None,
             NewConnection {
                 owner_tenant: ORG,
                 provider: "research",
@@ -627,4 +668,49 @@ async fn the_provider_list_says_which_providers_sign_in() {
         .unwrap();
     assert!(p.sign_in);
     assert_eq!(p.category, "compute");
+}
+
+/* ── A connection read from where this gear keeps it (#1067) ── */
+
+/// The organization's catalogue, holding one GitHub connection.
+fn org_catalogue(id: Uuid) -> Catalogues {
+    let catalogue = Catalogues::default();
+    catalogue.docs.lock().unwrap().insert(
+        ORG,
+        serde_json::json!({ "items": [{
+            "id": id,
+            "owner_tenant_id": ORG,
+            "provider": "github",
+            "label": "org repositories",
+            "base_url": "https://api.github.com",
+            "secret_ref": "studio-connection-org",
+            "scope": "organization",
+            "created_at_epoch_secs": 1,
+        }]}),
+    );
+    catalogue
+}
+
+#[tokio::test]
+async fn another_gears_lookup_reads_the_catalogue_where_this_gear_keeps_it() {
+    // The catalogue has moved into the domain model: this gear's own client
+    // finds it, the raw account-management one another gear holds does not.
+    let id = Uuid::from_u128(0xc0);
+    let kept = org_catalogue(id);
+    let raw = Catalogues::default();
+    let ctx = person(1);
+
+    let (at, c) = connection_by_id_via(Some(&kept), &raw, &ctx, ORG, id)
+        .await
+        .expect("the connection is found through the kept reader");
+    assert_eq!(at, ORG);
+    assert_eq!(c.secret_ref, "studio-connection-org");
+}
+
+#[tokio::test]
+async fn without_a_kept_reader_the_callers_client_is_asked() {
+    let id = Uuid::from_u128(0xc1);
+    let caller = org_catalogue(id);
+    let found = connection_by_id_via(None, &caller, &person(1), ORG, id).await;
+    assert_eq!(found.map(|(_, c)| c.id), Some(id));
 }

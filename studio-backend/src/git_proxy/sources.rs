@@ -22,6 +22,22 @@ pub struct Source {
     /// and the proxy refuses the source rather than reach the host as the
     /// platform (`cpt-studio-constraint-connector-own-connections`).
     pub held_outside: Option<uuid::Uuid>,
+    /// Why `token_ref` is `None`, when it is: what a failed clone names as its
+    /// cause when the source host then asks for credentials (#1071).
+    pub no_token: Option<NoToken>,
+}
+
+/// Why a source goes upstream without a token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoToken {
+    /// The source names no connection.
+    NoConnection,
+    /// It names one that is not found from the project.
+    ConnectionNotFound,
+    /// The connection is one person's, and a shared session does not carry it.
+    Personal,
+    /// The connection is held outside the project's organization.
+    HeldOutside,
 }
 
 /// The two Git services the smart-HTTP protocol names in `info/refs`.

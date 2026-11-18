@@ -551,9 +551,25 @@ function currentThemeName() {
     return themeService && themeService.getCurrentTheme().type === 'dark' ? 'dark' : 'light';
 }
 
+// The Studio colour themes (theia/studio, #1073) carry the portal's palette.
+// A mode switch stays in the family the current theme belongs to, so switching
+// a Studio theme's mode never drops back to the stock palette.
+const STUDIO_THEME_IDS = { light: 'studio-light', dark: 'studio-dark' };
+
+function themeIdFor(mode) {
+    const current = themeService && themeService.getCurrentTheme().id;
+    const studio = current === STUDIO_THEME_IDS.light || current === STUDIO_THEME_IDS.dark;
+    return studio ? STUDIO_THEME_IDS[mode] : mode;
+}
+
+/* Inside the portal's frame the portal decides the mode; see status-line.js. */
+function isEmbedded() {
+    try { return window.self !== window.top; } catch (e) { return true; }
+}
+
 function toggleStudioTheme() {
     if (!themeService) { return; }
-    themeService.setCurrentTheme(currentThemeName() === 'dark' ? 'light' : 'dark');
+    themeService.setCurrentTheme(themeIdFor(currentThemeName() === 'dark' ? 'light' : 'dark'));
 }
 
 // ThemeService is the single source of truth; our body attribute, monaco's
@@ -568,7 +584,9 @@ function syncTheme() {
     if (dark) { document.body.setAttribute('data-studio-theme', 'dark'); }
     else { document.body.removeAttribute('data-studio-theme'); }
     try { window.localStorage.setItem(THEME_STORAGE_KEY, dark ? 'dark' : 'light'); } catch (e) { /* private mode, etc. */ }
-    monaco.editor.setTheme(dark ? 'dark-theia' : 'light-theia');
+    // The theme's own editor theme when it has one (a Studio theme does), so
+    // the editor and the extension webviews wear the same palette as the shell.
+    monaco.editor.setTheme(themeService.getCurrentTheme().editorTheme || (dark ? 'dark-theia' : 'light-theia'));
     // The status line's theme field is a label, not just an icon, so it has to
     // follow the SERVICE rather than its own click handler — Theia's async
     // preference restore can change the theme right after startup for reasons
@@ -1654,7 +1672,7 @@ class ProductChromeContribution {
         // workbench.colorTheme persisted) — that is fine, since the listener
         // above re-syncs the body attribute, monaco, and the status line to
         // whatever ThemeService lands on either way; nothing here fights it.
-        if (loadStoredTheme() !== themeService.getCurrentTheme().id) { themeService.setCurrentTheme(loadStoredTheme()); }
+        if (loadStoredTheme() !== currentThemeName()) { themeService.setCurrentTheme(themeIdFor(loadStoredTheme())); }
         syncTheme();
         // Last, so the splash is repainted in the theme that was just settled
         // rather than flipping under the user a frame later.
@@ -1769,6 +1787,7 @@ class ProductChromeContribution {
             fileService: this.container.get(FileService),
             currentTheme: currentThemeName,
             toggleTheme: toggleStudioTheme,
+            embedded: isEmbedded,
             openProjectPage: () => this.openProjectPage(app.shell),
             // The terminal toggle runs Theia's own `terminal:new`; nothing
             // here reimplements a terminal.

@@ -984,3 +984,42 @@ async fn an_organization_s_change_to_a_core_field_survives_the_next_core() {
             .is_none()
     );
 }
+
+/// graph-storage refuses a node payload over 64 KiB (`payload_max_bytes`), and
+/// the in-memory store does not: an organization with every base kit and the
+/// core layer writes only nodes that fit. On Dev the core layer once went in
+/// one model node of ~140 KB and was refused for every organization.
+#[tokio::test]
+async fn every_node_the_model_writes_fits_graph_storage() {
+    use crate::domain_model::store::DomainStore;
+    const PAYLOAD_MAX_BYTES: usize = 65_536;
+    let org = Org::with_base_kits().await;
+    let ctx = person(ADMIN);
+    let nodes = org
+        .store
+        .list_objects(
+            &ctx,
+            &[
+                crate::domain_model::gts::META_MODEL.to_string(),
+                crate::domain_model::gts::META_OBJECT_TYPE.to_string(),
+            ],
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(
+        nodes
+            .iter()
+            .any(|n| n.type_id == crate::domain_model::gts::META_MODEL)
+    );
+    for n in &nodes {
+        let size = n.value.to_string().len();
+        assert!(
+            size <= PAYLOAD_MAX_BYTES,
+            "{} {} is {size} bytes, over graph-storage's {PAYLOAD_MAX_BYTES}",
+            n.type_id,
+            n.instance_id
+        );
+    }
+}

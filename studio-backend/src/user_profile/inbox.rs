@@ -414,19 +414,13 @@ pub fn inbox(items: Vec<Item>, marks: &[Mark], now: OffsetDateTime) -> (Vec<Item
     (open, hidden)
 }
 
-/// The workspaces of the caller's organization, `(id, name)`.
-fn workspaces(rollups: &Value) -> Vec<(String, String)> {
-    rollups["items"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter(|r| r["kind"] == "workspace")
-        .filter_map(|r| Some((text(&r["id"])?, text(&r["name"]).unwrap_or_default())))
-        .collect()
-}
-
 /// The most pull requests read for one workspace: pages of 200.
 const PULL_PAGES: usize = 10;
+
+/// How many workspaces' sources are read at once, and how many kit sources:
+/// each is a request through the gateway that takes pooled connections, and
+/// an organization with many workspaces queued every one of them together.
+const PARALLEL_READS: usize = 4;
 
 /// What a read could not reach, by source and workspace, for the answer to
 /// name rather than show as nothing waiting.
@@ -534,27 +528,41 @@ async fn kit_sources(
     sources: &[Value],
 ) -> Read {
     let mut unread = Vec::new();
+    use futures_util::StreamExt;
     let sources: Vec<&Value> = sources.iter().filter(|s| s["kind"] != STUDIO).collect();
-    let answers = futures_util::future::join_all(sources.into_iter().map(|source| async move {
-        let answer = if source["kind"] == ENDPOINT {
-            // A gear's route, called as the person: it answers their items,
-            // in the organization the Inbox is read for.
-            match source["path"].as_str().filter(|p| endpoint_path_allowed(p)) {
-                Some(path) => api.get(path, &scope(org)).await,
-                None => Err(crate::mcp::sdk::ToolError(
-                    "the source names no route of Studio's own".into(),
-                )),
-            }
-        } else {
-            let query = with_me(&source["query"], me);
-            api.post("/studio-domain-model/v1/query", &scope(org), &query)
-                .await
-        };
-        (source, answer)
-    }))
+    // A few at once, in the order the kits list them. By index: a closure
+    // over `&Value` items is not `Send` for every lifetime the handler needs.
+    let sources = &sources;
+    let answers: Vec<_> = futures_util::stream::iter(
+        (0..sources.len())
+            .map(|i| {
+                let source: &Value = sources[i];
+                async move {
+                    let answer = if source["kind"] == ENDPOINT {
+                        // A gear's route, called as the person: it answers their items,
+                        // in the organization the Inbox is read for.
+                        match source["path"].as_str().filter(|p| endpoint_path_allowed(p)) {
+                            Some(path) => api.get(path, &scope(org)).await,
+                            None => Err(crate::mcp::sdk::ToolError(
+                                "the source names no route of Studio's own".into(),
+                            )),
+                        }
+                    } else {
+                        let query = with_me(&source["query"], me);
+                        api.post("/studio-domain-model/v1/query", &scope(org), &query)
+                            .await
+                    };
+                    (i, answer)
+                }
+            })
+            .collect::<Vec<_>>(),
+    )
+    .buffered(PARALLEL_READS)
+    .collect()
     .await;
     let mut items = Vec::new();
-    for (source, answer) in answers {
+    for (i, answer) in answers {
+        let source: &Value = sources[i];
         match answer {
             Ok(page) => {
                 let rows = page["items"].as_array().cloned().unwrap_or_default();
@@ -583,15 +591,24 @@ async fn kit_sources(
 /// Every source of every workspace of the organization, read as the caller
 /// (`me` is their subject id), the kits' sources among them. `org` is the
 /// organization on screen; `None` is the caller's home.
-pub async fn read(api: &Api, me: &str, org: Option<&str>) -> Read {
+///
+/// `workspaces` answers the organization's workspaces, `(id, name)`, or why
+/// they could not be listed: the tenant tree alone
+/// (`organizations::sdk::portfolio_workspaces`), never `GET /rollups`, which
+/// computes every project's counts the Inbox has no use for (#1077).
+pub async fn read(
+    api: &Api,
+    me: &str,
+    org: Option<&str>,
+    workspaces: impl std::future::Future<Output = Result<Vec<(String, String)>, String>>,
+) -> Read {
+    use futures_util::StreamExt;
     let mut unread = Vec::new();
-    let query = scope(org);
-    let rollups = api.get("/studio-organizations/v1/rollups", &query);
-    let (rollups, listed) = tokio::join!(rollups, listed_sources(api, org));
-    let spaces = match rollups {
-        Ok(r) => workspaces(&r),
+    let (spaces, listed) = tokio::join!(workspaces, listed_sources(api, org));
+    let spaces = match spaces {
+        Ok(spaces) => spaces,
         Err(e) => {
-            unread.push(format!("workspaces: {}", e.0));
+            unread.push(format!("workspaces: {e}"));
             Vec::new()
         }
     };
@@ -606,49 +623,85 @@ pub async fn read(api: &Api, me: &str, org: Option<&str>) -> Read {
     // is read only while its kit applies to the organization.
     let owned = Owned::of(listed.as_deref());
     let (with_reviews, with_pulls) = (owned.reviews.is_some(), owned.pulls.is_some());
-    let per = futures_util::future::join_all(spaces.iter().map(|(id, name)| async move {
-        let q = vec![
-            ("workspace_id".to_string(), id.clone()),
-            ("waiting_on".to_string(), "me".to_string()),
-        ];
-        let reviews = if with_reviews {
-            api.get("/studio-documents/v1/review-requests", &q).await
-        } else {
-            Ok(Value::Null)
-        };
-        let mut pulls: Vec<Value> = Vec::new();
-        let mut pulls_failed = None;
-        let mut known = true;
-        let mut offset = 0usize;
-        let pages = if with_pulls { PULL_PAGES } else { 0 };
-        for _ in 0..pages {
-            let mut pq = q.clone();
-            pq.push(("limit".to_string(), "200".to_string()));
-            pq.push(("offset".to_string(), offset.to_string()));
-            match api
-                .get("/studio-artifact-ingest/v1/open-pull-requests", &pq)
-                .await
-            {
-                Ok(page) => {
-                    let got = page["items"].as_array().cloned().unwrap_or_default();
-                    known &= page["members_known"].as_bool().unwrap_or(true);
-                    let total = page["total"].as_u64().unwrap_or(0);
-                    offset += got.len();
-                    let done = got.is_empty() || offset as u64 >= total;
-                    pulls.extend(got);
-                    if done {
-                        break;
-                    }
+    // A few workspaces at once, in the order they were listed; in each, its
+    // review requests beside its pull requests.
+    let spaces_ref = &spaces;
+    let per = futures_util::stream::iter(
+        (0..spaces.len())
+            .map(|i| {
+                let (id, name) = &spaces_ref[i];
+                async move {
+                    let q = vec![
+                        ("workspace_id".to_string(), id.clone()),
+                        ("waiting_on".to_string(), "me".to_string()),
+                    ];
+                    let reviews = async {
+                        if with_reviews {
+                            api.get("/studio-documents/v1/review-requests", &q).await
+                        } else {
+                            Ok(Value::Null)
+                        }
+                    };
+                    let pulls = async {
+                        let mut pulls: Vec<Value> = Vec::new();
+                        let mut pulls_failed = None;
+                        let mut known = true;
+                        let mut offset = 0usize;
+                        let pages = if with_pulls { PULL_PAGES } else { 0 };
+                        for _ in 0..pages {
+                            let mut pq = q.clone();
+                            pq.push(("limit".to_string(), "200".to_string()));
+                            pq.push(("offset".to_string(), offset.to_string()));
+                            match api
+                                .get("/studio-artifact-ingest/v1/open-pull-requests", &pq)
+                                .await
+                            {
+                                Ok(page) => {
+                                    let got = page["items"].as_array().cloned().unwrap_or_default();
+                                    known &= page["members_known"].as_bool().unwrap_or(true);
+                                    let total = page["total"].as_u64().unwrap_or(0);
+                                    offset += got.len();
+                                    let done = got.is_empty() || offset as u64 >= total;
+                                    pulls.extend(got);
+                                    if done {
+                                        break;
+                                    }
+                                }
+                                Err(e) => {
+                                    pulls_failed = Some(e.0);
+                                    break;
+                                }
+                            }
+                        }
+                        (pulls, pulls_failed, known)
+                    };
+                    let (reviews, (pulls, pulls_failed, known)) = tokio::join!(reviews, pulls);
+                    (
+                        id.clone(),
+                        name.clone(),
+                        reviews,
+                        pulls,
+                        pulls_failed,
+                        known,
+                    )
                 }
-                Err(e) => {
-                    pulls_failed = Some(e.0);
-                    break;
-                }
-            }
-        }
-        (id, name, reviews, pulls, pulls_failed, known)
-    }))
-    .await;
+            })
+            .collect::<Vec<_>>(),
+    )
+    .buffered(PARALLEL_READS)
+    .collect::<Vec<_>>();
+    // The person's failed runs, in the organization's tenant, and what the
+    // installed kits bring (ADR-0068 §6): beside the workspaces, not after.
+    let mut rq = vec![
+        ("state".to_string(), "failed".to_string()),
+        ("limit".to_string(), "200".to_string()),
+    ];
+    if let Some(org) = org {
+        rq.push(("tenant".to_string(), org.to_string()));
+    }
+    let runs = api.get("/studio-tasks/v1/runs", &rq);
+    let kits = kit_sources(api, me, org, &spaces, listed.as_deref().unwrap_or_default());
+    let (per, runs, kits) = tokio::join!(per, runs, kits);
     let mut members_known = true;
     let mut reviews_all = Vec::new();
     let mut pulls_all = Vec::new();
@@ -663,24 +716,16 @@ pub async fn read(api: &Api, me: &str, org: Option<&str>) -> Read {
             unread.push(format!("{PULL_REQUESTS} in {name}: {why}"));
         }
         reviews_all.extend(owned_by(
-            items_of(id, name, reviews, Vec::new()),
+            items_of(&id, &name, reviews, Vec::new()),
             owned.reviews.as_ref().and_then(Option::as_ref),
         ));
         pulls_all.extend(owned_by(
-            items_of(id, name, Vec::new(), pulls),
+            items_of(&id, &name, Vec::new(), pulls),
             owned.pulls.as_ref().and_then(Option::as_ref),
         ));
     }
     reviews_all.extend(pulls_all);
-    // The person's failed runs, in the organization's tenant.
-    let mut rq = vec![
-        ("state".to_string(), "failed".to_string()),
-        ("limit".to_string(), "200".to_string()),
-    ];
-    if let Some(org) = org {
-        rq.push(("tenant".to_string(), org.to_string()));
-    }
-    match api.get("/studio-tasks/v1/runs", &rq).await {
+    match runs {
         Ok(page) => reviews_all.extend(failed_run_items(
             page["items"].as_array().cloned().unwrap_or_default(),
             me,
@@ -688,8 +733,7 @@ pub async fn read(api: &Api, me: &str, org: Option<&str>) -> Read {
         )),
         Err(e) => unread.push(format!("{FAILED_RUNS}: {}", e.0)),
     }
-    // What the installed kits bring (ADR-0068 §6), after the shell's own.
-    let kits = kit_sources(api, me, org, &spaces, listed.as_deref().unwrap_or_default()).await;
+    // The kits' items after the shell's own.
     reviews_all.extend(kits.items);
     unread.extend(kits.unread);
     Read {

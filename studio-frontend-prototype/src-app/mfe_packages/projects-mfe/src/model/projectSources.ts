@@ -25,13 +25,19 @@ function cloneUrlParts(cloneUrl: string): { protocol: string; host: string; path
  * for anything without a scheme.
  *
  * The backend's `repository_key` (`studio-backend/src/project_sources.rs`)
- * gives the same key for a provider's clone URL. They part on what a provider
- * does not answer with: an explicit default port, a query or a fragment, which
- * the backend keeps in the key and `URL` drops. Change both together.
+ * gives the same key for a provider's clone URL; both drop a query and a
+ * fragment. They part on what a provider does not answer with: an explicit
+ * default port, which the backend keeps in the key and `URL` drops. Change
+ * both together.
  */
 export function repositoryKey(cloneUrl: string): string | null {
   const parts = cloneUrlParts(cloneUrl);
   return parts && `${parts.host}/${parts.path}`.toLowerCase();
+}
+
+/** The provider host a clone URL names, lower case, as `repositoryKey` reads it; `null` without a scheme. */
+export function repositoryHost(cloneUrl: string): string | null {
+  return cloneUrlParts(cloneUrl)?.host.toLowerCase() ?? null;
 }
 
 // @cpt-dod:cpt-studiofrontend-dod-project-sources-menu-open-in:p1

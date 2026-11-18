@@ -6,7 +6,12 @@ import en from './i18n/en.json';
 import ru from './i18n/ru.json';
 import projectEn from '../../i18n/en.json';
 import { sourceRow } from '../../../../model/sourceRows.fixture';
-import type { SourceRow, SourcesTableRow } from '../../../../model/sourceRows';
+import {
+  CLONE_ACTIONS,
+  CLONE_CAUSES,
+  type SourceRow,
+  type SourcesTableRow,
+} from '../../../../model/sourceRows';
 import type { SourceRowActions } from '../../../../shared/useSourceRowActions';
 
 /** Each cell of the Sources table (#688). */
@@ -76,7 +81,7 @@ afterEach(() => {
 });
 
 describe('the headers', () => {
-  it('name the eight columns, in order, with the activity window', () => {
+  it('name the nine columns, in order, with the activity window', () => {
     expect(columns().map((entry) => [entry.id, entry.label])).toEqual([
       ['source', 'Source'],
       ['role', 'Role'],
@@ -85,6 +90,7 @@ describe('the headers', () => {
       ['pull_requests', 'Pull requests · 7 days'],
       ['commits', 'Commits · 7 days'],
       ['last_sync', 'Last sync'],
+      ['clone', 'Clone'],
       ['actions', 'Actions'],
     ]);
   });
@@ -385,6 +391,84 @@ describe('the Last sync cell', () => {
     expect(
       stopped({ kind: 'stopped', status: 'cancelled', reason: null, canRetry: true })
     ).toEqual(['Last attempt cancelled', null]);
+  });
+});
+
+describe('the Clone cell', () => {
+  const lines = (row: SourceRow) =>
+    [...cell('clone', row).container.querySelectorAll('span')].map((line) => line.textContent);
+
+  it('says nothing when the clone status was not read', () => {
+    expect(lines(sourceRow())).toEqual(['—']);
+  });
+
+  it('says a source that nobody cloned was never cloned', () => {
+    expect(cell('clone', sourceRow({ clone: { kind: 'never' } })).container.textContent).toBe(
+      'Never cloned'
+    );
+  });
+
+  it('shows a clone with when and by what', () => {
+    expect(
+      lines(sourceRow({ clone: { kind: 'cloned', at: '2026-11-12T09:30:00Z', by: 'desktop' } }))
+    ).toEqual(['Cloned', 'day 2026-11-12T09:30:00.000Z · desktop']);
+  });
+
+  // #1067: the session cloned a private source without its token.
+  it('shows a failed clone with its cause and the action that fixes it, and the detail as its title', () => {
+    const { container } = cell(
+      'clone',
+      sourceRow({
+        clone: {
+          kind: 'failed',
+          at: '2026-11-12T09:30:00Z',
+          by: 'ide_session',
+          cause: 'connection_not_found',
+          causeText: 'ignored',
+          action: 'reconnect',
+          actionText: 'ignored',
+          detail: 'the host answered 401',
+        },
+      })
+    );
+
+    expect([...container.querySelectorAll('span')].map((line) => line.textContent)).toEqual([
+      'Clone failed',
+      'day 2026-11-12T09:30:00.000Z · IDE session',
+      en.clone_cause_connection_not_found,
+      en.clone_action_reconnect,
+    ]);
+    expect(container.querySelector('div')?.getAttribute('title')).toBe('the host answered 401');
+  });
+
+  it("falls back to the backend's sentences for a cause it has no words for", () => {
+    expect(
+      lines(
+        sourceRow({
+          clone: {
+            kind: 'failed',
+            at: null,
+            by: null,
+            cause: null,
+            causeText: 'Something new went wrong.',
+            action: null,
+            actionText: 'Do the new thing.',
+            detail: null,
+          },
+        })
+      )
+    ).toEqual(['Clone failed', 'Something new went wrong.', 'Do the new thing.']);
+  });
+
+  it('has a sentence for every cause and action the backend names', () => {
+    const words = en as Record<string, string>;
+    for (const cause of CLONE_CAUSES) expect(words[`clone_cause_${cause}`]).toBeTruthy();
+    for (const action of CLONE_ACTIONS) expect(words[`clone_action_${action}`]).toBeTruthy();
+    const clone = (keys: object) =>
+      Object.keys(keys)
+        .filter((key) => key.startsWith('clone_') || key === 'col_clone')
+        .sort();
+    expect(clone(ru)).toEqual(clone(en));
   });
 });
 

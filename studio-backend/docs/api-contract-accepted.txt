@@ -1527,6 +1527,19 @@ response	GET /studio-artifact-ingest/v1/source-activity	items.merged	u32	always
 response	GET /studio-artifact-ingest/v1/source-activity	items.open	u32	always
 response	GET /studio-artifact-ingest/v1/source-activity	items.repo	String	always
 response	GET /studio-artifact-ingest/v1/source-activity	total	u32	always
+response	GET /studio-artifact-ingest/v1/sources/clone-status	items	Vec<{}>	always
+response	GET /studio-artifact-ingest/v1/sources/clone-status	items.action	String	optional
+response	GET /studio-artifact-ingest/v1/sources/clone-status	items.action_text	String	optional
+response	GET /studio-artifact-ingest/v1/sources/clone-status	items.at	String	optional
+response	GET /studio-artifact-ingest/v1/sources/clone-status	items.by	String	optional
+response	GET /studio-artifact-ingest/v1/sources/clone-status	items.cause	String	optional
+response	GET /studio-artifact-ingest/v1/sources/clone-status	items.cause_text	String	optional
+response	GET /studio-artifact-ingest/v1/sources/clone-status	items.clone_url	String	always
+response	GET /studio-artifact-ingest/v1/sources/clone-status	items.detail	String	optional
+response	GET /studio-artifact-ingest/v1/sources/clone-status	items.full_path	String	always
+response	GET /studio-artifact-ingest/v1/sources/clone-status	items.state	String	always
+response	GET /studio-artifact-ingest/v1/sources/clone-status	items.upstream_status	u16	optional
+response	GET /studio-artifact-ingest/v1/sources/clone-status	total	u32	always
 response	GET /studio-assembly/v1/manifest	build	{}	always
 response	GET /studio-assembly/v1/manifest	build.commit	String	optional
 response	GET /studio-assembly/v1/manifest	build.features	Vec<String>	always
@@ -8238,6 +8251,7 @@ route	GET /studio-artifact-ingest/v1/outputs/{}/download
 route	GET /studio-artifact-ingest/v1/repo-files
 route	GET /studio-artifact-ingest/v1/runs
 route	GET /studio-artifact-ingest/v1/source-activity
+route	GET /studio-artifact-ingest/v1/sources/clone-status
 route	GET /studio-assembly/v1/manifest
 route	GET /studio-components-catalog/v1/activity
 route	GET /studio-components-catalog/v1/component-history

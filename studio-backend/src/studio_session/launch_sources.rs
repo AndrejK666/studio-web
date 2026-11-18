@@ -10,7 +10,8 @@
 //! A plain function, so the rule has its tests; `rest::create_session`
 //! resolves the tokens and hands the result to the service.
 
-use crate::git_proxy::sdk::Source;
+use crate::artifact_ingest::port::CloneCause;
+use crate::git_proxy::sdk::{NoToken, Source};
 use crate::project_sources::same_repository;
 
 /// One source to launch with, before its token is resolved.
@@ -24,6 +25,47 @@ pub struct Planned {
     pub target: Option<String>,
     pub branch: Option<String>,
     pub token_ref: Option<String>,
+    /// One of the project's own sources, rather than one the caller added.
+    pub from_project: bool,
+    /// Why a project source has no `token_ref`, when it has none.
+    pub no_token: Option<NoToken>,
+}
+
+/// What a launch says on the project's Sources tab about one source (#1071).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LaunchClone {
+    /// The session clones it without the token its connection should lend.
+    Failed(CloneCause),
+    /// It has its token: a failure an earlier launch recorded no longer holds.
+    Clear,
+    /// Not the project's source: nothing to say.
+    Nothing,
+}
+
+/// What the launch of `planned` says, given whether its token was read:
+/// `None` when it had no token to read, `Some(false)` when credstore did not
+/// give it.
+///
+/// Only what the server knows for certain before the clone is said. A source
+/// that names no connection, or a personal one, may well be public and clone
+/// without a token, so its launch says nothing against it; one whose
+/// connection is lost or held outside the organization, or whose token cannot
+/// be read, was meant to clone with a token and does not get one.
+pub fn launch_clone(planned: &Planned, token_read: Option<bool>) -> LaunchClone {
+    if !planned.from_project {
+        return LaunchClone::Nothing;
+    }
+    match token_read {
+        Some(false) => LaunchClone::Failed(CloneCause::TokenUnreadable),
+        Some(true) => LaunchClone::Clear,
+        None => match planned.no_token {
+            Some(NoToken::ConnectionNotFound) => {
+                LaunchClone::Failed(CloneCause::ConnectionNotFound)
+            }
+            Some(NoToken::HeldOutside) => LaunchClone::Failed(CloneCause::HeldOutside),
+            _ => LaunchClone::Clear,
+        },
+    }
 }
 
 /// The project's sources, then each requested source that is not one of
@@ -41,6 +83,8 @@ pub fn plan(project: Vec<Source>, requested: Vec<Planned>) -> Vec<Planned> {
             target: s.target,
             branch: s.branch,
             token_ref: s.token_ref,
+            from_project: true,
+            no_token: s.no_token,
         })
         .collect();
     let project_urls: Vec<String> = out.iter().filter_map(|p| p.url.clone()).collect();
@@ -76,6 +120,7 @@ mod tests {
             target: None,
             token_ref: Some(format!("ref-{name}")),
             held_outside: None,
+            no_token: None,
         }
     }
 
@@ -88,7 +133,61 @@ mod tests {
             target: None,
             branch: None,
             token_ref: None,
+            from_project: false,
+            no_token: None,
         }
+    }
+
+    fn lost(no_token: Option<NoToken>) -> Planned {
+        let mut source = project("api", "https://github.com/org/api.git");
+        source.token_ref = None;
+        source.no_token = no_token;
+        plan(vec![source], vec![]).remove(0)
+    }
+
+    /// #1067: the connection was not found, the session cloned without a
+    /// token, and the Sources tab said nothing.
+    #[test]
+    fn a_launch_without_the_token_its_connection_should_lend_is_a_failed_clone() {
+        assert_eq!(
+            launch_clone(&lost(Some(NoToken::ConnectionNotFound)), None),
+            LaunchClone::Failed(CloneCause::ConnectionNotFound)
+        );
+        assert_eq!(
+            launch_clone(&lost(Some(NoToken::HeldOutside)), None),
+            LaunchClone::Failed(CloneCause::HeldOutside)
+        );
+        let read = plan(
+            vec![project("api", "https://github.com/org/api.git")],
+            vec![],
+        )
+        .remove(0);
+        assert_eq!(
+            launch_clone(&read, Some(false)),
+            LaunchClone::Failed(CloneCause::TokenUnreadable)
+        );
+    }
+
+    #[test]
+    fn a_launch_with_its_token_or_without_a_connection_says_nothing_against_it() {
+        let read = plan(
+            vec![project("api", "https://github.com/org/api.git")],
+            vec![],
+        )
+        .remove(0);
+        assert_eq!(launch_clone(&read, Some(true)), LaunchClone::Clear);
+        // Possibly public: no connection, or a personal one, is no failure.
+        assert_eq!(
+            launch_clone(&lost(Some(NoToken::NoConnection)), None),
+            LaunchClone::Clear
+        );
+        assert_eq!(
+            launch_clone(&lost(Some(NoToken::Personal)), None),
+            LaunchClone::Clear
+        );
+        // What the caller added is not the project's to report on.
+        let extra = asked("corpus", "git", Some("https://github.com/org/corpus.git"));
+        assert_eq!(launch_clone(&extra, Some(false)), LaunchClone::Nothing);
     }
 
     #[test]

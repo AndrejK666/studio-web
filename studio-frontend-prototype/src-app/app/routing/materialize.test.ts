@@ -224,10 +224,9 @@ describe('materialize', () => {
       expect(state().artifact).toBe(held);
     });
 
-    // The editor means nothing without its artifact (shell-levels.md): an
-    // address that names the editor and no artifact it can open lands on the
-    // project's entry point instead, the way a failed mount falls back.
-    it('drops an artifact of a kind the editor does not know, with a warning, and leaves the editor', () => {
+    // The editor is the project's IDE tab: inside a project it opens with an
+    // artifact or without one (then on the project's workspace).
+    it('drops an artifact of a kind the editor does not know, with a warning, and opens the IDE without it', () => {
       const { materialize, state, adapter, warn } = setup(
         '/?screen=space;org=o1;workspace=w1;project=p1;artifact=n-1;kind=spec_finding',
         { ...ready, projects: [ATLAS] }
@@ -235,19 +234,20 @@ describe('materialize', () => {
       materialize();
       expect(state().artifact).toBeNull();
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('n-1'));
-      expect(adapter.url()).toBe('/?screen=projects;org=o1;workspace=w1;project=p1;section=overview');
-      expect(mocks.mountScreen).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 'projects.main' }));
-      expect(mocks.mountScreen).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 'space.main' }));
+      expect(adapter.url()).toBe('/?screen=space;org=o1;workspace=w1;project=p1');
+      expect(mocks.mountScreen).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 'space.main' }));
       expect(adapter.length()).toBe(1);
     });
 
-    it('opens the project entry point when the editor address names no artifact at all', () => {
-      const { materialize, adapter } = setup('/?screen=space;org=o1;workspace=w1;project=p1', {
+    it('opens the IDE on the project when the editor address names no artifact at all', () => {
+      const { materialize, adapter, state, warn } = setup('/?screen=space;org=o1;workspace=w1;project=p1', {
         ...ready, projects: [ATLAS],
       });
       materialize();
-      expect(adapter.url()).toBe('/?screen=projects;org=o1;workspace=w1;project=p1;section=overview');
-      expect(mocks.mountScreen).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 'space.main' }));
+      expect(adapter.url()).toBe('/?screen=space;org=o1;workspace=w1;project=p1');
+      expect(state().artifact).toBeNull();
+      expect(mocks.mountScreen).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 'space.main' }));
+      expect(warn).not.toHaveBeenCalled();
     });
 
     it('opens the workspace entry point when the editor address names no project, and says so', () => {
@@ -264,16 +264,16 @@ describe('materialize', () => {
 
     it('says when there is no entry point to fall back to, and mounts the editor as it is', () => {
       const stripped = screens.filter((candidate) => levelOf(candidate) === 'organization' || candidate.id === 'space.main');
-      const { materialize, adapter, warn } = setup('/?screen=space;org=o1;workspace=w1;project=p1', { ...ready, projects: [ATLAS] }, stripped);
+      const { materialize, adapter, warn } = setup('/?screen=space;org=o1;workspace=w1', ready, stripped);
       materialize();
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('no entry point'));
-      expect(adapter.url()).toBe('/?screen=space;org=o1;workspace=w1;project=p1');
+      expect(adapter.url()).toBe('/?screen=space;org=o1;workspace=w1');
       expect(mocks.mountScreen).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 'space.main' }));
     });
 
     it('says it once per address, however often the same address is applied again', () => {
       const stripped = screens.filter((candidate) => levelOf(candidate) === 'organization' || candidate.id === 'space.main');
-      const { materialize, transition, warn } = setup('/?screen=space;org=o1;workspace=w1;project=p1', { ...ready, projects: [ATLAS] }, stripped);
+      const { materialize, transition, warn } = setup('/?screen=space;org=o1;workspace=w1', ready, stripped);
       materialize();
       materialize();
       expect(warn.mock.calls.filter(([text]) => String(text).includes('no entry point'))).toHaveLength(1);

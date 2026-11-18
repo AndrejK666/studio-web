@@ -17,9 +17,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::anyhow;
-use authn_resolver_sdk::{AuthNResolverClient, ClientCredentialsRequest};
 use credstore_sdk::{CredStoreClientV1, SecretRef};
-use secrecy::{ExposeSecret, SecretString};
+use secrecy::ExposeSecret;
 use toolkit_security::SecurityContext;
 
 use super::comment_threads;
@@ -282,9 +281,8 @@ pub struct IngestService {
 }
 
 pub struct PlatformClient {
-    pub authn: Arc<dyn AuthNResolverClient>,
-    pub client_id: String,
-    pub client_secret: String,
+    /// The configured OAuth client; the Studio PDP recognises the sync by it.
+    pub identity: Arc<super::mirror_identity::MirrorSyncIdentity>,
     pub mirror_base_url: String,
 }
 
@@ -390,17 +388,10 @@ impl IngestService {
                  client_credentials configured"
             )
         })?;
-        let result = platform
-            .authn
-            .exchange_client_credentials(&ClientCredentialsRequest {
-                client_id: platform.client_id.clone(),
-                client_secret: SecretString::from(platform.client_secret.clone()),
-                scopes: Vec::new(),
-            })
-            .await
-            .map_err(|e| anyhow!("client credentials exchange failed: {e}"))?;
-        result
-            .security_context
+        platform
+            .identity
+            .exchange()
+            .await?
             .bearer_token()
             .map(|t| t.expose_secret().to_string())
             .ok_or_else(|| anyhow!("the client credentials exchange returned no bearer token"))
@@ -2994,6 +2985,28 @@ impl super::port::ArtifactCounter for IngestService {
             .await?;
         Ok(u32::try_from(n).unwrap_or(u32::MAX))
     }
+
+    async fn count_nodes_in_projects(
+        &self,
+        ctx: &SecurityContext,
+        type_leaf: &str,
+        projects: &[String],
+    ) -> HashMap<String, u32> {
+        match self
+            .graph
+            .count_in_projects(ctx, Some(type_leaf), projects)
+            .await
+        {
+            Ok(counts) => counts
+                .into_iter()
+                .map(|(p, n)| (p, u32::try_from(n).unwrap_or(u32::MAX)))
+                .collect(),
+            Err(e) => {
+                warn!(error = %format!("{e:#}"), "studio-artifact-ingest: the projects' counts could not be read");
+                HashMap::new()
+            }
+        }
+    }
 }
 
 /// A project's work, from the same scoped reads: one indexed query per kind.
@@ -3078,17 +3091,82 @@ impl super::port::ProjectSignalSource for IngestService {
         let comments = entries(comments);
         let pulls = values(pulls);
         let repos = values(repos);
-        let now = i64::try_from(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis())
-                .unwrap_or(0),
-        )
-        .unwrap_or(0);
         Ok(super::activity::project_signals(
-            &findings, &comments, &pulls, &repos, now, days,
+            &findings,
+            &comments,
+            &pulls,
+            &repos,
+            now_ms(),
+            days,
         ))
     }
+
+    async fn project_signals_in(
+        &self,
+        ctx: &SecurityContext,
+        projects: &[String],
+        days: usize,
+    ) -> HashMap<String, super::port::ProjectSignals> {
+        // The same four reads, each once for every project.
+        let read = async {
+            tokio::try_join!(
+                self.graph
+                    .list_in_projects(ctx, Some("spec_finding"), projects),
+                self.graph.list_in_projects(ctx, Some("comment"), projects),
+                self.graph
+                    .list_in_projects(ctx, Some("pull_request"), projects),
+                self.graph.list_in_projects(ctx, Some("repo"), projects),
+            )
+        };
+        let (findings, comments, pulls, repos) = match read.await {
+            Ok(read) => read,
+            Err(e) => {
+                warn!(error = %format!("{e:#}"), "studio-artifact-ingest: the projects' signals could not be read");
+                return HashMap::new();
+            }
+        };
+        // One instant for every row of the table.
+        let now = now_ms();
+        let entries = |nodes: Option<Vec<GtsNode>>| -> Vec<(String, serde_json::Value)> {
+            nodes
+                .unwrap_or_default()
+                .into_iter()
+                .map(|n| (n.instance_id, n.value))
+                .collect()
+        };
+        let values = |nodes: Option<Vec<GtsNode>>| -> Vec<serde_json::Value> {
+            nodes
+                .unwrap_or_default()
+                .into_iter()
+                .map(|n| n.value)
+                .collect()
+        };
+        projects
+            .iter()
+            .map(|p| {
+                let signals = super::activity::project_signals(
+                    &entries(findings.get(p).cloned()),
+                    &entries(comments.get(p).cloned()),
+                    &values(pulls.get(p).cloned()),
+                    &values(repos.get(p).cloned()),
+                    now,
+                    days,
+                );
+                (p.clone(), signals)
+            })
+            .collect()
+    }
+}
+
+/// Now, in epoch milliseconds.
+fn now_ms() -> i64 {
+    i64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0),
+    )
+    .unwrap_or(0)
 }
 
 /// The files, offered to the gear that decides what each one is.
@@ -3229,34 +3307,61 @@ impl super::port::OpenPullRequests for IngestService {
         ctx: &SecurityContext,
         scope: &str,
     ) -> anyhow::Result<Vec<super::port::OpenPull>> {
-        let pulls: Vec<(String, serde_json::Value)> = self
-            .list_in_scope(ctx, Some("pull_request"), scope)
-            .await?
-            .into_iter()
-            .map(|n| (n.instance_id, n.value))
-            .collect();
+        let pulls = self.list_in_scope(ctx, Some("pull_request"), scope).await?;
         let now = time::OffsetDateTime::now_utc().unix_timestamp() * 1000;
-        Ok(super::pull_request_waits::waiting_pulls(&pulls, now)
-            .into_iter()
-            .map(|w| {
-                let mut reviewers = w.facts.requested_reviewers.clone();
-                for r in w.facts.reviews.iter().flatten() {
-                    if !reviewers.contains(&r.login) {
-                        reviewers.push(r.login.clone());
-                    }
-                }
-                super::port::OpenPull {
-                    project_id: w.project_id,
-                    author: w.facts.author,
-                    waiting: w.verdict.waiting.as_str().to_owned(),
-                    waiting_on: w.verdict.on,
-                    reviewers,
-                    days_open: w.days_open,
-                    days_since_update: w.days_since_update,
-                }
-            })
-            .collect())
+        Ok(open_pulls_of(pulls, now))
     }
+
+    async fn open_pulls_in(
+        &self,
+        ctx: &SecurityContext,
+        projects: &[String],
+    ) -> Vec<super::port::OpenPull> {
+        let mut by_project = match self
+            .graph
+            .list_in_projects(ctx, Some("pull_request"), projects)
+            .await
+        {
+            Ok(found) => found,
+            Err(e) => {
+                warn!(error = %format!("{e:#}"), "studio-artifact-ingest: the projects' pull requests could not be read");
+                return Vec::new();
+            }
+        };
+        let now = time::OffsetDateTime::now_utc().unix_timestamp() * 1000;
+        projects
+            .iter()
+            .flat_map(|p| open_pulls_of(by_project.remove(p).unwrap_or_default(), now))
+            .collect()
+    }
+}
+
+/// The pull requests among `nodes` that are open, with who each waits on.
+fn open_pulls_of(nodes: Vec<GtsNode>, now: i64) -> Vec<super::port::OpenPull> {
+    let pulls: Vec<(String, serde_json::Value)> = nodes
+        .into_iter()
+        .map(|n| (n.instance_id, n.value))
+        .collect();
+    super::pull_request_waits::waiting_pulls(&pulls, now)
+        .into_iter()
+        .map(|w| {
+            let mut reviewers = w.facts.requested_reviewers.clone();
+            for r in w.facts.reviews.iter().flatten() {
+                if !reviewers.contains(&r.login) {
+                    reviewers.push(r.login.clone());
+                }
+            }
+            super::port::OpenPull {
+                project_id: w.project_id,
+                author: w.facts.author,
+                waiting: w.verdict.waiting.as_str().to_owned(),
+                waiting_on: w.verdict.on,
+                reviewers,
+                days_open: w.days_open,
+                days_since_update: w.days_since_update,
+            }
+        })
+        .collect()
 }
 
 #[async_trait::async_trait]

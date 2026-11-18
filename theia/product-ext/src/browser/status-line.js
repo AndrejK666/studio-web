@@ -171,7 +171,7 @@ function coEditorsText(others) {
 
 class StatusLine {
 
-    init({ statusBar, shell, workspaceService, fileService, currentTheme, toggleTheme, openProjectPage, commandRegistry }) {
+    init({ statusBar, shell, workspaceService, fileService, currentTheme, toggleTheme, embedded, openProjectPage, commandRegistry }) {
         this.statusBar = statusBar;
         this.shell = shell;
         this.commandRegistry = commandRegistry;
@@ -179,6 +179,7 @@ class StatusLine {
         this.fileService = fileService;
         this.currentTheme = currentTheme;             // () => 'light' | 'dark'
         this.toggleTheme = toggleTheme;               // () => void
+        this.embedded = embedded;                     // () => boolean: inside the portal's frame
         this.openProjectPage = openProjectPage;
         this.changesStore = new ChangesStore(fileService, workspaceService);
         this.pending = 0;
@@ -488,6 +489,16 @@ class StatusLine {
             onclick: () => this.toggleTerminal()
         });
 
+        /*
+         * Inside the portal the portal decides the mode (#1073): it sends it with
+         * studio.init / studio.theme and the IDE wears the matching Studio theme.
+         * A toggle here could only take the IDE out of step with the page around
+         * it, so an embedded session has none; the portal's own switch is the one.
+         */
+        if (this.embedded && this.embedded()) {
+            this.statusBar.removeElement('studio.theme');
+            return;
+        }
         const dark = this.currentTheme && this.currentTheme() === 'dark';
         this.statusBar.setElement('studio.theme', {
             text: (dark ? '☽' : '☀') + ' ' + (dark ? 'Dark' : 'Light'),

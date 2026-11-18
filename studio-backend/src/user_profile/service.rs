@@ -446,6 +446,12 @@ impl IdentityService {
         }
     }
 
+    /// Account-management, as the service reads it: for a handler that
+    /// lists the tenant tree as the caller (the Inbox's workspaces).
+    pub(crate) fn account_management(&self) -> Arc<dyn AccountManagementClient> {
+        Arc::clone(&self.am)
+    }
+
     /// Hand the service the hub, in the REST phase like the connectors.
     pub fn attach_hub(&self, hub: Arc<toolkit::client_hub::ClientHub>) {
         let _ = self.hub.set(hub);

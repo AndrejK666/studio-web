@@ -14,12 +14,22 @@
 //! ([`ID_PREFIX`]): the artifact's own node still holds that key in the graph
 //! until a purge, and two nodes cannot share one.
 //!
-//! What a tenant already had moves once, in the background, the first time
-//! the store is touched for it: every node and relation the old store lists
-//! is written into the model, and a marker object records that it is done.
-//! Until then reads are answered by the old store and writes go to both, so
-//! nothing a sync writes during the move is lost. Relations the old store
-//! does not list come back with the next sync of their repository.
+//! What a tenant already had moves once, in the background, by the model
+//! sweep ([`ArtifactMover`], as this gear's service identity): every node and
+//! relation the old store lists is written into the model, and a marker
+//! object records that it is done. Until then reads are answered by the old
+//! store and writes go to both, so nothing a sync writes during the move is
+//! lost. Relations the old store does not list come back with the next sync
+//! of their repository.
+//!
+//! A request never starts the move. It used to: on Dev (2026-11-12), after
+//! the start-up sweep's move timed out, every artifact read asked the model
+//! for the marker and started the move again (failing then on the caller's
+//! context, #1080), 1124 times in 25 minutes (#1077). Whatever the context,
+//! a move lists the tenant's whole old store, which is no work for a request
+//! or for every read after a failure. A read only asks whether the tenant has
+//! moved, and remembers "not yet" for [`NOT_MOVED_FOR`]; the sweep moves it,
+//! and retries a failed move with a back-off.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -54,6 +64,17 @@ pub const ID_PREFIX: &str = "art-";
 
 /// The marker that a tenant's artifacts have moved.
 const MOVED_MARKER: &str = "art-store-moved-v1";
+
+/// How long a read takes "not moved yet" (or a marker it could not read) for
+/// an answer before asking the model again. A move this process makes is
+/// known at once; another replica's, after this long.
+const NOT_MOVED_FOR: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// The wait before the sweep tries a failed move again: doubled after each
+/// failure, up to [`MOVE_RETRY_MAX`]. A move lists the tenant's whole old
+/// store, so it is not repeated every period under the load that failed it.
+const MOVE_RETRY_FIRST: std::time::Duration = std::time::Duration::from_secs(300);
+const MOVE_RETRY_MAX: std::time::Duration = std::time::Duration::from_secs(3600);
 
 /// Each artifact type and the model type it becomes.
 const KINDS: [(&str, &str); 15] = [
@@ -307,6 +328,13 @@ pub struct ModelGraphStore {
     typed: Mutex<HashSet<Uuid>>,
     moved: Mutex<HashSet<Uuid>>,
     moving: Mutex<HashSet<Uuid>>,
+    /// When a read last found a tenant not moved (or could not tell).
+    not_moved: Mutex<HashMap<Uuid, std::time::Instant>>,
+    /// A tenant whose move failed: how many times, and when it may run again.
+    failed: Mutex<HashMap<Uuid, (u32, std::time::Instant)>>,
+    /// How many moves have been started (tests: a read starts none).
+    #[cfg(test)]
+    moves_started: std::sync::atomic::AtomicUsize,
 }
 
 impl ModelGraphStore {
@@ -317,12 +345,17 @@ impl ModelGraphStore {
             typed: Mutex::default(),
             moved: Mutex::default(),
             moving: Mutex::default(),
+            not_moved: Mutex::default(),
+            failed: Mutex::default(),
+            #[cfg(test)]
+            moves_started: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 
     fn port(&self) -> anyhow::Result<Arc<dyn DomainObjects>> {
         self.hub
             .get::<dyn DomainObjects>()
+            .map(crate::domain_model::port::KeptByGear::wrap)
             .map_err(|e| anyhow::anyhow!("the domain model is not available: {e}"))
     }
 
@@ -349,42 +382,54 @@ impl ModelGraphStore {
         Ok(())
     }
 
-    /// Has this tenant moved? Asked of the model once per process; a tenant
-    /// that has not starts its move in the background.
-    async fn ready(self: &Arc<Self>, ctx: &SecurityContext) -> bool {
-        let tenant = ctx.subject_tenant_id();
-        if self
-            .moved
+    fn is_moved(&self, tenant: Uuid) -> bool {
+        self.moved
             .lock()
             .map(|m| m.contains(&tenant))
             .unwrap_or(false)
-        {
-            return true;
-        }
-        let Ok(port) = self.port() else {
-            return false;
-        };
-        let marked = port
+    }
+
+    /// Whether the model's marker says this tenant has moved. `Err` when it
+    /// could not be read: not the same as absent.
+    async fn marked(&self, ctx: &SecurityContext) -> anyhow::Result<bool> {
+        let port = self.port()?;
+        let (rows, _) = port
             .query(
                 ctx,
                 json!({"type": "sync-state", "where": {"id": {"_eq": MOVED_MARKER}}, "limit": 1}),
             )
-            .await
-            .map(|(rows, _)| {
-                rows.first().is_some_and(|o| {
-                    o.payload.get("status").and_then(Value::as_str) != Some("returned")
-                })
-            });
-        // A marker that could not be read is not a marker that is absent.
-        // Taking a busy pool's timeout for "never moved" started the whole
-        // move (every artifact listed off the graph and written again) under
-        // exactly the load that made the read fail. This read answers from
-        // the old store; the next one asks again.
-        let marked = match marked {
+            .await?;
+        Ok(rows
+            .first()
+            .is_some_and(|o| o.payload.get("status").and_then(Value::as_str) != Some("returned")))
+    }
+
+    /// Has this tenant moved? What a read or a write asks. Never starts the
+    /// move: that is the sweep's ([`Self::make_ready`]). A tenant found moved
+    /// is remembered for the process; one found not moved, or whose marker
+    /// could not be read, for [`NOT_MOVED_FOR`], so a busy screen does not
+    /// ask the model on every read.
+    async fn ready(&self, ctx: &SecurityContext) -> bool {
+        let tenant = ctx.subject_tenant_id();
+        if self.is_moved(tenant) {
+            return true;
+        }
+        let asked_lately = self
+            .not_moved
+            .lock()
+            .ok()
+            .and_then(|m| m.get(&tenant).copied())
+            .is_some_and(|at| at.elapsed() < NOT_MOVED_FOR);
+        if asked_lately {
+            return false;
+        }
+        // A marker that could not be read is not a marker that is absent:
+        // this read answers from the old store, as for "not yet".
+        let marked = match self.marked(ctx).await {
             Ok(marked) => marked,
             Err(e) => {
-                warn!(error = %format!("{e:#}"), "studio-artifact-ingest: the move marker could not be read; this read stays on the old store");
-                return false;
+                warn!(error = %format!("{e:#}"), "studio-artifact-ingest: the move marker could not be read; reads stay on the old store");
+                false
             }
         };
         if marked {
@@ -393,31 +438,76 @@ impl ModelGraphStore {
             }
             return true;
         }
+        if let Ok(mut m) = self.not_moved.lock() {
+            m.insert(tenant, std::time::Instant::now());
+        }
+        false
+    }
+
+    /// Move this tenant's artifacts into the model if they have not moved:
+    /// the sweep's step, as this gear's service identity in the tenant
+    /// (`ctx`), which may declare the model's types. Waits for the move.
+    /// `Ok(true)` once moved; `Ok(false)` when the move is not tried now
+    /// (another is running, or a failed one waits for its retry).
+    pub(super) async fn make_ready(&self, ctx: &SecurityContext) -> anyhow::Result<bool> {
+        let tenant = ctx.subject_tenant_id();
+        if self.is_moved(tenant) {
+            return Ok(true);
+        }
+        let waiting = self
+            .failed
+            .lock()
+            .ok()
+            .and_then(|f| f.get(&tenant).copied())
+            .is_some_and(|(_, not_before)| std::time::Instant::now() < not_before);
+        if waiting {
+            return Ok(false);
+        }
+        // An unreadable marker is not an absent one: no move on it.
+        if self.marked(ctx).await? {
+            if let Ok(mut m) = self.moved.lock() {
+                m.insert(tenant);
+            }
+            return Ok(true);
+        }
         let claimed = self
             .moving
             .lock()
             .map(|mut m| m.insert(tenant))
             .unwrap_or(false);
-        if claimed {
-            let this = Arc::clone(self);
-            let ctx = ctx.clone();
-            tokio::spawn(async move {
-                match this.move_tenant(&ctx).await {
-                    Ok(()) => {
-                        if let Ok(mut m) = this.moved.lock() {
-                            m.insert(ctx.subject_tenant_id());
-                        }
-                    }
-                    Err(e) => {
-                        warn!(error = %format!("{e:#}"), "studio-artifact-ingest: moving the artifacts into the domain model failed — reads stay on the old store");
-                    }
-                }
-                if let Ok(mut m) = this.moving.lock() {
-                    m.remove(&ctx.subject_tenant_id());
-                }
-            });
+        if !claimed {
+            return Ok(false);
         }
-        false
+        #[cfg(test)]
+        self.moves_started
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let result = self.move_tenant(ctx).await;
+        if let Ok(mut m) = self.moving.lock() {
+            m.remove(&tenant);
+        }
+        match result {
+            Ok(()) => {
+                if let Ok(mut m) = self.moved.lock() {
+                    m.insert(tenant);
+                }
+                if let Ok(mut f) = self.failed.lock() {
+                    f.remove(&tenant);
+                }
+                Ok(true)
+            }
+            Err(e) => {
+                let mut retry_in = MOVE_RETRY_FIRST;
+                if let Ok(mut f) = self.failed.lock() {
+                    let failures = f.get(&tenant).map_or(0, |(n, _)| *n).saturating_add(1);
+                    retry_in = MOVE_RETRY_FIRST
+                        .saturating_mul(1u32 << failures.saturating_sub(1).min(4))
+                        .min(MOVE_RETRY_MAX);
+                    f.insert(tenant, (failures, std::time::Instant::now() + retry_in));
+                }
+                warn!(error = %format!("{e:#}"), %tenant, retry_in_s = retry_in.as_secs(), "studio-artifact-ingest: moving the artifacts into the domain model failed — reads stay on the old store until the sweep moves them");
+                Err(e)
+            }
+        }
     }
 
     async fn move_tenant(&self, ctx: &SecurityContext) -> anyhow::Result<()> {
@@ -648,6 +738,19 @@ fn scope_where(scope: &str) -> Value {
     json!({"_or": [{"workspace_id": {"_eq": scope}}, {"project_id": {"_eq": scope}}]})
 }
 
+/// [`scope_where`] for any of several projects.
+///
+/// Sent with `project_ids`, which narrows by the indexed `scope` column
+/// first: an artifact's scope is its project, else its workspace
+/// ([`scope_of`]), so every artifact naming one of these projects is in
+/// it, and so is one whose workspace field names it without a project. What
+/// the column leaves out is an artifact whose workspace field names one of
+/// these projects while its project field names another: a project is never
+/// a workspace, so no sync writes one.
+fn projects_where(projects: &[String]) -> Value {
+    json!({"_or": [{"workspace_id": {"_in": projects}}, {"project_id": {"_in": projects}}]})
+}
+
 /// The listing's order ([`page_of_nodes`]): newest `updated_at` first, an
 /// absent one last, ties by id; or by id alone.
 fn sort_as_listed(nodes: &mut [GtsNode], by_updated: bool) {
@@ -858,6 +961,81 @@ impl GraphStore for ModelGraph {
             .await?;
         let n: usize = answers.iter().map(|(_, _, n)| *n).sum();
         Ok(u64::try_from(n).unwrap_or(u64::MAX))
+    }
+
+    async fn list_in_projects(
+        &self,
+        ctx: &SecurityContext,
+        type_filter: Option<&str>,
+        projects: &[String],
+    ) -> anyhow::Result<HashMap<String, Vec<GtsNode>>> {
+        let s = &self.0;
+        if !s.ready(ctx).await {
+            return s.legacy.list_in_projects(ctx, type_filter, projects).await;
+        }
+        // One query per type for every project, by the indexed `scope`
+        // column, then split here by the same rule `scope_where` asks.
+        let answers = s
+            .query_types(ctx, type_filter, |entity| {
+                json!({"type": entity, "project_ids": projects, "where": projects_where(projects)})
+            })
+            .await?;
+        let mut out: HashMap<String, Vec<GtsNode>> =
+            projects.iter().map(|p| (p.clone(), Vec::new())).collect();
+        for node in answers.into_iter().flat_map(|(_, nodes, _)| nodes) {
+            for p in projects {
+                if super::rest::node_in_scope(&node.value, Some(p))
+                    && let Some(list) = out.get_mut(p)
+                {
+                    list.push(node.clone());
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    async fn count_in_projects(
+        &self,
+        ctx: &SecurityContext,
+        type_filter: Option<&str>,
+        projects: &[String],
+    ) -> anyhow::Result<HashMap<String, u64>> {
+        let s = &self.0;
+        if !s.ready(ctx).await {
+            return s.legacy.count_in_projects(ctx, type_filter, projects).await;
+        }
+        let port = s.port()?;
+        // One `GROUP BY` per type for every project: no row is read.
+        let reads = gts::resolve_listable_types(type_filter)
+            .into_iter()
+            .filter_map(entity_of)
+            .map(|entity| {
+                let port = Arc::clone(&port);
+                let body = json!({
+                    "type": entity,
+                    "project_ids": projects,
+                    "where": projects_where(projects),
+                    "aggregate": {"group_by": ["project_id", "workspace_id"]},
+                    "limit": 0,
+                });
+                async move { port.aggregate(ctx, body).await }
+            });
+        let mut out: HashMap<String, u64> = projects.iter().map(|p| (p.clone(), 0)).collect();
+        for (groups, _) in futures_util::future::try_join_all(reads).await? {
+            for (key, count) in groups {
+                let names = |i: usize, p: &str| key.get(i).and_then(Value::as_str) == Some(p);
+                for p in projects {
+                    // The same rule as `scope_where`: its project or its
+                    // workspace, counted once when it is both.
+                    if (names(0, p) || names(1, p))
+                        && let Some(n) = out.get_mut(p)
+                    {
+                        *n = n.saturating_add(count);
+                    }
+                }
+            }
+        }
+        Ok(out)
     }
 
     async fn files_in_scope(
@@ -1093,9 +1271,15 @@ impl crate::model_sweep::TenantMover for ArtifactMover {
         if self.returning {
             self.store.back_to_graph(ctx).await;
         } else {
-            self.store.ready(ctx).await;
+            // The one place the move runs: a request never starts it.
+            self.store.make_ready(ctx).await?;
         }
         Ok(())
+    }
+    /// Again every period: a move that failed (a deadline under the load of
+    /// a start) is retried here, with its back-off, not by requests.
+    fn periodic(&self) -> bool {
+        !self.returning
     }
 }
 

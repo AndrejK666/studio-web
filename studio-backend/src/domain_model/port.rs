@@ -183,6 +183,20 @@ pub trait DomainObjects: Send + Sync {
         anyhow::bail!("queries are not offered here")
     }
 
+    /// Run a query for its counts: the body `POST /query` takes, with an
+    /// `aggregate`, answered as the groups `(key, count)` and how many
+    /// matched. Send `"limit": 0` to read no rows at all: the read model then
+    /// answers with one `GROUP BY` over the matches.
+    ///
+    /// What a gear counts with instead of fetching the rows to count them.
+    async fn aggregate(
+        &self,
+        _ctx: &SecurityContext,
+        _body: Value,
+    ) -> anyhow::Result<(Vec<(Vec<Value>, u64)>, usize)> {
+        anyhow::bail!("aggregates are not offered here")
+    }
+
     /// Every type of the tenant's model, and whether it is abstract.
     async fn entity_types(&self, _ctx: &SecurityContext) -> anyhow::Result<Vec<(String, bool)>> {
         Ok(Vec::new())
@@ -404,6 +418,29 @@ impl DomainObjects for Objects {
         ))
     }
 
+    async fn aggregate(
+        &self,
+        ctx: &SecurityContext,
+        body: Value,
+    ) -> anyhow::Result<(Vec<(Vec<Value>, u64)>, usize)> {
+        let q = super::query::Query::from_json(body).map_err(|e| anyhow::anyhow!(e))?;
+        if q.aggregate.is_none() {
+            anyhow::bail!("an aggregate query names its `aggregate`");
+        }
+        let out = self.0.query_bulk(ctx, &q).await.map_err(|e| match e {
+            super::query::QueryError::Invalid(m) => anyhow::anyhow!(m),
+            super::query::QueryError::Failed(e) => e,
+        })?;
+        Ok((
+            out.groups
+                .unwrap_or_default()
+                .into_iter()
+                .map(|g| (g.key, g.count))
+                .collect(),
+            out.rows.total,
+        ))
+    }
+
     async fn relations(
         &self,
         ctx: &SecurityContext,
@@ -465,5 +502,184 @@ impl DomainObjects for Objects {
                 )
             })
             .collect())
+    }
+}
+
+/// The identity a gear reaches its own records with: a `service` subject with
+/// no bearer token (ADR-0066 §8a, [`super::access::GearsKeepTheirOwn`]).
+const GEAR_SUBJECT: uuid::Uuid = uuid::Uuid::from_u128(0x5ee7_0000_0000_4000_8000_0000_0066_08a0);
+
+/// `ctx`'s tenant, reached by the gear itself rather than by the caller.
+pub fn as_gear(ctx: &SecurityContext) -> anyhow::Result<SecurityContext> {
+    SecurityContext::builder()
+        .subject_id(GEAR_SUBJECT)
+        .subject_type("service")
+        .subject_tenant_id(ctx.subject_tenant_id())
+        .token_scopes(vec!["*".to_owned()])
+        .build()
+        .map_err(|e| anyhow::anyhow!("cannot build the gear's own context: {e}"))
+}
+
+/// The port a gear reaches its **own** records through (ADR-0066 §8a): every
+/// call is made as the gear, in the tenant the caller's context names (#1080).
+///
+/// Those records were the gear's tables before they moved into the model,
+/// and the gear still decides who may see them: its routes authorize the
+/// project or workspace first. Through the caller's context instead, the
+/// domain-object PDP asked again, and on the `roles` model a member without
+/// a grant on the project got an empty project model with no error.
+///
+/// Never wrap the port for anything a caller could also read over REST — the
+/// reports gear's mirror, for one: that path must stay the caller's.
+pub struct KeptByGear(pub Arc<dyn DomainObjects>);
+
+impl KeptByGear {
+    /// `port`, reached as the gear.
+    pub fn wrap(port: Arc<dyn DomainObjects>) -> Arc<dyn DomainObjects> {
+        Arc::new(Self(port))
+    }
+}
+
+#[async_trait]
+impl DomainObjects for KeptByGear {
+    async fn upsert(
+        &self,
+        ctx: &SecurityContext,
+        entity: &str,
+        key: &str,
+        payload: Value,
+    ) -> anyhow::Result<String> {
+        self.0.upsert(&as_gear(ctx)?, entity, key, payload).await
+    }
+
+    async fn list(&self, ctx: &SecurityContext, entity: &str) -> anyhow::Result<Vec<StoredObject>> {
+        self.0.list(&as_gear(ctx)?, entity).await
+    }
+
+    async fn upsert_in(
+        &self,
+        ctx: &SecurityContext,
+        entity: &str,
+        key: &str,
+        scope: &str,
+        payload: Value,
+    ) -> anyhow::Result<String> {
+        self.0
+            .upsert_in(&as_gear(ctx)?, entity, key, scope, payload)
+            .await
+    }
+
+    async fn list_in(
+        &self,
+        ctx: &SecurityContext,
+        entity: &str,
+        scope: &str,
+    ) -> anyhow::Result<Vec<StoredObject>> {
+        self.0.list_in(&as_gear(ctx)?, entity, scope).await
+    }
+
+    async fn delete(&self, ctx: &SecurityContext, instance_id: &str) -> anyhow::Result<()> {
+        self.0.delete(&as_gear(ctx)?, instance_id).await
+    }
+
+    async fn ensure_type(&self, ctx: &SecurityContext, need: &TypeNeed) -> anyhow::Result<()> {
+        self.0.ensure_type(&as_gear(ctx)?, need).await
+    }
+
+    async fn prepare_model(&self, ctx: &SecurityContext) -> anyhow::Result<()> {
+        self.0.prepare_model(&as_gear(ctx)?).await
+    }
+
+    async fn put_objects(
+        &self,
+        ctx: &SecurityContext,
+        entity: &str,
+        objects: Vec<OwnedObject>,
+    ) -> anyhow::Result<usize> {
+        self.0.put_objects(&as_gear(ctx)?, entity, objects).await
+    }
+
+    async fn claim(
+        &self,
+        ctx: &SecurityContext,
+        entity: &str,
+        id: &str,
+        payload: Value,
+    ) -> anyhow::Result<bool> {
+        self.0.claim(&as_gear(ctx)?, entity, id, payload).await
+    }
+
+    async fn remove_objects(
+        &self,
+        ctx: &SecurityContext,
+        entity: &str,
+        ids: Vec<String>,
+    ) -> anyhow::Result<usize> {
+        self.0.remove_objects(&as_gear(ctx)?, entity, ids).await
+    }
+
+    async fn link_objects(
+        &self,
+        ctx: &SecurityContext,
+        links: Vec<(String, String, String, String)>,
+    ) -> anyhow::Result<(usize, usize)> {
+        self.0.link_objects(&as_gear(ctx)?, links).await
+    }
+
+    async fn query(
+        &self,
+        ctx: &SecurityContext,
+        body: Value,
+    ) -> anyhow::Result<(Vec<StoredObject>, usize)> {
+        self.0.query(&as_gear(ctx)?, body).await
+    }
+
+    async fn aggregate(
+        &self,
+        ctx: &SecurityContext,
+        body: Value,
+    ) -> anyhow::Result<(Vec<(Vec<Value>, u64)>, usize)> {
+        self.0.aggregate(&as_gear(ctx)?, body).await
+    }
+
+    async fn entity_types(&self, ctx: &SecurityContext) -> anyhow::Result<Vec<(String, bool)>> {
+        self.0.entity_types(&as_gear(ctx)?).await
+    }
+
+    async fn relations(
+        &self,
+        ctx: &SecurityContext,
+        names: &[&str],
+    ) -> anyhow::Result<Vec<(String, String, String)>> {
+        self.0.relations(&as_gear(ctx)?, names).await
+    }
+
+    async fn sync_kit_model(
+        &self,
+        ctx: &SecurityContext,
+        slug: &str,
+        version: &str,
+        overlay: Option<&KitOverlay>,
+    ) -> anyhow::Result<KitModelChange> {
+        self.0
+            .sync_kit_model(&as_gear(ctx)?, slug, version, overlay)
+            .await
+    }
+
+    async fn kit_models(
+        &self,
+        ctx: &SecurityContext,
+    ) -> anyhow::Result<std::collections::BTreeMap<String, String>> {
+        self.0.kit_models(&as_gear(ctx)?).await
+    }
+
+    async fn search(
+        &self,
+        ctx: &SecurityContext,
+        text: &str,
+        entities: &[&str],
+        limit: u32,
+    ) -> anyhow::Result<Vec<(String, StoredObject)>> {
+        self.0.search(&as_gear(ctx)?, text, entities, limit).await
     }
 }

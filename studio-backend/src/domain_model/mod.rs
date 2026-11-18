@@ -35,6 +35,8 @@ mod mcp;
 pub(crate) use mcp::tools as mcp_tools;
 #[cfg(test)]
 mod held_tests;
+#[cfg(test)]
+mod kept_by_gear_tests;
 mod kit_overlay;
 mod migrations;
 mod mirror;

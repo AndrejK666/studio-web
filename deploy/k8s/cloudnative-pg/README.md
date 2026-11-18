@@ -12,16 +12,17 @@ implicit ceiling is one nobody can check. Per backend replica:
 
 | Consumer | Ceiling | Where it is set |
 |---|---|---|
-| studio-backend, 14 gear pools | 42 | `pool.max_conns: 3` on `pg_main`, `studio-backend/config/k8s.yaml` |
+| studio-backend, 8 gear pools | 24 | `pool.max_conns: 3` on `pg_main`, `studio-backend/config/k8s.yaml` |
+| studio-backend, 6 quiet gear pools | 12 | `max_conns: 2` on nodes-registry, resource-group, simple-user-settings, file-storage, oagw, mini-chat |
 | studio-backend, graph-storage | 8 | that gear's own `pool` override |
+| studio-backend, studio-domain-model | 8 | that gear's own `pool` override (ADR-0066); 2 until 2026-11-10, 6 until #1077 |
 | studio-backend, studio-events | 2 | that gear's own `pool` override |
 | studio-backend, studio-product | 2 | that gear's own `pool` override (ADR-0053) |
 | studio-backend, studio-artifact-ingest | 2 | that gear's own `pool` override |
-| studio-backend, studio-domain-model | 6 | that gear's own `pool` override (ADR-0066); 2 until 2026-11-10 queued a project screen's reads past the gateway |
 | studio-backend, studio-environments | 1 | that gear's own `pool` override (ADR-0062) |
 | studio-backend, github-mirror | 2 | that gear's own `pool` override |
 | studio-backend, postgres-usage-collector-plugin | 3 | 1 on its toolkit `pool`, 2 on its own sqlx pool (`pool_size_max`) |
-| **One replica** | **68** | |
+| **One replica** | **64** | |
 
 And once, whatever the number of replicas:
 
@@ -35,18 +36,19 @@ And once, whatever the number of replicas:
 
 The thing to know before changing any of it: toolkit-db caches one pool **per
 gear**, not per server, so the `max_conns` on `pg_main` is multiplied by the
-number of gear databases that inherit it -- fourteen (the gears in `k8s.yaml`
+number of gear databases that inherit it -- eight (the gears in `k8s.yaml`
 with a `database:` on `pg_main` and no `pool` of their own). Raising it by one
-raises the ceiling by fourteen per replica. Give a single gear its own `pool`
+raises the ceiling by eight per replica. Give a single gear its own `pool`
 block instead, the way `graph-storage` has one.
 
 The arithmetic for two replicas, which is the whole reason for the numbers:
 
-| shared `max_conns` | per replica | two replicas | with everyone else | fits 160? |
+| Pools | per replica | two replicas | with everyone else | fits 160? |
 |---|---|---|---|---|
-| 4 (until 2026-11) | 82 | 164 | 184 | no |
-| **3 (today)** | **68** | **136** | **156** | **yes, 4 spare** |
-| 2 | 54 | 108 | 128 | yes, but a queue |
+| shared 4 (until 2026-11) | 82 | 164 | 184 | no |
+| shared 3, domain-model 6 (until #1077) | 68 | 136 | 156 | yes, 4 spare |
+| **shared 3, six quiet gears at 2, domain-model 8 (today)** | **64** | **128** | **148** | **yes, 12 spare** |
+| shared 2 everywhere | 54 | 108 | 128 | yes, but a queue |
 
 The shared pool was 4 until the domain read model (ADR-0066), the product
 descriptions (ADR-0053) and the environments gear (ADR-0062) each took their
@@ -54,10 +56,9 @@ own pool: two replicas then needed more than 160, and a second replica could
 not start without raising `max_connections` again. It is 3 now, not the
 server limit higher:
 
-- **Lowering one knob** that every small gear inherits frees fourteen
+- **Lowering one knob** that every small gear inherits frees eight
   connections per replica; lowering any single gear's own pool frees one or
-  two, and the gears with their own pools have them because they need them
-  (graph-storage's 8 is the busiest pool there is).
+  two, and the gears with their own pools have them because they need them.
 - **Two replicas at 3 give each gear 6** connections in all, more than one
   replica at 4 gave it. A gear that queues behind 3 on one replica is one that
   wants its own `pool` block anyway.
@@ -65,9 +66,22 @@ server limit higher:
   every ten more is roughly another 30 MB of resident memory at saturation,
   and `max_connections` is not reloadable.
 
-Two is the floor not to go to: it would be a queue rather than a budget for
-any gear serving a burst. The pooler below is the other way to make room and
-is not available yet.
+Two is the floor not to go to for a gear serving a burst: it would be a queue
+rather than a budget. The six quiet gears are at 2 because they serve none --
+over a week neither Dev nor Test held more than two connections to any of
+their databases, so their third connection was budget nobody spent.
+
+That budget went to studio-domain-model (#1077). Documents, artifacts, kits,
+reports and the domain-object PDP all read the model through its pool, and at
+6 it queued 1441 waits over 2 s in 47 minutes on Dev. Eight is six for a
+screen's dozen parallel reads and two for the read-model fills and sweeps
+that hold a connection for seconds at a time. It is not more because
+PostgreSQL has one CPU on Dev: a ninth connection would queue inside the
+server instead of in the pool. Most of those waits were reads that should not
+have happened (every project's rows read once per project, writes on reads);
+they are removed in their own changes, and the pool is sized for what is
+left. The pooler below is the other way to make room and is not available
+yet.
 
 > **Changing `max_connections` takes effect on the next Deploy Infra**, and it
 > restarts PostgreSQL -- it is not a reloadable parameter. Plan it like any

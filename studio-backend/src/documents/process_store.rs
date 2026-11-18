@@ -269,7 +269,10 @@ impl ProcessStore {
         }
         let port = match &self.port {
             PortSource::None => None,
-            PortSource::Hub(hub) => hub.get::<dyn DomainObjects>().ok(),
+            PortSource::Hub(hub) => hub
+                .get::<dyn DomainObjects>()
+                .ok()
+                .map(crate::domain_model::port::KeptByGear::wrap),
             #[cfg(test)]
             PortSource::Fixed(port) => Some(Arc::clone(port)),
         };
@@ -402,7 +405,10 @@ impl ProcessStore {
         }
         let port = match &self.port {
             PortSource::None => None,
-            PortSource::Hub(hub) => hub.get::<dyn DomainObjects>().ok(),
+            PortSource::Hub(hub) => hub
+                .get::<dyn DomainObjects>()
+                .ok()
+                .map(crate::domain_model::port::KeptByGear::wrap),
             #[cfg(test)]
             PortSource::Fixed(port) => Some(Arc::clone(port)),
         };

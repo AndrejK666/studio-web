@@ -115,7 +115,8 @@ planner if an external consumer needs one.
 - `studio_domain_objects`: tenant, owner tenant (the project when the object
   has one, the organization otherwise), type id, key, `payload jsonb`,
   `version`, `updated_at`. Indexes: `(tenant, type, owner)`, a GIN index on
-  `payload`.
+  `payload`, and `(tenant, type, scope)` (m0002, studio-web#1077) for reads
+  that name the project or projects they are about.
 - `studio_domain_edges`: tenant, `src`, `dst`, edge type id and the **declared
   relation name** (`project.tracks`). Indexes on `(tenant, src, relation)` and
   `(tenant, dst, relation)`.
@@ -167,6 +168,12 @@ Cheap on SQL, and kept in the graph executor too so the two answer alike:
   discriminator, so a relation never answers for another of the same verb.
 - **Aggregates**: `aggregate: { group_by: ["status"] }`, so a summary screen
   is a query, not a new route.
+- **Several projects, counts only** (a gear's read through the port,
+  studio-web#1077): `project_ids: [...]` narrows by the indexed scope column
+  to any of them, and `limit: 0` returns no rows, only `total` and the
+  groups. A table of projects counts them with one `GROUP BY` per type
+  instead of reading each project's rows; the PDP is asked only about the
+  owners in those scopes.
 - **Optimistic writes**: `if_version`, answering 409 when the object moved on,
   instead of the graph's silent last-writer-wins.
 

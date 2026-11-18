@@ -2,8 +2,9 @@
 // portal (the IDE runs in an iframe there — a "Space"). Two duties:
 //
 //  * portal → IDE: `studio.init` / `studio.theme` messages carry the
-//    portal's theme; the bridge maps it onto Theia's color theme so a dark
-//    portal never opens a light IDE.
+//    portal's mode; the bridge applies the Studio colour theme of that mode
+//    (the portal's own palette, see theme/studio-color-themes.ts), so the IDE
+//    and the page around it share one palette.
 //  * IDE → portal: `studio.status` messages report the dirty-editor count,
 //    so the portal can mark the space ("unsaved changes" dot) without
 //    polling, and `studio.documentSaved` reports a portal document the IDE
@@ -30,6 +31,7 @@
 import { inject, injectable, optional } from '@theia/core/shared/inversify';
 import { FrontendApplicationContribution } from '@theia/core/lib/browser/frontend-application-contribution';
 import { ThemeService } from '@theia/core/lib/browser/theming';
+import { studioThemeId } from './theme/studio-color-themes';
 import { ApplicationShell } from '@theia/core/lib/browser/shell/application-shell';
 import { Saveable } from '@theia/core/lib/browser/saveable';
 import { CommandContribution, CommandRegistry, CommandService, Disposable, PreferenceService, PreferenceScope } from '@theia/core/lib/common';
@@ -576,15 +578,17 @@ export class PortalBridgeContribution implements FrontendApplicationContribution
         }
     }
 
+    /**
+     * The portal decides the mode, and the IDE wears the portal's palette in it:
+     * the Studio theme of that mode (#1073), not merely a theme of that type. A
+     * build without the Studio themes falls back to the first theme of the type.
+     */
     protected applyPortalTheme(portalTheme: string): void {
-        const target = portalTheme === 'light' ? 'light' : 'dark';
-        if (this.themeService.getCurrentTheme().type !== target) {
-            const theme = this.themeService
-                .getThemes()
-                .find(t => t.type === target);
-            if (theme) {
-                this.themeService.setCurrentTheme(theme.id, true);
-            }
+        const mode = portalTheme === 'light' ? 'light' : 'dark';
+        const themes = this.themeService.getThemes();
+        const theme = themes.find(t => t.id === studioThemeId(mode)) ?? themes.find(t => t.type === mode);
+        if (theme && this.themeService.getCurrentTheme().id !== theme.id) {
+            this.themeService.setCurrentTheme(theme.id, true);
         }
     }
 

@@ -81,6 +81,29 @@ fn a_pasted_url_and_the_providers_name_one_repository() {
     ));
 }
 
+/// #1070 review: the key is stored, so what a query or a fragment carries
+/// (a token, often) never reaches it.
+#[test]
+fn a_repository_key_keeps_no_query_and_no_fragment() {
+    assert_eq!(
+        repository_key("https://git.example/acme/api.git?access_token=s3cr3t").as_deref(),
+        Some("git.example/acme/api")
+    );
+    assert_eq!(
+        repository_key("https://git.example/Acme/API/#readme").as_deref(),
+        Some("git.example/acme/api")
+    );
+    assert_eq!(
+        repository_key("https://git.example?token=s3cr3t"),
+        None,
+        "no path, no repository"
+    );
+    assert!(same_repository(
+        "https://git.example/acme/api.git?access_token=s3cr3t",
+        "https://git.example/acme/api"
+    ));
+}
+
 fn resolved(secret_ref: Option<&str>, personal: bool) -> Resolved {
     Resolved {
         source: parse(&json!({ "sources": [
@@ -119,6 +142,35 @@ fn a_shared_connection_lends_its_token_to_the_clone() {
     assert_eq!(got.url, "https://github.com/acme/api.git");
     assert_eq!(got.branch.as_deref(), Some("dev"));
     assert_eq!(got.token_ref.as_deref(), Some("studio-connection-1"));
+}
+
+/// What a failed clone names as its cause (#1071): why the source went
+/// upstream without a token, and nothing when it carries one.
+#[test]
+fn a_source_without_a_token_says_why() {
+    use crate::git_proxy::sources::NoToken;
+    assert_eq!(
+        to_git_source(resolved(Some("studio-connection-1"), false)).no_token,
+        None
+    );
+    assert_eq!(
+        to_git_source(resolved(Some("studio-connection-1"), true)).no_token,
+        Some(NoToken::Personal)
+    );
+    assert_eq!(
+        to_git_source(resolved(None, false)).no_token,
+        Some(NoToken::NoConnection)
+    );
+    let mut lost = resolved(None, false);
+    lost.source.connection_id = Some(Uuid::from_u128(7));
+    assert_eq!(
+        to_git_source(lost).no_token,
+        Some(NoToken::ConnectionNotFound)
+    );
+    let root = Uuid::from_u128(1);
+    let mut outside = resolved(Some("studio-connection-root"), false);
+    outside.held_outside = Some(root);
+    assert_eq!(to_git_source(outside).no_token, Some(NoToken::HeldOutside));
 }
 
 #[test]

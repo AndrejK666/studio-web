@@ -253,6 +253,52 @@ const LastSyncCell: React.FC<{ row: SourceRow; actions: SourceRowActions }> = ({
 
 LastSyncCell.displayName = 'LastSyncCell';
 
+/**
+ * Whether the source could be cloned, and why not (#1071): the last clone or
+ * fetch by a desktop or an IDE session, beside the server's own sync. A
+ * failure names its cause and the action that fixes it.
+ */
+const CloneCell: React.FC<{ row: SourceRow }> = ({ row }) => {
+  const t = useSourcesText();
+  const { formatRelative } = useFormatters();
+  const dayTime = useDayTime();
+  const { clone } = row;
+
+  if (clone.kind === 'unknown') return <span className={styles.muted}>{MISSING}</span>;
+  if (clone.kind === 'never') return <div className={styles.lastSync}>{t('clone_never')}</div>;
+
+  const when =
+    clone.at === null ? null : (
+      <span className={styles.syncLine} title={formatRelative(clone.at)}>
+        {clone.by === null
+          ? dayTime(clone.at)
+          : t(`clone_when_by_${clone.by}`, { when: dayTime(clone.at) })}
+      </span>
+    );
+
+  if (clone.kind === 'cloned') {
+    return (
+      <div className={styles.lastSync}>
+        <span>{t('clone_cloned')}</span>
+        {when}
+      </div>
+    );
+  }
+
+  const cause = clone.cause === null ? clone.causeText : t(`clone_cause_${clone.cause}`);
+  const action = clone.action === null ? clone.actionText : t(`clone_action_${clone.action}`);
+  return (
+    <div className={styles.lastSync} title={clone.detail ?? undefined}>
+      <span className={styles.cloneFailed}>{t('clone_failed')}</span>
+      {when}
+      {cause && <span className={styles.syncLine}>{cause}</span>}
+      {action && <span className={styles.cloneAction}>{action}</span>}
+    </div>
+  );
+};
+
+CloneCell.displayName = 'CloneCell';
+
 const UploadedAtCell: React.FC<{ row: UploadsRow }> = ({ row }) => {
   const { formatRelative } = useFormatters();
   const dayTime = useDayTime();
@@ -351,6 +397,17 @@ export function sourceColumns({
           <UploadedAtCell row={row} />
         ) : (
           <LastSyncCell row={row} actions={actions} />
+        ),
+    },
+    {
+      id: 'clone',
+      label: t('col_clone'),
+      width: '14rem',
+      render: (row) =>
+        row.kind === 'uploads' ? (
+          <span className={styles.muted}>{MISSING}</span>
+        ) : (
+          <CloneCell row={row} />
         ),
     },
     {

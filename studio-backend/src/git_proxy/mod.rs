@@ -19,6 +19,7 @@
 //! Re-sync would queue. See [`refresh`].
 
 pub mod gear;
+pub mod outcome;
 pub mod refresh;
 pub mod rest;
 pub mod sdk;

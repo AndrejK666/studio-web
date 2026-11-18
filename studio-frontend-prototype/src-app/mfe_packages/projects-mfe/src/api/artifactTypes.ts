@@ -109,6 +109,32 @@ export interface SourceActivityListDto {
   days: number;
 }
 
+/**
+ * Mirrors `SourceCloneStatusDto` (#1071): the last clone or fetch of one
+ * project source, by a desktop through Studio's Git remote or by an IDE
+ * session's launch.
+ */
+export interface SourceCloneStatusDto {
+  clone_url: string;
+  full_path: string;
+  state: 'cloned' | 'failed' | 'never';
+  at?: string | null;
+  /** `desktop` or `ide_session`. */
+  by?: string | null;
+  cause?: string | null;
+  cause_text?: string | null;
+  action?: string | null;
+  action_text?: string | null;
+  upstream_status?: number | null;
+  detail?: string | null;
+}
+
+/** Mirrors `SourceCloneStatusListDto`. */
+export interface SourceCloneStatusListDto {
+  items: SourceCloneStatusDto[];
+  total: number;
+}
+
 /** Mirrors `AttachedRepo`: the pair a sync of the repository is sent. */
 export interface AttachedRepo {
   secret_ref: string;

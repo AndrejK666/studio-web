@@ -28,6 +28,7 @@
     "build:mfes": "npx --yes tsx@4.23.12 scripts/build-mfes.ts",
     "generate:mfe-manifests": "npx --yes tsx@4.23.12 scripts/generate-mfe-manifests.ts",
     "package:mfe-assets": "npx --yes tsx@4.23.12 scripts/package-mfe-assets.ts",
+    "generate:ide-theme": "npx --yes tsx@4.23.12 scripts/generate-ide-theme-tokens.ts",
     "dev": "npm run build:package && npm run build:mfes && npm run generate:mfe-manifests && vite",
     "predev:all": "npm run build:package",
     "dev:all": "npx --yes tsx@4.23.12 scripts/dev-all.ts",

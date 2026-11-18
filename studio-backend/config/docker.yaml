@@ -48,17 +48,17 @@ database:
         # because pools are lazy and one replica serves few people, which is
         # the kind of margin that disappears without warning.
         #
-        # The budget, counted as ceilings against `max_connections: 100`:
+        # The budget, counted as ceilings against compose's PostgreSQL
+        # default `max_connections: 100` (its Keycloak keeps its own store):
         #
-        #   13 gears x 4                                         52
-        #   graph-storage (its own override below)                8
+        #   14 gears x 4                                         56
+        #   graph-storage 8, studio-domain-model 6               14
+        #   events 2, product 2, artifact-ingest 2, envs 1        7
         #   postgres-usage-collector-plugin (1 + its own 2)       3
-        #   Keycloak (KC_DB_POOL_MAX_SIZE in the chart)          10
-        #   backend-bootstrap Job, transient                      2
-        #   CloudNativePG instance manager + exporter             5
+        #   backend-bootstrap, transient                          2
         #   superuser_reserved_connections                        3
         #                                                       ---
-        #                                                        83
+        #                                                        85
         #
         # Raising this by one raises the ceiling by fourteen. Raise a single
         # gear's own `pool` instead.

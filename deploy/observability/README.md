@@ -50,15 +50,18 @@ environment values now set (see **Turning on application metrics**).
 
 ## Dashboards
 
-Three, provisioned into the **Studio** folder from `grafana/dashboards/*.json`:
+Provisioned into the **Studio** folder from `grafana/dashboards/*.json` —
+every file in that directory ships, so a new board needs no list updated:
 
 | UID | Covers |
 |---|---|
 | `studio-resources` | Per-pod CPU, memory vs limit, throttling, network I/O, restarts, OOMKills, ready-vs-desired, live Theia sessions. |
 | `studio-edge` | Traefik: request rate, status classes, per-service rate and errors, latency percentiles, exporter health. |
 | `studio-postgres` | CNPG: instances up, backends, cache hit ratio, longest transaction, commits/rollbacks, database sizes, replication lag, lock waits. |
+| `studio-product` | What people do: tenants, sign-ins, sessions, most-used and slowest routes, errors people see. |
+| `studio-graph-storage` | One database at a time, default `graph_storage`: rows read and written, scan ratio, cache hits, disk reads, temp spills, backends, longest transaction, deadlocks, rollbacks, checkpoints, size — next to the backend's latency for the gears that call graph-storage and CPU throttling. |
 
-All three carry the same **Namespace** dropdown, so one choice of environment
+The first three carry the same **Namespace** dropdown, so one choice of environment
 follows you between them — Grafana keeps a variable's value across dashboards
 when the name matches. On Resources and Postgres it reads the `namespace` label
 directly; on Edge it cannot, because Traefik's metrics come from Traefik's own
@@ -67,6 +70,26 @@ namespace, so the list is lifted out of the service id
 Three panels there stay cluster-wide and say so in their titles: the entrypoint
 connection count and the exporter's own `up` carry no service label to filter
 on.
+
+**Graph storage** filters by `env` instead, because it mixes CNPG series with
+the backend's OTLP histogram, which has no `namespace` label. Three things
+about its labels:
+
+- The Postgres cluster is `cnpg_cluster` (`studio-postgres`, one per
+  namespace). `cluster` is Alloy's external label (`webstudio`) everywhere
+  except on `cnpg_collector_up`, where the exporter's own `cluster` wins — so
+  never filter CNPG series on `cluster`.
+- Per-database families (`cnpg_pg_stat_database_*`, `cnpg_backends_total`,
+  `cnpg_backends_max_tx_duration_seconds`, `cnpg_pg_database_size_bytes`)
+  carry `datname`. `cnpg_backends_waiting_total` and the checkpointer family
+  are per instance only, and those panels say "whole cluster" in their titles.
+- Test runs a replica, which reports the primary's database size again; size
+  is therefore `max`, not `sum`, across instances.
+
+`track_io_timing` is off on `studio-postgres`, so "Time spent reading blocks"
+reads zero until it is turned on in the cluster spec. graph-storage itself
+exports nothing yet (constructorfabric/gears-rust#5960); per-operation timings, walk sizes and
+pool waits arrive with backend instrumentation and a second board.
 
 `make dashboards` rebuilds the `studio-dashboards` ConfigMap from those files;
 the file provider re-reads the directory every 30 s, so no restart is needed.

@@ -11,7 +11,58 @@ pub struct Migrator;
 #[async_trait::async_trait]
 impl MigratorTrait for Migrator {
     fn migrations() -> Vec<Box<dyn MigrationTrait>> {
-        vec![Box::new(m0001::Migration)]
+        vec![Box::new(m0001::Migration), Box::new(m0002::Migration)]
+    }
+}
+
+/// An index on `scope`, the tenant an object was written in (a project, a
+/// workspace). A query naming a scope (`project_id`, `project_ids`) and the
+/// owners it asks the PDP about narrow by it: without the index each such
+/// read went through every row of the type in the organization.
+mod m0002 {
+    use toolkit_db::sea_orm_migration::prelude::*;
+    use toolkit_db::sea_orm_migration::sea_orm;
+    use toolkit_db::sea_orm_migration::sea_orm::ConnectionTrait;
+
+    const ONLY_POSTGRES: &str =
+        "studio-domain-model migrations: only PostgreSQL is supported (see the module docs)";
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m0002_studio_domain_objects_scope_index"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if manager.get_database_backend() != sea_orm::DatabaseBackend::Postgres {
+                return Err(DbErr::Custom(ONLY_POSTGRES.to_owned()));
+            }
+            manager
+                .get_connection()
+                .execute_unprepared(
+                    r"
+CREATE INDEX IF NOT EXISTS studio_domain_objects_scope
+    ON studio_domain_objects (tenant_id, type_id, scope)
+",
+                )
+                .await?;
+            Ok(())
+        }
+
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if manager.get_database_backend() != sea_orm::DatabaseBackend::Postgres {
+                return Err(DbErr::Custom(ONLY_POSTGRES.to_owned()));
+            }
+            manager
+                .get_connection()
+                .execute_unprepared("DROP INDEX IF EXISTS studio_domain_objects_scope")
+                .await?;
+            Ok(())
+        }
     }
 }
 

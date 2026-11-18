@@ -29,6 +29,8 @@ Ordered by how much it would help us, most first.
 
 ## 1. Let one bad type in a batch fail on its own
 
+*Filed: constructorfabric/gears-rust#5961 (2026-11-12). Still all-or-nothing in weftgraph 0.3.0-rc.2.*
+
 **Today.** `register_types` takes a batch and commits it whole. If one type in
 it is refused, the whole call fails and nothing is registered.
 
@@ -182,6 +184,8 @@ so for us the update does not exist yet. That is item 8.
 ---
 
 ## 4. Make removing something possible
+
+*Filed: constructorfabric/gears-rust#5962 (2026-11-12), for the tombstoned key and its refusal reason. Checked against weftgraph 0.3.0-rc.2: `replace_scope` now removes what a batch did not name (`scope::remove_stale`); a tombstoned key is still not reusable and the SDK has no purge.*
 
 Three smaller limits that add up to the same thing: our model can grow but not
 shrink.
@@ -530,7 +534,7 @@ admitted on `project_nodes`.
 
 ## 9. Let a traversal go one way
 
-*Filed: constructorfabric/gears-rust#5239, spun out of the `direction` line in #5012.*
+*Filed: constructorfabric/gears-rust#5239, spun out of the `direction` line in #5012. Closed 2026-11-09.*
 
 **Today.** `TraverseRequest` has seeds, depth, edge and node type patterns and
 `max_nodes`. The walk always expands `Direction::Either` (`domain/traversal.rs`:
@@ -559,7 +563,7 @@ no edge. With `Incoming`: A. With `None`: A, as today.
 
 ## 10. Say which relation a traversed edge is
 
-*Filed: constructorfabric/gears-rust#5240.*
+*Filed: constructorfabric/gears-rust#5240. Closed 2026-11-09.*
 
 **Today.** `EdgeSpec` and `EdgeView` carry `discriminator`, the value that keeps
 parallel edges of one type between one pair apart. `EdgeRef`, which `traverse`,
@@ -628,6 +632,56 @@ with 3. Per-seed limit 5 and a filter on an indexed path: each seed gets at most
 
 ---
 
+## 12. Report what the gear does as metrics
+
+*Added 2026-11-12, from a read regression on Studio's Dev stand. Filed: constructorfabric/gears-rust#5960.*
+
+**Today.** weftgraph 0.3.0-rc.2 emits no metrics. Studio runs it in-process,
+and everything we can see on a dashboard is either one level above it (our
+HTTP routes' latency) or one level below it (Postgres counters for the
+`graph_storage` database, from CloudNativePG). How long a projection took, how
+many pages it walked, how close a write came to `payload_max_bytes`, or why an
+operation hit its deadline, reaches us only as log lines we add around our own
+calls.
+
+**Why that matters.** On 2026-11-12 Studio's portal reads were 5–10x slower than
+three days earlier. The log showed whole-graph walks (`projection walked
+nodes=32879 pages=203 elapsed_ms=42910`), `register domain types:
+deadline_exceeded`, and one write refused for a 147 KB payload over the
+64 KiB limit. Finding which operation, type and tenant each came from took
+an afternoon of grepping per request. A metric per operation would have shown it
+on one panel, and alerted before people noticed.
+
+**What we need.** OpenTelemetry metrics through the host's meter provider (the
+one `toolkit` already exports from), so they reach the same backend as the
+host's own:
+
+- `graph_storage.operation.duration` (histogram, seconds), by `operation`
+  (`project_nodes`, `count_nodes`, `upsert_nodes`, `delete_nodes`,
+  `register_types`, `traverse`, `adjacency`, …), `node_type` and `outcome`
+  (`ok` or the canonical error kind: `deadline_exceeded`, `out_of_range`,
+  `invalid_argument`, …);
+- `graph_storage.projection.pages` and `graph_storage.projection.nodes`
+  (histograms) per projection, and whether a `$filter` was applied;
+- `graph_storage.write.payload_bytes` (histogram) per upserted node, with
+  `payload_max_bytes` exposed as a gauge, so a type creeping toward the limit is
+  visible before a write is refused;
+- `graph_storage.batch.size` (histogram) for upserts and registrations;
+- the store's database pool: connections in use, idle, and acquire wait
+  (histogram);
+- for traversals: `max_nodes` hits (counter) and nodes reached (histogram).
+
+`node_type` should be the GTS type id. A tenant label is optional; we would
+rather have none than an unbounded one.
+
+**How we would know it works.** Run a projection over a type with a few
+thousand nodes, an upsert with one node over `payload_max_bytes`, and a
+registration that hits its deadline. Each should show on the meter with its
+operation, type and outcome, and the payload histogram should have the
+refused node's size.
+
+---
+
 ## What we are not asking for
 
 **GTS major versions of a type** (`requirement.v2~` alongside `v1~`). We looked
@@ -656,6 +710,7 @@ sooner.
 | 9 | `direction` on `traverse` | landed in 0.3 | nothing |
 | 10 | `discriminator` on traversed edges | landed in 0.3, with a filter | nothing |
 | 11 | Per-seed filter, limit and count on a traversal | one `max_nodes` for the request | every neighbour fetched to show five per parent |
+| 12 | Metrics per operation, payload size and pool | none; logs only | a read regression took an afternoon of log grepping to locate |
 
 Items 1 and 2 are small and independent — a per-item report and one integer.
 Item 3 is the structural one and is best decided alongside `#4619`. Item 4 is

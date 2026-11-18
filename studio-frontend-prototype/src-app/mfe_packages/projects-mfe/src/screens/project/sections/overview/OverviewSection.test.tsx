@@ -199,6 +199,22 @@ describe('OverviewSection', () => {
     vi.useRealTimers();
   });
 
+  it('keeps the status a minute instead of reading it on every tab click and refocus', () => {
+    // The server reads every gear behind the status (studio-web#1077): with
+    // `staleTime: 0` each visit to the tab, and each return to the window,
+    // was such a read.
+    render(<OverviewSection projectId="p1" />);
+    expect(query).toHaveBeenCalledWith(expect.anything(), { staleTime: 60_000 });
+  });
+
+  it('reads the status again at once from Refresh, whatever its age', () => {
+    const refetch = vi.fn();
+    query.mockReturnValue({ ...ok(blocked), refetch });
+    render(<OverviewSection projectId="p1" />);
+    fireEvent.click(screen.getByRole('button', { name: 'refresh' }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
   it('names the sources it could not read', () => {
     render(<OverviewSection projectId="p1" />);
     expect(screen.getByText('not_read {"sources":"builds, deployments"}')).toBeTruthy();

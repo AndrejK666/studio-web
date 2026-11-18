@@ -66,6 +66,7 @@ import { WorkspaceSourcesContribution } from './workspace-sources-contribution';
 import { WorkspaceSourcesWidget } from './workspace-sources-widget';
 import { WorkspaceSourceRootDecorator, WorkspaceSourceRootService } from './workspace-source-root-decorator';
 import { PortalBridgeContribution } from './portal-bridge-contribution';
+import { StudioThemeContribution } from './theme/studio-theme-contribution';
 import { PortalPresenceContribution } from './portal-presence-contribution';
 import { OrcaContribution } from './orca-contribution';
 import { OrcaWidget } from './orca-widget';
@@ -269,6 +270,9 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
     // because it is configured from that token. Standalone (non-embedded)
     // sessions are unaffected: the contribution returns early when there is
     // no parent window.
+    // The Studio colour themes: the portal's palette, which the bridge applies (#1073).
+    bind(StudioThemeContribution).toSelf().inSingletonScope();
+    bind(FrontendApplicationContribution).toService(StudioThemeContribution);
     bind(PortalBridgeContribution).toSelf().inSingletonScope();
     bind(FrontendApplicationContribution).toService(PortalBridgeContribution);
     bind(CommandContribution).toService(PortalBridgeContribution);

@@ -336,6 +336,14 @@ fn in_scope(workspace_id: Uuid, scope: &DocScope) -> Value {
     }
 }
 
+/// [`DocumentsData::project_groups`]: `(key, count)` per group.
+pub struct ProjectGroups {
+    /// Keyed `[project_id, state, conforms]`.
+    pub bindings: Vec<(Vec<Value>, u64)>,
+    /// Keyed `[project_id, conforms]`.
+    pub documents: Vec<(Vec<Value>, u64)>,
+}
+
 pub struct DocumentsData {
     repo: Arc<DocumentsRepo>,
     table: ModelTable,
@@ -1372,6 +1380,68 @@ impl DocumentsData {
                 > 0);
         }
         self.repo.delete_doc(workspace_id, id).await
+    }
+
+    /// What the projects table counts for `projects` of one workspace, as
+    /// groups `(key, count)`: bindings by `[project_id, state, conforms]`
+    /// and authored documents by `[project_id, conforms]`, each over what
+    /// `DocScope::Effective` lets any of those projects see (its own rows and
+    /// the workspace's). One `GROUP BY` per type for every project, through
+    /// the indexed `scope` column; no row is read.
+    ///
+    /// `None` under the tables, which answer per project as before.
+    pub async fn project_groups(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Uuid,
+        projects: &[Uuid],
+    ) -> Result<Option<ProjectGroups>> {
+        let Some((port, ref ctx)) = at!(
+            self,
+            ctx,
+            document_binding::Model,
+            workspace_id,
+            all_bindings
+        ) else {
+            return Ok(None);
+        };
+        // A row's scope is its project, else its workspace (`ModelTable::
+        // write`): exactly the rows `Effective` admits for these projects.
+        let mut scopes: Vec<String> = projects.iter().map(Uuid::to_string).collect();
+        scopes.push(workspace_id.to_string());
+        let where_ = json!({
+            "tenant_id": {"_eq": workspace_id},
+            "_or": [{"project_id": {"_is_null": true}}, {"project_id": {"_in": ids(projects)}}],
+        });
+        let body = |entity: &str, group_by: &[&str]| {
+            json!({
+                "type": entity,
+                "project_ids": scopes,
+                "where": where_,
+                "aggregate": {"group_by": group_by},
+                "limit": 0,
+            })
+        };
+        let (bindings, documents) = tokio::try_join!(
+            port.aggregate(
+                ctx,
+                body(
+                    <document_binding::Model as TableRow>::ENTITY,
+                    &["project_id", "state", "conforms"]
+                )
+            ),
+            port.aggregate(
+                ctx,
+                body(
+                    <document::Model as TableRow>::ENTITY,
+                    &["project_id", "conforms"]
+                )
+            ),
+        )?;
+        Ok(Some(ProjectGroups {
+            bindings: bindings.0,
+            documents: documents.0,
+        }))
     }
 
     // ── document bindings ───────────────────────────────────────────────────

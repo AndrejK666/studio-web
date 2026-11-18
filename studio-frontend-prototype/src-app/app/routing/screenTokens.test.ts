@@ -102,7 +102,10 @@ describe('the real manifests', () => {
     expect(space?.members.map((member) => member.id)).toEqual([
       'gts.frontx.mfes.ext.extension.v1~frontx.screensets.layout.screen.v1~constructor_studio.screensets.layout.leveled_screen.v1~constructor_studio.space.screens.main.v1',
     ]);
-    expect(space?.owner.presentation).toMatchObject({ level: 'project', placement: 'hidden' });
+    // The project's IDE tab: shown in the tab bar, not hidden under Artifacts.
+    expect(space?.owner.presentation).toMatchObject({ level: 'project', label: 'IDE' });
+    expect(space?.owner.presentation).not.toHaveProperty('placement');
+    expect(space?.owner.presentation).not.toHaveProperty('parentSection');
   });
 
   it('open the organization on its Overview, as the prototype does', () => {

@@ -52,6 +52,13 @@ import { PhaseChip } from './PhaseChip';
 
 type Text = ReturnType<typeof useOverviewSectionTranslations>['t'];
 
+/**
+ * How long a project's status is shown without asking again. It was read on
+ * every tab click and window refocus (`staleTime: 0`), each a read of every
+ * gear behind it (studio-web#1077).
+ */
+const STATUS_FRESH_MS = 60_000;
+
 /** The route an action opens here, or null: not in this portal, or its kit not installed. */
 type Reach = (target: string, key?: string, kit?: string | null) => string | null;
 
@@ -66,7 +73,13 @@ export const OverviewSection: React.FC<{ projectId: string }> = ({ projectId }) 
     const route = routeFor(target, key);
     return route && availability.route(route) && availability.kit(kit) ? route : null;
   };
-  const read = useApiQuery(apiRegistry.getService(ProjectStatusApiService).status({ projectId }), { staleTime: 0 });
+  // Kept a minute per project: the server reads every gear behind it, and a
+  // tab click or a window refocus within that minute shows the answer it
+  // has. What moves the status on — a run ending, the Refresh button — reads
+  // it again at once.
+  const read = useApiQuery(apiRegistry.getService(ProjectStatusApiService).status({ projectId }), {
+    staleTime: STATUS_FRESH_MS,
+  });
   // A run that ended — a sync, a build, a deploy — may have moved the verdict
   // or the path: read the status again (the shell's live channel, scoped to
   // the organization on screen), keeping the old answer on screen meanwhile.
