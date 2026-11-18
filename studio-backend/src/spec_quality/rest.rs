@@ -841,11 +841,23 @@ async fn capabilities(
     Extension(_ctx): Extension<SecurityContext>,
     Extension(state): Extension<Arc<ProxyState>>,
 ) -> ApiResult<JsonBody<SpecQualityCapabilitiesDto>> {
+    // Not wired here (no upstream, or no key): nothing is declared, which is
+    // "unknown", the same as a schema without the enum. `/status` says why.
+    // It was a 500 on every visit to Document types on a server without
+    // Spec Quality (walk 2026-11-17).
+    if state.base_url.is_empty() || state.api_key.is_none() {
+        return Ok(Json(SpecQualityCapabilitiesDto {
+            detectors: Vec::new(),
+            doc_types: Vec::new(),
+        }));
+    }
     let schema = state
         .upstream_json(reqwest::Method::GET, "/openapi.json", None)
         .await
         .map_err(|e| {
-            CanonicalError::internal(format!("spec-quality capabilities unavailable: {e}")).create()
+            CanonicalError::service_unavailable()
+                .with_detail(format!("spec-quality capabilities unavailable: {e}"))
+                .create()
         })?;
 
     Ok(Json(read_capabilities(&schema)))
@@ -1181,10 +1193,11 @@ pub fn register_routes(
         .json_response_with_schema::<SpecQualityCapabilitiesDto>(
             openapi,
             StatusCode::OK,
-            "What the upstream declares",
+            "What the upstream declares; empty lists when Spec Quality is not set up here",
         )
         .error_401(openapi)
         .error_500(openapi)
+        .error_503(openapi)
         .register(router, openapi);
 
     // Lift the body limit for this gear's routes (submit endpoints carry the
