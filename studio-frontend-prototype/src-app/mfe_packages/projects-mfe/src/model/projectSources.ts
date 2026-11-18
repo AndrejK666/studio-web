@@ -106,6 +106,50 @@ export function supportsPullRequests(provider: string | null | undefined): boole
 }
 
 /**
+ * Why `name` cannot be a branch, or null when it can: git's own rules for a
+ * ref name, the ones a person mistypes (spaces, `..`, a leading `-` or `/`, a
+ * trailing `.lock`, `/` or `.`, control characters and `~^:?*[\`).
+ */
+export function branchNameProblem(name: string): 'empty' | 'invalid' | null {
+  const b = name.trim();
+  if (!b) return 'empty';
+  if (
+    /[\s~^:?*[\\]/.test(b) ||
+    [...b].some((c) => c.charCodeAt(0) < 0x20 || c.charCodeAt(0) === 0x7f) ||
+    b.includes('..') ||
+    b.includes('@{') ||
+    b.includes('//') ||
+    b.startsWith('-') ||
+    b.startsWith('/') ||
+    b.endsWith('/') ||
+    b.endsWith('.') ||
+    b.endsWith('.lock') ||
+    b === '@'
+  ) {
+    return 'invalid';
+  }
+  return null;
+}
+
+/**
+ * `sources` with the entry attached through that connection at that path
+ * checked out at `branch` (a session's checkout, a build's base, the specs'
+ * sync); every other entry, and every other field of that one, as it was.
+ */
+export function withBranch(
+  sources: readonly ProjectSource[],
+  entry: Pick<ProjectSource, 'connection_id' | 'full_path'>,
+  branch: string
+): ProjectSource[] {
+  const b = branch.trim();
+  return sources.map((source) =>
+    source.connection_id === entry.connection_id && source.full_path === entry.full_path
+      ? { ...source, branch: b }
+      : source
+  );
+}
+
+/**
  * `sources` with the entry attached through that connection at that path
  * shared as `mode`; every other entry, and every other field of that one, as
  * it was. An entry the config no longer lists changes nothing.
