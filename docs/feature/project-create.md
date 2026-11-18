@@ -153,7 +153,7 @@ are traced.
 1. [ ] - `p1` - Member activates "New project" in the list header - `inst-1`
 2. [ ] - `p1` - Mount the overlay extension in the shell's overlay domain - `inst-2`
 3. [ ] - `p1` - Reset the draft so no earlier attempt is carried in - `inst-3`
-4. [ ] - `p1` - Member enters a name, an optional goal, and picks "Start from scratch" - `inst-4`
+4. [ ] - `p1` - Member enters a name, picks the project type, an optional goal, and "Start from scratch" - `inst-4`
 5. [ ] - `p1` - **IF** the mode is greenfield - `inst-5`
    1. [ ] - `p1` - The repositories step is not applicable, so the primary action reads "Create project" - `inst-6`
 6. [ ] - `p1` - Run `cpt-studiofrontend-algo-project-create-write` - `inst-7`
@@ -236,6 +236,15 @@ configuration (mode, the workspace's required stages, status, brief, owner,
 the picked repositories as sources) and, with a brief, its PRD, each step
 recorded so a retry continues where it stopped. The wizard no longer makes
 those requests itself.
+
+The project type is a kit: `GET /cf/studio-organizations/v1/project-creation-types`
+lists the built-in kits marked `project_type` (Gears, then Constructor
+Research), the wizard offers them as one choice, and the request names the
+pick as `project_type_kit`. The run records it in the configuration and its
+`kits` step installs that kit in the new project, as studio-organizations'
+service, after checking the project sits in the organization the request was
+approved for. The organization need not have the kit itself; what the kit
+`requires` must already apply to the organization, or the request is refused.
 
 **Steps**:
 1. [x] - `p1` - Trim the name; reject an empty one before any request - `inst-1`
@@ -483,6 +492,9 @@ row.
 - [ ] A model provider (an API key) is offered neither as a chip nor as a connection on the repositories step.
 - [ ] A created project is a tenant of the project type whose parent is the workspace in scope, with `status = draft`, an `owner_id`, and the stages its workspace's catalogue marks required.
 - [ ] A workspace whose catalogue marks a different stage required seeds new projects with that one, and no code change is involved.
+- [ ] The details step offers the project types as one choice, Gears first, and Create project stays disabled until one is picked; the starting point is a separate choice.
+- [ ] A project created as Gears has the `gears-project` kit installed in it, one created as Constructor Research the `constructor-research` kit; neither installs the other.
+- [ ] A creation that stops shows the stopped step as stopped, and Create project again (or Retry in Background work) continues from that step without a second tenant.
 - [ ] The owner field names the signed-in member and offers no way to change them; the created project carries their subject id as `owner_id`.
 - [ ] A refused creation leaves the wizard open with the draft intact and shows what was refused.
 - [ ] The created project appears in the list without a manual refresh.
