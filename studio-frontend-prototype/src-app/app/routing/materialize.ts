@@ -483,6 +483,11 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
       dispatch(setContextSection(null));
     }
 
+    // A view (the failing specs, the components that need a decision) belongs
+    // to the section it was asked with: kept while that section is the one
+    // opened, dropped when the address lands elsewhere.
+    if (wanted.view && next.section === route.section) next.view = wanted.view;
+
     // Artifact: only the editor, and only inside a project, carries one.
     const isEditor = group?.token === EDITOR_SCREEN_TOKEN;
     const artifact = next.project && isEditor ? artifactOf(wanted) : null;

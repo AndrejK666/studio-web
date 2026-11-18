@@ -47,7 +47,15 @@ impl InstalledStore for Memory {
         Ok(answer)
     }
 
-    async fn organization_of(&self, _: &SecurityContext, tenant: Uuid) -> Uuid {
+    async fn organization_of(&self, ctx: &SecurityContext, tenant: Uuid) -> Uuid {
+        // As account-management answers it: the project creation run's
+        // context is scoped to the new project and reads nothing above it.
+        if tenant == PROJECT
+            && ctx.subject_id() == crate::organizations::SERVICE_SUBJECT_ID
+            && ctx.subject_tenant_id() == PROJECT
+        {
+            return PROJECT;
+        }
         if tenant == PROJECT { ORG } else { tenant }
     }
 
@@ -745,4 +753,57 @@ async fn a_project_installs_constructor_research_on_its_own() {
             .await
             .unwrap()
     );
+}
+
+#[tokio::test]
+async fn a_creation_run_installs_the_project_type_kit_in_its_new_project() {
+    let (installer, _) = installer();
+    // The run's own context: the organization gear, scoped to the project.
+    let run = SecurityContext::builder()
+        .subject_id(crate::organizations::SERVICE_SUBJECT_ID)
+        .subject_type("service")
+        .subject_tenant_id(PROJECT)
+        .token_scopes(vec!["*".into()])
+        .build()
+        .unwrap();
+    let own = installer
+        .install_for_created_project(&run, PROJECT, ORG, "gears-project")
+        .await
+        .unwrap();
+    assert_eq!(own.kind, KIND_PROJECT);
+    let installed = installer
+        .installed_in_project(&caller(MEMBER, ORG), PROJECT)
+        .await
+        .unwrap();
+    assert_eq!(slugs(&installed.project), ["gears-project"]);
+    // A retried run finds it there and installs nothing more.
+    installer
+        .install_for_created_project(&run, PROJECT, ORG, "gears-project")
+        .await
+        .unwrap();
+    let again = installer
+        .installed_in_project(&caller(MEMBER, ORG), PROJECT)
+        .await
+        .unwrap();
+    assert_eq!(slugs(&again.project), ["gears-project"]);
+    // Another organization than the project's, a kit that is no type, and
+    // anybody but the run are refused.
+    assert!(matches!(
+        installer
+            .install_for_created_project(&run, PROJECT, Uuid::from_u128(0xbad), "gears-project")
+            .await,
+        Err(Refusal::Forbidden(_))
+    ));
+    assert!(matches!(
+        installer
+            .install_for_created_project(&run, PROJECT, ORG, "delivery")
+            .await,
+        Err(Refusal::Invalid(_))
+    ));
+    assert!(matches!(
+        installer
+            .install_for_created_project(&caller(ORG_ADMIN, PROJECT), PROJECT, ORG, "gears-project")
+            .await,
+        Err(Refusal::Forbidden(_))
+    ));
 }

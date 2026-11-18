@@ -473,13 +473,15 @@ const BUILTIN_MANIFESTS: &[(&str, &str)] = &[
         "project-tests",
         include_str!("builtin/project-tests.kit.json"),
     ),
-    (
-        "constructor-research",
-        include_str!("builtin/constructor-research.kit.json"),
-    ),
+    // The two project types, in the order the New project wizard offers
+    // them (`project_type_kits`): Gears, then Constructor Research.
     (
         "gears-project",
         include_str!("builtin/gears-project.kit.json"),
+    ),
+    (
+        "constructor-research",
+        include_str!("builtin/constructor-research.kit.json"),
     ),
     // What the gears-matcher service reads in a project's specifications
     // (ADR-0072): the gear-match screens, routes, tools and Inbox source,

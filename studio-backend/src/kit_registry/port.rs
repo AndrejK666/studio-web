@@ -22,7 +22,7 @@ pub use super::claims::{Claims, builtin_gear_claims};
 pub use super::gate::{
     KIT_NOT_INSTALLED, KitRefusal, require_kit, sync_wanted, tool_refusal, with_claimed_routes,
 };
-use super::installed::KitInstaller;
+use super::installed::{KitInstaller, Refusal};
 pub(crate) use super::manifest::{project_type_kit, project_type_kits};
 pub use super::owners::{KitOwners, MarkOn, Rehome};
 use super::service::KitRegistryService;
@@ -83,7 +83,19 @@ impl ProjectKitRequests for KitRequests {
             .install_for_created_project(ctx, project, organization, slug)
             .await
             .map(|_| ())
-            .map_err(|failure| anyhow::anyhow!("{failure:?}"))
+            .map_err(|failure| match failure {
+                // The run's step line, read in the New project dialog.
+                Refusal::Internal(error) => error,
+                Refusal::Invalid(why) => anyhow::anyhow!(why),
+                Refusal::RequiresKits { kit, missing } => anyhow::anyhow!(
+                    "`{kit}` requires {}, which the organization does not have",
+                    missing.join(", ")
+                ),
+                Refusal::Forbidden(reason) => {
+                    anyhow::anyhow!("refused ({reason}): the run may only type its own new project")
+                }
+                other => anyhow::anyhow!("{other:?}"),
+            })
     }
 
     async fn requested(

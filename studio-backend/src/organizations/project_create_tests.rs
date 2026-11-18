@@ -192,8 +192,10 @@ async fn a_failed_step_stops_the_run_and_a_retry_continues_from_it() {
         .lock()
         .unwrap()
         .push(("prd".into(), StepError::Retry("documents down".into())));
-    let (record, ended, _) = go(&p, Record::resume(&p, None), &fake).await;
+    let (record, ended, seen) = go(&p, Record::resume(&p, None), &fake).await;
     assert_eq!(ended, Err(StepError::Retry("documents down".into())));
+    // The last report, which the poll reads, has the step stopped.
+    assert_eq!(seen.last(), Some(&record));
     let prd = record.steps.iter().find(|s| s.key == "prd").unwrap();
     assert_eq!(prd.state, "failed");
     assert_eq!(prd.detail.as_deref(), Some("documents down"));

@@ -440,7 +440,7 @@ impl KitInstaller {
     ) -> Result<InstalledKit, Refusal> {
         let slug = normalize_slug(slug).map_err(|e| Refusal::Invalid(e.to_string()))?;
         let org = self.require_project_admin(ctx, project).await?;
-        self.install_project_kit(ctx, project, org, slug, version)
+        self.install_project_kit(ctx, ctx, project, org, slug, version)
             .await
     }
 
@@ -461,7 +461,11 @@ impl KitInstaller {
                 "`{slug}` does not define a project type"
             )));
         }
-        let installed = self.installed_in_project(ctx, project).await?;
+        // The run's context reaches the new project and nothing above it, so
+        // the project's organization (its workspace's parent) is read as this
+        // gear in the organization the plan names, then checked against it.
+        let reader = service_context(organization).map_err(Refusal::Internal)?;
+        let installed = self.installed_in_project(&reader, project).await?;
         let org = installed.organization_id;
         if org != organization || org == project {
             return Err(Refusal::Forbidden(KIT_ADMIN_REQUIRED));
@@ -473,13 +477,16 @@ impl KitInstaller {
         {
             return Ok(kit);
         }
-        self.install_project_kit(ctx, project, org, slug.to_owned(), None)
+        self.install_project_kit(ctx, &reader, project, org, slug.to_owned(), None)
             .await
     }
 
+    /// Install `slug` in `project` of `org` as `ctx`, reading what applies
+    /// above the project as `reader`.
     async fn install_project_kit(
         &self,
         ctx: &SecurityContext,
+        reader: &SecurityContext,
         project: Uuid,
         org: Uuid,
         slug: String,
@@ -513,7 +520,7 @@ impl KitInstaller {
         }
         // What it requires must apply to the project once it is installed
         // (ADR-0071 §5).
-        let above = self.installed(ctx, project).await?;
+        let above = self.installed(reader, project).await?;
         let mut doc = self.store.read(&service_context(project)?, project).await?;
         install_project(&mut doc, record.clone());
         let after = effective(&above.effective, &project_kits(&doc, &self.catalogue));

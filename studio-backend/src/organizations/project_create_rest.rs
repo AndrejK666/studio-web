@@ -143,14 +143,14 @@ pub struct ProjectTypeKitsDto {
 }
 
 async fn list_project_type_kits() -> ApiResult<JsonBody<ProjectTypeKitsDto>> {
-    let mut items: Vec<_> = project_type_kits()
+    // The library's order, not the names': Gears, the usual type, first.
+    let items: Vec<_> = project_type_kits()
         .map(|kit| ProjectTypeKitDto {
             slug: kit.slug,
             name: kit.name,
             description: kit.description,
         })
         .collect();
-    items.sort_by(|a, b| a.name.cmp(&b.name));
     let total = u32::try_from(items.len()).unwrap_or(u32::MAX);
     Ok(Json(ProjectTypeKitsDto { items, total }))
 }
@@ -720,7 +720,10 @@ pub fn register(
         .operation_id("studio_organizations.list_project_creation_types")
         .summary("Kits that define a project type")
         .description(
-            "The built-in kits marked `project_type` (Gears, Constructor Research), sorted by              name: the New project wizard offers one of them as the project's type, and              `POST project-creations` installs the chosen kit in the new project. The list is              compiled in, the same for every organization, and never paged.",
+            "The built-in kits marked `project_type` (Gears, then Constructor Research), in \
+             the library's order: the New project wizard offers one of them as the project's \
+             type, and `POST project-creations` installs the chosen kit in the new project. \
+             The list is compiled in, the same for every organization, and never paged.",
         )
         .tag("StudioOrganizations")
         .authenticated()
