@@ -193,6 +193,23 @@ workspace. The catalogue is read in the organization on screen
 (`?organization_id=`, `crate::org_scope`), because the catalogue is kept per
 organization. A project the caller cannot reach answers 404.
 
+#### The plan comes with a kit
+
+- [ ] `p2` - **ID**: `cpt-studio-constraint-spec-mapping-kit`
+
+The plan is the **Spec mapping** kit's (`spec-mapping`, ADR-0074), a base kit by
+default that an organization may uninstall for itself. The kit claims the gear's
+MCP tools (`project_capabilities`, `project_findings`, `project_plan`,
+`project_requirements`) and its write route (`POST /decisions`), which answer
+`KIT_NOT_INSTALLED` where it does not apply. The plan's reads (`GET /plan`,
+`GET /findings`, `GET /decisions`) ask the same shared check themselves, once
+the caller is shown to reach the project, and answer `KIT_NOT_INSTALLED` too;
+the screens that draw the plan (Components, Gear match, the domain model's
+map, Releases) leave it out then. `GET /capabilities`, `GET /requirements` and
+`POST /conformance` stay open: other kits read them as what the specifications
+say. The kit also provides the product's `spec_mapping` assembly strategy
+(`assembly_strategy` in its manifest; [gear matches §8](product-gear-match.md#8-assembly-strategies)).
+
 ## 3. Technical Architecture
 
 ### 3.1 Domain Model
@@ -282,6 +299,9 @@ the catalogue of `?organization_id=` when one is named. Every list answers
 `CODE_UNREADABLE`, naming the repository and why, when the project's gear
 repository cannot be read -- typically a connection whose token is personal,
 which the organization cannot read.
+`GET /plan`, `GET /findings` and `GET /decisions` answer 400 `KIT_NOT_INSTALLED`
+where the Spec mapping kit does not apply to the project
+(`cpt-studio-constraint-spec-mapping-kit`).
 
 ### 3.4 Internal Dependencies
 

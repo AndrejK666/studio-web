@@ -1,0 +1,63 @@
+{
+  "manifest_version": "1",
+  "slug": "spec-mapping",
+  "icon": "lucide:git-compare-arrows",
+  "name": "Spec mapping",
+  "description": "The gears that could provide each capability a project's specifications name, matched by words and contracts: the plan on Components, the product map and the gear match, and a product assembled from it. Instant, free and deterministic.",
+  "publisher": "Constructor Fabric",
+  "levels": [
+    "organization",
+    "project"
+  ],
+  "mcp_tools": [
+    {
+      "name": "project_capabilities",
+      "description": "The capabilities a project's documents need"
+    },
+    {
+      "name": "project_requirements",
+      "description": "The non-functional statements a project's documents make"
+    },
+    {
+      "name": "project_plan",
+      "description": "The gears that could provide each capability"
+    },
+    {
+      "name": "project_findings",
+      "description": "Where the documents and the code disagree"
+    }
+  ],
+  "permissions": {
+    "reads": [
+      "GET /studio-spec-mapping/v1/plan",
+      "GET /studio-spec-mapping/v1/findings",
+      "GET /studio-spec-mapping/v1/capabilities",
+      "GET /studio-spec-mapping/v1/requirements",
+      "GET /studio-spec-mapping/v1/decisions",
+      "POST /studio-spec-mapping/v1/plan",
+      "POST /studio-spec-mapping/v1/conformance"
+    ],
+    "writes": [
+      "POST /studio-spec-mapping/v1/decisions"
+    ]
+  },
+  "gears": [
+    {
+      "gear": "studio-spec-mapping",
+      "mcp_tools": [
+        "project_capabilities",
+        "project_findings",
+        "project_plan",
+        "project_requirements"
+      ],
+      "routes": [
+        "POST /studio-spec-mapping/v1/decisions"
+      ]
+    }
+  ],
+  "assembly_strategy": {
+    "id": "spec_mapping",
+    "name": "Spec mapping",
+    "description": "Per capability the specifications name that no pick answers yet, the first gear the spec plan offers with a contract, a declaration or a member's confirmation behind it. Instant, free and deterministic."
+  }
+}

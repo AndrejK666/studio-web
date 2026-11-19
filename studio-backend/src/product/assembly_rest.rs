@@ -3,27 +3,30 @@
 //!
 //! - `GET  project-assembly-strategy?project_id=` -- the strategy the
 //!   project's product is assembled by, where that comes from (the project,
-//!   the organization's default, Studio's), and why it falls back to
-//!   `spec_mapping` when the chosen one cannot be used.
+//!   the organization's default, the kits'), and why it falls back when the
+//!   chosen one cannot be used.
 //! - `PUT  project-assembly-strategy?project_id=` -- the project's own
-//!   choice, or back to the organization's default. `gears_matcher` is refused
-//!   with `KIT_NOT_INSTALLED` where the Gears matcher kit does not apply.
-//!   Claimed by the Product kit.
+//!   choice, or back to the organization's default. A strategy whose kit does
+//!   not apply to the project is refused with `KIT_NOT_INSTALLED`. Claimed by
+//!   the Product kit.
 //! - `GET  assembly-strategy` -- the organization's default (`?organization_id=`).
 //! - `PUT  assembly-strategy` -- set it; an organization or platform
 //!   administrator (`kit.manage`), 403 `ASSEMBLY_DEFAULT_ADMIN_REQUIRED`
 //!   otherwise. Claimed by the Gears matcher kit.
 //!
-//! The settings need the gear's database; without it every read answers
-//! Studio's default (`settable: false`) and the writes answer 503.
+//! The strategies offered are the ones the kits that apply provide
+//! (`assembly_strategy` in their manifests, ADR-0074): Spec mapping brings
+//! `spec_mapping`, Gears matcher `gears_matcher`; with neither, the product is
+//! assembled by hand (`strategy: "manual"`).
+//!
+//! The settings need the gear's database; without it every read answers the
+//! kits' default (`settable: false`) and the writes answer 503.
 
 use toolkit::client_hub::ClientScope;
 
 use super::*;
-use crate::kit_registry::port::{KitRefusal, require_kit};
-use crate::product::assembly::{
-    self, DEFAULT_PRIVILEGE, GEARS_MATCHER_KIT, MatcherState, Strategy, StrategyStore,
-};
+use crate::kit_registry::port::{KitPresence, ProvidedStrategy, assembly_strategies, require_kit};
+use crate::product::assembly::{self, Available, DEFAULT_PRIVILEGE, Strategy, StrategyStore};
 use crate::product::gear_match::GearMatches;
 
 /// Why the chosen strategy is not the one used.
@@ -49,6 +52,22 @@ pub struct AssemblyMatcherDto {
     pub offered: bool,
 }
 
+/// A strategy a kit that applies here provides (ADR-0074).
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct AssemblyStrategyKitDto {
+    /// `spec_mapping` or `gears_matcher`.
+    pub id: String,
+    /// As its kit's manifest names it.
+    pub name: String,
+    pub description: String,
+    /// The kit that provides it.
+    pub kit: String,
+    /// It can be used here now; else `reason` says why not.
+    pub offered: bool,
+    pub reason: Option<String>,
+}
+
 /// The strategy a product is assembled by, and why.
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
@@ -56,21 +75,27 @@ pub struct AssemblyStrategyDto {
     pub organization_id: String,
     /// Absent for the organization's default.
     pub project_id: Option<String>,
-    /// What is used: `spec_mapping` or `gears_matcher`.
+    /// What is used: `spec_mapping`, `gears_matcher`, or `manual` where no
+    /// strategy can be: the product is assembled by hand in the configurator.
     pub strategy: String,
-    /// What the settings ask for; differs from `strategy` only with a
-    /// `fallback`.
+    /// What the settings ask for (`manual` where nothing was chosen and no
+    /// strategy kit applies); differs from `strategy` only with a `fallback`.
     pub chosen: String,
-    /// Where `chosen` comes from: `project`, `organization` or `studio`.
+    /// Where `chosen` comes from: `project`, `organization` or `studio`
+    /// (nobody chose: the only strategy kit installed, else `spec_mapping`).
     pub source: String,
     /// The project's own choice; null: it follows the organization's default.
     pub project: Option<String>,
-    /// The organization's default; null: Studio's (`spec_mapping`).
+    /// The organization's default; null: what the installed kits make it.
     pub organization_default: Option<String>,
     pub fallback: Option<AssemblyFallbackDto>,
     pub gears_matcher: AssemblyMatcherDto,
-    /// Every strategy there is, in the order to offer them.
+    /// The strategies the kits that apply here provide, in the order to offer
+    /// them: what a choice may name. Empty: the product is assembled by hand.
     pub strategies: Vec<String>,
+    /// The same strategies with their names, kits and whether each can be
+    /// used now.
+    pub strategy_kits: Vec<AssemblyStrategyKitDto>,
     /// Whether the settings are kept in this deployment.
     pub settable: bool,
     /// Whether the caller may change the organization's default.
@@ -88,7 +113,7 @@ pub struct ProjectQuery {
 pub struct SetAssemblyStrategyRequest {
     /// `spec_mapping` or `gears_matcher`; null or absent forgets the choice
     /// (a project follows its organization's default again, an organization
-    /// Studio's).
+    /// what its kits make it).
     pub strategy: Option<String>,
 }
 
@@ -133,27 +158,48 @@ async fn may_set_default(hub: &ClientHub, ctx: &SecurityContext, org: Uuid) -> b
     }
 }
 
-/// Whether the matcher can be used where `tenant` is (a project or an
-/// organization the caller was shown to reach).
-async fn matcher_state(
+/// The strategies studio-product runs among `provided`, in [`Strategy::ALL`]
+/// order: a kit's strategy this gear does not know is not offered.
+pub(crate) fn known(provided: &[ProvidedStrategy]) -> Vec<Strategy> {
+    Strategy::ALL
+        .into_iter()
+        .filter(|s| provided.iter().any(|p| p.id == s.as_str()))
+        .collect()
+}
+
+/// What can be used where `tenant` is (a project or an organization the
+/// caller was shown to reach): the strategies its kits provide, and whether
+/// the matcher can be called. Without studio-kits in the assembly there is
+/// nothing to install, and both strategies apply.
+pub(crate) async fn available(
     hub: &ClientHub,
     matches: Option<&GearMatches>,
     ctx: &SecurityContext,
     tenant: Uuid,
-) -> MatcherState {
-    let kit = match require_kit(hub, ctx, tenant, GEARS_MATCHER_KIT).await {
-        Ok(()) => Some(true),
-        Err(KitRefusal::NotInstalled { .. }) => Some(false),
-        Err(KitRefusal::Unavailable(why)) => {
-            tracing::warn!(%tenant, "studio-product: the assembly strategy: {why}");
-            None
-        }
+) -> (Available, Vec<ProvidedStrategy>) {
+    let provided = match hub.get::<dyn KitPresence>() {
+        Err(_) => Some(assembly_strategies(
+            &Strategy::ALL.map(|s| s.kit().to_owned()),
+        )),
+        Ok(presence) => match presence.effective(ctx, tenant).await {
+            Ok(slugs) => Some(assembly_strategies(&slugs)),
+            Err(e) => {
+                tracing::warn!(%tenant, "studio-product: the assembly strategy: {e:#}");
+                None
+            }
+        },
     };
-    let missing = match matches {
+    let matcher_missing = match matches {
         None => Some("gear matches are not part of this deployment".to_owned()),
         Some(m) => m.available().err().map(|r| r.to_string()),
     };
-    MatcherState { kit, missing }
+    (
+        Available {
+            kits: provided.as_deref().map(known),
+            matcher_missing,
+        },
+        provided.unwrap_or_default(),
+    )
 }
 
 async fn read(
@@ -175,17 +221,44 @@ async fn read(
             (choice, default)
         }
     };
-    let (matcher, may) = tokio::join!(
-        matcher_state(&product.hub, matches, ctx, project.unwrap_or(org)),
+    let ((available, provided), may) = tokio::join!(
+        available(&product.hub, matches, ctx, project.unwrap_or(org)),
         may_set_default(&product.hub, ctx, org),
     );
-    let e = assembly::resolve(project_choice, default, matcher);
-    let offered = e.matcher.refusal().is_none();
+    let e = assembly::resolve(project_choice, default, available);
+    let matcher_refusal = e.available.refusal(Strategy::GearsMatcher);
+    // What the kits provide; while they cannot be read, `spec_mapping` only.
+    let offered_kits: Vec<Strategy> = e.available.provided();
+    let strategy_kits = offered_kits
+        .iter()
+        .filter_map(|s| {
+            // Named as its kit's manifest names it; from the built-in manifest
+            // when the kits could not be read.
+            let p = provided
+                .iter()
+                .find(|p| p.id == s.as_str())
+                .cloned()
+                .or_else(|| {
+                    assembly_strategies(&[s.kit().to_owned()])
+                        .into_iter()
+                        .next()
+                })?;
+            let refusal = e.available.refusal(*s);
+            Some(AssemblyStrategyKitDto {
+                id: p.id,
+                name: p.name,
+                description: p.description,
+                kit: p.kit,
+                offered: refusal.is_none(),
+                reason: refusal.map(|(_, why)| why),
+            })
+        })
+        .collect();
     Ok(AssemblyStrategyDto {
         organization_id: org.to_string(),
         project_id: project.map(|p| p.to_string()),
-        strategy: e.strategy.as_str().to_owned(),
-        chosen: e.chosen.as_str().to_owned(),
+        strategy: assembly::wire(e.strategy).to_owned(),
+        chosen: assembly::wire(e.chosen).to_owned(),
         source: e.source.as_str().to_owned(),
         project: e.project.map(|s| s.as_str().to_owned()),
         organization_default: e.organization_default.map(|s| s.as_str().to_owned()),
@@ -194,15 +267,13 @@ async fn read(
             reason,
         }),
         gears_matcher: AssemblyMatcherDto {
-            kit_installed: e.matcher.kit,
-            configured: e.matcher.missing.is_none(),
-            missing: e.matcher.missing,
-            offered,
+            kit_installed: e.available.installed(Strategy::GearsMatcher),
+            configured: e.available.matcher_missing.is_none(),
+            missing: e.available.matcher_missing.clone(),
+            offered: matcher_refusal.is_none(),
         },
-        strategies: Strategy::ALL
-            .iter()
-            .map(|s| s.as_str().to_owned())
-            .collect(),
+        strategies: offered_kits.iter().map(|s| s.as_str().to_owned()).collect(),
+        strategy_kits,
         settable: store.is_some(),
         may_set_default: may,
     })
@@ -258,11 +329,11 @@ async fn upsert_project_assembly_strategy(
     let Some(Extension(kept)) = store.as_ref() else {
         return Err(no_store());
     };
-    // Choosing the matcher is the Gears matcher kit's: refused where it does
-    // not apply, as its own writes are. Whether the service answers is not
-    // asked here: the read says so, and the choice stands for when it does.
-    if strategy == Some(Strategy::GearsMatcher) {
-        require_kit(&product.hub, &ctx, project_id, GEARS_MATCHER_KIT)
+    // A strategy is its kit's (ADR-0074): refused where that kit does not
+    // apply, as its own writes are. Whether the matcher answers is not asked
+    // here: the read says so, and the choice stands for when it does.
+    if let Some(s) = strategy {
+        require_kit(&product.hub, &ctx, project_id, s.kit())
             .await
             .map_err(|r| r.problem())?;
     }
@@ -322,12 +393,18 @@ async fn upsert_assembly_strategy(
     let Some(Extension(kept)) = store.as_ref() else {
         return Err(no_store());
     };
+    // The default is one of the strategies the organization's kits provide.
+    if let Some(s) = strategy {
+        require_kit(&product.hub, &ctx, org, s.kit())
+            .await
+            .map_err(|r| r.problem())?;
+    }
     kept.put(org, org, strategy, &ctx.subject_id().to_string())
         .await
         .map_err(internal)?;
     tracing::info!(
         organization_id = %org,
-        strategy = strategy.map_or("studio default", Strategy::as_str),
+        strategy = strategy.map_or("the kits' default", Strategy::as_str),
         "studio-product: an organization's default assembly strategy was set"
     );
     let dto = read(
@@ -348,7 +425,7 @@ pub(super) fn register(router: Router, openapi: &dyn OpenApiRegistry) -> Router 
             .operation_id("studio_product.get_project_assembly_strategy")
             .summary("How the project's product is assembled")
             .description(
-                "When to call: before proposing gears for the project's product, or to show                  how it is assembled. `strategy` is what is used: `spec_mapping` (the gears                  studio-spec-mapping's plan offers for the capabilities the specifications                  name: instant, free, deterministic) or `gears_matcher` (the gears the latest                  gear match proposes: minutes, paid, varies between runs). `chosen` and                  `source` say what the settings ask for and where that comes from                  (`project`, `organization`, `studio`); `fallback` says why `chosen` is not                  used (`KIT_NOT_INSTALLED`, `KIT_UNKNOWN`, `MATCHER_NOT_CONFIGURED`). Either                  strategy only proposes picks: the engine's completion and a person's                  confirmation come after.",
+                "When to call: before proposing gears for the project's product, or to show                  how it is assembled. `strategy` is what is used: one of the strategies the                  kits that apply provide (`strategies`, `strategy_kits`: `spec_mapping`, the                  gears studio-spec-mapping's plan offers, instant, free, deterministic;                  `gears_matcher`, the gears the latest gear match proposes, minutes, paid,                  varies between runs), or `manual` where none can be used and the product is                  assembled by hand. `chosen` and `source` say what the settings ask for and                  where that comes from (`project`, `organization`, `studio`); `fallback` says                  why `chosen` is not used (`KIT_NOT_INSTALLED`, `KIT_UNKNOWN`,                  `MATCHER_NOT_CONFIGURED`). A strategy only proposes picks: the engine's                  completion and a person's confirmation come after.",
             )
             .tag("StudioProduct")
             .authenticated()
@@ -370,11 +447,11 @@ pub(super) fn register(router: Router, openapi: &dyn OpenApiRegistry) -> Router 
         .operation_id("studio_product.upsert_project_assembly_strategy")
         .summary("Choose how the project's product is assembled")
         .description(
-            "The project's own strategy over its organization's default: \
-                 `spec_mapping` or `gears_matcher`; null follows the organization's default \
-                 again. `gears_matcher` is refused with `KIT_NOT_INSTALLED` where the Gears \
-                 matcher kit does not apply. Answers the strategy as `GET` does. 503 without \
-                 the gear's database.",
+            "The project's own strategy over its organization's default: one the kits \
+                 that apply to it provide (`spec_mapping`, `gears_matcher`); null follows the \
+                 organization's default again. A strategy whose kit does not apply is refused \
+                 with `KIT_NOT_INSTALLED`. Answers the strategy as `GET` does. 503 without the \
+                 gear's database.",
         )
         .tag("StudioProduct")
         .authenticated()
@@ -395,7 +472,7 @@ pub(super) fn register(router: Router, openapi: &dyn OpenApiRegistry) -> Router 
         .operation_id("studio_product.get_assembly_strategy")
         .summary("How the organization's products are assembled by default")
         .description(
-            "When to call: to show or change the organization's default way of assembling              its projects' products (Organization › Gears matcher). The same answer as the              project's read, for the organization alone: `organization_default`, the              strategy a project that follows it gets, its `fallback`, and whether the              caller may change it (`may_set_default`).",
+            "When to call: to show or change the organization's default way of assembling              its projects' products (Organization › Gears matcher). The same answer as the              project's read, for the organization alone: the strategies its kits provide,              `organization_default`, the strategy a project that follows it gets, its              `fallback`, and whether the caller may change it (`may_set_default`).",
         )
         .tag("StudioProduct")
         .authenticated()
@@ -413,10 +490,12 @@ pub(super) fn register(router: Router, openapi: &dyn OpenApiRegistry) -> Router 
         .summary("Set how the organization's products are assembled by default")
         .description(
             "The organization's default strategy, which every project without its own \
-             choice follows: `spec_mapping` or `gears_matcher`; null goes back to Studio's \
-             (`spec_mapping`). An organization or platform administrator only (403 \
-             `ASSEMBLY_DEFAULT_ADMIN_REQUIRED`). The Gears matcher kit's: \
-             `KIT_NOT_INSTALLED` where it does not apply. 503 without the gear's database.",
+             choice follows: one the organization's kits provide (`spec_mapping`, \
+             `gears_matcher`; `KIT_NOT_INSTALLED` for another); null goes back to what the \
+             kits make it (the only one, else `spec_mapping`). An organization or platform \
+             administrator only (403 `ASSEMBLY_DEFAULT_ADMIN_REQUIRED`). The Gears matcher \
+             kit's: `KIT_NOT_INSTALLED` where it does not apply. 503 without the gear's \
+             database.",
         )
         .tag("StudioProduct")
         .authenticated()

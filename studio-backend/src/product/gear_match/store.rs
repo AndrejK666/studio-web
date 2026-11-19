@@ -171,7 +171,7 @@ pub struct Change {
 }
 
 pub struct MatchStore {
-    db: Db,
+    pub(super) db: Db,
 }
 
 impl MatchStore {

@@ -8,7 +8,7 @@ date: 2026-11-18
 
 **ID**: `cpt-studio-adr-gears-matcher-kit`
 
-Status: **proposed** · Date: 2026-11-18 · Builds on ADR-0068 (Studio is a shell; kits), ADR-0071 (a kit claims its gear's tools and write routes; `requires`; built-in kits cut by function) · **Amends** ADR-0071 §6 (the Product kit no longer stands for gear matches; a fourteenth built-in kit) · Design: [`docs/design/product-gear-match.md`](../design/product-gear-match.md)
+Status: **proposed** · Date: 2026-11-18 · **Amended by** [ADR-0074](0074-spec-mapping-is-a-kit-and-strategies-come-from-kits.md) (§3–§4: `spec_mapping` is the Spec mapping kit's, and the strategies offered are the installed kits') · Builds on ADR-0068 (Studio is a shell; kits), ADR-0071 (a kit claims its gear's tools and write routes; `requires`; built-in kits cut by function) · **Amends** ADR-0071 §6 (the Product kit no longer stands for gear matches; a fourteenth built-in kit) · Design: [`docs/design/product-gear-match.md`](../design/product-gear-match.md)
 
 ## Table of Contents
 
@@ -141,6 +141,12 @@ product is assembled by `spec_mapping`, and the read says why: `fallback.code` i
 `MATCHER_NOT_CONFIGURED`, with a sentence.
 
 ### 4. Default and override
+
+> **Amended by [ADR-0074](0074-spec-mapping-is-a-kit-and-strategies-come-from-kits.md).** The
+> strategies offered are the ones the installed kits provide (`spec_mapping` is the Spec
+> mapping kit's, a base kit by default); nobody's choice is `spec_mapping` when installed,
+> else the only strategy installed, else the product is assembled by hand. There is no
+> "Studio's default" choice on the organization page any more.
 
 - **Studio's default** is `spec_mapping`.
 - **The organization's default** is set on Organization › Gears matcher by an organization

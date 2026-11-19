@@ -33,7 +33,8 @@
       ],
       "actions": [],
       "domainActions": [
-        "gts.frontx.mfes.comm.action.v1~constructor_studio.shell.screen.open.v1~"
+        "gts.frontx.mfes.comm.action.v1~constructor_studio.shell.screen.open.v1~",
+        "gts.frontx.mfes.comm.action.v1~constructor_studio.shell.place.open.v1~"
       ],
       "manifest": "gts.frontx.mfes.mfe.mf_manifest.v1~constructor_studio.product.mfe.manifest.v1",
       "exposedModule": "./gearsMatcherLifecycle"

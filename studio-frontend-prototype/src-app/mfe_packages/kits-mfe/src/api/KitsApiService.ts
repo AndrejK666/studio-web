@@ -71,6 +71,8 @@ export interface InstalledKit {
   installed_at?: string | null;
   /** A built-in kit nobody removed: installed by default. */
   by_default?: boolean;
+  /** A base kit an organization administrator may uninstall for that organization alone (ADR-0074). */
+  removable_by_organization?: boolean;
 }
 
 export interface InstalledKits {

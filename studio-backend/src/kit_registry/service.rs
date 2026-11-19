@@ -89,6 +89,26 @@ pub const CONSTRUCTOR_RESEARCH_KIT: &str = "constructor-research";
 /// project's product is assembled by the `gears_matcher` strategy.
 pub const GEARS_MATCHER_KIT: &str = "gears-matcher";
 
+/// The Spec mapping kit (ADR-0074): studio-spec-mapping's plan -- the gears
+/// that could provide each capability a project's specifications name -- and
+/// the product's `spec_mapping` assembly strategy. A base kit by default, so
+/// an organization that never thought about it keeps what it had; one of the
+/// base kits an organization may uninstall for itself
+/// ([`ORGANIZATION_REMOVABLE_BASE`]).
+pub const SPEC_MAPPING_KIT: &str = "spec-mapping";
+
+/// Base kits an organization administrator may uninstall for that
+/// organization alone (ADR-0074): the uninstall is recorded in the
+/// organization's own document (`removed_base`), and installing the kit
+/// again for the organization takes it back. Every other base kit is the
+/// platform's to remove.
+pub const ORGANIZATION_REMOVABLE_BASE: &[&str] = &[SPEC_MAPPING_KIT];
+
+/// May an organization uninstall the base kit `slug` for itself?
+pub fn is_organization_removable_base(slug: &str) -> bool {
+    ORGANIZATION_REMOVABLE_BASE.contains(&slug)
+}
+
 /// Is `slug` a built-in kit only where somebody installs it?
 pub fn is_opt_in_builtin(slug: &str) -> bool {
     OPT_IN_BUILTIN.contains(&slug)
@@ -796,6 +816,7 @@ pub const BUILTIN_ICONS: &[(&str, &str)] = &[
     ("project-domain-model", "lucide:shapes"),
     (CONSTRUCTOR_RESEARCH_KIT, "lucide:atom"),
     (GEARS_MATCHER_KIT, "lucide:scan-search"),
+    (SPEC_MAPPING_KIT, "lucide:git-compare-arrows"),
     ("gears-project", "lucide:boxes"),
     ("assistant", "lucide:sparkles"),
     ("project-git", "lucide:git-pull-request"),
@@ -908,6 +929,14 @@ pub fn builtin_catalogue() -> Vec<KitDescriptor> {
             GEARS_MATCHER_KIT,
             "Gears matcher",
             "Which gears of the catalogue cover a project's specifications, as the gears-matcher service reads them requirement by requirement, and a product assembled from what it proposes. For the whole organization, or for one project.",
+            &["organization", "project"],
+        ),
+        // A base kit by default (ADR-0074), which an organization may
+        // uninstall for itself (`ORGANIZATION_REMOVABLE_BASE`).
+        kit(
+            SPEC_MAPPING_KIT,
+            "Spec mapping",
+            "The gears that could provide each capability a project's specifications name, matched by words and contracts: the plan on Components, the product map and the gear match, and a product assembled from it. Instant, free and deterministic. For the whole organization, or for one project.",
             &["organization", "project"],
         ),
         kit(
@@ -1264,6 +1293,7 @@ mod tests {
                 "gears-project",
                 "constructor-research",
                 "gears-matcher",
+                "spec-mapping",
                 "assistant",
                 "project-git"
             ]

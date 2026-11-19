@@ -128,6 +128,11 @@ pub struct KitManifest {
     /// asks for, `greenfield`, and no next steps.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_creation: Option<ManifestProjectCreation>,
+    /// The way of assembling a product this kit provides (ADR-0074): a
+    /// project's product is assembled by one of the strategies the kits that
+    /// apply to it provide, and by hand where none does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assembly_strategy: Option<ManifestAssemblyStrategy>,
 }
 
 /// The optional steps of a project's creation, beyond the tenant, its
@@ -332,6 +337,45 @@ fn check_project_creation(m: &KitManifest, project_type: bool) -> Result<(), Str
                 NEXT_STEP_DONE_WHEN.join(", ")
             )));
         }
+
+/// `assembly_strategy`: the strategy's id (the value studio-product keeps
+/// and answers, `snake_case`), its name and what it does, for the person
+/// choosing.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ManifestAssemblyStrategy {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+}
+
+/// `assembly_strategy` as written: a `snake_case` id of at most 40
+/// characters, a name, a description of at most 400.
+fn check_assembly_strategy(m: &KitManifest) -> Result<(), String> {
+    let Some(s) = &m.assembly_strategy else {
+        return Ok(());
+    };
+    let id_ok = !s.id.is_empty()
+        && s.id.len() <= 40
+        && s.id.starts_with(|c: char| c.is_ascii_lowercase())
+        && s.id
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
+    if !id_ok {
+        return Err(format!(
+            "{KIT_JSON}: assembly_strategy.id: `{}` must be snake_case, at most 40 characters",
+            s.id
+        ));
+    }
+    if s.name.trim().is_empty() || s.name.len() > 80 {
+        return Err(format!(
+            "{KIT_JSON}: assembly_strategy.name: 1 to 80 characters"
+        ));
+    }
+    if s.description.len() > 400 {
+        return Err(format!(
+            "{KIT_JSON}: assembly_strategy.description: at most 400 characters"
+        ));
     }
     Ok(())
 }
@@ -706,6 +750,13 @@ const BUILTIN_MANIFESTS: &[(&str, &str)] = &[
         "gears-matcher",
         include_str!("builtin/gears-matcher.kit.json"),
     ),
+    // studio-spec-mapping's plan and the `spec_mapping` assembly strategy
+    // (ADR-0074), out of project-domain-model (tools) and project-product
+    // (the decision route); a base kit by default.
+    (
+        "spec-mapping",
+        include_str!("builtin/spec-mapping.kit.json"),
+    ),
     // The API reference: a screen (`contents.rs`) and the route it reads.
     (
         "studio-api-docs",
@@ -952,6 +1003,7 @@ fn check(m: &KitManifest) -> Result<(), String> {
     }
     check_requires(m)?;
     check_claims(m)?;
+    check_assembly_strategy(m)?;
     // The overlay's own rules (ADR-0067 §6); the organization's model is
     // checked against it when the kit is installed.
     let overlay = overlay_of(m)?;

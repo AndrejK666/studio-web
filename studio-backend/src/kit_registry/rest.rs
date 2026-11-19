@@ -788,6 +788,9 @@ pub struct InstalledKitDto {
     /// A retired slug (ADR-0071 §8), listed in `effective` during the alias
     /// release for an old client: every kit it resolves to applies here.
     pub retired: bool,
+    /// A base kit an organization administrator may uninstall for that
+    /// organization alone (ADR-0074); every other base kit is the platform's.
+    pub removable_by_organization: bool,
 }
 
 /// A retired kit slug a document named, and what it is now (ADR-0071 §8).
@@ -901,7 +904,10 @@ pub struct InstallKitDto {
 
 impl From<InstalledKit> for InstalledKitDto {
     fn from(value: InstalledKit) -> Self {
+        let removable_by_organization = value.kind == super::installed::KIND_BASE
+            && super::service::is_organization_removable_base(&value.kit_slug);
         Self {
+            removable_by_organization,
             kit_slug: value.kit_slug,
             version: value.version,
             shelf: value.shelf,

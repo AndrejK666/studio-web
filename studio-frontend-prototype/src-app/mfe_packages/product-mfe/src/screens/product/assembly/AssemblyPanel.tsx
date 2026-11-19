@@ -1,15 +1,19 @@
 /**
- * How the product is assembled (ADR-0072), on Project › Product beside its
- * header's action: the strategy the project uses and where that comes from
- * (its own choice, the organization's default, Studio's), the choice itself,
- * and "Propose gears", which asks the chosen strategy for picks.
+ * How the product is assembled (ADR-0072, ADR-0074), on Project › Product
+ * beside its header's action: the strategy the project uses and where that
+ * comes from (its own choice, the organization's default, the kits'), the
+ * choice itself, and "Propose gears", which asks the chosen strategy for picks.
+ * The strategies offered are the ones the installed kits provide:
  *
- * - `spec_mapping`: what spec-mapping's plan offers for the capabilities no
- *   pick answers yet;
- * - `gears_matcher`: what the latest finished gear match proposes (the Gears
- *   matcher kit's Project › Gear match runs it). Offered only where that kit
- *   is installed and the service configured; otherwise the server falls back
- *   to `spec_mapping` and this says why.
+ * - `spec_mapping` (the Spec mapping kit): what spec-mapping's plan offers for
+ *   the capabilities no pick answers yet;
+ * - `gears_matcher` (the Gears matcher kit): what the latest finished gear
+ *   match proposes (its Project › Gear match runs it); usable only where the
+ *   service is configured, otherwise the server falls back and this says why.
+ *
+ * With neither kit the product is assembled by hand in the configurator: no
+ * proposals, and the panel says so and points to Kits. With one, it is the
+ * strategy, with nothing to choose.
  *
  * Either way the proposals go through the engine's completion first, and into
  * the product only when the person confirms them (nothing applied silently).
@@ -22,6 +26,7 @@ import {
   isFinished,
   matcherProposals,
   matcherUnavailable,
+  offeredStrategies,
   organizationStrategy,
   projectChoice,
   specMappingProposals,
@@ -29,9 +34,11 @@ import {
   type ProjectChoice,
   type Proposal,
   type StrategyId,
+  type StrategyUsed,
 } from '../../../model/assembly';
 import { isRunning } from '../../../model/gear-match';
 import { useAssemblyTranslations } from '../../../i18n';
+import { openScreen } from '@constructor-studio/mfe-shared';
 import { errText, openTab, Segmented, StatusChip, useScope } from '../../common';
 import { catalogueNames, indexCatalogue, pickNames } from '../../../model/product-configurator';
 import page from '../../product.module.css';
@@ -45,6 +52,9 @@ interface Pending {
   config: GearConfig;
   changes: ProductChange[];
 }
+
+/** Project › Kits, where a project installs a strategy kit for itself. */
+const PROJECT_KITS_ROUTE = '/project-kits';
 
 export function AssemblyPanel({ round, onChanged }: { round: number; onChanged: () => void }) {
   const { projectId, bridge } = useScope();
@@ -90,6 +100,8 @@ export function AssemblyPanel({ round, onChanged }: { round: number; onChanged: 
   };
 
   const propose = async () => {
+    if (a.strategy === 'manual') return;
+    const strategy: StrategyId = a.strategy;
     setBusy('propose');
     setErr(null);
     setNote(null);
@@ -138,7 +150,7 @@ export function AssemblyPanel({ round, onChanged }: { round: number; onChanged: 
         return;
       }
       const done = await productApi.completeProduct([...saved, ...items.map((p) => p.gear)], record?.config ?? {});
-      setPending({ strategy: a.strategy, items, record, gears: done.gears, config: done.config, changes: done.changes });
+      setPending({ strategy, items, record, gears: done.gears, config: done.config, changes: done.changes });
     } catch (e) {
       setErr(errText(e));
     } finally {
@@ -176,25 +188,57 @@ export function AssemblyPanel({ round, onChanged }: { round: number; onChanged: 
     }
   };
 
-  const strategyLabel = (s: StrategyId) => t(`strategy_${s}`);
-  const offered = a.gears_matcher.offered;
+  const strategyLabel = (s: StrategyUsed) => t(`strategy_${s}`);
+  const kits = offeredStrategies(a);
   // Why the matcher cannot be chosen, said under the choice rather than only
   // in the disabled button's tooltip, which a pointer-less reader never sees.
-  const unavailable = matcherUnavailable(a);
+  // Only where its kit is installed: a strategy whose kit is not is not offered.
+  const unavailable = a.strategies.includes('gears_matcher') ? matcherUnavailable(a) : null;
   const unavailableText = unavailable
     ? t(`unavailable_${unavailable}`, { reason: a.gears_matcher.missing ?? '' })
     : null;
+  // The installed strategies; a project's earlier choice whose kit went stays
+  // visible, disabled, so the fallback reads against something.
+  const listed: StrategyId[] = [...a.strategies];
+  const own = a.project ?? null;
+  if (own && !listed.includes(own)) listed.push(own);
   const choices: { id: ProjectChoice; label: string; title?: string; disabled?: boolean }[] = [
     { id: 'default', label: t('choice_default', { strategy: strategyLabel(organizationStrategy(a)) }) },
-    { id: 'spec_mapping', label: strategyLabel('spec_mapping'), title: t('hint_spec_mapping') },
-    {
-      id: 'gears_matcher',
-      label: strategyLabel('gears_matcher'),
-      title: offered ? t('hint_gears_matcher') : (unavailableText ?? t('not_offered')),
-      // Not offered here: still shown, so the person sees it exists and why not.
-      disabled: !offered && projectChoice(a) !== 'gears_matcher',
-    },
+    ...listed.map((s) => {
+      const kit = kits.find((k) => k.id === s);
+      return {
+        id: s as ProjectChoice,
+        label: strategyLabel(s),
+        title: kit && !kit.offered ? (kit.reason ?? unavailableText ?? t('not_offered')) : t(`hint_${s}`),
+        // Not usable here: still shown, so the person sees it exists and why not.
+        disabled: (!kit || !kit.offered) && projectChoice(a) !== s,
+      };
+    }),
   ];
+  // With no strategy kit: by hand, and where to get one.
+  if (a.strategies.length === 0 && a.strategy === 'manual') {
+    return (
+      <div className={page.card} data-product-assembly="manual">
+        <div className={page.row}>
+          <b>{t('title')}</b>
+          <StatusChip tone="neutral" data-product-assembly-effective="manual">
+            {strategyLabel('manual')}
+          </StatusChip>
+          <Button type="button" size="sm" variant="ghost" onClick={() => openScreen(bridge, PROJECT_KITS_ROUTE)} data-product-assembly-kits>
+            {t('open_kits')}
+          </Button>
+        </div>
+        <span className={`${page.small} ${page.muted}`} data-product-assembly-manual>
+          {t('manual_no_kits')}
+        </span>
+        {a.fallback && (
+          <span className={`${page.small} ${page.error}`} data-product-assembly-fallback={a.fallback.code}>
+            {t('fallback_manual', { chosen: strategyLabel(a.chosen), reason: a.fallback.reason })}
+          </span>
+        )}
+      </div>
+    );
+  }
   // What the completion did beyond the proposals, with the engine's reason,
   // and which gears it kept that still want settings: confirming saves them
   // as they are, and the product will not resolve until they are given.
@@ -211,16 +255,18 @@ export function AssemblyPanel({ round, onChanged }: { round: number; onChanged: 
         <span className={`${page.small} ${page.muted}`} data-product-assembly-source={a.source}>
           {t(`source_${a.source}`)}
         </span>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          onClick={() => void propose()}
-          disabled={busy !== null}
-          data-product-assembly-propose
-        >
-          {busy === 'propose' ? t('proposing') : t('propose')}
-        </Button>
+        {a.strategy !== 'manual' && (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={() => void propose()}
+            disabled={busy !== null}
+            data-product-assembly-propose
+          >
+            {busy === 'propose' ? t('proposing') : t('propose')}
+          </Button>
+        )}
         {a.strategy === 'gears_matcher' && (
           <Button type="button" size="sm" variant="ghost" onClick={() => openTab(bridge, 'gearMatch')}>
             {t('open_gear_match')}
@@ -229,10 +275,12 @@ export function AssemblyPanel({ round, onChanged }: { round: number; onChanged: 
       </div>
       {a.fallback && (
         <span className={`${page.small} ${page.error}`} data-product-assembly-fallback={a.fallback.code}>
-          {t('fallback', { chosen: strategyLabel(a.chosen), reason: a.fallback.reason })}
+          {a.strategy === 'manual'
+            ? t('fallback_manual', { chosen: strategyLabel(a.chosen), reason: a.fallback.reason })
+            : t('fallback', { chosen: strategyLabel(a.chosen), used: strategyLabel(a.strategy), reason: a.fallback.reason })}
         </span>
       )}
-      {a.settable && (
+      {a.settable && listed.length > 1 && (
         <Segmented
           label={t('choice_label')}
           value={projectChoice(a)}

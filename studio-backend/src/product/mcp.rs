@@ -368,6 +368,32 @@ pub fn tools() -> Vec<Tool> {
             experimental: false,
             run: Run::Get("/studio-product/v1/gear-matches/{match_id}"),
         },
+        Tool {
+            name: "gear_match_usage",
+            description: "How the organization's projects use the gears matcher, over the last \
+                `period_days` (default 30): per project the strategy its product is assembled \
+                by and why, its last gear match with that run's coverage, its runs by state, \
+                the model calls and tokens they spent, the gears members accepted and rejected \
+                and the questions still open; summed in `summary`; and whether the \
+                gears-matcher service answers now (`service`: versions, catalogue commit, \
+                limits). Call it before suggesting a gear match is worth its cost, or to see \
+                which projects wait on answers. Reads only.",
+            input_schema: || {
+                object(
+                    json!({
+                        "organization_id": { "type": "string",
+                            "description": "The organization; your home organization when absent." },
+                        "period_days": { "type": "integer", "minimum": 1, "maximum": 365 },
+                        "offset": { "type": "integer", "minimum": 0 },
+                        "limit": { "type": "integer", "minimum": 1, "maximum": 200 }
+                    }),
+                    &[],
+                )
+            },
+            effect: Effect::Read,
+            experimental: false,
+            run: Run::Get("/studio-product/v1/gear-match-usage"),
+        },
     ]
 }
 
@@ -527,6 +553,20 @@ mod tests {
         assert_eq!(s.method, Method::Get);
         assert_eq!(s.path, "/studio-product/v1/project-assembly-strategy");
         assert_eq!(s.query, vec![("project_id".to_owned(), "p".to_owned())]);
+        let u = request_of(
+            &all,
+            "gear_match_usage",
+            json!({"organization_id": "o", "period_days": 7}),
+        );
+        assert_eq!(u.method, Method::Get);
+        assert_eq!(u.path, "/studio-product/v1/gear-match-usage");
+        assert_eq!(
+            u.query,
+            vec![
+                ("organization_id".to_owned(), "o".to_owned()),
+                ("period_days".to_owned(), "7".to_owned()),
+            ]
+        );
         assert_eq!(
             r.query,
             vec![

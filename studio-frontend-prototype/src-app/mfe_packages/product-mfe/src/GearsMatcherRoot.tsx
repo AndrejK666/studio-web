@@ -68,7 +68,7 @@ export const GearsMatcherRoot: React.FC<{ bridge: ChildMfeBridge }> = ({ bridge 
         <Skeleton className={styles.skeleton} />
       ) : view === 'gears-matcher' ? (
         orgId ? (
-          <GearsMatcherSettings key={orgId} orgId={orgId} />
+          <GearsMatcherSettings key={orgId} orgId={orgId} bridge={bridge} language={language} />
         ) : (
           <Skeleton className={styles.skeleton} />
         )

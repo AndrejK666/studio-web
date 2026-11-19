@@ -15,7 +15,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { Skeleton } from '@gears-frontx/ui-kit';
-import { openScreen } from '@constructor-studio/mfe-shared';
+import { openScreen, violationOfType } from '@constructor-studio/mfe-shared';
 import { GridFailed } from '@constructor-studio/mfe-shared/grid';
 import { productApi } from '../../api/client';
 import type { Conformance, PlanRow } from '../../api/types';
@@ -80,7 +80,13 @@ function useRunning(projectId: string): Running[] | null {
 async function readInventory(projectId: string, workspaceId: string | null): Promise<Read> {
   const partial: string[] = [];
   const [plan, product, services, code, registry] = await Promise.all([
-    productApi.projectPlan(projectId),
+    // The plan is the Spec mapping kit's (ADR-0074): without it the plan's
+    // part of the list is left out and said so, and the rest still shows.
+    productApi.projectPlan(projectId).catch((e: unknown) => {
+      if (!violationOfType(e, 'KIT_NOT_INSTALLED')) throw e;
+      partial.push('partial_plan_kit');
+      return { items: [] as PlanRow[] };
+    }),
     productApi.projectProduct(projectId).catch(() => {
       partial.push('partial_product');
       return null;

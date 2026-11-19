@@ -141,6 +141,7 @@ async fn every_builtin_kit_is_a_base_kit_until_the_platform_removes_it() {
             "project-product",
             "project-specs",
             "project-tests",
+            "spec-mapping",
             "studio-api-docs"
         ]
     );
@@ -291,6 +292,48 @@ async fn an_organization_cannot_uninstall_a_base_kit() {
 }
 
 #[tokio::test]
+async fn an_organization_uninstalls_spec_mapping_for_itself_and_takes_it_back() {
+    let (installer, store) = installer();
+    let admin = caller(ORG_ADMIN, ORG);
+    let other = Uuid::from_u128(0x07e5);
+    // A base kit by default (ADR-0074): every organization has it.
+    let installed = installer.installed(&admin, ORG).await.unwrap();
+    assert!(slugs(&installed.base).contains(&"spec-mapping"));
+    // Gone for this organization alone, and for its projects.
+    installer
+        .uninstall_for_organization(&admin, ORG, "spec-mapping")
+        .await
+        .unwrap();
+    let installed = installer.installed(&admin, ORG).await.unwrap();
+    assert!(!slugs(&installed.effective).contains(&"spec-mapping"));
+    assert!(slugs(&installed.effective).contains(&"project-tests"));
+    let in_project = installer
+        .installed_in_project(&admin, PROJECT)
+        .await
+        .unwrap();
+    assert!(!slugs(&in_project.effective).contains(&"spec-mapping"));
+    assert_eq!(
+        store.docs.lock().unwrap()[&ORG].removed_base,
+        vec!["spec-mapping".to_owned()]
+    );
+    let elsewhere = installer
+        .installed(&caller(PLATFORM_ADMIN, other), other)
+        .await
+        .unwrap();
+    assert!(slugs(&elsewhere.base).contains(&"spec-mapping"));
+    // Installed again, it is the base kit once more, with no record of its own.
+    let back = installer
+        .install_for_organization(&admin, ORG, "spec-mapping", None)
+        .await
+        .unwrap();
+    assert_eq!(back.kind, KIND_BASE);
+    let installed = installer.installed(&admin, ORG).await.unwrap();
+    assert!(slugs(&installed.base).contains(&"spec-mapping"));
+    assert!(installed.organization.is_empty());
+    assert!(store.docs.lock().unwrap()[&ORG].removed_base.is_empty());
+}
+
+#[tokio::test]
 async fn kits_are_installed_for_an_organization_not_a_project_or_the_platform() {
     let (installer, _) = installer();
     let admin = caller(PLATFORM_ADMIN, PLATFORM_TENANT);
@@ -412,6 +455,7 @@ fn a_stored_builtin_kit_takes_the_version_this_image_ships() {
             },
         ],
         removed_builtin: vec![],
+        removed_base: vec![],
         shelf: vec![],
         shelf_versions: vec![],
         renamed: None,

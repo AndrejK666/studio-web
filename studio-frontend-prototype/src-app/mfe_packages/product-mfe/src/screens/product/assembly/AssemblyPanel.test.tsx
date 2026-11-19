@@ -212,4 +212,48 @@ describe('AssemblyPanel', () => {
     await waitFor(() => expect(document.body.textContent).toContain('no_finished_match'));
     expect(read).not.toHaveBeenCalled();
   });
+
+  it('with no strategy kit, says the product is assembled by hand and points to Kits', async () => {
+    vi.spyOn(api, 'assemblyStrategy').mockResolvedValue(
+      strategy({ strategy: 'manual', chosen: 'manual', strategies: [], strategy_kits: [] })
+    );
+    draw();
+    await found('[data-product-assembly-manual]');
+    expect(document.querySelector('[data-product-assembly-effective="manual"]')).toBeTruthy();
+    expect(document.querySelector('[data-product-assembly-kits]')).toBeTruthy();
+    expect(document.querySelector('[data-product-assembly-propose]')).toBeNull();
+    expect(document.querySelector('[data-product-assembly-choice]')).toBeNull();
+  });
+
+  it('with one strategy kit, proposes by it with nothing to choose', async () => {
+    vi.spyOn(api, 'assemblyStrategy').mockResolvedValue(
+      strategy({
+        strategy: 'gears_matcher',
+        chosen: 'gears_matcher',
+        strategies: ['gears_matcher'],
+        strategy_kits: [{ id: 'gears_matcher', name: 'Gears matcher', description: '', kit: 'gears-matcher', offered: true }],
+      })
+    );
+    draw();
+    await found('[data-product-assembly-effective="gears_matcher"]');
+    expect(document.querySelector('[data-product-assembly-propose]')).toBeTruthy();
+    expect(document.querySelector('[data-product-assembly-choice]')).toBeNull();
+  });
+
+  it('offers only the strategies the installed kits provide', async () => {
+    vi.spyOn(api, 'assemblyStrategy').mockResolvedValue(
+      strategy({
+        strategies: ['spec_mapping', 'gears_matcher'],
+        strategy_kits: [
+          { id: 'spec_mapping', name: 'Spec mapping', description: '', kit: 'spec-mapping', offered: true },
+          { id: 'gears_matcher', name: 'Gears matcher', description: '', kit: 'gears-matcher', offered: false, reason: 'no address' },
+        ],
+      })
+    );
+    draw();
+    const matcher = (await found('[data-product-assembly-choice="gears_matcher"]')) as HTMLButtonElement;
+    expect(matcher.disabled).toBe(true);
+    expect(matcher.title).toBe('no address');
+    expect((document.querySelector('[data-product-assembly-choice="spec_mapping"]') as HTMLButtonElement).disabled).toBe(false);
+  });
 });

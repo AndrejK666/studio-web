@@ -227,6 +227,8 @@ export const api = {
     svc().setAssemblyStrategy(projectId).fetch({ strategy }),
   organizationAssemblyStrategy: (_token: string, organizationId: string) =>
     svc().organizationAssemblyStrategy({ organizationId }).fetch(FRESH),
+  gearMatchUsage: (_token: string, organizationId: string, periodDays: number) =>
+    svc().gearMatchUsage({ organizationId, periodDays }).fetch(FRESH),
   setOrganizationAssemblyStrategy: (
     _token: string,
     organizationId: string,

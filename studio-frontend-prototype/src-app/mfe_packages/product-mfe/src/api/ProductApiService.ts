@@ -59,6 +59,7 @@ import type { GearCatalogue } from '../model/product-configurator';
 import type { GearBrings } from '../model/gear-brings';
 import type { GearMatch, GearMatchDiff, GearMatchItem } from '../model/gear-match';
 import type { AssemblyStrategy, StrategyId } from '../model/assembly';
+import type { GearMatchUsage } from '../model/gear-match-usage';
 
 /** The tenant-metadata type a project's configuration is kept under. */
 export const PROJECT_CONFIG_TYPE = 'gts.cf.core.am.tenant_metadata.v1~cf.studio.project.config.v1~';
@@ -591,6 +592,14 @@ export class ProductApiService extends BaseApiService {
       orgScoped('/studio-product/v1/assembly-strategy', organizationId)
     );
   }
+
+  /** How the organization's projects use the gears matcher, over the last `periodDays` (Organization › Gears matcher). */
+  readonly gearMatchUsage = this.protocol(RestEndpointProtocol).queryWith<
+    GearMatchUsage,
+    { organizationId: string; periodDays: number }
+  >(({ organizationId, periodDays }) =>
+    orgScoped(`/studio-product/v1/gear-match-usage?period_days=${periodDays}&limit=200`, organizationId)
+  );
 
   readonly artifactNodes = this.protocol(RestEndpointProtocol).queryWith<ArtifactNodePage, { query: string }>(
     ({ query }) => `/studio-artifact-ingest/v1/nodes${query ? `?${query}` : ''}`

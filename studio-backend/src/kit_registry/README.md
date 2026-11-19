@@ -35,14 +35,20 @@ This README is what you need to work in the directory.
   `project-lifecycle` (Planning), `project-git` (Git collaboration),
   `project-tests` (Tests), `project-product` (Product), `delivery` (Builds,
   releases & environments), `constructor-research`, `gears-matcher`
-  (Gears matcher, ADR-0072), `components` (Catalogue), `org-costs`, `org-reports`, `studio-api-docs` (level
+  (Gears matcher, ADR-0072), `spec-mapping` (Spec mapping, ADR-0074),
+  `components` (Catalogue), `org-costs`, `org-reports`, `studio-api-docs` (level
   `platform`) and `assistant`
   (Studio AI, the chat panel the shell docks in its sidebar; no route, its
   permissions are studio-llm-proxy's client settings and chat completions) and
   `constructor-research`. Every built-in kit is a base kit by default except
   those in `OPT_IN_BUILTIN` (`service.rs`): `constructor-research` and
   `gears-matcher` apply only where an organization (or one project) installs
-  them (or a platform administrator makes one a base kit). A feature ported into the portal is added here,
+  them (or a platform administrator makes one a base kit). The base kits of
+  `ORGANIZATION_REMOVABLE_BASE` (`spec-mapping`) an organization administrator
+  may uninstall for that organization alone: its document's `removed_base`,
+  taken back by installing the kit for it again (ADR-0074). A kit's manifest
+  may declare the assembly strategy it provides (`assembly_strategy`,
+  `port::assembly_strategies`). A feature ported into the portal is added here,
   with its screens in `contents.rs` (a route only once the portal has one)
   and everything else in its compiled-in `builtin/<slug>.kit.json` — every
   built-in kit has one, `studio-api-docs` too: its model, what it claims
@@ -258,8 +264,9 @@ This README is what you need to work in the directory.
   and removal stay. Design:
   `docs/design/studio-kits.md` §3.13. studio-product asks it for
   `gears-matcher` (ADR-0072): a project choosing the `gears_matcher` assembly
-  strategy, and the strategy read, which falls back to `spec_mapping` where
-  the kit does not apply. The gear-match writes and tools that kit claims
+  strategy, and the strategy read, which falls back where the kit does not
+  apply; studio-spec-mapping asks it for `spec-mapping` before the plan,
+  findings and decisions are read (ADR-0074). The gear-match writes and tools that kit claims
   answer `KIT_NOT_INSTALLED` through the shared check.
 - `project-lifecycle` is the first built-in kit with a model: the type
   `project-lifecycle-phase`, `project.phase` / `phase_owner` / `phase_since`,
