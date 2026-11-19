@@ -19,6 +19,7 @@ pub mod config;
 pub mod report;
 pub mod store;
 pub mod task;
+pub mod usage;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -92,6 +93,20 @@ pub struct GearMatches {
     pub matcher: Arc<dyn Matcher>,
     store: Option<Arc<MatchStore>>,
     hub: Arc<ClientHub>,
+    /// The last `GET /v1/info`, for the organization page's live check.
+    info_cache: tokio::sync::Mutex<Option<(std::time::Instant, LiveInfo)>>,
+}
+
+/// How long a live check of the service is kept before it is asked again.
+pub const INFO_TTL: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// What the service said when it was last asked (`GET /v1/info`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct LiveInfo {
+    /// When it was asked, epoch milliseconds.
+    pub checked_at_ms: i64,
+    /// Its answer; `Err` saying why when it did not answer.
+    pub answer: Result<Value, String>,
 }
 
 impl GearMatches {
@@ -106,7 +121,27 @@ impl GearMatches {
             matcher,
             store,
             hub,
+            info_cache: tokio::sync::Mutex::new(None),
         }
+    }
+
+    /// Whether the service answers now: its `GET /v1/info`, asked at most
+    /// once per [`INFO_TTL`]. `None` when it is not configured (nothing to
+    /// ask).
+    pub async fn live_info(&self) -> Option<LiveInfo> {
+        self.matcher.missing().is_none().then_some(())?;
+        let mut cache = self.info_cache.lock().await;
+        if let Some((at, info)) = cache.as_ref()
+            && at.elapsed() < INFO_TTL
+        {
+            return Some(info.clone());
+        }
+        let info = LiveInfo {
+            checked_at_ms: store::now_ms(),
+            answer: self.matcher.info().await.map_err(|e| e.to_string()),
+        };
+        *cache = Some((std::time::Instant::now(), info.clone()));
+        Some(info)
     }
 
     pub fn store(&self) -> Result<&Arc<MatchStore>, Refusal> {
