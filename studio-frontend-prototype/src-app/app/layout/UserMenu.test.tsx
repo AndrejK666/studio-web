@@ -152,6 +152,20 @@ describe('UserMenu', () => {
     expect(JSON.parse(window.localStorage.getItem('studio.ui-preferences.v1') ?? '{}')).toMatchObject({ 'app.theme': 'dark' });
   });
 
+  it('switches the layout to the sidebar and back, and remembers it (shell.layout)', async () => {
+    window.localStorage.removeItem('studio.ui-preferences.v1');
+    render(<UserMenu />);
+    openMenu();
+    const top = await screen.findByText('Top bar');
+    expect(top.closest('[role="menuitemradio"]')?.getAttribute('aria-checked')).toBe('true');
+    fireEvent.click(await screen.findByText('Sidebar'));
+    expect(JSON.parse(window.localStorage.getItem('studio.ui-preferences.v1') ?? '{}')).toMatchObject({ 'shell.layout': 'sidebar' });
+    openMenu();
+    fireEvent.click(await screen.findByText('Top bar'));
+    // The default is stored as nothing.
+    expect(JSON.parse(window.localStorage.getItem('studio.ui-preferences.v1') ?? '{}')).not.toHaveProperty('shell.layout');
+  });
+
   it('sign-out clears the user and logs out via the auth runtime', async () => {
     render(<UserMenu />);
     openMenu();

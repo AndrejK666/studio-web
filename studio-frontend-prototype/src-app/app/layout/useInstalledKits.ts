@@ -19,15 +19,22 @@ import { kitIn } from '@constructor-studio/mfe-shared';
 import { InstalledKitsApiService } from '@/app/api/InstalledKitsApiService';
 import { ModelTypesApiService } from '@/app/api/ModelTypesApiService';
 import { APP_CONTEXT_SLICE_KEY, type AppContextState } from '@/app/slices/appContextSlice';
-import type { StudioScreenExtension } from '@/app/mfe/screenLevels';
+import type { ScreenLevel, StudioScreenExtension } from '@/app/mfe/screenLevels';
 
-export function useInstalledKits(): ReadonlySet<string> | null {
+/**
+ * `level`, when given, names whose kits are asked about: a level above the
+ * project reads the organization's even while a project is open (the
+ * sidebar lists the organization's tabs beside the project's). Absent: the
+ * scope on screen, as before.
+ */
+export function useInstalledKits(level?: ScreenLevel): ReadonlySet<string> | null {
   const orgId = useAppSelector(
     (state) => (state[APP_CONTEXT_SLICE_KEY] as AppContextState | undefined)?.org?.id ?? null
   );
-  const projectId = useAppSelector(
+  const openProject = useAppSelector(
     (state) => (state[APP_CONTEXT_SLICE_KEY] as AppContextState | undefined)?.project?.id ?? null
   );
+  const projectId = level === undefined || level === 'project' ? openProject : null;
   const scope = projectId ? { projectId } : { organizationId: orgId ?? '' };
   const read = useApiQuery(apiRegistry.getService(InstalledKitsApiService).installed(scope), {
     enabled: !!orgId || !!projectId,

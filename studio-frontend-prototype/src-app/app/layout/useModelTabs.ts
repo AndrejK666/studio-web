@@ -86,6 +86,12 @@ export interface HiddenTabs {
 
 const NOTHING_HIDDEN: string[] = [];
 
+// A save heard by every reader of the same level and tenant: the top bar's
+// row, the sidebar's list and the bar over the screen read the document each
+// on its own, and one saving must not leave the others showing the old list.
+type SavedListener = (key: string, hidden: string[]) => void;
+const savedListeners = new Set<SavedListener>();
+
 /** The names `tenantId`'s settings document hides from `level`'s tabs, and how to change them. */
 export function useHiddenTabs(level: ScreenLevel, tenantId: string | null): HiddenTabs {
   const [read, setRead] = useState<{ key: string; hidden: string[] } | null>(null);
@@ -109,6 +115,17 @@ export function useHiddenTabs(level: ScreenLevel, tenantId: string | null): Hidd
     };
   }, [tabLevel, tenantId, key]);
 
+  useEffect(() => {
+    if (!key) return undefined;
+    const heard: SavedListener = (savedKey, hidden) => {
+      if (savedKey === key) setRead({ key, hidden });
+    };
+    savedListeners.add(heard);
+    return () => {
+      savedListeners.delete(heard);
+    };
+  }, [key]);
+
   const save = useCallback(
     async (next: string[]) => {
       if (!tabLevel || !tenantId || !key) return;
@@ -119,6 +136,7 @@ export function useHiddenTabs(level: ScreenLevel, tenantId: string | null): Hidd
       const current = await accounts.getTenantMetadata<unknown>({ tenantId, metadataType: type }).fetch({ staleTime: 0 });
       await accounts.putTenantMetadata<Record<string, unknown>>(tenantId, type).fetch(withHiddenTabs(current?.value, next));
       setRead({ key, hidden: next });
+      for (const listener of [...savedListeners]) listener(key, next);
     },
     [tabLevel, tenantId, key]
   );

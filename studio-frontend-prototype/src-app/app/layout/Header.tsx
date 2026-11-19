@@ -1,17 +1,9 @@
 /** Header Component — the global top bar. */
 
-import React, { useCallback, useState } from 'react';
-import {
-  useFrontX,
-  useDomainExtensions,
-  overlayDomain,
-  FRONTX_ACTION_MOUNT_EXT,
-} from '@gears-frontx/react';
-import { executeAndSettle } from '@/app/mfe/shellOutcomes';
+import React from 'react';
 import { Button } from '@gears-frontx/ui-kit/button';
 import { cn } from '@/app/lib/utils';
 import { BundledIcon } from '@/app/icons/BundledIcon';
-import type { OverlayExtension } from './overlayExtension';
 import { ContextChain } from './ContextChain';
 import { ProjectStatusSlot } from './KitSlot';
 import { UserMenu } from './UserMenu';
@@ -19,6 +11,7 @@ import { ProductMenu } from './ProductMenu';
 import { PinsMenu } from './PinsMenu';
 import { WorkInbox } from './WorkInbox';
 import { useInboxEntry } from './useInboxEntry';
+import { useSearchEntry } from './useSearchEntry';
 import { useShellText } from '@/app/i18n/shellTranslations';
 
 export interface HeaderProps {
@@ -68,33 +61,12 @@ const IconPill: React.FC<{
 );
 
 export const Header: React.FC<HeaderProps> = ({ children }) => {
-  const { mfeRegistry } = useFrontX();
-
-  const overlayExtensions = useDomainExtensions(overlayDomain.id) as OverlayExtension[];
-  const searchExtension = overlayExtensions.find((ext) => ext.presentation?.route === '/search');
+  const search = useSearchEntry();
+  const searchExtension = search.extension;
   // The Inbox is a screen (organization-mfe, `/inbox`), opened from here with
   // how many items wait on the person (the prototype's InboxButton).
   const inbox = useInboxEntry();
   const t = useShellText();
-
-  const [mounting, setMounting] = useState(false);
-
-  const openOverlayExtension = useCallback(
-    async (extensionId: string) => {
-      if (!mfeRegistry || mounting) return;
-      setMounting(true);
-      try {
-        await executeAndSettle(mfeRegistry, {
-          type: FRONTX_ACTION_MOUNT_EXT,
-          target: overlayDomain.id,
-          payload: { subject: extensionId },
-        }).catch(() => undefined);
-      } finally {
-        setMounting(false);
-      }
-    },
-    [mfeRegistry, mounting]
-  );
 
   return (
     <header className="flex h-14 shrink-0 items-center border-b border-border bg-card pr-4">
@@ -120,9 +92,7 @@ export const Header: React.FC<HeaderProps> = ({ children }) => {
           icon={searchExtension?.presentation?.icon ?? 'lucide:search'}
           label={searchExtension?.presentation?.label ?? 'Search'}
           disabled={!searchExtension}
-          onClick={
-            searchExtension ? () => void openOverlayExtension(searchExtension.id) : undefined
-          }
+          onClick={searchExtension ? search.open : undefined}
         />
         {/* The count is the server's (GET /me/inbox/count): nothing shows while it is unknown. */}
         <IconPill

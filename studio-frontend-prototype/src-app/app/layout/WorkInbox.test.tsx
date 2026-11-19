@@ -30,7 +30,7 @@ vi.mock('@/app/live/liveChannel', () => ({
   }),
 }));
 
-import { WorkInbox, BACKGROUND_WORK_ROUTE } from './WorkInbox';
+import { WorkInbox, BACKGROUND_WORK_ROUTE, resetCompletedWorkForTests } from './WorkInbox';
 
 let seq = 0;
 function hear(payload: Record<string, unknown>) {
@@ -61,6 +61,7 @@ describe('WorkInbox', () => {
   afterEach(() => {
     cleanup();
     channel.listeners.clear();
+    resetCompletedWorkForTests();
     vi.clearAllMocks();
   });
 
@@ -92,6 +93,14 @@ describe('WorkInbox', () => {
     render(<WorkInbox />);
     fireEvent.click(bell());
     expect(screen.getByText('Nothing has finished since you opened the portal.')).toBeTruthy();
+  });
+
+  it('keeps what finished when the bell is drawn again (the layout switched)', () => {
+    const first = render(<WorkInbox />);
+    hear({ state: 'succeeded', task_type: 'artifact.ingest', summary: '12 files' });
+    first.unmount();
+    render(<WorkInbox side="top" />);
+    expect(count()).toBe('1');
   });
 
   it('hands over to Background work', () => {

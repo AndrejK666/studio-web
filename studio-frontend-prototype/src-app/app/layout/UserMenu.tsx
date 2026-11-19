@@ -31,12 +31,18 @@ import {
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuGroup,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
 } from '@gears-frontx/ui-kit/dropdown-menu';
 import { Avatar, AvatarImage, AvatarFallback } from '@gears-frontx/ui-kit/avatar';
 import { Skeleton } from '@gears-frontx/ui-kit/skeleton';
-import { Building2, CircleUserRound, Inbox, LogOut, Moon, Shield, Server, Sun } from 'lucide-react';
+import { Building2, ChevronsUpDown, CircleUserRound, Inbox, LogOut, Moon, PanelLeft, PanelTop, Shield, Server, Sun } from 'lucide-react';
 import { useThemeChoice } from '@/app/preferences/theme';
+import { useShellLayout, type ShellLayout } from '@/app/preferences/shellLayout';
+import { cn } from '@/app/lib/utils';
 import { resolveLevelMenu, type StudioScreenExtension } from '@/app/mfe/screenLevels';
 import { useShellText } from '@/app/i18n/shellTranslations';
 import { OrganizationRequestsDialog, useDecidesRequests } from './OrganizationRequests';
@@ -57,7 +63,16 @@ function initialsOf(user: { displayName?: string; email?: string } | null | unde
   );
 }
 
-export const UserMenu: React.FC = () => {
+export interface UserMenuProps {
+  /**
+   * `avatar`: the top bar's round avatar. `sidebar`: the sidebar's foot —
+   * the avatar beside the name, the menu opening upward; `rail` the same,
+   * folded to the avatar alone.
+   */
+  variant?: 'avatar' | 'sidebar' | 'rail';
+}
+
+export const UserMenu: React.FC<UserMenuProps> = ({ variant = 'avatar' }) => {
   const t = useShellText();
   const { auth } = useFrontX();
   const dispatch = useAppDispatch();
@@ -72,6 +87,8 @@ export const UserMenu: React.FC = () => {
   const profile = screens.find((screen) => screen.presentation?.route === PROFILE_ROUTE);
   // The person's theme: applied once their preferences answer, switched here.
   const [theme, chooseTheme] = useThemeChoice();
+  // The shell's layout, the person's choice: switched here, live.
+  const [layout, chooseLayout] = useShellLayout();
   const [requestsOpen, setRequestsOpen] = useState(false);
   const closeRequests = useCallback(() => setRequestsOpen(false), []);
 
@@ -84,7 +101,7 @@ export const UserMenu: React.FC = () => {
   }, [auth, dispatch]);
 
   if (loading) {
-    return <Skeleton className="size-8 rounded-full" />;
+    return <Skeleton className={cn('size-8 rounded-full', variant === 'sidebar' && 'ml-1')} />;
   }
 
   const label = user?.displayName || user?.email || 'User';
@@ -94,14 +111,31 @@ export const UserMenu: React.FC = () => {
       <DropdownMenu>
         <DropdownMenuTrigger
           aria-label={label}
-          className="rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          title={variant === 'rail' ? label : undefined}
+          className={cn(
+            'outline-none focus-visible:ring-2 focus-visible:ring-ring',
+            variant === 'sidebar'
+              ? 'flex min-w-0 flex-1 items-center gap-2 rounded-md p-1 text-left hover:bg-[var(--sidebar-accent)]'
+              : 'rounded-full'
+          )}
         >
-          <Avatar>
+          <Avatar className={variant === 'avatar' ? undefined : 'size-7 shrink-0'}>
             {user?.avatarUrl && <AvatarImage src={user.avatarUrl} alt={label} />}
             <AvatarFallback>{initialsOf(user)}</AvatarFallback>
           </Avatar>
+          {variant === 'sidebar' && (
+            <>
+              <span className="min-w-0 flex-1 truncate text-body font-medium text-[var(--sidebar-foreground)]">{label}</span>
+              <ChevronsUpDown aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+            </>
+          )}
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" sideOffset={6} className="min-w-56 rounded-lg">
+        <DropdownMenuContent
+          align={variant === 'avatar' ? 'end' : 'start'}
+          side={variant === 'avatar' ? undefined : 'top'}
+          sideOffset={6}
+          className="min-w-56 rounded-lg"
+        >
           <div className="px-2 py-1.5">
             <div className="truncate text-body font-medium text-foreground">{label}</div>
             {user?.displayName && user?.email && (
@@ -152,6 +186,21 @@ export const UserMenu: React.FC = () => {
             {theme === 'dark' ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
             {theme === 'dark' ? t('user_menu_theme_light') : t('user_menu_theme_dark')}
           </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          {/* The shell's layout: the top bar, or the sidebar (the designer's). */}
+          <DropdownMenuGroup>
+            <DropdownMenuLabel className="text-label text-muted-foreground">{t('user_menu_layout')}</DropdownMenuLabel>
+            <DropdownMenuRadioGroup value={layout} onValueChange={(value) => chooseLayout(value as ShellLayout)}>
+              <DropdownMenuRadioItem value="top" closeOnClick data-layout-choice="top">
+                <PanelTop aria-hidden="true" />
+                {t('user_menu_layout_top')}
+              </DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="sidebar" closeOnClick data-layout-choice="sidebar">
+                <PanelLeft aria-hidden="true" />
+                {t('user_menu_layout_sidebar')}
+              </DropdownMenuRadioItem>
+            </DropdownMenuRadioGroup>
+          </DropdownMenuGroup>
           <DropdownMenuSeparator />
           <DropdownMenuItem onClick={() => void signOut()}>
             <LogOut aria-hidden="true" />

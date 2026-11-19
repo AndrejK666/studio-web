@@ -32,7 +32,16 @@ export function productScreens(
     .sort((a, b) => (a.presentation.order ?? 999) - (b.presentation.order ?? 999));
 }
 
-export const ProductMenu: React.FC = () => {
+export interface ProductMenuProps {
+  /**
+   * `wordmark`: "Constructor Studio ▾", as the top bar draws it. `logo`: the
+   * logo alone, for the sidebar folded to its rail. `sidebar`: the wordmark
+   * at the head of the sidebar, in the sidebar's size.
+   */
+  trigger?: 'wordmark' | 'logo' | 'sidebar';
+}
+
+export const ProductMenu: React.FC<ProductMenuProps> = ({ trigger = 'wordmark' }) => {
   const t = useShellText();
   const screens = useDomainExtensions(FRONTX_SCREEN_DOMAIN) as StudioScreenExtension[];
   const installed = useInstalledKits();
@@ -47,16 +56,28 @@ export const ProductMenu: React.FC = () => {
         render={
           <button
             type="button"
-            className="ml-2 inline-flex items-center gap-1 whitespace-nowrap rounded-md px-1 text-heading-2 font-semibold text-foreground hover:bg-muted"
+            className={
+              trigger === 'logo'
+                ? 'inline-flex size-9 items-center justify-center rounded-md outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring'
+                : trigger === 'sidebar'
+                  ? 'inline-flex min-w-0 items-center gap-1 whitespace-nowrap rounded-md px-1 text-body font-semibold text-foreground outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring'
+                  : 'ml-2 inline-flex items-center gap-1 whitespace-nowrap rounded-md px-1 text-heading-2 font-semibold text-foreground hover:bg-muted'
+            }
             aria-label={t('product_menu')}
             title={t('product_menu')}
           />
         }
       >
-        Constructor Studio
-        <ChevronDown className="size-4 text-muted-foreground" aria-hidden="true" />
+        {trigger === 'logo' ? (
+          <img src="/brand/constructor-weave.svg" alt="" width={28} height={28} className="size-7" />
+        ) : (
+          <>
+            Constructor Studio
+            <ChevronDown className="size-4 text-muted-foreground" aria-hidden="true" />
+          </>
+        )}
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="min-w-52">
+      <DropdownMenuContent align="start" side={trigger === 'logo' ? 'right' : undefined} className="min-w-52">
         <DropdownMenuItem
           onClick={() => eventBus.emit('app/context/level/requested', { level: 'organization' })}
         >
