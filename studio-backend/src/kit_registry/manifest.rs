@@ -337,6 +337,9 @@ fn check_project_creation(m: &KitManifest, project_type: bool) -> Result<(), Str
                 NEXT_STEP_DONE_WHEN.join(", ")
             )));
         }
+    }
+    Ok(())
+}
 
 /// `assembly_strategy`: the strategy's id (the value studio-product keeps
 /// and answers, `snake_case`), its name and what it does, for the person
