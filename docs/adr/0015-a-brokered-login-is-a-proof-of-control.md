@@ -10,6 +10,16 @@ date: 2026-09-10
 
 Status: **proposed** · Date: 2026-09-10 · Implements ADR-0012 follow-up 2 · Extends ADR-0025
 
+Amendment 2026-11-19: the `constructor` OIDC broker
+([`keycloak/CONSTRUCTOR_SSO.md`](../../keycloak/CONSTRUCTOR_SSO.md)) is a
+proof channel like `github`. Its alias is `constructor:<handle>`, where the
+handle is the IdP's `preferred_username`, or the email when it sends none. Its
+`trustEmail` takes the IdP's `email_verified` claim as given, so an address the
+IdP does not vouch for is not verified in the realm and claims no invitation.
+Using a brokered login's stored tokens as a credential (a Research connection)
+is a separate claim this ADR does not make; that file sets out the proposal
+and its risks.
+
 ## Table of Contents
 
 <!-- toc -->

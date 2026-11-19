@@ -10,6 +10,11 @@ date: 2026-08-27
 
 Status: accepted · 2026-08-27 · Amends ADR-0004 · §3 and §4 superseded by [ADR-0018](0018-an-identity-proves-it-is-you-and-decides-nothing-else.md)
 
+Amendment 2026-11-19: §1 covers every broker, not only GitHub. The
+`constructor` broker (the IdP behind Constructor Research,
+[`keycloak/CONSTRUCTOR_SSO.md`](../../keycloak/CONSTRUCTOR_SSO.md)) is added
+without a tenant mapper, so a Constructor sign-in establishes identity only.
+
 ## Table of Contents
 
 <!-- toc -->
