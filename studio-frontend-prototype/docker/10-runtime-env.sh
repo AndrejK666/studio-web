@@ -21,6 +21,13 @@ js_escape() {
   [ -n "${STUDIO_OIDC_ISSUER:-}" ]    && echo "  OIDC_ISSUER: \"$(js_escape "$STUDIO_OIDC_ISSUER")\","
   [ -n "${STUDIO_OIDC_CLIENT_ID:-}" ] && echo "  OIDC_CLIENT_ID: \"$(js_escape "$STUDIO_OIDC_CLIENT_ID")\","
   [ -n "${STUDIO_DISCORD_URL:-}" ]    && echo "  DISCORD_URL: \"$(js_escape "$STUDIO_DISCORD_URL")\","
+  # The realm brokers the Constructor IdP: any value but empty, false or 0
+  # turns the sign-in button on. Compose passes the broker's issuer, which is
+  # empty exactly when its keycloak-constructor-idp job switches the broker off.
+  case "$(printf '%s' "${STUDIO_CONSTRUCTOR_SIGN_IN:-}" | tr 'A-Z' 'a-z')" in
+    ''|false|0) ;;
+    *) echo "  CONSTRUCTOR_SIGN_IN: \"true\"," ;;
+  esac
   echo "};"
 } > "$HTML_DIR/env.js"
 

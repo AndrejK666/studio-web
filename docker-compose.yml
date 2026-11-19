@@ -503,6 +503,9 @@ services:
     environment:
       STUDIO_OIDC_ISSUER: ${STUDIO_OIDC_ISSUER_PUBLIC:-https://localhost:8443/realms/studio}
       STUDIO_OIDC_CLIENT_ID: ${STUDIO_OIDC_PORTAL_CLIENT_ID:-studio-portal}
+      # The sign-in screen offers Constructor where keycloak-constructor-idp
+      # brokers it: the same issuer, so an empty one turns both off.
+      STUDIO_CONSTRUCTOR_SIGN_IN: ${STUDIO_CONSTRUCTOR_IDP_ISSUER-http://research.localhost:8095/idp}
     ports:
       - "127.0.0.1:8081:8080"   # nginx-unprivileged listens on 8080 inside
     depends_on:

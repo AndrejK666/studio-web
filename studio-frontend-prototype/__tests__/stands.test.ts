@@ -107,4 +107,14 @@ describe('renderRuntimeEnv', () => {
     const script = renderRuntimeEnv(resolveStand({ STUDIO_DISCORD_URL: 'https://discord.gg/x' }));
     expect(script).toContain('"DISCORD_URL":"https://discord.gg/x"');
   });
+
+  it('offers Constructor sign-in only when the stand says its realm brokers it', () => {
+    expect(renderRuntimeEnv(resolveStand({ STUDIO_STAND: 'local' }))).not.toContain('CONSTRUCTOR_SIGN_IN');
+    expect(renderRuntimeEnv(resolveStand({ STUDIO_CONSTRUCTOR_SIGN_IN: 'false' }))).not.toContain(
+      'CONSTRUCTOR_SIGN_IN',
+    );
+    expect(renderRuntimeEnv(resolveStand({ STUDIO_CONSTRUCTOR_SIGN_IN: 'TRUE' }))).toContain(
+      '"CONSTRUCTOR_SIGN_IN":"true"',
+    );
+  });
 });
