@@ -20,7 +20,12 @@ import { useShellText } from '@/app/i18n/shellTranslations';
 import { usePins } from '@/app/pins/usePins';
 import { pinKey } from '@/app/pins/pins';
 
-export const PinsMenu: React.FC = () => {
+export interface PinsMenuProps {
+  /** Where the list opens: below the top bar's star, or right of the sidebar rail's. */
+  side?: 'bottom' | 'right';
+}
+
+export const PinsMenu: React.FC<PinsMenuProps> = ({ side = 'bottom' }) => {
   const t = useShellText();
   const { pins, toggle } = usePins();
   const label = t('pins');
@@ -39,7 +44,12 @@ export const PinsMenu: React.FC = () => {
       >
         <Star aria-hidden="true" className="size-[1.125rem]" fill={pins.length > 0 ? 'currentColor' : 'none'} />
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" sideOffset={6} className="w-72 rounded-lg">
+      <DropdownMenuContent
+        align={side === 'right' ? 'start' : 'end'}
+        side={side}
+        sideOffset={6}
+        className="w-72 rounded-lg"
+      >
         <div className="px-2 py-1.5 text-body font-medium text-foreground">{label}</div>
         <DropdownMenuSeparator />
         {pins.length === 0 ? (
