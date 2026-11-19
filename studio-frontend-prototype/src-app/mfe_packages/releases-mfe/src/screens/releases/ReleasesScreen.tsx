@@ -33,7 +33,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import type { ChildMfeBridge } from '@gears-frontx/react';
 import { useSharedProperty } from '@gears-frontx/react';
 import { Badge, Button, Skeleton, Tabs, TabsList, TabsTrigger } from '@gears-frontx/ui-kit';
-import { STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT, isNotFound, openScreen, useHostChrome, useScreenAvailability } from '@constructor-studio/mfe-shared';
+import { STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT, isNotFound, openScreen, screenView, useHostChrome, useScreenAvailability } from '@constructor-studio/mfe-shared';
 import type { Deployment, PathAction, ProjectPath, ProjectTargets } from '../../api/types';
 import { ROUTES, deploymentFromSearch, pathSteps, type Intent, type SpecsSeen } from '../../model/path';
 import { DeployDialog } from './DeployDialog';
@@ -154,10 +154,13 @@ function Releases({ projectId, onOrganization }: { projectId: string; onOrganiza
   const [unavailable, setUnavailable] = useState(false);
   // Bumped to read again: after a change, and while a build runs.
   const [round, setRound] = useState(0);
-  // The environment whose Deploy… is open; none until the reader opens one.
-  const [open, setOpen] = useState<string | null>(null);
+  // Also open the environment a failed run leads to from the organization overview.
+  const [addressedEnvironment] = useState(() => /^environment-([0-9a-f-]{36})$/.exec(
+    screenView(window.location.search) ?? ''
+  )?.[1] ?? null);
+  const [open, setOpen] = useState<string | null>(addressedEnvironment);
   // The tab the member picked; none until they pick one, and the step that is next shows.
-  const [picked, setPicked] = useState<ReleaseTab | null>(() => storedTab(projectId));
+  const [picked, setPicked] = useState<ReleaseTab | null>(() => addressedEnvironment ? 'deploy' : storedTab(projectId));
   const pick = (tab: ReleaseTab) => {
     setPicked(tab);
     storeTab(projectId, tab);
@@ -353,6 +356,7 @@ function Releases({ projectId, onOrganization }: { projectId: string; onOrganiza
             <ProjectBuilds
               ideBuilds={builds}
               environments={targets?.environments.map((x) => x.environment) ?? []}
+              environmentsReady={targets !== null}
               deployments={deployments}
               round={round}
               now={now}

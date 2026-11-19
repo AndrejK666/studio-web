@@ -49,7 +49,7 @@ import {
   workspaceLine,
   type NeedTarget,
 } from '../../overview/model';
-import type { OrgOverview, OrgPull, OrgRunFailure } from '../../overview/types';
+import type { OrgOverview, OrgPull, OrgRunFailure, OrgWorkspace } from '../../overview/types';
 import { BackgroundApiService } from '../../api/BackgroundApiService';
 import { RunDetails, when } from '../background/BackgroundGrids';
 import { useBackgroundTranslations, useOverviewTranslations } from '../../i18n';
@@ -274,7 +274,10 @@ function OrganizationOverview({
                           <div id={detailsId} className={styles.attentionDetails}>
                             {pulls && <ul>{pulls.map((pull) => <PullDetails key={pull.id} pull={pull} t={t} />)}</ul>}
                             {failures && <>
-                              <ul>{failures.map((run) => <FailedRun key={run.id} run={run} language={language} />)}</ul>
+                              <ul>{failures.map((run) => (
+                                <FailedRun key={run.id} run={run} language={language}
+                                  organizationId={organizationId} workspaces={o.workspaces} />
+                              ))}</ul>
                               {routeOf('tasks') && <button type="button" className={styles.tileOpen} onClick={() => go('tasks')}>
                                 {t('open_all_runs')}
                               </button>}
@@ -335,23 +338,72 @@ function PullDetails({ pull, t }: { pull: OrgPull; t: Text }) {
   );
 }
 
-function FailedRun({ run, language }: { run: OrgRunFailure; language: string }) {
+interface FailedRunProps {
+  run: OrgRunFailure;
+  language: string;
+  organizationId: string;
+  workspaces: OrgWorkspace[];
+}
+
+function FailedRun(props: FailedRunProps) {
+  const { run, language } = props;
   const [open, setOpen] = useState(false);
   return (
     <li>
       <details onToggle={(event) => setOpen(event.currentTarget.open)}>
         <summary>{run.task_type} · {when(run.created_at, language)}</summary>
-        {open && <FailedRunDetails run={run} language={language} />}
+        {open && <FailedRunDetails {...props} />}
       </details>
     </li>
   );
 }
 
-function FailedRunDetails({ run, language }: { run: OrgRunFailure; language: string }) {
+function FailedRunDetails({ run, language, organizationId, workspaces }: FailedRunProps) {
   const { t: overviewText } = useOverviewTranslations();
   const { t } = useBackgroundTranslations();
+  const bridge = useMfeBridge();
+  const availability = useScreenAvailability();
   const result = useApiQuery(apiRegistry.getService(BackgroundApiService).run({ id: run.id, tenant: run.tenant_id }));
-  if (result.data) return <RunDetails run={result.data} t={t} language={language} />;
+  if (result.data) {
+    const { payload, last_error, progress } = result.data;
+    const projectId = typeof payload.project_id === 'string' ? payload.project_id : run.tenant_id;
+    const environmentId = typeof payload.environment_id === 'string' && /^[0-9a-f-]{36}$/.test(payload.environment_id)
+      ? payload.environment_id : null;
+    const workspace = workspaces.find((place) => place.projects.some((project) => project.id === projectId));
+    const project = workspace?.projects.find((place) => place.id === projectId);
+    const route = environmentId && availability.route('/releases')
+      ? '/releases'
+      : run.task_type.startsWith('connector.') && availability.route('/projects/sources')
+        ? '/projects/sources'
+        : '/projects/overview';
+    const repo = typeof payload.repo_full_path === 'string' ? payload.repo_full_path : null;
+    const firstLine = last_error?.split(/\r?\n/).find((line) => line.trim())?.trim();
+    const reason = firstLine && firstLine.length > 240 ? `${firstLine.slice(0, 237)}…` : firstLine;
+    return (
+      <>
+        <p className={styles.muted}>{reason || progress || overviewText('run_no_reason')}</p>
+        {repo && <p className={styles.muted}>{repo}</p>}
+        {workspace && project && (
+          <button type="button" className={styles.tileOpen} onClick={() => openPlace(bridge, {
+            organizationId, workspaceId: workspace.id, projectId, route,
+            view: environmentId && route === '/releases' ? `environment-${environmentId}` : undefined,
+          })}>
+            {overviewText('run_open_project', { project: project.name })}
+          </button>
+        )}
+        {environmentId && !(project && route === '/releases') && availability.route('/infrastructure') && (
+          <button type="button" className={styles.tileOpen}
+            onClick={() => openScreen(bridge, '/infrastructure', `environment-${environmentId}`)}>
+            {overviewText('run_open_environment')}
+          </button>
+        )}
+        <details>
+          <summary>{overviewText('run_technical_details')}</summary>
+          <RunDetails run={result.data} t={t} language={language} />
+        </details>
+      </>
+    );
+  }
   return <p role={result.isError ? 'alert' : 'status'}>
     {result.isError ? t('load_failed', { error: String(result.error) }) : overviewText('reading')}
   </p>;

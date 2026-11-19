@@ -160,10 +160,10 @@ export function Catalogue({ tier }: { tier: 'platform' | 'organization' }) {
         {t('read_projects_now')}
       </Button>
       <Button variant="outline" onClick={() => setSourcesOpen(true)} data-components-sources>
-        {t('sources')}
+        {t('organization_sources')}
       </Button>
       <Button disabled={sync.busy} onClick={() => void sync.run()} data-components-sync-btn>
-        {sync.busy ? t('syncing') : t('sync')}
+        {sync.busy ? t('syncing') : t('sync_organization_catalogue')}
       </Button>
     </>
   );

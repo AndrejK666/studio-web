@@ -1,5 +1,5 @@
 import { AccountsApiService, type ProjectSource } from '@constructor-studio/mfe-shared';
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   apiRegistry,
   useApiQuery,
@@ -7,7 +7,7 @@ import {
   useAppSelector,
   useMfeBridge,
 } from '@gears-frontx/react';
-import { Skeleton } from '@gears-frontx/ui-kit';
+import { Button, Card, CardContent, Input, Skeleton } from '@gears-frontx/ui-kit';
 import { useOrganization, useWorkspace } from '@constructor-studio/mfe-shared';
 import { useProjectScreenTranslations, useProjectText } from '../../i18n';
 import { useArtifactCount } from '../../shared/useArtifacts';
@@ -92,6 +92,7 @@ export const ProjectScreen: React.FC<ProjectScreenProps> = ({ projectId }) => {
   const accounts = apiRegistry.getService(AccountsApiService);
   const {
     data: project,
+    refetch: refreshProject,
     isLoading,
     isError,
   } = useApiQuery(accounts.getTenant({ tenantId: projectId }));
@@ -137,6 +138,11 @@ export const ProjectScreen: React.FC<ProjectScreenProps> = ({ projectId }) => {
         return <SpecsSection projectId={projectId} projectName={project.name} />;
       case 'sources':
         return <SourcesSection projectId={projectId} projectName={project.name} />;
+      case 'settings':
+        return <ProjectSettings key={projectId} name={project.name} rename={async (name) => {
+          await accounts.renameTenant(projectId).fetch({ name });
+          await refreshProject();
+        }} />;
       default:
         return <PlaceholderSection title={t(`section_${section}`)} note={t('no_source_yet')} />;
     }
@@ -170,3 +176,50 @@ export const ProjectScreen: React.FC<ProjectScreenProps> = ({ projectId }) => {
 };
 
 ProjectScreen.displayName = 'ProjectScreen';
+
+function ProjectSettings({ name, rename }: { name: string; rename: (name: string) => Promise<void> }) {
+  const t = useProjectText();
+  const [draft, setDraft] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const next = (draft ?? name).trim();
+
+  return (
+    <Card>
+      <CardContent>
+        <form className={styles.sectionBody} onSubmit={async (event) => {
+          event.preventDefault();
+          if (saving || !next || next === name) return;
+          setSaving(true);
+          setError(null);
+          setSaved(false);
+          try {
+            await rename(next);
+            setDraft(null);
+            setSaved(true);
+          } catch (failure) {
+            setError(failure instanceof Error ? failure.message : String(failure));
+          } finally {
+            setSaving(false);
+          }
+        }}>
+          <label className={styles.sectionBody}>
+            {t('field_name')}
+            <Input value={draft ?? name} required disabled={saving} onChange={(event) => {
+              setDraft(event.target.value);
+              setSaved(false);
+            }} />
+          </label>
+          <div>
+            <Button type="submit" disabled={saving || !next || next === name}>
+              {t(saving ? 'settings_saving' : 'settings_save')}
+            </Button>
+          </div>
+          {saved && <p role="status">{t('settings_saved')}</p>}
+          {error && <p role="alert" className={styles.repoFailure}>{t('settings_save_failed', { reason: error })}</p>}
+        </form>
+      </CardContent>
+    </Card>
+  );
+}

@@ -80,5 +80,9 @@
   "open_people": "Люди →",
   "open_workspace": "Открыть",
   "project_failing_specs": "Спецификаций с ошибками: {count}",
-  "tile_spend_prices_missing": "Тарифы не настроены"
+  "tile_spend_prices_missing": "Тарифы не настроены",
+  "run_no_reason": "Запуск не сообщил причину ошибки.",
+  "run_open_project": "Открыть {project}",
+  "run_technical_details": "Технические детали",
+  "run_open_environment": "Открыть окружение"
 }

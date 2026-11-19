@@ -12,7 +12,7 @@
  * Releases, not here: this form only writes the organization's.
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Button,
   Card,
@@ -347,6 +347,7 @@ export function EnvironmentForm({
   researches,
   projects,
   initialCluster,
+  focusRegistry = false,
   onDone,
   onCancel,
   onClusterAdded,
@@ -361,6 +362,7 @@ export function EnvironmentForm({
   projects: ProjectRef[];
   /** The place a new environment runs on: the one whose panel is open. */
   initialCluster?: string;
+  focusRegistry?: boolean;
   onDone: () => void;
   onCancel: () => void;
   onClusterAdded: (c: Connection) => void;
@@ -378,6 +380,12 @@ export function EnvironmentForm({
   const [error, setError] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [connectingRegistry, setConnectingRegistry] = useState(false);
+  const registryInput = useRef<HTMLSelectElement>(null);
+  useEffect(() => {
+    if (!focusRegistry) return;
+    const frame = requestAnimationFrame(() => registryInput.current?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [focusRegistry]);
   // A field says what is wrong once it was touched, or once Add was pressed:
   // a fresh form is not a list of complaints.
   const [touched, setTouched] = useState<Set<EnvironmentField>>(new Set());
@@ -571,6 +579,7 @@ export function EnvironmentForm({
               <label className={styles.field}>
                 {t('field_registry_login')}
                 <NativeSelect
+                  ref={registryInput}
                   value={connectingRegistry ? NEW_CLUSTER : (input.registry_connection_id ?? '')}
                   onChange={(e) => {
                     if (e.target.value === NEW_CLUSTER) {

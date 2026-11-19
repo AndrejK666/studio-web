@@ -56,6 +56,7 @@ const STEP_STAGE: Record<string, StageState> = { passed: 'done', running: 'runni
 export function ProjectBuilds({
   ideBuilds,
   environments,
+  environmentsReady = true,
   deployments,
   round,
   now,
@@ -68,6 +69,7 @@ export function ProjectBuilds({
   /** The environment something of the product runs in, when one does: with no build on record it was built outside Studio. */
   runningIn?: string | null;
   environments: DeployEnvironment[];
+  environmentsReady?: boolean;
   deployments: Deployment[];
   /** Bumped by Releases when it read again: read the runs again too. */
   round: number;
@@ -132,20 +134,44 @@ export function ProjectBuilds({
   // Building in Studio is not in this portal yet (parity.md): the line says
   // what it can without it.
   const screens = useScreenAvailability();
+  const kubernetes = environments.filter((environment) => environment.kind !== 'research');
+  const registryTarget = kubernetes.find((environment) => !environment.project_id && !environment.registry_connection_id);
+  const hasRegistry = kubernetes.some((environment) => environment.registry_connection_id);
+  const researchOnly = kubernetes.length === 0 && environments.some((environment) => environment.kind === 'research');
+  const latestBuild = builds.find((build) => build.action !== 'run');
+  const configureBuild = environmentsReady && !latestBuild && !runningIn && !hasRegistry && !researchOnly;
+  const failedCiUrl = latestBuild?.where === 'ci' && latestBuild.status === 'failed'
+    && latestBuild.url && /^https?:\/\//i.test(latestBuild.url) ? latestBuild.url : null;
   // What runs with no build on record was built outside Studio (the IDE or CI): the
   // path already says Build and Image are done, and "Nothing built yet" under it
   // contradicted it (walk 2026-11-17).
   const hint =
-    runningIn && !builds.some((b) => b.action !== 'run')
+    runningIn && !latestBuild
       ? { text: t('build_outside_hint', { environment: runningIn }), tone: 'done' as const }
-      : buildsHint(builds, false, now, screens.route(ROUTES.infrastructure));
+      : configureBuild
+        ? {
+            text: registryTarget
+              ? t('build_registry_missing', { environment: registryTarget.name })
+              : t('build_environment_missing'),
+            tone: 'todo' as const,
+          }
+        : !latestBuild
+          ? { text: t(researchOnly ? 'build_in_research_hint' : 'build_registry_ready'), tone: 'todo' as const }
+          : buildsHint(builds, false, now, screens.route(ROUTES.infrastructure));
 
   return (
     <section className={styles.stack} data-release-builds>
       <NextLine hint={hint} />
-      {builds.length === 0 && screens.route(ROUTES.infrastructure) && (
-        <Button size="sm" variant="outline" onClick={() => openScreen(bridge, ROUTES.infrastructure)}>
-          {t('open_build_infrastructure')}
+      {failedCiUrl && (
+        <a href={failedCiUrl} target="_blank" rel="noreferrer" className={styles.link}>
+          {t('open_ci_run')}
+        </a>
+      )}
+      {configureBuild && screens.route(ROUTES.infrastructure) && (
+        <Button size="sm" variant="outline" onClick={() => openScreen(
+          bridge, ROUTES.infrastructure, registryTarget ? `build-registry-${registryTarget.id}` : 'build-environment'
+        )}>
+          {t(registryTarget ? 'configure_build_registry' : 'open_build_infrastructure')}
         </Button>
       )}
       <section className={styles.card} data-build-in-ci>

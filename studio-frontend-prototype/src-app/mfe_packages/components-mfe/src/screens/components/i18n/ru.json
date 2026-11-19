@@ -396,5 +396,8 @@
   "item_grade": "оценка",
   "item_progress": "прогресс",
   "sec_unknown": "Неизвестно: у каталога нет для него страницы.",
-  "type_from_list_only": "Как прочитал список."
+  "type_from_list_only": "Как прочитал список.",
+  "organization_sources": "Источники организации",
+  "sync_organization_catalogue": "Синхронизировать каталог организации",
+  "decision_scope": "Реестр организации «{organization}»"
 }

@@ -129,6 +129,10 @@ export function ObjectAttributes({
   const filled = listed.filter(filledField);
   const empty = listed.filter((f) => !filled.includes(f));
   const behind = fields.length - primary.length;
+  const scopeSettings = level === 'organization' ? '/organization/settings' : level === 'project' ? '/projects/settings' : null;
+  const editable = (field: ModelField) => !field.heldBy
+    && !['parent_tenant_id', 'hidden_tabs', 'name'].includes(field.name)
+    && !(level === 'organization' && field.name === 'title');
 
   if (!known) {
     // Who may change the model can make the type here, as the prototype offered.
@@ -168,7 +172,9 @@ export function ObjectAttributes({
   const startEdit = () => {
     setDraft(
       Object.fromEntries(
-        fields.filter((f) => !f.heldBy).map((f) => [f.name, f.kind.kind === 'boolean' ? valueOf(f) === true : inputValue(valueOf(f))])
+        fields
+          .filter((f) => editable(f) || (!f.heldBy && f.name in facts && value?.[f.name] === undefined))
+          .map((f) => [f.name, f.kind.kind === 'boolean' ? valueOf(f) === true : inputValue(valueOf(f))])
       )
     );
     setEditing(true);
@@ -203,13 +209,16 @@ export function ObjectAttributes({
         title={t('model_attributes_title')}
         info={<>
           <p>{t('model_attributes_about', { level: t(`model_level_${level}`) })}</p>
+          {scopeSettings && <Button size="sm" variant="outline" onClick={() => openScreen(bridge, scopeSettings)}>
+            {t('model_open_settings')}
+          </Button>}
           {model.canEdit && <Button size="sm" variant="outline" onClick={() => openScreen(bridge, '/admin/domain-model', `${type}-fields`)}>
             {t('model_manage_fields')}
           </Button>}
         </>}
         status={<Badge variant="outline">{t('model_attributes_fields', { count: String(fields.length), type })}</Badge>}
         action={
-          !editing && !forbidden ? (
+          !editing && !forbidden && fields.some(editable) ? (
             <Button size="sm" variant="outline" disabled={value === null} onClick={startEdit} data-attributes-edit>
               {t('model_edit')}
             </Button>
@@ -230,7 +239,7 @@ export function ObjectAttributes({
               }}
             >
               {listed
-                .filter((f) => !f.heldBy)
+                .filter(editable)
                 .map((f) => (
                   <FieldInput
                     key={f.name}
