@@ -130,6 +130,8 @@ describe('KitContentsSection', () => {
       return pre as HTMLElement;
     });
     expect(text.textContent).toContain('gdl_version = "1.7"');
+    // The open file takes the whole row, so its text never lies over the next lists.
+    expect(document.querySelector('[data-kit-files]')?.hasAttribute('data-open')).toBe(true);
     expect(files.calls[0]).toBe('/cf/studio-kits/v1/catalog/project-lifecycle/kit.gdl');
 
     fireEvent.click(screen.getByRole('button', { name: 'kit.json' }));

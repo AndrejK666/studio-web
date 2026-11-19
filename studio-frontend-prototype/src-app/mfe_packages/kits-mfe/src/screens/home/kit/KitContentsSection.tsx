@@ -121,7 +121,12 @@ export function KitContentsSection({
   const gears = gearsOf(c);
   return (
     <div className={page.columns} data-kit-contents>
-      <section className={page.list} data-kit-files aria-label={t('contents_files')}>
+      <section
+        className={page.list}
+        data-kit-files
+        data-open={shown ? '' : undefined}
+        aria-label={t('contents_files')}
+      >
         <h5 className={page.listTitle}>{t('contents_files')}</h5>
         <div className={page.files}>
           <Button
