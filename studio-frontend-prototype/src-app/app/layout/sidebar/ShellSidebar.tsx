@@ -1,8 +1,8 @@
 /**
  * The sidebar layout's navigation (the designer's prototype): the product,
  * the place switcher and Search at the head; Inbox, Projects (the open
- * project and its tabs, the recent ones), Components, Organization (its tabs
- * and the workspace's), Platform and Administration; the pins; the person,
+ * project and its tabs, the recent ones), Components, Platform and
+ * Administration; the pins; the person,
  * the bell and the fold at the foot.
  *
  * Nothing here is a kit's: every list is a level's tabs as `useLevelTabs`
@@ -68,7 +68,7 @@ const routeOf = (ext: StudioScreenExtension | undefined) => ext?.presentation?.r
 const findTab = (model: LevelTabsModel, route: string) =>
   model.ordered.find((tab) => routeOf(tab.extension) === route)?.extension;
 
-type Group = 'projects' | 'project' | 'organization' | 'workspace' | 'platform' | 'admin' | 'pinned';
+type Group = 'projects' | 'project' | 'organization' | 'workspaces' | 'workspace' | 'platform' | 'admin' | 'pinned';
 
 /** A group's open state: what the person chose, else open where the level on screen is. */
 function useGroups(level: ScreenLevel) {
@@ -77,7 +77,8 @@ function useGroups(level: ScreenLevel) {
     projects: true,
     project: true,
     // Inside a project its tabs come first; the organization's fold away.
-    organization: level === 'organization' || level === 'workspace',
+    organization: level === 'organization',
+    workspaces: level === 'workspace',
     workspace: level === 'workspace',
     platform: level === 'platform',
     admin: true,
@@ -254,7 +255,6 @@ export const ShellSidebar: React.FC<ShellSidebarProps> = ({ models, level, rail 
   const others = recent.filter((entry) => entry.project.id !== project?.id && entry.org.id === org?.id);
 
   const showPlatform = platformAdmin || level === 'platform';
-  const orgHoldsActive = level === 'organization' || level === 'workspace';
 
   return (
     <nav ref={root} className={cn(styles.sidebar, rail && styles.rail)} aria-label={t('sidebar')} data-sidebar={rail ? 'rail' : 'open'}>
@@ -307,6 +307,69 @@ export const ShellSidebar: React.FC<ShellSidebarProps> = ({ models, level, rail 
               badge={<Count value={inbox.count} rail={rail} />}
               data={{ 'data-sidebar-item': 'inbox' }}
             />
+          )}
+          {org && (
+            <Row
+              icon={<Building2 aria-hidden="true" />}
+              label={t('sidebar_organization')}
+              onClick={() => eventBus.emit('app/context/level/requested', { level: 'organization' })}
+              holdsActive={level === 'organization'}
+              rail={rail}
+              expanded={isOpen('organization')}
+              onToggle={() => toggle('organization')}
+              controls={`${ids}-organization`}
+              data={{ 'data-sidebar-item': 'organization' }}
+            >
+              {isOpen('organization') && (
+                <div id={`${ids}-organization`}>
+                  <TabList
+                    id={`${ids}-organization-tabs`}
+                    model={models.organization}
+                    without={[components?.id, orgWorkspaces?.id]}
+                    label={org.name}
+                  />
+                </div>
+              )}
+            </Row>
+          )}
+          {(orgWorkspaces || workspace) && (
+            <Row
+              icon={<Layers aria-hidden="true" />}
+              label={orgWorkspaces?.presentation?.label ?? t('sidebar_workspaces')}
+              onClick={() => orgWorkspaces && chooseTab(orgWorkspaces)}
+              active={!!orgWorkspaces && models.organization.isActive(orgWorkspaces)}
+              holdsActive={level === 'workspace'}
+              rail={rail}
+              expanded={workspace ? isOpen('workspaces') : undefined}
+              onToggle={workspace ? () => toggle('workspaces') : undefined}
+              controls={`${ids}-workspaces`}
+              data={{ 'data-sidebar-item': 'workspaces' }}
+            >
+              {workspace && isOpen('workspaces') && (
+                <ul id={`${ids}-workspaces`} className={styles.sub}>
+                  <Row
+                    sub
+                    icon={<Layers aria-hidden="true" className={styles.tabGlyph} />}
+                    label={workspace.name}
+                    onClick={() => eventBus.emit('app/context/level/requested', { level: 'workspace' })}
+                    holdsActive={level === 'workspace'}
+                    expanded={isOpen('workspace')}
+                    onToggle={() => toggle('workspace')}
+                    controls={`${ids}-workspace`}
+                    data={{ 'data-sidebar-item': 'workspace' }}
+                  >
+                    {isOpen('workspace') && (
+                      <TabList
+                        id={`${ids}-workspace`}
+                        model={models.workspace}
+                        without={[workspaceProjects?.id]}
+                        label={workspace.name}
+                      />
+                    )}
+                  </Row>
+                </ul>
+              )}
+            </Row>
           )}
           {(projectsTarget || project || others.length > 0) && (
             <Row
@@ -378,54 +441,6 @@ export const ShellSidebar: React.FC<ShellSidebarProps> = ({ models, level, rail 
               rail={rail}
               data={{ 'data-sidebar-item': 'components' }}
             />
-          )}
-          {org && (
-            <Row
-              icon={<Building2 aria-hidden="true" />}
-              label={t('sidebar_organization')}
-              onClick={() => eventBus.emit('app/context/level/requested', { level: 'organization' })}
-              holdsActive={orgHoldsActive}
-              rail={rail}
-              expanded={isOpen('organization')}
-              onToggle={() => toggle('organization')}
-              controls={`${ids}-organization`}
-              data={{ 'data-sidebar-item': 'organization' }}
-            >
-              {isOpen('organization') && (
-                <div id={`${ids}-organization`}>
-                  <TabList
-                    id={`${ids}-organization-tabs`}
-                    model={models.organization}
-                    without={[components?.id]}
-                    label={org.name}
-                  />
-                  {workspace && (
-                    <ul className={styles.sub}>
-                      <Row
-                        sub
-                        icon={<Layers aria-hidden="true" className={styles.tabGlyph} />}
-                        label={workspace.name}
-                        onClick={() => eventBus.emit('app/context/level/requested', { level: 'workspace' })}
-                        holdsActive={level === 'workspace'}
-                        expanded={isOpen('workspace')}
-                        onToggle={() => toggle('workspace')}
-                        controls={`${ids}-workspace`}
-                        data={{ 'data-sidebar-item': 'workspace' }}
-                      >
-                        {isOpen('workspace') && (
-                          <TabList
-                            id={`${ids}-workspace`}
-                            model={models.workspace}
-                            without={[workspaceProjects?.id]}
-                            label={workspace.name}
-                          />
-                        )}
-                      </Row>
-                    </ul>
-                  )}
-                </div>
-              )}
-            </Row>
           )}
           {showPlatform && models.platform.ordered.length > 0 && (
             <Row
