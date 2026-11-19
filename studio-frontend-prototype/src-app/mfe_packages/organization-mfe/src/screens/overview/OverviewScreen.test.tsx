@@ -2,17 +2,18 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { OrgOverview } from '../../overview/types';
 
-const { query, available, openScreen, requestWorkspace } = vi.hoisted(() => ({
+const { query, available, openScreen, openPlace, requestWorkspace } = vi.hoisted(() => ({
   query: vi.fn(),
   available: { value: null as unknown },
   openScreen: vi.fn(),
+  openPlace: vi.fn(),
   requestWorkspace: vi.fn(),
 }));
 
 vi.mock('../../i18n', () => {
   const t = (key: string, params?: Record<string, unknown>) => (params ? `${key} ${JSON.stringify(params)}` : key);
   t.count = (key: string, count: number) => `${key} ${count}`;
-  return { useOverviewTranslations: () => ({ t, loading: false }) };
+  return { useOverviewTranslations: () => ({ t, loading: false }), useBackgroundTranslations: () => ({ t }) };
 });
 // The Inbox has its own test (InboxGroup.test.tsx): here it reports one item waiting on the reader.
 vi.mock('./InboxGroup', async () => {
@@ -28,11 +29,12 @@ vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@constructor-studio/mfe-shared')>()),
   useOrganization: () => ({ org: { id: 'o1', name: 'Acme' }, loading: false, failed: false }),
   openScreen,
+  openPlace,
 }));
 vi.mock('../../actions/workspaceActions', () => ({ requestWorkspace }));
 vi.mock('@gears-frontx/react', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@gears-frontx/react')>()),
-  apiRegistry: { getService: () => ({ overview: () => ({}) }) },
+  apiRegistry: { getService: () => ({ overview: () => ({}), run: () => ({ detail: true }) }) },
   useApiQuery: query,
   useSharedProperty: (id: string) => (id.includes('screens.available') ? available.value : 'en'),
   useMfeBridge: () => null,
@@ -69,6 +71,7 @@ describe('OverviewScreen', () => {
     query.mockReturnValue({ data: overview, isLoading: false, isError: false, error: null });
     available.value = null;
     openScreen.mockReset();
+    openPlace.mockReset();
     requestWorkspace.mockReset();
   });
 
@@ -135,6 +138,34 @@ describe('OverviewScreen', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Decide' }));
 
     expect(openScreen).toHaveBeenCalledWith(null, '/components', 'needs-decision');
+  });
+
+  it('shows a short run failure with its project and environment in context', () => {
+    const environment = 'fb8aa971-8f7b-437d-b007-d3ce83d15099';
+    const recent = { id: 'r1', tenant_id: 'p1', task_type: 'environments.build', created_at: '2026-11-18T00:00:00Z' };
+    const data: OrgOverview = {
+      ...overview,
+      needs: [{ kind: 'runs', tone: 'danger', projects: [], runs: 1 }],
+      recent_failures: [recent],
+      workspaces: [{ ...overview.workspaces[0], projects: [{
+        id: 'p1', name: 'App', spend: null, previous: null, specs_failing: null, open_findings: null,
+        stuck: 0, quiet_days: null, broken: false, score: 0, reasons: [],
+      }] }],
+    };
+    query.mockImplementation((request) => request.detail
+      ? { data: { ...recent, last_error: 'Registry refused the push\nFull diagnostics', payload: { environment_id: environment } } }
+      : { data });
+    available.value = { routes: ['/releases'], kits: [] };
+    render(<OverviewScreen />);
+    fireEvent.click(screen.getByRole('button', { name: 'show_recent_failures' }));
+    const run = screen.getByText(/^environments\.build/).closest('details')!;
+    run.open = true;
+    fireEvent(run, new Event('toggle'));
+    expect(screen.getByText('Registry refused the push')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /run_open_project/ }));
+    expect(openPlace).toHaveBeenCalledWith(null, {
+      organizationId: 'o1', workspaceId: 'w1', projectId: 'p1', route: '/releases', view: `environment-${environment}`,
+    });
   });
 
   it('names the refused connection, the figures and the workspaces', () => {

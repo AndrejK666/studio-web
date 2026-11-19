@@ -78,5 +78,9 @@
   "open_people": "People →",
   "open_workspace": "Open",
   "project_failing_specs": "{count} failing specs",
-  "tile_spend_prices_missing": "Price list missing"
+  "tile_spend_prices_missing": "Price list missing",
+  "run_no_reason": "The run did not report a reason.",
+  "run_open_project": "Open {project}",
+  "run_technical_details": "Technical details",
+  "run_open_environment": "Open environment"
 }

@@ -881,9 +881,14 @@
   "model_create_type": "Create the {type} type",
   "sys_refused_platform_admin": "Only a platform administrator sees who is in Studio.",
   "sys_refused_org_admin": "Only an administrator of this organization, or a platform administrator, sends notifications from here.",
-  "prof_github_reviews_hint": "Inbox matches reviews to a verified GitHub identity. Sign in with GitHub or connect a personal GitHub account, then check your sign-ins and connections.",
+  "prof_github_reviews_hint": "Inbox matches reviews to a verified GitHub account. Check an existing sign-in or connect a personal account below.",
   "prof_back_to_inbox": "Back to Inbox",
   "model_manage_fields": "Manage fields in Studio domain model",
   "int_personal_title": "Personal connections",
-  "int_organization_title": "Organization connections"
+  "int_organization_title": "Organization connections",
+  "model_open_settings": "Open settings",
+  "prof_github_unavailable": "Personal GitHub connections are unavailable in this organization.",
+  "prof_connect_github": "Connect a personal GitHub account",
+  "int_add_personal": "Add personal connection",
+  "int_add_for_org": "Add connection for {organization}"
 }

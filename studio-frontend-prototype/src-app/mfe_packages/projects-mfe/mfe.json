@@ -181,7 +181,7 @@
         "order": 70,
         "level": "project",
         "section": "settings",
-        "placement": "hidden"
+        "placement": "settings"
       }
     }
   ]

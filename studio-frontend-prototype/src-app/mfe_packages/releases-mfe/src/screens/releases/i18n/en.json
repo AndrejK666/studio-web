@@ -284,5 +284,11 @@
   "no_environment_admin": "No environment yet. Ask an organization administrator for one.",
   "status_build_outside": "What runs in {environment} was built outside Studio (the IDE or CI): Studio has no build of it on record.",
   "build_outside_hint": "What runs in {environment} was built outside Studio's records (the IDE or CI). Build here, in the IDE or in CI to record the next one.",
-  "open_build_infrastructure": "Open organization infrastructure"
+  "open_build_infrastructure": "Open organization infrastructure",
+  "configure_build_registry": "Connect a registry",
+  "build_registry_missing": "{environment} needs a registry connection to publish a Studio build. You can also build in the IDE or CI.",
+  "build_environment_missing": "To publish a Studio build, add a Kubernetes environment with a registry connection. You can also build in the IDE or CI.",
+  "build_registry_ready": "No builds are recorded yet. Build in the IDE or run the project’s CI workflow.",
+  "build_in_research_hint": "No builds are recorded yet. To build and run the product in Constructor Research, use Deploy.",
+  "open_ci_run": "Open failed CI run"
 }
