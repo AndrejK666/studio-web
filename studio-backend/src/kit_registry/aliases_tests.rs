@@ -269,6 +269,7 @@ async fn installations_under_the_old_slugs_count_as_the_kits_they_resolve_to() {
             "project-product",
             "project-specs",
             "project-tests",
+            "spec-mapping",
             "studio-api-docs"
         ]
     );

@@ -3644,6 +3644,23 @@
     },
     {
       "method": "GET",
+      "path": "/studio-product/v1/gear-match-usage",
+      "operation_id": "studio_product.list_gear_match_usage",
+      "tag": "StudioProduct",
+      "summary": "How the organization's projects use the gears matcher",
+      "authenticated": true,
+      "responses": [
+        "GearMatchUsageDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-product/v1/gear-matches",
       "operation_id": "studio_product.list_gear_matches",
       "tag": "StudioProduct",
@@ -4214,6 +4231,7 @@
         "MappingPlanDto"
       ],
       "errors": [
+        "400",
         "401",
         "404",
         "500"

@@ -483,8 +483,9 @@ function KitControls({
             ))}
           {scope === 'organization' &&
             organization &&
-            (own ? (
-              <Button variant="ghost" size="sm" disabled={busy} onClick={() => onRemove(organization.id)}>
+            (own || base?.removable_by_organization ? (
+              // Its own installation, or a base kit it may uninstall for itself (ADR-0074).
+              <Button variant="ghost" size="sm" disabled={busy} onClick={() => onRemove(organization.id)} data-kit-remove-organization>
                 {t('remove_from', { organization: name })}
               </Button>
             ) : base ? (

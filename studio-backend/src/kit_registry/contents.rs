@@ -430,6 +430,14 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
             ],
             ..KitContents::default()
         },
+        // studio-spec-mapping's plan (ADR-0074). No screen of its own: the
+        // plan is drawn inside other kits' screens -- Project › Components'
+        // plan, the product map's spec plan, the gear match's "also in the
+        // spec plan" -- which hide it where this kit does not apply (the plan
+        // then answers `KIT_NOT_INSTALLED`). A base kit by default that an
+        // organization may uninstall; its tools and the decision route are
+        // claimed in `builtin/spec-mapping.kit.json`.
+        "spec-mapping" => KitContents::default(),
         // `assistant-mfe`: Studio AI, docked in the shell's sidebar beside
         // whatever screen is open (the old prototype's `studio-ai.tsx`). No
         // route: it is not a tab. It answers through studio-llm-proxy on the

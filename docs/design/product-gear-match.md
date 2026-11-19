@@ -15,10 +15,12 @@ files and answers a verified coverage report: per requirement a verdict
 (`covered`, `partial`, `gap`, `clarification_needed`, `not_assessed`) and the
 candidate gears of the gears-rust catalogue with the evidence for each. This
 document is how Studio asks for one, keeps it, and turns it into decisions a
-person takes, and how a product is assembled with it or without it (§8). The
-code is `studio-backend/src/product/gear_match/` and `gear_match_rest.rs`; the
-screens are the **Gears matcher** kit's (`gears-matcher`, ADR-0072), the second
-entry of `product-mfe`: Project › Gear match and Organization › Gears matcher.
+person takes, how a product is assembled with it or without it (§8), and how
+an organization's projects use it (§9). The code is
+`studio-backend/src/product/gear_match/`, `gear_match_rest.rs` and
+`gear_match_usage_rest.rs`; the screens are the **Gears matcher** kit's
+(`gears-matcher`, ADR-0072), the second entry of `product-mfe`: Project › Gear
+match and Organization › Gears matcher.
 
 ## 1. Where it lives
 
@@ -31,8 +33,9 @@ for every action.
 The **kit** is its own (ADR-0072): `gears-matcher`, a built-in kit that is not
 a base kit by default (`OPT_IN_BUILTIN`), levels organization and project,
 `requires: ["project-product"]`. It claims (ADR-0071 §1) the gear-match write
-routes and the two MCP tools of §5, and brings the Inbox source and the two
-screens. Where it does not apply, the claimed writes and tools answer
+routes and the three MCP tools of §5, brings the Inbox source and the two
+screens, and provides the `gears_matcher` assembly strategy (its manifest's
+`assembly_strategy`, ADR-0074). Where it does not apply, the claimed writes and tools answer
 `KIT_NOT_INSTALLED` naming it, the screens are not shown, and the product is
 assembled by `spec_mapping` (§8). The reads stay open, as every gear's do. The
 Product kit claimed all of this until ADR-0072; nothing was renamed, so no
@@ -57,6 +60,7 @@ the gear's database and show again once the kit is installed.
 - `task.rs` — `product.gear_match` on studio-tasks.
 - `report.rs` — pure: the report read for a person, the paths and answers of
   what is sent, the difference of two runs.
+- `usage.rs` — the organization's use of the matcher, counted in SQL (§9).
 
 ## 2. A match
 
@@ -171,14 +175,21 @@ REST, all `?project_id=` (the Gears matcher kit claims the writes):
 | `PUT` | `/studio-product/v1/gear-match-answers` | answer a question |
 | `GET` | `/studio-product/v1/inbox/gear-match-questions` | the Inbox source |
 
-MCP: `project_gear_match` (start) and `project_gear_match_report` (read), both
-the Gears matcher kit's.
+The organization's use of the matcher (§9), `?organization_id=` (the caller's
+home organization when absent):
+
+| Method | Path | |
+|---|---|---|
+| `GET` | `/studio-product/v1/gear-match-usage` | per project and summed, over `period_days` (1–365, default 30); `{items, total}` with `offset` / `limit`, `summary` and `service` |
+
+MCP: `project_gear_match` (start), `project_gear_match_report` (read) and
+`gear_match_usage` (the organization's usage), all the Gears matcher kit's.
 
 The assembly strategy (§8):
 
 | Method | Path | |
 |---|---|---|
-| `GET` | `/studio-product/v1/project-assembly-strategy` | the strategy used, where it comes from, why it falls back |
+| `GET` | `/studio-product/v1/project-assembly-strategy` | the strategy used (or `manual`), where it comes from, why it falls back, the strategies the installed kits provide |
 | `PUT` | `/studio-product/v1/project-assembly-strategy` | the project's choice, or `null` for the organization's default (the Product kit's) |
 | `GET` | `/studio-product/v1/assembly-strategy` | the organization's default (`?organization_id=`) |
 | `PUT` | `/studio-product/v1/assembly-strategy` | set it; `kit.manage` (the Gears matcher kit's) |
@@ -203,35 +214,96 @@ MCP: `product_assembly_strategy` (the read; the Product kit's).
 
 ## 8. Assembly strategies
 
-How a project's product is assembled (ADR-0072). Two strategies, each of which
-only **proposes** gears; the engine's completion and the person's confirmation
-stay the one way they enter the product (§3: nothing applied silently).
+How a project's product is assembled (ADR-0072, as amended by ADR-0074). A
+strategy only **proposes** gears; the engine's completion and the person's
+confirmation stay the one way they enter the product (§3: nothing applied
+silently).
 
-| Strategy | What it proposes | Needs |
-|---|---|---|
-| `spec_mapping` | per capability the specifications name that no pick answers yet, the first gear spec-mapping's plan offers with a contract, a declaration or a member's confirmation behind it, built and in the catalogue the product reads | nothing: instant, free, deterministic. Studio's default |
-| `gears_matcher` | every gear the project's latest finished match proposes (`covered`/`partial` with code) that nobody rejected and the catalogue holds; on confirmation each one's decision is kept `accepted`, as "Add to product" does | the Gears matcher kit where the project is, and the service configured |
+**Strategies come from kits.** A kit declares the strategy it provides in its
+manifest, one optional section, `assembly_strategy: {id, name, description}`
+(checked in `kit_registry/manifest.rs`). studio-product reads the strategies of
+the kits that apply where the product is and offers the ones it knows how to run;
+no list of strategies to offer is kept in its code.
 
-**Which one.** The project's choice, else the organization's default, else
-Studio's (`spec_mapping`). The organization's default is set on Organization ›
-Gears matcher by an organization or platform administrator (`kit.manage`); the
-project's choice ("organization default", `spec_mapping`, `gears_matcher`) on
+| Strategy | Kit | What it proposes | Needs |
+|---|---|---|---|
+| `spec_mapping` | Spec mapping (`spec-mapping`, a base kit by default an organization may uninstall) | per capability the specifications name that no pick answers yet, the first gear spec-mapping's plan offers with a contract, a declaration or a member's confirmation behind it, built and in the catalogue the product reads | nothing: instant, free, deterministic |
+| `gears_matcher` | Gears matcher (`gears-matcher`, opt-in) | every gear the project's latest finished match proposes (`covered`/`partial` with code) that nobody rejected and the catalogue holds; on confirmation each one's decision is kept `accepted`, as "Add to product" does | the service configured |
+
+**Which one.** The project's choice, else the organization's default, else what
+the kits make it: `spec_mapping` when it is installed, else the only strategy
+installed. With exactly one strategy kit there is nothing to choose; with none
+the product is assembled by hand in the configurator (`strategy: "manual"`): no
+proposals, and the panel says so and points to Kits. The organization's default
+is set on Organization › Gears matcher by an organization or platform
+administrator (`kit.manage`), out of the installed strategies only; the
+project's choice ("organization default" or one installed strategy) on
 Project › Product, beside the header's action. Both are rows of
 `studio_product_assembly_strategies` (`m0004`, `assembly.rs`): `scope_id` is the
 organization for its default, the project for its choice; keyed by the
 organization the project hangs under.
 
-**Fallback.** `gears_matcher` chosen where it cannot be used is not used: the
-product is assembled by `spec_mapping`, and the read says why —
-`KIT_NOT_INSTALLED` (the kit does not apply), `KIT_UNKNOWN` (the installed kits
-could not be read) or `MATCHER_NOT_CONFIGURED` (the 503 sentence of §1). A
-project cannot choose `gears_matcher` where the kit does not apply
-(`KIT_NOT_INSTALLED`); it can where the service is down, and falls back until
-it answers.
+**Fallback.** A chosen strategy that cannot be used is not used: the product is
+assembled by one that can (`spec_mapping` first), else by hand, and the read
+says why — `KIT_NOT_INSTALLED` (its kit does not apply, e.g. uninstalled after
+the choice), `KIT_UNKNOWN` (the installed kits could not be read: `spec_mapping`
+is assumed, the paid matcher is not) or `MATCHER_NOT_CONFIGURED` (the 503
+sentence of §1). Choosing a strategy whose kit does not apply is refused
+(`KIT_NOT_INSTALLED`), for a project and for the organization's default; a
+project can choose `gears_matcher` where the service is down, and falls back
+until it answers.
 
 **On the page.** Project › Product shows the strategy used, where it comes from
-and any fallback, the project's choice (`gears_matcher` shown but disabled, with
-the reason, where it is not offered), and **Propose gears**: the proposals,
-what the completion adds with them, and **Add N to the product**. With
-`gears_matcher` and no finished match it says so and links to Project › Gear
-match, which runs one.
+and any fallback, the project's choice among the installed strategies (one not
+usable now shown but disabled, with the reason), and **Propose gears**: the
+proposals, what the completion adds with them, and **Add N to the product**.
+With `gears_matcher` and no finished match it says so and links to Project ›
+Gear match, which runs one.
+
+## 9. Usage by project
+
+Organization › Gears matcher shows how the organization's projects use the
+matcher, from `GET /studio-product/v1/gear-match-usage?organization_id=&period_days=`
+(`gear_match_usage_rest.rs`, counted in `gear_match/usage.rs`).
+
+**Which projects.** The organization's tree as the caller reads it
+(`organizations::port::ProjectsOf`, the walk every organization-level read
+uses), so a project the caller cannot reach is neither listed nor counted. Rows
+of the gear's tables for other projects or other organizations are never read:
+every query is scoped to the organization and filtered to those project ids.
+
+**Counted in PostgreSQL** from the gear's own tables:
+
+- runs started in the period, grouped by project and state (`queued`,
+  `running` and `cancelling` count as `running`), with the matcher's `usage`
+  summed in SQL (`calls`, `cache_hits`, `input_tokens`, `output_tokens`; a value
+  that is absent or not a number counts nothing);
+- each project's last match, whenever it ran, with its report's counts
+  (`DISTINCT ON`);
+- the members' decisions kept now, accepted and rejected (state, not events,
+  so not limited to the period);
+- the questions of each project's last finished match, open (no answer note)
+  or answered: the one count read in Rust, from the report, the way the match
+  view and the Inbox list them (`report::questions`);
+- the median time from asking to a written report over the period's
+  `succeeded` / `partial` runs (`percentile_cont`).
+
+Each project's strategy is resolved as §8 resolves it, from its own kits and
+settings, and summed as the strategy split (`spec_mapping`, `gears_matcher`,
+`manual`), by source (`project`, `organization`, `studio`) and by fallback code.
+
+**The service.** Not only "configured": the server asks the matcher's
+`GET /v1/info` and keeps the answer 30 s (`GearMatches::live_info`), and the
+page shows whether it answers, its versions, the catalogue it reads and its
+commit, the models and the limits, and plainly "Configured, but not answering"
+with the error when it does not.
+
+**On the page.** Tiles: how the projects are assembled, the runs by how they
+ended with the median duration, the tokens and model calls, the decisions, the
+open questions. Then a project per row on the kit's DataGrid (ListGrid: search,
+header sort, pages, the list's empty state, kept in the address under `gmug.`):
+project, strategy and where it comes from (a fallback marked), last run and its
+state, its coverage (covered / partial / gap / to clarify), runs, tokens and
+calls, accepted / rejected, open questions. A row opens that project's Gear
+match tab (`openPlace` with the project's workspace). The period switch (7, 30,
+90 days) is kept in the address (`gmu.f.period`).

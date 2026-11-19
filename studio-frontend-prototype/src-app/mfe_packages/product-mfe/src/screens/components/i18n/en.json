@@ -71,5 +71,6 @@
   "push": "Push to gear repo →",
   "scaffold_with_pr": "open a pull request",
   "scaffold_needs_repo": "needs a gear repository: the project's or the organization's (Components)",
-  "copy": "Copy"
+  "copy": "Copy",
+  "partial_plan_kit": "the spec plan, which comes with the Spec mapping kit (Organization › Kits)"
 }

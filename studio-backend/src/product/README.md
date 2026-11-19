@@ -101,11 +101,15 @@ This README is what you need to work in the directory.
   claims its writes and tools, so they answer `KIT_NOT_INSTALLED` where the
   kit does not apply (ADR-0072).
 - `assembly.rs` and `assembly_rest.rs` — how a product is assembled
-  (ADR-0072): the strategy (`spec_mapping` or `gears_matcher`), the
-  organization's default and a project's choice in
-  `studio_product_assembly_strategies` (`m0004`), and the rule that falls back
-  to `spec_mapping` where the Gears matcher kit does not apply or the service
-  is not configured.
+  (ADR-0072, ADR-0074): the strategies the installed kits provide
+  (`spec_mapping` from Spec mapping, `gears_matcher` from Gears matcher; by
+  hand, `manual`, with neither), the organization's default and a project's
+  choice in `studio_product_assembly_strategies` (`m0004`), and the rule that
+  falls back where a chosen strategy's kit does not apply or the service is
+  not configured.
+- `gear_match/usage.rs` and `gear_match_usage_rest.rs` — how the
+  organization's projects use the matcher (`GET gear-match-usage`), counted in
+  SQL, with a live check of the service's `/v1/info` kept 30 s.
 - `rest.rs` — the routes, including where a new `product.gdl` is written
   (`product_path_for`: `products/<id>/product.gdl`, or where it already is).
 

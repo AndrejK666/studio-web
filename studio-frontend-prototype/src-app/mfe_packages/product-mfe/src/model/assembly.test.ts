@@ -4,6 +4,8 @@ import {
   isFinished,
   matcherProposals,
   matcherUnavailable,
+  kitsDefault,
+  offeredStrategies,
   organizationStrategy,
   projectChoice,
   specMappingProposals,
@@ -83,6 +85,23 @@ describe('assembly strategy', () => {
     expect(projectChoice(strategy({ project: 'gears_matcher' }))).toBe('gears_matcher');
     expect(organizationStrategy(strategy())).toBe('spec_mapping');
     expect(organizationStrategy(strategy({ organization_default: 'gears_matcher' }))).toBe('gears_matcher');
+    // Nobody chose: what the installed kits make it (ADR-0074).
+    expect(organizationStrategy(strategy({ strategies: ['gears_matcher'] }))).toBe('gears_matcher');
+    expect(organizationStrategy(strategy({ strategies: [] }))).toBe('manual');
+  });
+
+  it('names the default the kits make, and the strategies to offer', () => {
+    expect(kitsDefault(['gears_matcher', 'spec_mapping'])).toBe('spec_mapping');
+    expect(kitsDefault(['gears_matcher'])).toBe('gears_matcher');
+    expect(kitsDefault([])).toBe('manual');
+    const kits = [{ id: 'gears_matcher' as const, name: 'Gears matcher', description: '', kit: 'gears-matcher', offered: true }];
+    expect(offeredStrategies(strategy({ strategies: ['gears_matcher'], strategy_kits: kits }))).toEqual(kits);
+    // An older server: both, the matcher's availability from its block.
+    const old = offeredStrategies(strategy({ gears_matcher: { kit_installed: true, configured: false, offered: false } }));
+    expect(old.map((k) => [k.id, k.offered])).toEqual([
+      ['spec_mapping', true],
+      ['gears_matcher', false],
+    ]);
   });
 
   it('says why the matcher cannot be chosen, the kit before the service', () => {

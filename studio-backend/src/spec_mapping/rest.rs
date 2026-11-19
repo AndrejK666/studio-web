@@ -85,6 +85,27 @@ impl Ports {
     }
 }
 
+/// The plan is the Spec mapping kit's (ADR-0074): where that kit does not
+/// apply to the project, its plan, findings and decisions answer
+/// `KIT_NOT_INSTALLED` naming it, and the screens that draw the plan hide it.
+/// Asked once the caller is shown to reach the project. The capabilities,
+/// requirements and conformance stay open: other kits read them as what the
+/// specifications say (Tests, the project domain model).
+async fn require_spec_mapping(
+    ports: &Ports,
+    ctx: &SecurityContext,
+    project_id: Uuid,
+) -> ApiResult<()> {
+    crate::kit_registry::port::require_kit(
+        &ports.hub,
+        ctx,
+        project_id,
+        crate::kit_registry::port::SPEC_MAPPING_KIT,
+    )
+    .await
+    .map_err(|r| r.problem())
+}
+
 fn internal(e: anyhow::Error) -> CanonicalError {
     CanonicalError::internal(format!("{e:#}")).create()
 }
@@ -827,20 +848,8 @@ struct ProjectReading {
     registry_states: local::RegistryStates,
 }
 
-async fn read_project(
-    ctx: &SecurityContext,
-    org: &SecurityContext,
-    ports: &Ports,
-    project_id: Uuid,
-) -> ApiResult<ProjectReading> {
-    let docs = ports.documents()?;
-    // The project is shown to be the caller's before anything is read for it.
-    let workspace_id = project_workspace(&docs, ctx, project_id).await?;
-    read_reachable_project(ctx, org, ports, project_id, workspace_id).await
-}
-
-/// [`read_project`] for a project already shown to be the caller's, in
-/// `workspace_id`: independent reads, asked together.
+/// What a project's plan is read from, for a project already shown to be
+/// the caller's, in `workspace_id`: independent reads, asked together.
 async fn read_reachable_project(
     ctx: &SecurityContext,
     org: &SecurityContext,
@@ -918,6 +927,10 @@ async fn get_project_plan(
     Query(q): Query<ProjectQuery>,
 ) -> ApiResult<JsonBody<MappingPlanDto>> {
     let project_id = parse_project(&q.project_id)?;
+    // The project is shown to be the caller's, then the kit is asked, before
+    // anything is read for it.
+    let workspace_id = project_workspace(&ports.documents()?, &ctx, project_id).await?;
+    require_spec_mapping(&ports, &ctx, project_id).await?;
     let ProjectReading {
         vocabulary,
         needs,
@@ -927,7 +940,7 @@ async fn get_project_plan(
         in_repo,
         in_org,
         registry_states,
-    } = read_project(&ctx, &org, &ports, project_id).await?;
+    } = read_reachable_project(&ctx, &org, &ports, project_id, workspace_id).await?;
     let mut dto = plan_dto(rows, &rules, plan::deployment_profile(&statements));
     local::mark_in_repo(
         dto.items.iter_mut().flat_map(|r| r.candidates.iter_mut()),
@@ -976,6 +989,7 @@ async fn list_product_findings(
     // the code is read beside the documents: the two are the slow halves of
     // this answer and neither needs the other.
     let workspace_id = project_workspace(&ports.documents()?, &ctx, project_id).await?;
+    require_spec_mapping(&ports, &ctx, project_id).await?;
     let project = project_id.to_string();
     let (reading, code) = tokio::join!(
         read_reachable_project(&ctx, &org, &ports, project_id, workspace_id),
@@ -1328,6 +1342,7 @@ async fn list_decisions(
     let project_id = parse_project(&q.project_id)?;
     let docs = ports.documents()?;
     project_workspace(&docs, &ctx, project_id).await?;
+    require_spec_mapping(&ports, &ctx, project_id).await?;
     let mut items: Vec<MappingDecisionDto> = ports
         .decisions()?
         .list_decisions(&ctx, &project_id.to_string())
@@ -1358,7 +1373,8 @@ pub fn register_routes(router: Router, openapi: &dyn OpenApiRegistry, ports: Por
              the Gearbox engine reports as providing one of the capability's contracts, then \
              gears whose words mention its terms, each citing its passage. A confirmed gear \
              ranks first within its step and a rejected one last. `profile` is the deployment \
-             profile the documents' non-functional statements point to.",
+             profile the documents' non-functional statements point to. The Spec mapping \
+             kit's: `KIT_NOT_INSTALLED` where it does not apply to the project.",
         )
         .tag("StudioSpecMapping")
         .authenticated()
@@ -1367,6 +1383,7 @@ pub fn register_routes(router: Router, openapi: &dyn OpenApiRegistry, ports: Por
         .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
         .handler(get_project_plan)
         .json_response_with_schema::<MappingPlanDto>(openapi, StatusCode::OK, "The plan")
+        .error_400(openapi)
         .error_401(openapi)
         .error_404(openapi)
         .error_500(openapi)
@@ -1384,7 +1401,8 @@ pub fn register_routes(router: Router, openapi: &dyn OpenApiRegistry, ports: Por
              DOCUMENTS THAT ASK, each with the requirement or front matter that asks. \
              Non-functional capabilities are answered by the deployment profile and raise none; \
              a decision whose document changed since raises none until it is decided again. \
-             `repo` is null and `items` empty when the project has no code to compare.",
+             `repo` is null and `items` empty when the project has no code to compare. The Spec \
+             mapping kit's: `KIT_NOT_INSTALLED` where it does not apply to the project.",
         )
         .tag("StudioSpecMapping")
         .authenticated()
@@ -1526,7 +1544,8 @@ pub fn register_routes(router: Router, openapi: &dyn OpenApiRegistry, ports: Por
         .summary("List the mapping decisions recorded in a project")
         .description(
             "Every mapping decision recorded in the project, newest first. A project's plan reads them \
-             itself; a plan asked by value takes them in its request.",
+             itself; a plan asked by value takes them in its request. The Spec mapping kit's: \
+             `KIT_NOT_INSTALLED` where it does not apply to the project.",
         )
         .tag("StudioSpecMapping")
         .authenticated()

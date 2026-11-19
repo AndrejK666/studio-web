@@ -127,12 +127,6 @@
       "types": [
         "mapping-decision"
       ]
-    },
-    {
-      "gear": "studio-spec-mapping",
-      "routes": [
-        "POST /studio-spec-mapping/v1/decisions"
-      ]
     }
   ]
 }

@@ -21,7 +21,11 @@
 //!   `project` may be.
 //!
 //! An organization cannot uninstall a base kit, and a project neither a base
-//! kit nor an organization kit. A kit installed on more than one level is one
+//! kit nor an organization kit -- except the base kits of
+//! [`super::service::ORGANIZATION_REMOVABLE_BASE`] (ADR-0074), which an
+//! organization administrator uninstalls for that organization alone: the
+//! organization's document records it in `removed_base`, and installing the
+//! kit for the organization again takes it back. A kit installed on more than one level is one
 //! installation where they meet, at the newest of the versions ([`effective`]).
 //!
 //! Both documents are account-management tenant metadata of
@@ -90,6 +94,11 @@ pub struct InstalledDocument {
     /// default the moment its record was gone.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub removed_builtin: Vec<String>,
+    /// Base kits this organization uninstalled for itself (ADR-0074), of
+    /// those it may ([`super::service::ORGANIZATION_REMOVABLE_BASE`]). Only an
+    /// organization's document has any.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub removed_base: Vec<String>,
     /// The organization's own kits (ADR-0068 phase 7, [`super::shelf`]).
     /// Only an organization's document has any.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -386,16 +395,16 @@ impl KitInstaller {
             .store
             .read(&service_context(PLATFORM_TENANT)?, PLATFORM_TENANT)
             .await?;
-        let base = base_kits(&root, &self.catalogue);
         // Read as the service: the caller's reach was checked by `OrgCtx`,
         // and a platform administrator acting in an organization is not a
         // member of it.
-        let organization = if org == PLATFORM_TENANT {
-            Vec::new()
+        let (base, organization) = if org == PLATFORM_TENANT {
+            (base_kits(&root, &self.catalogue), Vec::new())
         } else {
-            organization_kits(
-                &self.store.read(&service_context(org)?, org).await?,
-                &self.catalogue,
+            let doc = self.store.read(&service_context(org)?, org).await?;
+            (
+                base_for(&root, &doc, &self.catalogue),
+                organization_kits(&doc, &self.catalogue),
             )
         };
         let effective = effective(&base, &organization);
@@ -692,9 +701,31 @@ impl KitInstaller {
             .read(&service_context(PLATFORM_TENANT)?, PLATFORM_TENANT)
             .await?;
         let mut doc = self.store.read(&service_context(org)?, org).await?;
+        // A base kit the organization uninstalled for itself comes back as
+        // the base kit it is: nothing else is recorded.
+        if doc.removed_base.contains(&slug)
+            && let Some(kit) = base_kits(&root, &self.catalogue)
+                .into_iter()
+                .find(|k| k.kit_slug == slug)
+        {
+            let back = kit.clone();
+            self.store
+                .update(org, &mut |doc| {
+                    doc.removed_base.retain(|s| *s != slug);
+                    Ok(Some(back.clone()))
+                })
+                .await?;
+            self.announce(
+                super::events::INSTALLED,
+                super::events::Level::Organization(org),
+                &kit.kit_slug,
+                Some(&kit.version),
+            );
+            return Ok(kit);
+        }
         install_organization(&mut doc, record.clone());
         let after = effective(
-            &base_kits(&root, &self.catalogue),
+            &base_for(&root, &doc, &self.catalogue),
             &organization_kits(&doc, &self.catalogue),
         );
         self.check_requires(org, &slug, &record.version, &after)
@@ -733,10 +764,13 @@ impl KitInstaller {
             .store
             .read(&service_context(PLATFORM_TENANT)?, PLATFORM_TENANT)
             .await?;
-        let base = base_kits(&root, &self.catalogue);
         let mut doc = self.store.read(&service_context(org)?, org).await?;
+        let base = base_for(&root, &doc, &self.catalogue);
         if uninstall_organization(&mut doc, &slug, &base).is_ok() {
-            let after = effective(&base, &organization_kits(&doc, &self.catalogue));
+            let after = effective(
+                &base_for(&root, &doc, &self.catalogue),
+                &organization_kits(&doc, &self.catalogue),
+            );
             self.check_required_by(org, &slug, &after).await?;
         }
         self.store
@@ -1089,6 +1123,21 @@ pub fn base_kits(root: &InstalledDocument, catalogue: &[KitDescriptor]) -> Vec<I
     kits
 }
 
+/// The base kits as they apply to one organization: [`base_kits`] without
+/// the ones it uninstalled for itself (`removed_base`, ADR-0074).
+pub fn base_for(
+    root: &InstalledDocument,
+    organization: &InstalledDocument,
+    catalogue: &[KitDescriptor],
+) -> Vec<InstalledKit> {
+    let mut kits = base_kits(root, catalogue);
+    kits.retain(|k| {
+        !(super::service::is_organization_removable_base(&k.kit_slug)
+            && organization.removed_base.contains(&k.kit_slug))
+    });
+    kits
+}
+
 /// An organization's own kits, sorted by slug.
 pub fn organization_kits(
     doc: &InstalledDocument,
@@ -1255,6 +1304,16 @@ pub fn uninstall_organization(
     let before = doc.kits.len();
     doc.kits.retain(|k| k.kit_slug != slug);
     if doc.kits.len() != before {
+        return Ok(());
+    }
+    // A base kit the organization may uninstall for itself (ADR-0074).
+    if super::service::is_organization_removable_base(slug)
+        && base.iter().any(|k| k.kit_slug == slug)
+    {
+        if !doc.removed_base.iter().any(|s| s == slug) {
+            doc.removed_base.push(slug.to_owned());
+            doc.removed_base.sort();
+        }
         return Ok(());
     }
     if base.iter().any(|k| k.kit_slug == slug) {

@@ -26,7 +26,38 @@ use super::installed::{KitInstaller, Refusal};
 pub(crate) use super::manifest::{project_type_kit, project_type_kits};
 pub use super::owners::{KitOwners, MarkOn, Rehome};
 use super::service::KitRegistryService;
-pub use super::service::{CONSTRUCTOR_RESEARCH_KIT, GEARS_MATCHER_KIT};
+pub use super::service::{CONSTRUCTOR_RESEARCH_KIT, GEARS_MATCHER_KIT, SPEC_MAPPING_KIT};
+
+/// A way of assembling a product that a kit provides (ADR-0074): its
+/// manifest's `assembly_strategy`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProvidedStrategy {
+    /// The kit that provides it.
+    pub kit: String,
+    pub id: String,
+    pub name: String,
+    pub description: String,
+}
+
+/// The assembly strategies the kits `slugs` provide, in the order given; a
+/// slug that is not a built-in kit, or a kit that declares none, provides
+/// none. Built-in kits only: an organization's own kit cannot bring a
+/// strategy studio-product does not know how to run.
+pub fn assembly_strategies(slugs: &[String]) -> Vec<ProvidedStrategy> {
+    slugs
+        .iter()
+        .filter_map(|slug| {
+            let m = super::manifest::builtin_manifest(slug)?;
+            let s = m.assembly_strategy?;
+            Some(ProvidedStrategy {
+                kit: m.slug,
+                id: s.id,
+                name: s.name,
+                description: s.description,
+            })
+        })
+        .collect()
+}
 
 #[async_trait]
 pub trait ProjectKitRequests: Send + Sync + 'static {

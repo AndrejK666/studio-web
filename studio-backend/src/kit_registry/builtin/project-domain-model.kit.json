@@ -282,15 +282,6 @@
       ]
     },
     {
-      "gear": "studio-spec-mapping",
-      "mcp_tools": [
-        "project_capabilities",
-        "project_findings",
-        "project_plan",
-        "project_requirements"
-      ]
-    },
-    {
       "gear": "studio-artifact-ingest",
       "types": [
         "finding"
