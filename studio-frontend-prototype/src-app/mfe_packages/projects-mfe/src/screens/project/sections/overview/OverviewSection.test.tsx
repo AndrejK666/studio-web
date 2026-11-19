@@ -36,6 +36,9 @@ vi.mock('@gears-frontx/react', async (importOriginal) => ({
     id.includes('screens.available') ? available.value : id.includes('last_event') ? live.value : null,
 }));
 
+// The type's next steps read their own data; NextSteps.test.tsx covers them.
+vi.mock('./NextSteps', () => ({ NextSteps: () => null }));
+
 import { OverviewSection } from './OverviewSection';
 
 const blocked: ProjectStatus = {

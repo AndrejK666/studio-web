@@ -1,4 +1,3 @@
-import type { ProjectMode } from '@constructor-studio/mfe-shared';
 /**
  * What the New project wizard is collecting, before anything is sent.
  *
@@ -16,22 +15,18 @@ import type { ProjectMode } from '@constructor-studio/mfe-shared';
  *   (ADR-0014 section 7) and an organization may mark a different set, so the
  *   wizard reads it rather than assuming. The rest are added later from the
  *   project screen.
- * - **Sources.** A modernization takes one or more repositories, capped at
- *   `MAX_SOURCES`. ADR-0010 lists "modernize carries exactly one source" among
- *   the invariants that moved out of the database and became advisory when the
- *   `studio-project` gear was retired; this feature widens it, and the ADR
- *   records the change. Nothing on the wire enforces either shape — the
- *   metadata type is a free-form object.
+ * - **What comes next.** The wizard asks for a name, the project type, a goal
+ *   and shows the owner; nothing else. The type decides the rest -- the
+ *   `mode`, which optional steps the creation takes, and the next steps the
+ *   project's Overview shows (ADR-0073). Repositories are connected from the
+ *   project's Sources afterwards, with the same picker (`RepositoryPicker`).
  */
-
-
-export type { ProjectMode };
 
 /** Only `draft` is reachable at creation; the ladder moves forward from there. */
 export const INITIAL_STATUS = 'draft';
 
 /**
- * Ceiling on how many repositories one project can be seeded from.
+ * Ceiling on how many repositories one Connect source picks at once.
  *
  * A product limit, not a technical one: nothing on the wire counts, and the
  * array is stored verbatim. It is not accidentally reachable either — one
@@ -75,18 +70,14 @@ export interface ProjectDraft {
   readonly goal: string;
   /** Keycloak `sub`. One owner, not a list. */
   readonly ownerId: string | null;
-  readonly mode: ProjectMode | null;
+  /** The kit that is the project's type (`slug` of `project-creation-types`). */
   readonly typeKit?: string;
-  /** Empty for greenfield, and for modernize until a row is picked. */
-  readonly sources: readonly RepositoryPick[];
 }
 
 export const EMPTY_DRAFT: ProjectDraft = {
   name: '',
   goal: '',
   ownerId: null,
-  mode: null,
-  sources: [],
 };
 
 /**
@@ -103,7 +94,3 @@ export function isNameUsable(name: string): boolean {
   return name.trim().length > 0;
 }
 
-/** One is enough to continue; the cap is enforced when picking, not here. */
-export function hasRequiredSource(draft: ProjectDraft): boolean {
-  return draft.mode !== 'modernize' || draft.sources.length > 0;
-}

@@ -1,12 +1,14 @@
 /**
- * The wizard's steps, as data.
+ * The wizard's steps, as data. One today: the project type decides what
+ * follows the creation, so there is no second step to choose a starting
+ * point or repositories (ADR-0073). The list stays the place a step is added.
  */
 
 // @cpt-dod:cpt-studiofrontend-dod-project-create-steps:p1
 // @cpt-algo:cpt-studiofrontend-algo-project-create-steps:p2
-import { hasRequiredSource, isNameUsable, type ProjectDraft } from './projectDraft';
+import { isNameUsable, type ProjectDraft } from './projectDraft';
 
-export type WizardStepKey = 'details' | 'repositories';
+export type WizardStepKey = 'details';
 
 export interface WizardStep {
   readonly key: WizardStepKey;
@@ -15,21 +17,15 @@ export interface WizardStep {
   isComplete(draft: ProjectDraft): boolean;
 }
 
+/** The type is required where the server offers types; the wizard checks that against the list. */
 const details: WizardStep = {
   key: 'details',
   titleKey: 'title',
   isApplicable: () => true,
-  isComplete: (draft) => isNameUsable(draft.name) && draft.mode !== null,
+  isComplete: (draft) => isNameUsable(draft.name),
 };
 
-const repositories: WizardStep = {
-  key: 'repositories',
-  titleKey: 'repos_title',
-  isApplicable: (draft) => draft.mode === 'modernize',
-  isComplete: hasRequiredSource,
-};
-
-export const WIZARD_STEPS: readonly WizardStep[] = [details, repositories];
+export const WIZARD_STEPS: readonly WizardStep[] = [details];
 
 export const FIRST_STEP_KEY: WizardStepKey = 'details';
 
