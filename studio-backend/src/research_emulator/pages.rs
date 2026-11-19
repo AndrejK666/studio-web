@@ -138,6 +138,8 @@ pub fn dashboard(cfg: &Config, st: &State, now: u64) -> String {
          client <code>{c}</code>. A desk starts in {d}s, an image builds in {bl}s, a service comes up in {s}s.</p>\
          <div class=\"card\"><form method=\"post\" action=\"{bp}/_emulator/fail-next-build\" style=\"display:inline\">\
          <button class=\"alt\">{fail}</button></form> \
+         <form method=\"post\" action=\"{bp}/_emulator/dav-hiccups\" style=\"display:inline\">\
+         <button class=\"alt\">{hiccups}</button></form> \
          <form method=\"post\" action=\"{bp}/_emulator/reset\" style=\"display:inline\" onsubmit=\"return confirm('Forget every member, key and project?')\">\
          <button class=\"alt\">Reset everything</button></form> \
          <span class=\"sub\">A Dockerfile that says <code>research-emulator: fail</code> fails its build too.</span></div>",
@@ -151,6 +153,11 @@ pub fn dashboard(cfg: &Config, st: &State, now: u64) -> String {
             "The next build fails — click to undo"
         } else {
             "Make the next build fail"
+        },
+        hiccups = if st.dav_hiccups > 0 {
+            format!("{} desk file calls answer 502 — click to undo", st.dav_hiccups)
+        } else {
+            "Make the next desk file calls answer 502".to_owned()
         },
     );
 

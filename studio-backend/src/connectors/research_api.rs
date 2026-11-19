@@ -51,15 +51,48 @@ pub const STUDIO_DESK: &str = "studio";
 /// out of the project's git (`.git/info/exclude`) and removed after a build.
 pub const BUILD_FOLDER: &str = "studio-build";
 
-/// How often, and how far apart, a WebDAV call is asked again while a desk
-/// that just started does not serve its files yet: two minutes in all.
-const DAV_WARMUP_TRIES: u32 = 12;
-const DAV_WARMUP_WAIT: Duration = Duration::from_secs(10);
+/// How a WebDAV call to a desk's files is asked again when Research's
+/// gateway answers 502/503/504 or does not answer at all: a desk reported
+/// running serves its files a little later, and an upload of thousands of
+/// files meets a gateway hiccup now and then (Research DEV, 2026-11-18/19).
+/// Each call is asked again `first` apart, doubling up to `cap`, until `for_`
+/// has passed since its first try. Every DAV call Studio makes is idempotent
+/// (MKCOL, PUT of the same bytes, GET, DELETE), so asking again is safe.
+#[derive(Debug, Clone, Copy)]
+pub struct DavRetry {
+    pub for_: Duration,
+    pub first: Duration,
+    pub cap: Duration,
+}
 
-/// A gateway's answer while the desk's file storage comes up.
+impl DavRetry {
+    pub const RESEARCH: DavRetry = DavRetry {
+        for_: Duration::from_secs(3 * 60),
+        first: Duration::from_secs(1),
+        cap: Duration::from_secs(15),
+    };
+}
+
+/// A gateway's answer while the desk's file storage is not there.
 fn warming_up(status: reqwest::StatusCode) -> bool {
     matches!(status.as_u16(), 502..=504)
 }
+
+/// How many files are written to a desk at once.
+const UPLOAD_CONCURRENCY: usize = 8;
+
+/// The file in a desk's `BUILD_FOLDER` that says which Studio build is using
+/// the desk now: one build at a time per desk, the next one waits.
+const DESK_LOCK: &str = "studio-build/.studio-desk-lock";
+
+/// A lock not written again for this long belongs to a build that is gone.
+const DESK_LOCK_STALE: Duration = Duration::from_secs(20 * 60);
+
+/// How often a build that holds the desk writes its lock again.
+const DESK_LOCK_REFRESH: Duration = Duration::from_secs(4 * 60);
+
+/// How long a build waits for the desk before it gives up.
+const DESK_WAIT_FOR: Duration = Duration::from_secs(3 * 60 * 60);
 
 /// Research's own public API, as one member reaches it.
 pub struct ResearchApi {
@@ -70,6 +103,7 @@ pub struct ResearchApi {
     base: String,
     token: Mutex<String>,
     renew: Option<Renew>,
+    dav_retry: DavRetry,
 }
 
 /// A Research project the member owns or collaborates on.
@@ -442,6 +476,17 @@ enum Body<'b> {
     Bytes(&'b [u8]),
 }
 
+impl<'b> Body<'b> {
+    /// The same body, for asking again.
+    fn again(&self) -> Body<'b> {
+        match self {
+            Body::Empty => Body::Empty,
+            Body::Json(v) => Body::Json(v),
+            Body::Bytes(b) => Body::Bytes(b),
+        }
+    }
+}
+
 impl ResearchApi {
     pub fn new(http: reqwest::Client, api_url: &str, token: String) -> Self {
         let (account, base) = roots(api_url);
@@ -451,6 +496,39 @@ impl ResearchApi {
             base,
             token: Mutex::new(token),
             renew: None,
+            dav_retry: DavRetry::RESEARCH,
+        }
+    }
+
+    /// Ask WebDAV calls again by `retry` (tests make it fast).
+    pub fn with_dav_retry(mut self, retry: DavRetry) -> Self {
+        self.dav_retry = retry;
+        self
+    }
+
+    /// A WebDAV call, asked again by [`DavRetry`] while the gateway answers
+    /// 502/503/504 or the request does not reach it. The last answer, or the
+    /// last error, once the time is up.
+    async fn send_dav(
+        &self,
+        method: reqwest::Method,
+        url: &str,
+        body: Body<'_>,
+        what: &str,
+    ) -> anyhow::Result<reqwest::Response> {
+        let started = tokio::time::Instant::now();
+        let mut wait = self.dav_retry.first;
+        loop {
+            let tried = self.send(method.clone(), url, body.again(), what).await;
+            let again = match &tried {
+                Ok(res) => warming_up(res.status()),
+                Err(e) => !format!("{e:#}").contains(SIGN_IN_AGAIN),
+            };
+            if !again || started.elapsed() + wait > self.dav_retry.for_ {
+                return tried;
+            }
+            tokio::time::sleep(wait).await;
+            wait = (wait * 2).min(self.dav_retry.cap);
         }
     }
 
@@ -747,7 +825,7 @@ impl ResearchApi {
         let what = format!("making folder {path} in the desk");
         let mkcol = reqwest::Method::from_bytes(b"MKCOL").expect("a method name");
         let res = self
-            .send(mkcol, &self.dav(desk, path), Body::Empty, &what)
+            .send_dav(mkcol, &self.dav(desk, path), Body::Empty, &what)
             .await?;
         if res.status().is_success() || res.status() == reqwest::StatusCode::METHOD_NOT_ALLOWED {
             return Ok(());
@@ -758,7 +836,7 @@ impl ResearchApi {
     pub async fn put_file(&self, desk: &str, path: &str, content: &[u8]) -> anyhow::Result<()> {
         let what = format!("writing {path} to the desk");
         let res = self
-            .send(
+            .send_dav(
                 reqwest::Method::PUT,
                 &self.dav(desk, path),
                 Body::Bytes(content),
@@ -775,7 +853,7 @@ impl ResearchApi {
     pub async fn get_file(&self, desk: &str, path: &str) -> anyhow::Result<Option<Vec<u8>>> {
         let what = format!("reading {path} in the desk");
         let res = self
-            .send(
+            .send_dav(
                 reqwest::Method::GET,
                 &self.dav(desk, path),
                 Body::Empty,
@@ -793,41 +871,19 @@ impl ResearchApi {
 
     /// Remove a file or a folder and all in it; one not there is fine.
     pub async fn remove_path(&self, desk: &str, path: &str) -> anyhow::Result<()> {
-        self.remove_path_paced(desk, path, DAV_WARMUP_TRIES, DAV_WARMUP_WAIT)
-            .await
-    }
-
-    /// [`Self::remove_path`], asking again while the desk's file storage
-    /// answers 502/503/504: a desk Research reports `running` serves its
-    /// files a little later (seen on Research DEV, 2026-11-18: the first
-    /// DELETE after a start was a 503). `tries` asks at most, `wait` apart.
-    async fn remove_path_paced(
-        &self,
-        desk: &str,
-        path: &str,
-        tries: u32,
-        wait: Duration,
-    ) -> anyhow::Result<()> {
         let what = format!("removing {path} from the desk");
-        let mut left = tries.max(1);
-        loop {
-            let res = self
-                .send(
-                    reqwest::Method::DELETE,
-                    &self.dav(desk, path),
-                    Body::Empty,
-                    &what,
-                )
-                .await?;
-            if res.status().is_success() || res.status() == reqwest::StatusCode::NOT_FOUND {
-                return Ok(());
-            }
-            left -= 1;
-            if left == 0 || !warming_up(res.status()) {
-                return Err(Self::refused(res, &what).await);
-            }
-            tokio::time::sleep(wait).await;
+        let res = self
+            .send_dav(
+                reqwest::Method::DELETE,
+                &self.dav(desk, path),
+                Body::Empty,
+                &what,
+            )
+            .await?;
+        if res.status().is_success() || res.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(());
         }
+        Err(Self::refused(res, &what).await)
     }
 
     /* ── images ── */
@@ -1159,8 +1215,15 @@ impl ResearchApi {
         }
         match self.create_desk(project, STUDIO_DESK).await {
             Ok(d) => Ok(d),
-            // One desk per project (Research's `multi_desk` off): build in it.
-            Err(e) => desks.into_iter().next().ok_or(e),
+            Err(e) => {
+                // Another build made Studio's desk a moment ago: build in it.
+                let now = self.desks(project).await.unwrap_or_default();
+                if let Some(d) = now.iter().find(|d| d.name == STUDIO_DESK) {
+                    return Ok(d.clone());
+                }
+                // One desk per project (Research's `multi_desk` off): build in it.
+                desks.into_iter().next().ok_or(e)
+            }
         }
     }
 
@@ -1173,23 +1236,31 @@ impl ResearchApi {
     ) -> anyhow::Result<bool> {
         let until = tokio::time::Instant::now() + pace.desk_for;
         let mut started = false;
+        let mut last = String::new();
         loop {
             let state = self.desk(desk).await?;
+            last.clone_from(&state.filesystem.status);
             match state.filesystem.status.as_str() {
                 "running" => return Ok(started),
-                "not_started" | "" => {
+                // On its way: wait for it.
+                "starting" | "stopping" | "pending" => {}
+                // Not running, whatever Research calls it (`not_started`,
+                // `stopped` after another build stopped it, ...): start it.
+                // A status left out here once kept a second build waiting
+                // ten minutes for a desk the first had stopped.
+                _ => {
                     self.start_desk(desk).await?;
                     started = true;
                 }
-                _ => {}
             }
             if cancelled() {
                 bail!("the build was cancelled");
             }
             if tokio::time::Instant::now() >= until {
                 bail!(
-                    "the desk did not start within {} minutes",
-                    pace.desk_for.as_secs() / 60
+                    "the desk did not start within {} minutes (Research reports it {})",
+                    pace.desk_for.as_secs() / 60,
+                    if last.is_empty() { "without a status" } else { last.as_str() }
                 );
             }
             tokio::time::sleep(pace.poll).await;
@@ -1219,7 +1290,13 @@ impl ResearchApi {
 
     /// Write the tree at `local` into the desk at `remote`, but for `.git`
     /// and `target` folders; how many files.
-    async fn upload(&self, desk: &str, local: &Path, remote: &str) -> anyhow::Result<usize> {
+    async fn upload(
+        &self,
+        desk: &str,
+        local: &Path,
+        remote: &str,
+        lock: Option<&str>,
+    ) -> anyhow::Result<usize> {
         let root = local.to_path_buf();
         let (dirs, files) = tokio::task::spawn_blocking(move || walk(&root))
             .await
@@ -1232,8 +1309,22 @@ impl ResearchApi {
             at.push_str(part);
             self.make_folder(desk, &at).await?;
         }
+        // A folder after its parent: level by level, each level at once.
+        let mut levels: BTreeMap<usize, Vec<&String>> = BTreeMap::new();
         for dir in &dirs {
-            self.make_folder(desk, &format!("{remote}/{dir}")).await?;
+            levels.entry(dir.matches('/').count()).or_default().push(dir);
+        }
+        for level in levels.values() {
+            let mut made = futures_util::stream::iter(
+                level
+                    .iter()
+                    .map(|dir| self.make_folder(desk, &format!("{remote}/{dir}")))
+                    .collect::<Vec<_>>(),
+            )
+            .buffer_unordered(UPLOAD_CONCURRENCY);
+            while let Some(done) = made.next().await {
+                done?;
+            }
         }
         let count = files.len();
         let mut writes = futures_util::stream::iter(files.into_iter().map(|rel| {
@@ -1246,9 +1337,16 @@ impl ResearchApi {
                     .await
             }
         }))
-        .buffer_unordered(8);
+        .buffer_unordered(UPLOAD_CONCURRENCY);
+        let mut refreshed = tokio::time::Instant::now();
         while let Some(done) = writes.next().await {
             done?;
+            if let Some(lock) = lock
+                && refreshed.elapsed() >= DESK_LOCK_REFRESH
+            {
+                self.write_desk_lock(desk, lock).await?;
+                refreshed = tokio::time::Instant::now();
+            }
         }
         Ok(count)
     }
@@ -1269,19 +1367,130 @@ impl ResearchApi {
         cancelled: Cancelled<'_>,
     ) -> anyhow::Result<Vec<Built>> {
         let desk = self.build_desk(project).await?;
-        progress(format!("starting desk {}", desk.name)).await;
-        let started = self.desk_running(&desk.id, pace, cancelled).await?;
+        let started = self
+            .take_desk(&desk, name, pace, progress, cancelled)
+            .await?;
         let folder = format!("{BUILD_FOLDER}/{name}");
         let built = self
-            .build_in(&desk.id, local, &folder, images, pace, progress, cancelled)
+            .build_in(&desk.id, local, &folder, images, pace, progress, cancelled, name)
             .await;
         if let Err(e) = self.remove_path(&desk.id, &folder).await {
             tracing::warn!(error = %e, "research: the build folder could not be removed");
         }
-        if started && let Err(e) = self.stop_desk(&desk.id).await {
-            tracing::warn!(error = %e, "research: the desk Studio started could not be stopped");
+        self.release_desk(&desk.id, name).await;
+        // A build waiting for the desk looks every three polls: give it the
+        // time to take the desk, and leave the desk running for it if it did
+        // (it stops it then, having waited).
+        if started {
+            tokio::time::sleep(pace.poll * 4).await;
+            let taken = matches!(self.desk_holder(&desk.id).await, Ok(Some(_)));
+            if !taken && let Err(e) = self.stop_desk(&desk.id).await {
+                tracing::warn!(error = %e, "research: the desk Studio started could not be stopped");
+            }
         }
         built
+    }
+
+    /// Start the desk and take it for build `name`: while another Studio
+    /// build holds it (its lock written within [`DESK_LOCK_STALE`]), wait
+    /// and say so, then take it. Whether Studio started the desk.
+    async fn take_desk(
+        &self,
+        desk: &Desk,
+        name: &str,
+        pace: Pace,
+        progress: Progress<'_>,
+        cancelled: Cancelled<'_>,
+    ) -> anyhow::Result<bool> {
+        let until = tokio::time::Instant::now() + DESK_WAIT_FOR;
+        let mut said: Option<String> = None;
+        let mut started = false;
+        loop {
+            if said.is_none() {
+                progress(format!("starting desk {}", desk.name)).await;
+            }
+            started |= self.desk_running(&desk.id, pace, cancelled).await?;
+            match self.desk_holder(&desk.id).await? {
+                Some(other) if other != name => {
+                    // Having waited, this build stops the desk at its end:
+                    // the one before leaves it running for it.
+                    started = true;
+                    if said.as_deref() != Some(other.as_str()) {
+                        progress(format!(
+                            "waiting for build {other}, which is using desk {} of this \
+                             Research project; this build starts when it ends",
+                            desk.name
+                        ))
+                        .await;
+                        said = Some(other.clone());
+                    }
+                    if cancelled() {
+                        bail!("the build was cancelled while it waited for the desk");
+                    }
+                    if tokio::time::Instant::now() >= until {
+                        bail!(
+                            "desk {} of this Research project stayed in use by build {other} \
+                             for {} hours",
+                            desk.name,
+                            DESK_WAIT_FOR.as_secs() / 3600
+                        );
+                    }
+                    tokio::time::sleep(pace.poll.max(Duration::from_millis(1)) * 3).await;
+                }
+                _ => {
+                    self.write_desk_lock(&desk.id, name).await?;
+                    // Two builds that read an empty lock at once: the later
+                    // write wins, and the other one waits.
+                    match self.desk_holder(&desk.id).await? {
+                        Some(holder) if holder != name => continue,
+                        _ => return Ok(started),
+                    }
+                }
+            }
+        }
+    }
+
+    /// The build holding the desk, if its lock is fresh.
+    async fn desk_holder(&self, desk: &str) -> anyhow::Result<Option<String>> {
+        let Some(bytes) = self.get_file(desk, DESK_LOCK).await? else {
+            return Ok(None);
+        };
+        let lock: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or_default();
+        let at = lock.get("at").and_then(serde_json::Value::as_u64).unwrap_or(0);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        if now.saturating_sub(at) > DESK_LOCK_STALE.as_secs() {
+            return Ok(None);
+        }
+        Ok(lock
+            .get("build")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned))
+    }
+
+    async fn write_desk_lock(&self, desk: &str, name: &str) -> anyhow::Result<()> {
+        let at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        self.make_folder(desk, BUILD_FOLDER).await?;
+        let body = serde_json::json!({ "build": name, "at": at }).to_string();
+        self.put_file(desk, DESK_LOCK, body.as_bytes()).await
+    }
+
+    /// Let the desk go, if this build still holds it.
+    async fn release_desk(&self, desk: &str, name: &str) {
+        match self.desk_holder(desk).await {
+            Ok(Some(holder)) if holder == name => {
+                if let Err(e) = self.remove_path(desk, DESK_LOCK).await {
+                    tracing::warn!(error = %e, "research: the desk's lock could not be removed");
+                }
+            }
+            Ok(_) => {}
+            Err(e) => tracing::warn!(error = %e, "research: the desk's lock could not be read"),
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1294,11 +1503,12 @@ impl ResearchApi {
         pace: Pace,
         progress: Progress<'_>,
         cancelled: Cancelled<'_>,
+        lock: &str,
     ) -> anyhow::Result<Vec<Built>> {
         self.exclude_from_git(desk, BUILD_FOLDER).await;
         self.remove_path(desk, folder).await?;
         progress("uploading the prepared tree to the desk".into()).await;
-        let files = self.upload(desk, local, folder).await?;
+        let files = self.upload(desk, local, folder, Some(lock)).await?;
         progress(format!(
             "uploaded {files} files; building {} image(s)",
             images.len()
@@ -1329,7 +1539,13 @@ impl ResearchApi {
         // gives up: the first name each image failed under.
         let mut erred: BTreeSet<String> = BTreeSet::new();
         let mut retried: BTreeMap<String, String> = BTreeMap::new();
+        let mut refreshed = tokio::time::Instant::now();
         loop {
+            // The desk stays this build's while its images build.
+            if refreshed.elapsed() >= DESK_LOCK_REFRESH {
+                self.write_desk_lock(desk, lock).await?;
+                refreshed = tokio::time::Instant::now();
+            }
             for n in 0..pending.len() {
                 let (i, name, id) = pending[n].clone();
                 if done.contains_key(&i.key) {

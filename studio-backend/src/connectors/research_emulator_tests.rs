@@ -199,3 +199,64 @@ async fn a_failed_build_on_the_emulator_shows_the_last_lines_of_its_log() {
     assert!(e.contains("STEP 1/2: FROM rust:1.97"), "{e}");
     assert!(e.contains("research-emulator: fail"), "{e}");
 }
+
+const FAST_RETRY: DavRetry = DavRetry {
+    for_: Duration::from_secs(2),
+    first: Duration::from_millis(1),
+    cap: Duration::from_millis(5),
+};
+
+#[tokio::test]
+async fn an_upload_goes_through_the_gateways_502s_on_the_emulator() {
+    // Research DEV, 2026-11-19: one PUT of thousands answered 502, and the
+    // build failed. Each desk call is asked again now.
+    let (url, emu) = spawn_for_tests(instant()).await;
+    let api = signed_in(&url).await.with_dav_retry(FAST_RETRY);
+    let p = api.projects().await.unwrap()[0].id.clone();
+    emu.lock().dav_hiccups = crate::research_emulator::DAV_HICCUPS;
+
+    let work = tree("FROM rust:1.97\nRUN cargo build\n");
+    let built = api
+        .build_in_desk(&p, &work, "research-b3", &api_image(), FAST, &quiet, &never)
+        .await;
+    let _ = std::fs::remove_dir_all(&work);
+    assert_eq!(built.unwrap().len(), 1);
+    assert_eq!(emu.lock().dav_hiccups, 0, "every hiccup was met and gone through");
+}
+
+/// What the concurrent builds below said.
+static SAID: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+fn say<'a>(m: String) -> BoxFuture<'a, ()> {
+    SAID.lock().unwrap().push(m);
+    Box::pin(async {})
+}
+
+#[tokio::test]
+async fn two_builds_into_one_research_project_take_its_desk_in_turn_on_the_emulator() {
+    let (url, emu) = spawn_for_tests(instant()).await;
+    let api = signed_in(&url).await;
+    let p = api.projects().await.unwrap()[0].id.clone();
+    let (one, two) = (
+        tree("FROM rust:1.97\nRUN cargo build\n"),
+        tree("FROM rust:1.97\nRUN cargo build\n"),
+    );
+    let (a, b) = tokio::join!(
+        api.build_in_desk(&p, &one, "research-c1", &api_image(), FAST, &say, &never),
+        api.build_in_desk(&p, &two, "research-c2", &api_image(), FAST, &say, &never),
+    );
+    let _ = (std::fs::remove_dir_all(&one), std::fs::remove_dir_all(&two));
+    assert_eq!(a.unwrap().len(), 1);
+    assert_eq!(b.unwrap().len(), 1);
+    let said = SAID.lock().unwrap();
+    assert!(
+        said.iter().any(|m| m.starts_with("waiting for build research-c")),
+        "the second says what it waits for: {said:?}"
+    );
+    let st = emu.lock();
+    assert_eq!(st.images.len(), 2);
+    assert!(
+        st.desks.values().all(|d| d.status != "running"),
+        "the desk is stopped once both are done"
+    );
+}

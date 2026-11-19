@@ -391,25 +391,41 @@ pub fn explain(of: Of, text: &str, step: Option<&str>, research: bool) -> Failur
     // with "no healthy upstream", a gateway's 502/503/504): nothing in the
     // product or in Studio is wrong, and nothing here fixes it but time or
     // Research's team.
-    if research
-        && has(
-            text,
-            &[
-                "no healthy upstream",
-                "refused removing",
-                "502 bad gateway",
-                "503 service unavailable",
-                "504 gateway timeout",
-            ],
-        )
-        && has(text, &["constructor research refused"])
-    {
+    // Studio asks each desk call again for minutes before it gives up, so
+    // what reaches here kept failing. The step says where: a build's
+    // `images` is the desk (its start, its files, the image builds).
+    let at = match step {
+        Some("images") => " while it put the product on the desk and built its images",
+        Some(s) if !s.is_empty() => " in this step",
+        _ => "",
+    };
+    let gateway = has(
+        text,
+        &[
+            "no healthy upstream",
+            "502 bad gateway",
+            "503 service unavailable",
+            "504 gateway timeout",
+        ],
+    ) && has(text, &["constructor research refused"]);
+    let desk_down = has(text, &["the desk did not start within"]);
+    let desk_busy = has(text, &["stayed in use by build"]);
+    if research && (gateway || desk_down || desk_busy) {
+        let what = if desk_busy {
+            "Another Studio build kept the Research project's desk for hours, and this one \
+             stopped waiting for it"
+        } else if desk_down {
+            "Constructor Research did not start the project's desk in time"
+        } else {
+            "Constructor Research's own service kept refusing (its gateway or the desk's file \
+             storage answered 5xx)"
+        };
         return cause(
             "RESEARCH_UNAVAILABLE",
-            "Constructor Research's own service did not answer (its desk's file storage, or \
-             its gateway): nothing in the product is wrong. Try again later; if it keeps \
-             failing, tell the Research team which project and desk."
-                .to_owned(),
+            format!(
+                "{what}{at}: nothing in the product is wrong. Build again in a while; if it \
+                 keeps failing, tell the Research team the project and the desk the log names."
+            ),
             vec![
                 FailureAction::new("retry", retry_label),
                 FailureAction::new("open_log", "Open the log"),
@@ -557,6 +573,37 @@ mod tests {
         );
         assert_eq!(down.code, "RESEARCH_UNAVAILABLE");
         assert_eq!(down.actions[0].kind, "retry");
+        assert!(down.summary.contains("on the desk"), "{}", down.summary);
+        // And on 2026-11-19: a write of one file of thousands, then a desk
+        // that did not start while the first build held it.
+        for (text, says) in [
+            (
+                "Constructor Research refused writing studio-build/research-ea7ac5911378/.gearbox/\
+                 out/frontend/i18n/fa.json to the desk: 502 Bad Gateway",
+                "kept refusing",
+            ),
+            (
+                "the desk did not start within 10 minutes (Research reports it stopped)",
+                "did not start the project's desk",
+            ),
+            (
+                "desk studio of this Research project stayed in use by build research-1 for 3 \
+                 hours",
+                "kept the Research project's desk",
+            ),
+        ] {
+            let c = explain(Of::Build, text, Some("images"), true);
+            assert_eq!(c.code, "RESEARCH_UNAVAILABLE", "{text}");
+            assert!(c.summary.contains(says), "{}", c.summary);
+        }
+        // Only Research's own 5xx: a refusal of another kind is not this.
+        let refused = explain(
+            Of::Build,
+            "Constructor Research refused removing x from the desk: Forbidden",
+            Some("images"),
+            true,
+        );
+        assert_ne!(refused.code, "RESEARCH_UNAVAILABLE");
         // A deploy is never about a branch.
         assert_ne!(
             explain(Of::Deploy, "unknown revision", None, false).code,

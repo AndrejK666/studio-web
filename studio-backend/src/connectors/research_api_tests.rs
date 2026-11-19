@@ -43,7 +43,8 @@ struct Fake {
     /// Service id -> service.
     services: BTreeMap<String, Value>,
     bodies: Vec<(String, Value)>,
-    /// How many WebDAV DELETEs answer 503 first, as a desk that just started.
+    /// How many WebDAV calls answer 502 "no healthy upstream" first, as
+    /// Research's gateway did while a desk's storage was not there.
     dav_unavailable: u32,
 }
 
@@ -137,6 +138,10 @@ async fn handle(
     }
 
     if let Some(rel) = path.strip_prefix(DAV) {
+        if f.dav_unavailable > 0 {
+            f.dav_unavailable -= 1;
+            return (StatusCode::BAD_GATEWAY, "no healthy upstream").into_response();
+        }
         let rel = rel.trim_end_matches('/').to_owned();
         return match method.as_str() {
             "MKCOL" => {
@@ -154,10 +159,6 @@ async fn handle(
                 Some(b) => b.clone().into_response(),
                 None => StatusCode::NOT_FOUND.into_response(),
             },
-            "DELETE" if f.dav_unavailable > 0 => {
-                f.dav_unavailable -= 1;
-                StatusCode::SERVICE_UNAVAILABLE.into_response()
-            }
             "DELETE" => {
                 f.removed.push(rel.clone());
                 f.files.retain(|k, _| !k.starts_with(&rel));
@@ -560,8 +561,12 @@ async fn a_build_starts_a_desk_uploads_the_tree_builds_each_image_and_stops_the_
     );
     assert_eq!(
         f.removed,
-        ["studio-build/research-b1", "studio-build/research-b1"],
-        "cleared before the upload, removed after the build"
+        [
+            "studio-build/research-b1",
+            "studio-build/research-b1",
+            "studio-build/.studio-desk-lock"
+        ],
+        "cleared before the upload, removed after the build, the desk let go"
     );
     assert!(
         String::from_utf8_lossy(&f.files[".git/info/exclude"]).ends_with("\n/studio-build/\n"),
@@ -853,30 +858,141 @@ async fn the_platform_saying_a_container_waits_to_start_is_a_restart() {
     assert_eq!(w.lines, ["10:11 up"]);
 }
 
+const FAST_RETRY: DavRetry = DavRetry {
+    for_: Duration::from_millis(400),
+    first: Duration::from_millis(1),
+    cap: Duration::from_millis(5),
+};
+
+/// A tree of `files` files under `repo/`, and its Dockerfile.
+fn tree(files: usize) -> std::path::PathBuf {
+    let work = std::env::temp_dir().join(format!("research-api-{}", uuid::Uuid::new_v4().simple()));
+    for n in 0..files {
+        let dir = work.join(format!("repo/d{}", n % 7));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(format!("f{n}.json")), format!("{{\"n\":{n}}}")).unwrap();
+    }
+    std::fs::write(work.join("repo/studio-api.dockerfile"), "FROM scratch\n").unwrap();
+    work
+}
+
+fn api_image() -> [ImageBuild; 1] {
+    [ImageBuild {
+        key: "api".into(),
+        name: "gbx-api".into(),
+        dockerfile: "repo/studio-api.dockerfile".into(),
+    }]
+}
+
 #[tokio::test]
-async fn a_desk_that_just_started_is_asked_again_until_its_files_answer() {
-    // Seen on Research DEV, 2026-11-18: the first DELETE after a start was a 503.
+async fn a_desk_call_is_asked_again_while_the_gateway_answers_5xx() {
+    // Seen on Research DEV, 2026-11-18: "503 Service Unavailable: no healthy
+    // upstream" on the first DELETE after a start, and a 502 on one PUT of
+    // thousands on 2026-11-19.
     let (url, fake) = serve(Fake {
-        dav_unavailable: 2,
+        dav_unavailable: 3,
         ..Fake::default()
     })
     .await;
-    api(&url)
-        .remove_path_paced("d1", "studio-build/b1", 5, Duration::from_millis(1))
-        .await
-        .unwrap();
+    let research = api(&url).with_dav_retry(FAST_RETRY);
+    research.remove_path("d1", "studio-build/b1").await.unwrap();
+    research.put_file("d1", "a.txt", b"a").await.unwrap();
     assert_eq!(fake.lock().unwrap().removed, ["studio-build/b1"]);
+    assert_eq!(fake.lock().unwrap().files["a.txt"], b"a");
 
+    // For a bounded time only: then the gateway's own words.
     let (url, _) = serve(Fake {
-        dav_unavailable: 9,
+        dav_unavailable: u32::MAX,
         ..Fake::default()
     })
     .await;
     let e = api(&url)
-        .remove_path_paced("d1", "studio-build/b1", 2, Duration::from_millis(1))
+        .with_dav_retry(FAST_RETRY)
+        .put_file("d1", "a.txt", b"a")
         .await
         .unwrap_err();
-    assert!(format!("{e:#}").contains("503"), "{e:#}");
+    assert!(format!("{e:#}").contains("502 Bad Gateway: no healthy upstream"), "{e:#}");
+}
+
+#[tokio::test]
+async fn an_upload_of_many_files_goes_through_gateway_hiccups() {
+    let (url, seen) = serve(Fake {
+        // A desk that just started, and some 502s on the way.
+        dav_unavailable: 6,
+        ..Fake::default()
+    })
+    .await;
+    let work = tree(60);
+    let built = api(&url)
+        .with_dav_retry(FAST_RETRY)
+        .build_in_desk("p1", &work, "b1", &api_image(), FAST, &quiet, &never)
+        .await;
+    let _ = std::fs::remove_dir_all(&work);
+    built.unwrap();
+    let f = seen.lock().unwrap();
+    let puts = f
+        .calls
+        .iter()
+        .filter(|c| c.starts_with("PUT ") && c.contains("/studio-build/b1/repo/d"))
+        .count();
+    assert!(puts >= 60, "every file went up: {puts}");
+}
+
+/// What the concurrent builds below said.
+static SAID: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+fn say<'a>(m: String) -> BoxFuture<'a, ()> {
+    SAID.lock().unwrap().push(m);
+    Box::pin(async {})
+}
+
+#[tokio::test]
+async fn a_second_build_waits_for_the_desk_and_says_so() {
+    let (url, seen) = serve(Fake::default()).await;
+    let (one, two) = (tree(20), tree(20));
+    let (first, second) = (api(&url), api(&url));
+    let (a, b) = tokio::join!(
+        first.build_in_desk("p1", &one, "b1", &api_image(), FAST, &say, &never),
+        second.build_in_desk("p1", &two, "b2", &api_image(), FAST, &say, &never),
+    );
+    let _ = (std::fs::remove_dir_all(&one), std::fs::remove_dir_all(&two));
+    a.unwrap();
+    b.unwrap();
+    let said = SAID.lock().unwrap();
+    assert!(
+        said.iter()
+            .any(|m| m.starts_with("waiting for build b1") || m.starts_with("waiting for build b2")),
+        "{said:?}"
+    );
+    // Each build had the desk to itself: the images were asked for one build
+    // after the other, never interleaved.
+    let f = seen.lock().unwrap();
+    let order: Vec<&str> = f
+        .images
+        .values()
+        .map(|(_, dockerfile, _)| dockerfile.as_str())
+        .collect();
+    assert_eq!(order.len(), 2, "{order:?}");
+    assert!(!f.files.contains_key("studio-build/.studio-desk-lock"), "the desk is let go");
+}
+
+#[tokio::test]
+async fn a_desk_another_build_stopped_is_started_again() {
+    // Research DEV, 2026-11-19: a second build waited ten minutes for a desk
+    // the first had stopped, whose status was neither running nor not_started.
+    let (url, seen) = serve(Fake {
+        desk_status: "stopped".into(),
+        ..Fake::default()
+    })
+    .await;
+    let work = tree(3);
+    let built = api(&url)
+        .build_in_desk("p1", &work, "b1", &api_image(), FAST, &quiet, &never)
+        .await;
+    let _ = std::fs::remove_dir_all(&work);
+    built.unwrap();
+    let f = seen.lock().unwrap();
+    assert!(f.calls.iter().any(|c| c == &format!("POST {ACCOUNT}/desks/d1/filesystem")));
 }
 
 #[test]

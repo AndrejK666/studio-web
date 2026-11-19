@@ -240,6 +240,9 @@ pub async fn spawn_for_tests(timings: Timings) -> (String, Shared) {
 
 pub use state::Timings;
 
+/// How many desk file calls the dashboard's button makes fail.
+pub const DAV_HICCUPS: u32 = 5;
+
 /* ── answers ── */
 
 /// A refusal the way Research words one.
@@ -370,6 +373,11 @@ fn route(
         ("POST", ["_emulator", "fail-next-build"]) => {
             let mut st = emu.lock();
             st.fail_next_build = !st.fail_next_build;
+            Redirect::to(&format!("{}/_emulator", emu.cfg.base_path)).into_response()
+        }
+        ("POST", ["_emulator", "dav-hiccups"]) => {
+            let mut st = emu.lock();
+            st.dav_hiccups = if st.dav_hiccups > 0 { 0 } else { DAV_HICCUPS };
             Redirect::to(&format!("{}/_emulator", emu.cfg.base_path)).into_response()
         }
         ("POST", ["_emulator", "reset"]) => {
@@ -1169,6 +1177,10 @@ fn dav(emu: &Shared, m: &str, desk: &str, rel: &str, headers: &HeaderMap, body: 
         .is_some_and(|p| p.owner == user)
     {
         return not_found("Desk");
+    }
+    if st.dav_hiccups > 0 {
+        st.dav_hiccups -= 1;
+        return (StatusCode::BAD_GATEWAY, "no healthy upstream").into_response();
     }
     if d.status != "running" {
         return refusal(StatusCode::CONFLICT, "The desk's filesystem is not running");

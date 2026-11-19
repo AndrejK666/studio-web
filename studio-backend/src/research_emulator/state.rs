@@ -222,6 +222,10 @@ pub struct State {
     pub calls: VecDeque<Call>,
     /// The next image build fails, whatever its Dockerfile says.
     pub fail_next_build: bool,
+    /// How many of the next desk file calls the gateway answers 502 "no
+    /// healthy upstream", as Research DEV did now and then (2026-11-19).
+    #[serde(default)]
+    pub dav_hiccups: u32,
 }
 
 impl State {
