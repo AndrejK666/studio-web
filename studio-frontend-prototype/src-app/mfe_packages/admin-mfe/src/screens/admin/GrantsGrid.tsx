@@ -42,6 +42,7 @@ const ScopeCell: React.FC<{ item: GrantDef }> = ({ item }) => (
 
 const RowActions: React.FC<{ item: GrantDef }> = ({ item }) => {
   const { t, onRemove } = useGrantCells();
+  if (item.roleKey === 'owner') return null;
   return (
     <Button size="sm" variant="ghost" onClick={() => onRemove(item)}>
       {t('remove')}

@@ -18,6 +18,7 @@ use account_management_sdk::{AccountManagementClient, UpsertMetadataRequest};
 use anyhow::{Context, Result, anyhow, bail};
 use gts::GtsTypeId;
 use serde_json::{Value, json};
+use toolkit_canonical_errors::CanonicalError;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
@@ -86,7 +87,14 @@ fn is(grant: &Value, key: &GrantKey) -> bool {
     field(grant, "subjectType") == Some(key.subject_type.as_str())
         && field(grant, "subjectId") == Some(key.subject_id.as_str())
         && field(grant, "scopeType") == Some(key.scope_type.as_str())
-        && (key.scope_type == "org" || field(grant, "scopeId") == key.scope_id.as_deref())
+        && (key.scope_type == "org"
+            || field(grant, "scopeId")
+                .zip(key.scope_id.as_deref())
+                .is_some_and(|(stored, requested)| {
+                    Uuid::parse_str(stored.trim()).ok().is_some_and(|project| {
+                        Uuid::parse_str(requested.trim()).ok() == Some(project)
+                    })
+                }))
 }
 
 fn grants(doc: &mut Value) -> Result<&mut Vec<Value>> {
@@ -104,6 +112,12 @@ fn grants(doc: &mut Value) -> Result<&mut Vec<Value>> {
 /// subject held on that scope. Refused for the owner role, for an owner grant
 /// already there, and for a role the document does not define.
 pub fn put(doc: &mut Value, org: Uuid, grant: &Grant) -> Result<Value, String> {
+    check_key(&grant.key)?;
+    if grant.key.subject_type == "team" {
+        return Err(
+            "team grants are not supported yet; assign a role to individual members".into(),
+        );
+    }
     if grant.role_key == ROLE_OWNER {
         return Err("the owner grant follows an owner membership (studio-user), not this".into());
     }
@@ -137,7 +151,13 @@ pub fn put(doc: &mut Value, org: Uuid, grant: &Grant) -> Result<Value, String> {
     let scope_id = if grant.key.scope_type == "org" {
         org.to_string()
     } else {
-        grant.key.scope_id.clone().unwrap_or_default()
+        grant
+            .key
+            .scope_id
+            .as_deref()
+            .and_then(|id| Uuid::parse_str(id.trim()).ok())
+            .ok_or("a project grant requires a project UUID")?
+            .to_string()
     };
     let written = json!({
         "id": kept_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
@@ -197,10 +217,15 @@ pub async fn change<T>(
         let (mut doc, version) = match am.get_metadata(ctx, org, type_id.clone()).await {
             Ok(entry) => (entry.value, entry.version),
             // No document yet: the first grant creates it.
-            Err(_) => (
+            Err(CanonicalError::NotFound { .. }) => (
                 json!({ "model": "tenant", "roles": crate::access_config::default_roles(), "grants": [] }),
                 0,
             ),
+            Err(e) => {
+                return Err(ChangeError::Internal(anyhow!(
+                    "cannot read the organization's access config: {e}"
+                )));
+            }
         };
         let out = change(&mut doc).map_err(ChangeError::Invalid)?;
         let request =
@@ -344,5 +369,47 @@ mod tests {
         assert!(key_of("member", "x", "workspace", None).is_err());
         assert!(key_of("member", "x", "project", Some("nope")).is_err());
         assert!(key_of("team", "t", "org", None).is_ok());
+    }
+
+    #[test]
+    fn updating_a_project_grant_canonicalizes_its_id_without_duplicating_it() {
+        let mut d = doc();
+        let legacy = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        d["grants"][1]["scopeId"] = json!(legacy);
+        let key = key_of(
+            "member",
+            "bob",
+            "project",
+            Some("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+        )
+        .unwrap();
+        let result = put(
+            &mut d,
+            Uuid::nil(),
+            &Grant {
+                key,
+                role_key: "editor".into(),
+                subject_name: None,
+                scope_name: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(result["id"], "g2");
+        assert_eq!(result["scopeId"], "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+        assert_eq!(d["grants"].as_array().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn team_grants_are_removable_but_cannot_be_created() {
+        let mut d = doc();
+        let key = key_of("team", "team", "org", None).unwrap();
+        let grant = Grant {
+            key: key.clone(),
+            role_key: "viewer".into(),
+            subject_name: None,
+            scope_name: None,
+        };
+        assert!(put(&mut d, Uuid::nil(), &grant).is_err());
+        assert!(!remove(&mut d, &key).unwrap());
     }
 }

@@ -2,13 +2,12 @@
  * Admin › Access — the prototype's `AccessView` (`App.tsx`) carried over
  * (ADR-0069): choose the organization's access model and, when it is
  * role-based, edit the roles (each a set of privileges) and the grants
- * (member or team × role × the whole organization or one workspace). Stored as
+ * (member × role × the whole organization or one project). Stored as
  * the organization's AM tenant metadata; the privilege catalogue and the seeded
  * ladder come from the side that evaluates them (`studio-organizations`).
  *
  * A self-managed organization is governed from inside: a notice, not the editor.
- * Switching to role-based seeds an Owner grant for the caller, so nobody locks
- * themselves out.
+ * The membership service maintains the owner grant.
  */
 
 import { useEffect, useState } from 'react';
@@ -65,18 +64,10 @@ function Access({ org }: { org: OrganizationRef }) {
   const [dirty, setDirty] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Grant subjects: the organization's members and teams (RG groups); scopes: its workspaces.
+  // Only individual grants are evaluated by the authorization service.
   const [members, setMembers] = useState<Member[]>([]);
-  const [teams, setTeams] = useState<Member[]>([]);
   const [projects, setProjects] = useState<{ id: string; name: string }[]>([]);
-  // The caller: what a self grant names (ADR-0040 §5), the sign-in subject until the person is known.
-  const [me, setMe] = useState<{ personId: string | null; subject: string; name: string }>({
-    personId: null,
-    subject: '',
-    name: '',
-  });
   // Add-grant form.
-  const [gSubjectType, setGSubjectType] = useState<'member' | 'team'>('member');
   const [gSubject, setGSubject] = useState('');
   const [gRole, setGRole] = useState('');
   const [gScope, setGScope] = useState('');
@@ -117,36 +108,24 @@ function Access({ org }: { org: OrganizationRef }) {
           () => live && setMembers([])
         )
     );
-    api.groups.fetch({ staleTime: 0 }).then(
-      (p) => live && setTeams((p.items ?? []).map((g) => ({ id: g.id, name: g.name ?? g.id.slice(0, 8) }))),
-      () => live && setTeams([])
-    );
-    accounts
-      .getWorkspaces({ organizationId: org.id })
-      .fetch({ staleTime: 0 })
-      .then(
-        (p) => live && setProjects((p?.items ?? []).map((w) => ({ id: w.id, name: w.name }))),
-        () => live && setProjects([])
-      );
-    Promise.all([
-      accounts.getMe.fetch().catch(() => null),
-      api.myProfile.fetch({ staleTime: 0 }).catch(() => null),
-    ]).then(([who, profile]) => {
+    void (async () => {
+      const workspaces = await accounts.getWorkspaces({ organizationId: org.id })
+        .fetch({ staleTime: 0 }).then((page) => page?.items ?? [], () => []);
       if (!live) return;
-      setMe({
-        personId: profile?.id ?? null,
-        subject: who?.subject_id ?? '',
-        name: profile?.display_name?.trim() || profile?.email?.trim() || '',
-      });
-    });
+      const pages = await Promise.all([org.id, ...workspaces.map((workspace) => workspace.id)].map((parentId) =>
+        accounts.getProjects({ parentId }).fetch({ staleTime: 0 }).then((page) => page?.items ?? [], () => [])
+      ));
+      if (live) setProjects(byName([...new Map(pages.flat().map((project) => [project.id, project])).values()]));
+    })();
     return () => {
       live = false;
     };
   }, [api, accounts, org.id]);
 
-  const myKeys = [me.personId, me.subject].filter((k): k is string => !!k);
   const selfManaged = loaded?.tenant?.self_managed ?? false;
   const privileges = loaded?.privileges ?? [];
+  const hasOwner = cfg?.grants.some((grant) => grant.subjectType === 'member'
+    && grant.scopeType === 'org' && grant.roleKey === 'owner' && grant.subjectId.trim()) ?? false;
 
   function mutate(next: AccessConfig) {
     setCfg(next);
@@ -154,52 +133,32 @@ function Access({ org }: { org: OrganizationRef }) {
     setSaved(false);
   }
 
-  const subjectPool = gSubjectType === 'member' ? members : teams;
-
   function addGrant() {
-    if (!cfg || !gSubject || !gRole) return;
-    const subj = subjectPool.find((s) => s.id === gSubject);
+    if (!cfg || !gSubject || !gRole || gRole === 'owner') return;
+    const subj = members.find((s) => s.id === gSubject);
     const scopeProj = projects.find((p) => p.id === gScope);
+    if (!subj || (gScope && !scopeProj)) return;
+    const sameAssignment = (grant: GrantDef) => grant.subjectType === 'member' && grant.subjectId === gSubject
+      && (gScope ? grant.scopeType === 'project' && grant.scopeId === gScope : grant.scopeType === 'org');
+    if (cfg.grants.some((grant) => sameAssignment(grant) && grant.roleKey === 'owner')) return;
+    const existing = cfg.grants.find(sameAssignment);
     const grant: GrantDef = {
-      id: `g_${Date.now().toString(36)}_${cfg.grants.length}`,
-      subjectType: gSubjectType,
+      id: existing?.id ?? crypto.randomUUID(),
+      subjectType: 'member',
       subjectId: gSubject,
-      subjectName: subj?.name ?? gSubject.slice(0, 8),
+      subjectName: subj.name,
       roleKey: gRole,
       scopeType: gScope ? 'project' : 'org',
-      scopeId: gScope,
-      scopeName: gScope ? (scopeProj?.name ?? gScope.slice(0, 8)) : org.name,
+      scopeId: scopeProj?.id ?? org.id,
+      scopeName: scopeProj?.name ?? org.name,
     };
-    mutate({ ...cfg, grants: [...cfg.grants, grant] });
+    mutate({ ...cfg, grants: [...cfg.grants.filter((g) => !sameAssignment(g)), grant] });
     setGSubject('');
   }
 
-  const selfGranted = (c: AccessConfig): boolean =>
-    c.grants.some((g) => g.subjectType === 'member' && myKeys.includes(g.subjectId));
-
-  /** An org-wide Owner grant for the caller, so enabling roles cannot lock them out. Idempotent. */
-  function withSelfOwner(c: AccessConfig): AccessConfig {
-    if (selfGranted(c)) return c;
-    const ownerKey = c.roles.some((r) => r.key === 'owner') ? 'owner' : (c.roles[0]?.key ?? 'owner');
-    const grant: GrantDef = {
-      // One self grant per person (`selfGranted` keeps it idempotent), so the person names it.
-      id: `g_self_${me.personId ?? me.subject}`,
-      subjectType: 'member',
-      subjectId: me.personId ?? me.subject,
-      subjectName: t('access_you', { name: me.name || me.subject.slice(0, 8) }),
-      roleKey: ownerKey,
-      scopeType: 'org',
-      scopeId: '',
-      scopeName: org.name,
-    };
-    return { ...c, grants: [...c.grants, grant] };
-  }
-
   function setModel(model: AccessModel) {
-    if (!cfg) return;
-    // Role-based without a grant for yourself would hide everything from you
-    // once enforcement is on — seed a self Owner grant up front.
-    mutate(model === 'roles' ? withSelfOwner({ ...cfg, model }) : { ...cfg, model });
+    if (!cfg || (model === 'roles' && !hasOwner)) return;
+    mutate({ ...cfg, model });
   }
 
   function togglePrivilege(roleKey: string, privId: string) {
@@ -216,7 +175,7 @@ function Access({ org }: { org: OrganizationRef }) {
 
   function addRole() {
     if (!cfg) return;
-    const key = `role_${cfg.roles.length + 1}_${privileges.length}`.replace(/[^a-z0-9_]/gi, '');
+    const key = `role_${crypto.randomUUID().replace(/-/g, '_')}`;
     mutate({ ...cfg, roles: [...cfg.roles, { key, name: t('access_new_role'), privileges: ['people.view'] }] });
   }
 
@@ -268,6 +227,7 @@ function Access({ org }: { org: OrganizationRef }) {
                       type="radio"
                       name="access-model"
                       checked={cfg.model === m.id}
+                      disabled={m.id === 'roles' && !hasOwner}
                       onChange={() => setModel(m.id)}
                       data-access-model={m.id}
                     />
@@ -278,20 +238,13 @@ function Access({ org }: { org: OrganizationRef }) {
                   </label>
                 ))}
               </div>
+              {!hasOwner && <p className={styles.notice}>{t('access_owner_required')}</p>}
             </CardContent>
           </Card>
 
           {cfg.model === 'roles' ? (
             <>
               <p className={styles.notice}>{t('access_rolling_out')}</p>
-              {!selfGranted(cfg) && (
-                <p className={`${styles.notice} ${styles.danger}`} data-access-no-self-grant>
-                  {t('access_no_grant')}{' '}
-                  <Button size="sm" variant="outline" onClick={() => mutate(withSelfOwner(cfg))}>
-                    {t('access_grant_myself')}
-                  </Button>
-                </p>
-              )}
               {cfg.roles.map((role) => (
                 <Card key={role.key} data-access-role={role.key}>
                   <CardContent className={styles.cardBody}>
@@ -300,6 +253,7 @@ function Access({ org }: { org: OrganizationRef }) {
                         className={styles.search}
                         aria-label={t('access_role_name')}
                         value={role.name}
+                        readOnly={role.key === 'owner'}
                         onChange={(e) =>
                           mutate({
                             ...cfg,
@@ -307,7 +261,7 @@ function Access({ org }: { org: OrganizationRef }) {
                           })
                         }
                       />
-                      {role.system ? (
+                      {role.system || role.key === 'owner' ? (
                         <Badge variant="secondary" title={t('access_system_hint')}>
                           {t('access_system')}
                         </Badge>
@@ -315,6 +269,7 @@ function Access({ org }: { org: OrganizationRef }) {
                         <Button
                           size="sm"
                           variant="ghost"
+                          disabled={cfg.grants.some((grant) => grant.roleKey === role.key)}
                           onClick={() => mutate({ ...cfg, roles: cfg.roles.filter((r) => r.key !== role.key) })}
                         >
                           {t('delete')}
@@ -333,7 +288,7 @@ function Access({ org }: { org: OrganizationRef }) {
                               <Checkbox
                                 // Owner holds every privilege, never editable.
                                 disabled={role.key === 'owner'}
-                                checked={role.privileges.includes(p.id)}
+                                checked={role.key === 'owner' || role.privileges.includes(p.id)}
                                 onCheckedChange={() => togglePrivilege(role.key, p.id)}
                               />
                               {p.label}
@@ -355,6 +310,9 @@ function Access({ org }: { org: OrganizationRef }) {
                 <CardContent className={styles.cardBody}>
                   <h3 className={styles.subtitle}>{t('access_grants')}</h3>
                   <p className={styles.muted}>{t('access_grants_about')}</p>
+                  {cfg.grants.some((grant) => grant.subjectType === 'team') && (
+                    <p className={styles.notice}>{t('access_team_grants_inactive')}</p>
+                  )}
                   <GrantsGrid
                     t={t}
                     grants={cfg.grants}
@@ -363,26 +321,11 @@ function Access({ org }: { org: OrganizationRef }) {
                   />
 
                   <div className={styles.inline}>
-                    <NativeSelect
-                      aria-label={t('access_col_subject')}
-                      value={gSubjectType}
-                      onChange={(e) => {
-                        setGSubjectType(e.target.value as 'member' | 'team');
-                        setGSubject('');
-                      }}
-                    >
-                      <NativeSelectOption value="member">{t('access_subject_member')}</NativeSelectOption>
-                      <NativeSelectOption value="team">{t('access_subject_team')}</NativeSelectOption>
-                    </NativeSelect>
                     <NativeSelect aria-label={t('access_pick_subject')} value={gSubject} onChange={(e) => setGSubject(e.target.value)}>
                       <NativeSelectOption value="">
-                        {subjectPool.length
-                          ? t(`access_select_${gSubjectType}`)
-                          : gSubjectType === 'team'
-                            ? t('access_no_teams')
-                            : t('access_no_members')}
+                        {members.length ? t('access_select_member') : t('access_no_members')}
                       </NativeSelectOption>
-                      {subjectPool.map((s) => (
+                      {members.map((s) => (
                         <NativeSelectOption key={s.id} value={s.id}>
                           {s.name}
                         </NativeSelectOption>
@@ -390,7 +333,7 @@ function Access({ org }: { org: OrganizationRef }) {
                     </NativeSelect>
                     <NativeSelect aria-label={t('access_col_role')} value={gRole} onChange={(e) => setGRole(e.target.value)}>
                       <NativeSelectOption value="">{t('access_select_role')}</NativeSelectOption>
-                      {cfg.roles.map((r) => (
+                      {cfg.roles.filter((r) => r.key !== 'owner').map((r) => (
                         <NativeSelectOption key={r.key} value={r.key}>
                           {r.name}
                         </NativeSelectOption>

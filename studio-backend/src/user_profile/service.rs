@@ -742,6 +742,9 @@ impl IdentityService {
         org_id: Uuid,
         privilege: &str,
     ) -> bool {
+        if !self.caller_is_active_member(ctx, org_id).await {
+            return false;
+        }
         let cfg = crate::access_config::read(self.am.as_ref(), ctx, org_id).await;
         let keys = self.caller_grant_keys(ctx).await;
         cfg.grants_ownership_to(&keys)
@@ -755,9 +758,24 @@ impl IdentityService {
     /// confers it, whatever the access model (ADR-0019 §2).
     pub async fn may_dispose(&self, ctx: &SecurityContext, org_id: Uuid) -> bool {
         let subject = ctx.subject_id().to_string();
+        if self.is_platform_admin(&subject).await.unwrap_or(false) {
+            return true;
+        }
+        if !self.caller_is_active_member(ctx, org_id).await {
+            return false;
+        }
         let cfg = crate::access_config::read(self.am.as_ref(), ctx, org_id).await;
         cfg.grants_ownership_to(&self.caller_grant_keys(ctx).await)
-            || self.is_platform_admin(&subject).await.unwrap_or(false)
+    }
+
+    async fn caller_is_active_member(&self, ctx: &SecurityContext, org_id: Uuid) -> bool {
+        self.memberships_of_subject(&ctx.subject_id().to_string())
+            .await
+            .is_ok_and(|memberships| {
+                memberships
+                    .iter()
+                    .any(|membership| membership.org_id == org_id && membership.status == "active")
+            })
     }
 
     /// The caller's grant keys (`grant_keys_of`), or the bare subject when the

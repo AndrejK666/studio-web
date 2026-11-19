@@ -366,6 +366,31 @@ async fn creating_an_organization_grants_the_person_not_the_login() {
 }
 
 #[tokio::test]
+async fn an_administrative_grant_requires_active_membership() {
+    let (service, store, am) = service().await;
+    let (first, second) = (Uuid::new_v4(), Uuid::new_v4());
+    let person = person_with_two_logins(&service, &store, first, second).await;
+    let org = Uuid::new_v4();
+    am.put(org, json!({
+        "model": "roles", "roles": crate::access_config::default_roles(), "grants": [
+            { "subjectType": "member", "subjectId": person, "roleKey": "admin", "scopeType": "org" },
+        ],
+    }));
+    let ctx = caller(second);
+    assert!(!service.may_administer(&ctx, org, "people.manage").await);
+    service
+        .record_membership(&person, &org.to_string(), "member", "test")
+        .await
+        .unwrap();
+    assert!(service.may_administer(&ctx, org, "people.manage").await);
+
+    let mut membership = store.memberships_of(&person).await.unwrap().pop().unwrap();
+    membership.status = "suspended".into();
+    store.upsert_membership(&membership).await.unwrap();
+    assert!(!service.may_administer(&ctx, org, "people.manage").await);
+}
+
+#[tokio::test]
 async fn a_demotion_takes_the_grant_from_the_person_and_from_every_login() {
     let (service, store, am) = service().await;
     let (first, second) = (Uuid::new_v4(), Uuid::new_v4());

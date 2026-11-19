@@ -154,9 +154,11 @@ impl AccessConfig {
 
     /// Does anybody own this organization?
     fn has_an_owner(&self) -> bool {
-        self.grants
-            .iter()
-            .any(|g| g.role_key == crate::access_config::ROLE_OWNER && g.scope_type == "org")
+        self.grants.iter().any(|g| {
+            g.subject_type == "member"
+                && g.role_key == crate::access_config::ROLE_OWNER
+                && g.scope_type == "org"
+        })
     }
 
     /// Does `subject` hold `privilege` across the whole organization?
@@ -190,8 +192,8 @@ struct GrantDef {
     role_key: String,
     #[serde(rename = "scopeType")]
     scope_type: String,
-    #[serde(rename = "scopeId")]
-    scope_id: String,
+    #[serde(rename = "scopeId", default)]
+    scope_id: Option<String>,
 }
 
 /* ── Service ── */
@@ -458,11 +460,21 @@ impl Service {
         let allowed = match self.read_access_config(&sec, organization).await {
             ConfigRead::Absent => true,
             ConfigRead::Unreadable => false,
+            ConfigRead::Found(cfg) if !cfg.has_an_owner() => true,
             ConfigRead::Found(cfg) => {
-                cfg.owns(&subjects)
-                    || !cfg.has_an_owner()
+                let eligible = cfg.owns(&subjects)
                     || (cfg.model == "roles"
-                        && cfg.grants_org_privilege(&subjects, "access.manage"))
+                        && cfg.grants_org_privilege(&subjects, "access.manage"));
+                if !eligible {
+                    false
+                } else if let Some(reader) = self.organization_reader() {
+                    reader
+                        .organizations_of(&subject)
+                        .await
+                        .is_ok_and(|orgs| orgs.contains(&organization))
+                } else {
+                    false
+                }
             }
         };
 
@@ -568,9 +580,10 @@ enum ConfigRead {
 /// What the role path decides, before the answer is shaped into constraints.
 #[derive(Debug, PartialEq, Eq)]
 enum RoleDecision {
-    /// Answer with the tenant clamp: this organization is not on the roles
-    /// model, or the caller holds the privilege across the whole organization.
+    /// Keep the legacy membership-based reach outside the roles model.
     Clamp,
+    /// An organization-wide grant covers only the subtree under evaluation.
+    Tenant,
     /// Refuse.
     Deny,
     /// Narrow the clamp to these project scopes.
@@ -621,20 +634,25 @@ fn decide(
         // before the ladder was seeded — strips its owner of every privilege,
         // `access.manage` included, leaving nobody able to repair it. The
         // ladder is for editing; it never decides whether an owner is an owner.
-        let role_has = g.role_key == crate::access_config::ROLE_OWNER
-            || cfg
-                .roles
+        let role_has = if g.role_key == crate::access_config::ROLE_OWNER {
+            g.subject_type == "member" && g.scope_type == "org"
+        } else {
+            cfg.roles
                 .iter()
                 .find(|r| r.key == g.role_key)
-                .is_some_and(|r| crate::access_config::carries(&r.privileges, privilege));
+                .is_some_and(|r| crate::access_config::carries(&r.privileges, privilege))
+        };
         if !role_has {
             continue;
         }
         match g.scope_type.as_str() {
-            // Carries the privilege across the whole tenant: exactly the clamp.
-            "org" => return RoleDecision::Clamp,
+            "org" => return RoleDecision::Tenant,
             "project" => {
-                if let Ok(pid) = Uuid::parse_str(&g.scope_id) {
+                if let Some(pid) = g
+                    .scope_id
+                    .as_deref()
+                    .and_then(|id| Uuid::parse_str(id.trim()).ok())
+                {
                     project_scopes.push(pid);
                 }
             }
@@ -873,9 +891,14 @@ impl Plan {
             return Self::Mirror(tid);
         }
 
-        // First-party / unrestricted token (`token_scopes` contains "*"): a
-        // platform / service caller is never role-gated — anti-lockout backstop.
-        if request.context.token_scopes.iter().any(|s| s == "*") {
+        let unrestricted = request.context.token_scopes.iter().any(|s| s == "*");
+        let service_subject = matches!(
+            request.subject.subject_type.as_deref(),
+            Some("service" | SERVICE_SUBJECT_TYPE)
+        );
+        // The portal can also have "*" scopes. Protected metadata needs an
+        // explicitly typed service principal to take the service path.
+        if unrestricted && service_subject {
             return Self::Clamp(tid);
         }
 
@@ -979,6 +1002,7 @@ impl AuthZResolverPluginClient for Service {
                 let tids = self.reachable_tenants(&request, tid).await;
                 return Ok(tenant_clamp(&request, &tids));
             }
+            RoleDecision::Tenant => return Ok(tenant_clamp(&request, &[tid])),
             RoleDecision::Deny => return Ok(deny()),
             RoleDecision::Narrow(scopes) => scopes,
         };
@@ -1110,23 +1134,11 @@ fn deny() -> EvaluationResponse {
     }
 }
 
-/// Map a platform request `(resource_type, action)` to a Studio privilege id
-/// (the portal's `access.ts` catalogue). TODO(step 4): complete the table and
-/// key off the real Studio GTS resource-type ids.
 /// The privilege a resource type and action need, when this deployment
 /// role-gates them.
 ///
-/// **Maps only the domain object resource (ADR-0035).** Everything else is
-/// answered by the tenant clamp, for the reason that held before it: `studio-project` (the portal's "Work") has been retired —
-/// projects are AM tenants now, and their access is governed by tenant
-/// membership rather than by a Studio privilege grant. Nothing is role-mapped,
-/// so every request is answered by the tenant clamp and the grant evaluation in
-/// [`AuthZResolverPluginClient::evaluate`] is unreachable.
-///
-/// That is a stage, not a leftover: the roles, grants and scopes it walks are
-/// the model the access config already carries. Mapping the first resource type
-/// here is what turns it on — and, through [`Plan`], what makes the config
-/// worth reading.
+/// Only domain object reads and writes are mapped here (ADR-0035).
+/// Administrative privileges are checked by the gears that own each operation.
 fn privilege_for(resource_type: &str, action: &str) -> Option<&'static str> {
     match (resource_type, action) {
         // Domain objects (ADR-0035): which rows a person may read or write is
@@ -1384,12 +1396,27 @@ mod tests {
         assert_eq!(Plan::for_request(&req), Plan::Deny);
     }
 
-    /// The anti-lockout backstop: a first-party caller is never role-gated, so
-    /// a broken access config can never lock the platform out of itself.
     #[test]
-    fn an_unrestricted_token_is_clamped_without_a_config_read() {
-        let mut req = request(STUDIO_RESOURCES[0]);
+    fn a_wildcard_scope_preserves_service_access_and_still_checks_user_roles() {
+        let mut req = request(crate::domain_model::DOMAIN_OBJECT_RESOURCE);
+        req.action.name = "read".to_owned();
         req.context.token_scopes = vec!["*".to_string()];
+        assert_eq!(
+            Plan::for_request(&req),
+            Plan::Roles {
+                tid: TENANT,
+                privilege: "domain.view"
+            }
+        );
+        req.subject.subject_type = None;
+        assert_eq!(
+            Plan::for_request(&req),
+            Plan::Roles {
+                tid: TENANT,
+                privilege: "domain.view"
+            }
+        );
+        req.subject.subject_type = Some(SERVICE_SUBJECT_TYPE.to_owned());
         assert_eq!(Plan::for_request(&req), Plan::Clamp(TENANT));
     }
 
@@ -1447,14 +1474,18 @@ mod tests {
     #[test]
     fn a_write_to_the_access_config_is_not_answered_by_the_clamp() {
         for action in ["write", "delete"] {
-            assert_eq!(
-                Plan::for_request(&metadata_request(action, ACCESS_METADATA_TYPE, Some(ORG))),
-                Plan::AccessConfigWrite {
-                    tid: TENANT,
-                    organization: ORG
-                },
-                "{action} on the access config fell through to the clamp"
-            );
+            let mut request = metadata_request(action, ACCESS_METADATA_TYPE, Some(ORG));
+            for scopes in [vec![], vec!["*".to_owned()]] {
+                request.context.token_scopes = scopes;
+                assert_eq!(
+                    Plan::for_request(&request),
+                    Plan::AccessConfigWrite {
+                        tid: TENANT,
+                        organization: ORG
+                    },
+                    "{action} on the access config fell through to the clamp"
+                );
+            }
         }
     }
 
@@ -1490,6 +1521,8 @@ mod tests {
             );
             let mut service = metadata_request("write", type_id, Some(ORG));
             service.context.token_scopes = vec!["*".to_owned()];
+            assert_eq!(Plan::for_request(&service), Plan::Deny);
+            service.subject.subject_type = Some(SERVICE_SUBJECT_TYPE.to_owned());
             assert_eq!(Plan::for_request(&service), Plan::Clamp(TENANT));
         }
         // Bindings are a project's own setting, which its members change.
@@ -1649,10 +1682,43 @@ mod tests {
         for privilege in crate::access_config::PRIVILEGES {
             assert_eq!(
                 decide(&one("ada"), &cfg, &[], privilege),
-                RoleDecision::Clamp,
+                RoleDecision::Tenant,
                 "an owner was denied {privilege} because the document does not define the role"
             );
         }
+    }
+
+    #[test]
+    fn a_legacy_org_grant_can_omit_the_scope_id() {
+        let cfg = found(
+            "roles",
+            serde_json::json!([]),
+            serde_json::json!([{
+                "subjectType": "member", "subjectId": "ada", "roleKey": "owner", "scopeType": "org"
+            }]),
+        );
+        assert_eq!(
+            decide(&one("ada"), &cfg, &[], "access.manage"),
+            RoleDecision::Tenant
+        );
+    }
+
+    #[test]
+    fn ownership_requires_an_organization_wide_member_grant() {
+        let cfg = found(
+            "roles",
+            serde_json::json!([{"key": "owner", "privileges": ["*"]}]),
+            serde_json::json!([
+                {"subjectType": "team", "subjectId": "team", "roleKey": "owner", "scopeType": "org"},
+                {"subjectType": "member", "subjectId": "ada", "roleKey": "owner", "scopeType": "project",
+                 "scopeId": "11111111-1111-1111-1111-111111111111"}
+            ]),
+        );
+        assert_eq!(
+            decide(&one("ada"), &cfg, &one("team"), "people.manage"),
+            RoleDecision::Deny
+        );
+        assert!(matches!(&cfg, ConfigRead::Found(config) if !config.has_an_owner()));
     }
 
     /// A role that IS defined is still resolved through the document, so the
@@ -1666,7 +1732,7 @@ mod tests {
         );
         assert_eq!(
             decide(&one("ada"), &cfg, &[], "people.manage"),
-            RoleDecision::Clamp
+            RoleDecision::Tenant
         );
         assert_eq!(
             decide(&one("ada"), &cfg, &[], "access.manage"),

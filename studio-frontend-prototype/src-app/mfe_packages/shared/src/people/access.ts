@@ -64,9 +64,9 @@ export function grantsForProject(cfg: AccessConfig | null, projectId: string): G
   );
 }
 
-/** The role a new team member gets when none is picked: `editor`, else the first. */
+/** The role a new team member gets when none is picked: `editor`, else an assignable role. */
 export function defaultTeamRole(cfg: AccessConfig): RoleDef | undefined {
-  return cfg.roles.find((r) => r.key === 'editor') ?? cfg.roles[0];
+  return cfg.roles.find((r) => r.key === 'editor') ?? cfg.roles.find((r) => r.key !== 'owner');
 }
 
 /** A project-scoped grant for one member. `now` and `n` make its id. */

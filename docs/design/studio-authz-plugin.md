@@ -88,9 +88,12 @@ are a member", which is how a member would appoint themselves owner.
 - [x] `p2` - **ID**: `cpt-studio-principle-authz-plugin-plan-first`
 
 `Plan::for_request` classifies a request with no I/O. No tenant, or the nil
-tenant: deny. An unrestricted token (`token_scopes` contains `*`): the clamp,
-never role-gated, as an anti-lockout backstop. A write or delete of the access
-config: the ownership gate. A request on an account-management tenant, tenant
+tenant: deny. An explicitly typed service principal with `*` uses the tenant
+clamp. User tokens with `*` still go through privilege and protected metadata
+checks. A write or delete of the access config uses the ownership gate, which
+also checks active membership when the organization already has an owner.
+An organization-wide grant applies to the tenant subtree under evaluation.
+A request on an account-management tenant, tenant
 metadata or tenant type: the clamp — authorizing a read of the access config
 must not read the access config, which would recurse. A resource type
 `privilege_for` maps: the role path. Anything else: the clamp. Only the role

@@ -391,7 +391,7 @@ function AddDialog({
           </NativeSelect>
           <NativeSelect aria-label={t('role')} value={role} onChange={(e) => setRole(e.target.value)}>
             <NativeSelectOption value="">{t('role_default', { role: fallback?.name ?? t('role_none') })}</NativeSelectOption>
-            {cfg.roles.map((r) => (
+            {cfg.roles.filter((r) => r.key !== 'owner').map((r) => (
               <NativeSelectOption key={r.key} value={r.key}>
                 {r.name}
               </NativeSelectOption>

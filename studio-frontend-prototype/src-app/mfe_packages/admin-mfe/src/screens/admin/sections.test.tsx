@@ -192,21 +192,42 @@ describe('People', () => {
 });
 
 describe('Access', () => {
-  it('seeds the caller an Owner grant on switching to roles, and saves the document on the organization', async () => {
+  it('keeps the owner from membership on switching to roles', async () => {
+    const owner = {
+      id: 'g-owner', subjectType: 'member', subjectId: 'person-owner', subjectName: 'Owner',
+      roleKey: 'owner', scopeType: 'org', scopeId: 'o1', scopeName: 'Acme',
+    };
+    serve({ getTenantMetadata: read('getTenantMetadata', { value: { model: 'tenant', grants: [owner] } }) });
     render(<AccessSection />);
     const roles = await screen.findByText('access_model_roles');
-    // The caller is known once the profile answered.
-    await waitFor(() => expect(calls.some((c) => c.what === 'myProfile')).toBe(true));
     fireEvent.click(roles.closest('label')?.querySelector('input') as HTMLElement);
-    const grant = await shown('[data-access-grants] [data-access-grant]');
-    expect(grant.textContent).toContain('access_you');
-    expect(document.querySelector('[data-access-no-self-grant]')).toBeNull();
+    await shown('[data-access-grants] [data-access-grant]');
+    expect(screen.queryByRole('button', { name: 'remove' })).toBeNull();
     fireEvent.click(document.querySelector('[data-access-save]') as HTMLElement);
     await waitFor(() => expect(calls.find((c) => c.what === 'putTenantMetadata')).toBeTruthy());
     const saved = calls.find((c) => c.what === 'putTenantMetadata');
     expect(saved?.arg).toEqual(['o1', 'gts.cf.core.am.tenant_metadata.v1~cf.studio.access.config.v1~']);
     expect((saved?.body as { model: string; grants: { subjectId: string }[] }).model).toBe('roles');
-    expect((saved?.body as { grants: { subjectId: string }[] }).grants[0].subjectId).toBe('person-me');
+    expect((saved?.body as { grants: unknown[] }).grants).toEqual([owner]);
+  });
+
+  it('offers projects rather than their parent workspaces for grant scope', async () => {
+    serve({ getTenantMetadata: read('getTenantMetadata', { value: { model: 'roles' } }) });
+    render(<AccessSection />);
+    const project = await screen.findByRole('option', { name: 'Site' });
+    expect(project.getAttribute('value')).toBe('p1');
+    expect(screen.queryByRole('option', { name: 'Web' })).toBeNull();
+    expect(screen.queryByRole('option', { name: 'Owner' })).toBeNull();
+    expect(calls.filter((call) => call.what === 'getProjects').map((call) => call.arg))
+      .toEqual([{ parentId: 'o1' }, { parentId: 'w1' }]);
+  });
+
+  it('requires the organization to already have an owner before enabling roles', async () => {
+    render(<AccessSection />);
+    await screen.findByText('access_owner_required');
+    const roles = document.querySelector<HTMLInputElement>('[data-access-model="roles"]');
+    expect(roles?.disabled).toBe(true);
+    expect(calls.some((call) => call.what === 'putTenantMetadata')).toBe(false);
   });
 
   it('shows a notice, not the editor, for a self-managed organization', async () => {
