@@ -365,7 +365,8 @@ of `repository`, `sources`, `scaffold` — which needs `repository` — and
 label, description?, route, done_when?}`, `id` lowercase with `-`, `route` a
 shell screen's route, `done_when` a step of the project path that
 `project-status` answers — `repos`, `types`, `model`, `findings`, `kind`,
-`product`, `build`). The built-in project types' overlays are carried by every
+`product`, `build` — or `field:<name>`, a field of the kit's own project type,
+done once the project's object in the model has it set). The built-in project types' overlays are carried by every
 organization's model, so installing one in a single project is not
 `MODEL_KIT_NOT_FOR_PROJECT`.
 
@@ -1036,6 +1037,25 @@ loses it. Catalogue (`components`) writes no connection any more.
      `screenShows` and `kitAvailable` (back to `has`).
   4. The retired slugs in tests (`MAY_NAME_A_RETIRED_SLUG`), fixtures and
      docs (this section's table becomes history in ADR-0071).
+
+### 3.16 The M&A due diligence kit
+
+- [ ] `p2` - **ID**: `cpt-studio-design-kits-mna-entry`
+
+The third built-in project type (studio-web#1024): slug `mna`, name "M&A due
+diligence", level `project`, opt-in (`OPT_IN_BUILTIN`). A deal is a project
+of its subtype of Project
+(`gts.cf.studio.domain.project.v1~cf.studio.kit.mna.project.v1~`: target,
+thesis, `deal_phase`, IC date, recommendation, conditions, sign-off), with
+findings, risks and open questions as the kit's own types
+(`gts.cf.studio.kit.mna.*`). It creates a project in `modernize` mode taking
+`sources` only; its next steps connect the target's repositories, fill in the
+thesis (`done_when: field:thesis`) and review the evidence. Its function is
+compiled into this gear (`kit_registry/mna.rs`, routes under
+`/studio-kits/v1/mna/`, MCP `mna_*`), its screen is `mna-mfe`'s Project ›
+Deal; the deal lead who signs off is the project's owner. The design, the
+evidence summary and the follow-ups: [`mna-kit.md`](mna-kit.md)
+(`cpt-studio-design-kits-mna`).
 
 ## 4. Additional context
 

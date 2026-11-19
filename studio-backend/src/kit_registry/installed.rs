@@ -188,6 +188,9 @@ pub enum Refusal {
     KitNotInstalled(String),
     /// 400 `failed_precondition`: a lifecycle does not declare the move.
     NoSuchTransition(String),
+    /// 400 `failed_precondition`: what a kit function needs first is not
+    /// there: `(subject, description, kind)`.
+    Precondition(&'static str, String, &'static str),
     /// 400 `failed_precondition`: the kit requires kits that would not apply
     /// where it is installed (ADR-0071 §5): `kit`, and what is `missing`.
     RequiresKits {

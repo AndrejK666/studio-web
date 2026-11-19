@@ -264,7 +264,8 @@ and `spec_check_result` Specs'; `project_phase*` Planning's
 (`project-lifecycle`); the `product_*` tools and `gdl_file` Product's
 (`project-product`); `build_list` and every environments tool but
 `research_*` Builds, releases & environments' (`delivery`, which
-`constructor-research` requires); `research_*` Constructor Research's
+`constructor-research` requires); `research_*` Constructor Research's;
+the `mna_*` tools M&A due diligence's (`mna`, studio-web#1024)
 (ADR-0071 §6; until step 5 the last three were `product-releases` and
 `org-infrastructure`, now aliases of these for one release). The kit library, the Studio domain
 model, a project's creation, status and sources, connections, the Inbox and
@@ -294,6 +295,12 @@ The tool list itself does not change with the kits.
 | `project_phase` | a project's phase (Project lifecycle): the phase, its owner, since when, and the moves open |
 | `project_phase_set` | *changes:* moves a project to a phase along the declared lifecycle (`NO_SUCH_TRANSITION` otherwise) |
 | `project_phases` | an organization's projects with their phases |
+| `mna_deal` | a deal of the M&A due diligence kit (a project of the M&A type): target, thesis, phase, IC date, recommendation and conditions, sign-off, the deal lead, and the evidence summary, each fact with its source (`available: false` with the reason where it has none) |
+| `mna_deal_update` | *changes:* a deal's fields; `sign_off: true` signs the recommendation off, the deal lead only (`DEAL_LEAD_REQUIRED`) |
+| `mna_findings` | a deal's findings |
+| `mna_finding_upsert` | *changes:* records a finding, or replaces one by `finding_id` |
+| `mna_risks` | a deal's risk ledger |
+| `mna_risk_upsert` | *changes:* records a risk, or replaces one by `risk_id` |
 | `kits_inbox_sources` | the Inbox sources of the kits installed for an organization: each query over a kit's objects that says what waits on whom |
 
 **The inbox.** Everything that waits for you in one organization, as the

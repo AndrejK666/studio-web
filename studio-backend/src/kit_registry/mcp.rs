@@ -27,6 +27,13 @@ fn version() -> Value {
 }
 
 pub fn tools() -> Vec<Tool> {
+    let mut all = kit_tools();
+    // M&A due diligence's deal, findings and risks (studio-web#1024).
+    all.extend(super::mna_mcp::tools());
+    all
+}
+
+fn kit_tools() -> Vec<Tool> {
     vec![
         Tool {
             name: "kits_catalog",

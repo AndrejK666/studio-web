@@ -144,7 +144,10 @@ pub struct ProjectNextStepDto {
     /// The portal route of the screen where it is done (`/projects/sources`).
     pub route: String,
     /// The step of the project's path (`GET project-status` `path[].step`)
-    /// whose being done makes this one done; absent: done when dismissed.
+    /// whose being done makes this one done, or `field:<name>`, a field of the
+    /// type's own that is done once the project's object in the domain model
+    /// has it set (`type: project`, its `tenant_id` the project); absent:
+    /// done when dismissed.
     pub done_when: Option<String>,
 }
 
@@ -924,7 +927,7 @@ mod tests {
     fn a_project_type_answers_its_subtype_its_steps_and_what_comes_next() {
         let items: Vec<ProjectTypeKitDto> = project_type_kits().filter_map(type_dto).collect();
         let slugs: Vec<&str> = items.iter().map(|t| t.slug.as_str()).collect();
-        assert_eq!(slugs, ["gears-project", "constructor-research"]);
+        assert_eq!(slugs, ["gears-project", "constructor-research", "mna"]);
         let gears = &items[0];
         assert_eq!(
             gears.type_id,
@@ -946,6 +949,26 @@ mod tests {
         assert_eq!(research.next_steps[0].route, "/constructor-research");
         assert_eq!(research.next_steps[0].done_when, None);
         assert_eq!(research.next_steps[1].route, "/releases");
+        let mna = &items[2];
+        assert_eq!(
+            mna.type_id,
+            "gts.cf.studio.domain.project.v1~cf.studio.kit.mna.project.v1~"
+        );
+        assert_eq!(mna.mode, "modernize");
+        assert_eq!(mna.steps, ["sources"]);
+        let next: Vec<(&str, &str)> = mna
+            .next_steps
+            .iter()
+            .map(|n| (n.route.as_str(), n.done_when.as_deref().unwrap_or("")))
+            .collect();
+        assert_eq!(
+            next,
+            [
+                ("/projects/sources", "repos"),
+                ("/deal", "field:thesis"),
+                ("/deal", "")
+            ]
+        );
     }
 
     #[test]

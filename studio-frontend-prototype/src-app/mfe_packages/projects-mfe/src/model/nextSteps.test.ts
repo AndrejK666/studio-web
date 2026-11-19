@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import type { ProjectTypeKit } from '../api/ProjectStatusApiService';
 import type { ProjectPathStep } from './projectStatus';
-import { pendingNextSteps, typeOf, withDismissed } from './nextSteps';
+import {
+  fieldsAwaited,
+  isFieldSet,
+  isStepDone,
+  pendingNextSteps,
+  stepField,
+  typeOf,
+  withDismissed,
+} from './nextSteps';
 
 const gears: ProjectTypeKit = {
   slug: 'gears-project',
@@ -17,6 +25,17 @@ const research: ProjectTypeKit = {
   name: 'Constructor Research project',
   description: '',
   next_steps: [{ id: 'connect-research-project', label: 'Connect Research', description: '', route: '/constructor-research' }],
+};
+
+const mna: ProjectTypeKit = {
+  slug: 'mna',
+  name: 'M&A deal',
+  description: '',
+  next_steps: [
+    { id: 'connect-target-repositories', label: 'Connect', description: '', route: '/projects/sources', done_when: 'repos' },
+    { id: 'fill-in-thesis', label: 'Thesis', description: '', route: '/deal', done_when: 'field:thesis' },
+    { id: 'review-evidence', label: 'Review', description: '', route: '/deal' },
+  ],
 };
 
 const step = (id: string, state: ProjectPathStep['state']): ProjectPathStep => ({
@@ -53,6 +72,48 @@ describe("a project type's next steps", () => {
     expect(pendingNextSteps(research, undefined, [])).toHaveLength(1);
     expect(pendingNextSteps(research, ['connect-research-project'], [])).toEqual([]);
     expect(pendingNextSteps(null, [], [])).toEqual([]);
+  });
+
+  it('read a field step by its name, and nothing else as one', () => {
+    expect(stepField(mna.next_steps![1])).toBe('thesis');
+    expect(stepField(mna.next_steps![0])).toBeNull();
+    expect(stepField(mna.next_steps![2])).toBeNull();
+    expect(stepField({ id: 'x', label: '', description: '', route: '/', done_when: 'field:' })).toBeNull();
+  });
+
+  it('count a field as set when it holds something', () => {
+    expect(isFieldSet('Buy the platform')).toBe(true);
+    expect(isFieldSet('  ')).toBe(false);
+    expect(isFieldSet(null)).toBe(false);
+    expect(isFieldSet(undefined)).toBe(false);
+    expect(isFieldSet([])).toBe(false);
+    expect(isFieldSet(['a'])).toBe(true);
+    expect(isFieldSet(0)).toBe(true);
+    expect(isFieldSet(false)).toBe(true);
+  });
+
+  it('go once the project field they wait on is set, and stay while it is unread', () => {
+    const thesis = mna.next_steps![1];
+    expect(isStepDone(thesis, [], undefined)).toBe(false);
+    expect(isStepDone(thesis, [], {})).toBe(false);
+    expect(isStepDone(thesis, [], { thesis: '' })).toBe(false);
+    expect(isStepDone(thesis, [], { thesis: 'Why we buy' })).toBe(true);
+    // A path step named like the field does not make it done.
+    expect(isStepDone(thesis, [step('field:thesis', 'done')], undefined)).toBe(false);
+    expect(
+      pendingNextSteps(mna, [], [step('repos', 'done')], { thesis: 'Why we buy' }).map((s) => s.id)
+    ).toEqual(['review-evidence']);
+    expect(pendingNextSteps(mna, [], [step('repos', 'done')]).map((s) => s.id)).toEqual([
+      'fill-in-thesis',
+      'review-evidence',
+    ]);
+  });
+
+  it('ask for the fields only steps not dismissed wait on', () => {
+    expect(fieldsAwaited(mna, [])).toEqual(['thesis']);
+    expect(fieldsAwaited(mna, ['fill-in-thesis'])).toEqual([]);
+    expect(fieldsAwaited(gears, [])).toEqual([]);
+    expect(fieldsAwaited(null, [])).toEqual([]);
   });
 
   it('keeps a dismissal once', () => {

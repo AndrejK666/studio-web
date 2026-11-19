@@ -58,6 +58,11 @@ fn a_built_in_kit_with_a_model_renders_as_its_golden_file() {
 }
 
 #[test]
+fn a_project_type_renders_with_its_subtype_and_its_own_types() {
+    golden("mna.kit.gdl", &rendered("mna"));
+}
+
+#[test]
 fn an_official_kit_renders_from_its_cf_studio_kit_toml() {
     golden("sdlc.kit.gdl", &rendered("sdlc"));
 }

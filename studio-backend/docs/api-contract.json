@@ -317,6 +317,51 @@
     },
     {
       "method": "DELETE",
+      "path": "/studio-kits/v1/mna/findings/{finding_id}",
+      "operation_id": "studio_kits.delete_mna_finding",
+      "tag": "StudioKits",
+      "summary": "Delete a finding of a deal (M&A due diligence)",
+      "authenticated": true,
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/studio-kits/v1/mna/open-questions/{question_id}",
+      "operation_id": "studio_kits.delete_mna_open_question",
+      "tag": "StudioKits",
+      "summary": "Delete an open question of a deal (M&A due diligence)",
+      "authenticated": true,
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/studio-kits/v1/mna/risks/{risk_id}",
+      "operation_id": "studio_kits.delete_mna_risk",
+      "tag": "StudioKits",
+      "summary": "Delete a risk of a deal (M&A due diligence)",
+      "authenticated": true,
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "DELETE",
       "path": "/studio-kits/v1/organization-kits/{kit_slug}",
       "operation_id": "studio_kits.delete_organization_kit",
       "tag": "StudioKits",
@@ -3221,6 +3266,91 @@
     },
     {
       "method": "GET",
+      "path": "/studio-kits/v1/mna/deal",
+      "operation_id": "studio_kits.get_mna_deal",
+      "tag": "StudioKits",
+      "summary": "A deal: the M&A project's attributes and sign-off (M&A due diligence)",
+      "authenticated": true,
+      "responses": [
+        "MnaDealDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-kits/v1/mna/evidence",
+      "operation_id": "studio_kits.get_mna_evidence",
+      "tag": "StudioKits",
+      "summary": "What Studio already holds about a deal's target (M&A due diligence)",
+      "authenticated": true,
+      "responses": [
+        "MnaEvidenceDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-kits/v1/mna/findings",
+      "operation_id": "studio_kits.list_mna_findings",
+      "tag": "StudioKits",
+      "summary": "A deal's findings (M&A due diligence)",
+      "authenticated": true,
+      "responses": [
+        "MnaFindingListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-kits/v1/mna/open-questions",
+      "operation_id": "studio_kits.list_mna_open_questions",
+      "tag": "StudioKits",
+      "summary": "A deal's open questions (M&A due diligence)",
+      "authenticated": true,
+      "responses": [
+        "MnaQuestionListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-kits/v1/mna/risks",
+      "operation_id": "studio_kits.list_mna_risks",
+      "tag": "StudioKits",
+      "summary": "A deal's risk ledger (M&A due diligence)",
+      "authenticated": true,
+      "responses": [
+        "MnaRiskListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-kits/v1/organization-shelf",
       "operation_id": "studio_kits.list_organization_shelf",
       "tag": "StudioKits",
@@ -4824,6 +4954,25 @@
         "400",
         "401",
         "403",
+        "500"
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/studio-kits/v1/mna/deal",
+      "operation_id": "studio_kits.patch_mna_deal",
+      "tag": "StudioKits",
+      "summary": "Change a deal's attributes (M&A due diligence)",
+      "authenticated": true,
+      "request": "MnaDealPatchDto",
+      "responses": [
+        "MnaDealDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
         "500"
       ]
     },
@@ -6755,6 +6904,81 @@
     },
     {
       "method": "POST",
+      "path": "/studio-kits/v1/mna/deal/sign-off",
+      "operation_id": "studio_kits.confirm_mna_deal_sign_off",
+      "tag": "StudioKits",
+      "summary": "Sign a deal's recommendation off, as its deal lead (M&A due diligence)",
+      "authenticated": true,
+      "responses": [
+        "MnaDealDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-kits/v1/mna/findings",
+      "operation_id": "studio_kits.create_mna_finding",
+      "tag": "StudioKits",
+      "summary": "Record a finding of a deal (M&A due diligence)",
+      "authenticated": true,
+      "request": "MnaFindingBodyDto",
+      "responses": [
+        "MnaFindingDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-kits/v1/mna/open-questions",
+      "operation_id": "studio_kits.create_mna_open_question",
+      "tag": "StudioKits",
+      "summary": "Ask an open question in a deal (M&A due diligence)",
+      "authenticated": true,
+      "request": "MnaQuestionBodyDto",
+      "responses": [
+        "MnaQuestionDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-kits/v1/mna/risks",
+      "operation_id": "studio_kits.create_mna_risk",
+      "tag": "StudioKits",
+      "summary": "Record a risk of a deal (M&A due diligence)",
+      "authenticated": true,
+      "request": "MnaRiskBodyDto",
+      "responses": [
+        "MnaRiskDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-kits/v1/organization-shelf",
       "operation_id": "studio_kits.create_organization_shelf_kit",
       "tag": "StudioKits",
@@ -8326,6 +8550,63 @@
       "request": "InstallKitDto",
       "responses": [
         "InstalledKitDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-kits/v1/mna/findings/{finding_id}",
+      "operation_id": "studio_kits.update_mna_finding",
+      "tag": "StudioKits",
+      "summary": "Replace a finding of a deal (M&A due diligence)",
+      "authenticated": true,
+      "request": "MnaFindingBodyDto",
+      "responses": [
+        "MnaFindingDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-kits/v1/mna/open-questions/{question_id}",
+      "operation_id": "studio_kits.update_mna_open_question",
+      "tag": "StudioKits",
+      "summary": "Replace an open question of a deal (M&A due diligence)",
+      "authenticated": true,
+      "request": "MnaQuestionBodyDto",
+      "responses": [
+        "MnaQuestionDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-kits/v1/mna/risks/{risk_id}",
+      "operation_id": "studio_kits.update_mna_risk",
+      "tag": "StudioKits",
+      "summary": "Replace a risk of a deal (M&A due diligence)",
+      "authenticated": true,
+      "request": "MnaRiskBodyDto",
+      "responses": [
+        "MnaRiskDto"
       ],
       "errors": [
         "400",

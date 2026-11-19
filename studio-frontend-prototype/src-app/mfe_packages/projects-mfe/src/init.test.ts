@@ -50,6 +50,7 @@ vi.mock('@constructor-studio/mfe-shared', () => ({
   ConnectorsApiService: class ConnectorsApiService {},
   StudioTasksApiService: class StudioTasksApiService {},
   StudioEventsApiService: class StudioEventsApiService {},
+  DomainModelApiService: class DomainModelApiService {},
   authShared,
 }));
 
@@ -147,8 +148,9 @@ describe('projects-mfe init', () => {
     // stream those runs are announced on), studio-documents (the journey-stage
     // catalogue the create wizard reads, and the project's specs),
     // studio-spec-quality (whether those specs can be checked) and
-    // studio-organizations (the project status Overview draws).
-    expect(register).toHaveBeenCalledTimes(9);
+    // studio-organizations (the project status Overview draws) and
+    // studio-domain-model (a next step waiting on a project field).
+    expect(register).toHaveBeenCalledTimes(10);
     expect(initialize).toHaveBeenCalledTimes(1);
     expect(createFrontX).toHaveBeenCalledTimes(1);
     expect(effects).toHaveBeenCalledTimes(1);

@@ -619,7 +619,7 @@ fn a_kit_is_a_project_type_by_the_subtype_of_project_its_model_derives() {
     assert!(bare.creation_takes("prd") && bare.creation_takes("repository"));
     assert_eq!(bare.creation_mode(), "greenfield");
     // The built-in types are such kits, and nothing else built in is.
-    for slug in ["gears-project", "constructor-research"] {
+    for slug in ["gears-project", "constructor-research", "mna"] {
         let kit = project_type_kit(slug).expect(slug);
         assert!(kit.project_subtype().is_some());
         assert!(
@@ -628,7 +628,7 @@ fn a_kit_is_a_project_type_by_the_subtype_of_project_its_model_derives() {
         );
     }
     let types: Vec<String> = project_type_kits().map(|k| k.slug).collect();
-    assert_eq!(types, ["gears-project", "constructor-research"]);
+    assert_eq!(types, ["gears-project", "constructor-research", "mna"]);
 }
 
 #[test]
@@ -659,6 +659,19 @@ fn a_project_types_creation_is_checked() {
     assert!(refused(r#""steps": ["sources"]"#, r#""steps": ["deploy"]"#).contains("none of"));
     assert!(refused(r#""steps": ["sources"]"#, r#""steps": ["scaffold"]"#).contains("repository"));
     assert!(refused(r#""done_when": "repos""#, r#""done_when": "deployed""#).contains("done_when"));
+    // `field:<name>` names a field of the kit's own project type.
+    assert!(
+        refused(r#""done_when": "repos""#, r#""done_when": "field:thesis""#)
+            .contains("names no field")
+    );
+    let with_field = TYPED
+        .replace(
+            r#""description": "A deal worked as a project"}]}"#,
+            r#""description": "A deal worked as a project",
+                       "fields": [{"name": "thesis", "type": "string?"}]}]}"#,
+        )
+        .replace(r#""done_when": "repos""#, r#""done_when": "field:thesis""#);
+    assert!(read_kit_json(&with_field).is_ok());
     assert!(refused(r#""route": "/projects/sources""#, r#""route": "projects""#).contains("route"));
     assert!(refused(r#""id": "connect-data-room""#, r#""id": "Connect""#).contains("id"));
     assert!(

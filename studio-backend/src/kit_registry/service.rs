@@ -74,7 +74,17 @@ pub const SHELF_BUILTIN: &str = "builtin";
 /// only where someone asks for them"). An organization installs one for
 /// itself, or a platform administrator makes it a base kit for every
 /// organization; until then it is in the library and applies nowhere.
-pub const OPT_IN_BUILTIN: &[&str] = &[CONSTRUCTOR_RESEARCH_KIT, GEARS_MATCHER_KIT, "gears-project"];
+pub const OPT_IN_BUILTIN: &[&str] = &[
+    CONSTRUCTOR_RESEARCH_KIT,
+    GEARS_MATCHER_KIT,
+    "gears-project",
+    MNA_KIT,
+];
+
+/// The M&A due diligence kit (studio-web#1024, `docs/design/mna-kit.md`): a
+/// project type whose project is a deal, installed for that one project by
+/// its creation.
+pub const MNA_KIT: &str = "mna";
 
 /// The Constructor Research kit (`docs/design/studio-kits.md` §3.13): building
 /// a project's product in Constructor Research and running it there as one of
@@ -818,6 +828,7 @@ pub const BUILTIN_ICONS: &[(&str, &str)] = &[
     (GEARS_MATCHER_KIT, "lucide:scan-search"),
     (SPEC_MAPPING_KIT, "lucide:git-compare-arrows"),
     ("gears-project", "lucide:boxes"),
+    (MNA_KIT, "lucide:handshake"),
     ("assistant", "lucide:sparkles"),
     ("project-git", "lucide:git-pull-request"),
 ];
@@ -938,6 +949,13 @@ pub fn builtin_catalogue() -> Vec<KitDescriptor> {
             "Spec mapping",
             "The gears that could provide each capability a project's specifications name, matched by words and contracts: the plan on Components, the product map and the gear match, and a product assembled from it. Instant, free and deterministic. For the whole organization, or for one project.",
             &["organization", "project"],
+        ),
+        // A project type (ADR-0073), installed for the one project a deal is.
+        kit(
+            MNA_KIT,
+            "M&A due diligence",
+            "Technical due diligence of an acquisition target: the deal as a project, the target's repositories as its sources, findings, risks and open questions, the evidence Studio already holds, and a recommendation the deal lead signs off.",
+            &["project"],
         ),
         kit(
             "assistant",
@@ -1294,6 +1312,7 @@ mod tests {
                 "constructor-research",
                 "gears-matcher",
                 "spec-mapping",
+                "mna",
                 "assistant",
                 "project-git"
             ]

@@ -131,7 +131,7 @@ export const ProjectScreen: React.FC<ProjectScreenProps> = ({ projectId }) => {
 
     switch (section) {
       case 'overview':
-        return <OverviewSection projectId={projectId} />;
+        return <OverviewSection projectId={projectId} orgId={org?.id ?? null} />;
       case 'artifacts':
         return <ArtifactsSection projectId={projectId} projectName={project.name} />;
       case 'specs':

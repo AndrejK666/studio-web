@@ -111,7 +111,11 @@ export interface ProjectNextStep {
   description: string;
   /** The shell route of the screen where it is done. */
   route: string;
-  /** The project path step (`ProjectStatus.path[].step`) whose being done makes this one done. */
+  /**
+   * What makes this step done: a project path step (`ProjectStatus.path[].step`)
+   * being done, or `field:<name>` — the project's object in the domain model
+   * (type `project`) having `<name>` set. Without it the step stays until dismissed.
+   */
   done_when?: string | null;
 }
 

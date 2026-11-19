@@ -151,6 +151,22 @@ pub const NEXT_STEP_DONE_WHEN: [&str; 7] = [
     "repos", "types", "model", "findings", "kind", "product", "build",
 ];
 
+/// The other form of a next step's `done_when`: `field:<name>`, a field of
+/// the kit's project type, done once the project's object in the model has
+/// it set (the portal reads the object; the path knows nothing of a kit's
+/// fields).
+pub const DONE_WHEN_FIELD: &str = "field:";
+
+/// The fields the kit's project type declares of its own.
+fn subtype_fields(m: &KitManifest) -> Vec<String> {
+    overlay_of(m)
+        .ok()
+        .flatten()
+        .and_then(|o| o.project_subtype().map(|t| t.fields.clone()))
+        .map(|fs| fs.into_iter().map(|f| f.name).collect())
+        .unwrap_or_default()
+}
+
 /// The most next steps a project type names: a short list, not a plan.
 pub const MAX_NEXT_STEPS: usize = 8;
 
@@ -328,14 +344,22 @@ fn check_project_creation(m: &KitManifest, project_type: bool) -> Result<(), Str
                 n.id
             )));
         }
-        if let Some(done) = n.done_when.as_deref()
-            && !NEXT_STEP_DONE_WHEN.contains(&done)
-        {
-            return Err(at(format!(
-                "next step `{}`: `done_when` `{done}` is none of the project path's steps ({})",
-                n.id,
-                NEXT_STEP_DONE_WHEN.join(", ")
-            )));
+        if let Some(done) = n.done_when.as_deref() {
+            if let Some(field) = done.strip_prefix(DONE_WHEN_FIELD) {
+                if !subtype_fields(m).iter().any(|f| f == field) {
+                    return Err(at(format!(
+                        "next step `{}`: `done_when` `{done}` names no field of the kit's project type",
+                        n.id
+                    )));
+                }
+            } else if !NEXT_STEP_DONE_WHEN.contains(&done) {
+                return Err(at(format!(
+                    "next step `{}`: `done_when` `{done}` is none of the project path's steps ({}), \
+                     nor `{DONE_WHEN_FIELD}<a field of the kit's project type>`",
+                    n.id,
+                    NEXT_STEP_DONE_WHEN.join(", ")
+                )));
+            }
         }
     }
     Ok(())
@@ -736,8 +760,8 @@ const BUILTIN_MANIFESTS: &[(&str, &str)] = &[
         "project-tests",
         include_str!("builtin/project-tests.kit.json"),
     ),
-    // The two project types, in the order the New project wizard offers
-    // them (`project_type_kits`): Gears, then Constructor Research.
+    // The project types, in the order the New project wizard offers them
+    // (`project_type_kits`): Gears, Constructor Research, M&A due diligence.
     (
         "gears-project",
         include_str!("builtin/gears-project.kit.json"),
@@ -746,6 +770,9 @@ const BUILTIN_MANIFESTS: &[(&str, &str)] = &[
         "constructor-research",
         include_str!("builtin/constructor-research.kit.json"),
     ),
+    // Technical due diligence of an acquisition target (studio-web#1024):
+    // a deal is a project of this type; its function is `mna.rs`.
+    ("mna", include_str!("builtin/mna.kit.json")),
     // What the gears-matcher service reads in a project's specifications
     // (ADR-0072): the gear-match screens, routes, tools and Inbox source,
     // out of project-product; opt-in.

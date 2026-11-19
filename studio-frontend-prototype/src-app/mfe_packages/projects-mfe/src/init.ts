@@ -37,6 +37,7 @@ import { SpecQualityApiService } from './api/SpecQualityApiService';
 import { ProjectPhaseApiService, ProjectStatusApiService } from './api/ProjectStatusApiService';
 import {
   ConnectorsApiService,
+  DomainModelApiService,
   StudioEventsApiService,
   StudioTasksApiService,
 } from '@constructor-studio/mfe-shared';
@@ -58,6 +59,9 @@ apiRegistry.register(ProjectStatusApiService);
 apiRegistry.register(ProjectPhaseApiService);
 apiRegistry.register(StudioTasksApiService);
 apiRegistry.register(StudioEventsApiService);
+// studio-domain-model: a project type's next step can wait on a field of the
+// project's object (`done_when = "field:<name>"`, ADR-0073).
+apiRegistry.register(DomainModelApiService);
 apiRegistry.initialize();
 
 // Create only the local MFE app shell.
