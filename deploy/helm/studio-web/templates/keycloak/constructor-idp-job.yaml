@@ -1,0 +1,100 @@
+{{- if and .Values.keycloak.enabled .Values.keycloak.constructorIdp.enabled }}
+{{- $idp := .Values.keycloak.constructorIdp }}
+# The realm's `constructor` broker, kept in step with the values on every
+# install and upgrade (keycloak/CONSTRUCTOR_SSO.md). The script is the same
+# one the compose stand runs.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "studio-web.fullname" . }}-keycloak-constructor-idp
+  labels: {{- include "studio-web.labels" . | nindent 4 }}
+    app.kubernetes.io/component: keycloak
+data:
+  constructor-idp.sh: |-
+{{ .Files.Get "files/keycloak/constructor-idp.sh" | indent 4 }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "studio-web.fullname" . }}-keycloak-constructor-idp
+  labels: {{- include "studio-web.labels" . | nindent 4 }}
+    app.kubernetes.io/component: keycloak-constructor-idp
+  annotations:
+    # After the release's resources, so a new Keycloak and the ConfigMap above
+    # exist; the script waits for Keycloak to answer. The last run is kept for
+    # its log until the next one replaces it.
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "10"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: {{ add $idp.waitSeconds 300 }}
+  template:
+    metadata:
+      labels: {{- include "studio-web.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: keycloak-constructor-idp
+      annotations:
+        checksum/script: {{ .Files.Get "files/keycloak/constructor-idp.sh" | sha256sum }}
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: constructor-idp
+          # The Keycloak image: it has kcadm.sh and bash, and is already admitted.
+          image: "{{ .Values.keycloak.image.repository }}:{{ required "keycloak.image.tag is required when keycloak is enabled" .Values.keycloak.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          command: ["bash", "/scripts/constructor-idp.sh"]
+          securityContext: {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          env:
+            - name: KC_SERVER
+              value: {{ printf "http://%s-keycloak%s" (include "studio-web.fullname" .) .Values.keycloak.relativePath | quote }}
+            - name: KC_REALM
+              value: "studio"
+            - name: KC_ADMIN_USER
+              valueFrom: { secretKeyRef: { name: {{ .Values.keycloak.adminSecret }}, key: username } }
+            - name: KC_ADMIN_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ .Values.keycloak.adminSecret }}, key: password } }
+            - name: KC_WAIT_SECONDS
+              value: {{ $idp.waitSeconds | quote }}
+            - name: CONSTRUCTOR_IDP_ISSUER
+              value: {{ $idp.issuer | quote }}
+            - name: CONSTRUCTOR_IDP_CLIENT_ID
+              value: {{ $idp.clientId | quote }}
+            - name: CONSTRUCTOR_IDP_DISPLAY_NAME
+              value: {{ $idp.displayName | quote }}
+            # Only whether the key exists is read here; Keycloak reads the value.
+            - name: CONSTRUCTOR_IDP_VAULT_DIR
+              value: /vault
+            # kcadm and mktemp write here, not into the image.
+            - name: HOME
+              value: /tmp
+            - name: TMPDIR
+              value: /tmp
+          resources: {{- toYaml $idp.resources | nindent 12 }}
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+              readOnly: true
+            - name: vault
+              mountPath: /vault
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: script
+          configMap:
+            name: {{ include "studio-web.fullname" . }}-keycloak-constructor-idp
+        - name: vault
+          secret:
+            secretName: {{ .Values.keycloak.vaultSecret }}
+            optional: true
+            items:
+              - key: studio_constructor-client-secret
+                path: studio_constructor-client-secret
+        - name: tmp
+          emptyDir: {}
+{{- end }}

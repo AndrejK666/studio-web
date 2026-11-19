@@ -102,6 +102,16 @@ keycloak:
   relativePath: /auth
   image:
     tag: "sha-REPLACE_ME"
+  # Signing in with a Constructor IdP account (keycloak/CONSTRUCTOR_SSO.md).
+  # The client secret is the vault key studio_constructor-client-secret in
+  # studio-web-keycloak-vault. Turn on only once the IdP team has added
+  # https://studio-test.cfabric.org/auth/realms/studio/broker/constructor/endpoint
+  # to the client, and Keycloak's pods reach the issuer (discovery, token,
+  # JWKS, userinfo): the Job fails the release otherwise.
+  constructorIdp:
+    enabled: false
+    issuer: https://dev-constructor.dev/idp
+    clientId: constructor-studio
 
 ingress:
   enabled: true
