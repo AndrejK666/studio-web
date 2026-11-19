@@ -11,7 +11,7 @@
  * the screen then carries the path and the level's tabs (`SidebarLayout`).
  */
 
-import React, { useId, useState } from 'react';
+import React, { useEffect, useId, useRef, useState } from 'react';
 import { eventBus, useAppSelector } from '@gears-frontx/react';
 import {
   Boxes,
@@ -223,9 +223,16 @@ export const ShellSidebar: React.FC<ShellSidebarProps> = ({ models, level, rail 
   const platformAdmin = useDecidesRequests();
   const { isOpen, toggle } = useGroups(level);
   const mounted = models.organization.mounted;
+  const root = useRef<HTMLElement | null>(null);
+  const activeKey = `${level}|${mounted?.id ?? ''}|${context?.section ?? ''}`;
+  // The item on screen stays in view: a project's list can be taller than the window.
+  useEffect(() => {
+    root.current?.querySelector<HTMLElement>('[aria-current="page"]')?.scrollIntoView?.({ block: 'nearest' });
+  }, [activeKey]);
 
   const org = context?.org ?? null;
-  const workspace = level === 'platform' || level === 'admin' ? null : (context?.workspace ?? null);
+  // A workspace is in scope below the organization only; above it the address names none.
+  const workspace = level === 'workspace' || level === 'project' ? (context?.workspace ?? null) : null;
   const project = level === 'project' ? (context?.project ?? null) : null;
 
   // Components and Projects are tabs of a level, raised to the top of the list.
@@ -250,7 +257,7 @@ export const ShellSidebar: React.FC<ShellSidebarProps> = ({ models, level, rail 
   const orgHoldsActive = level === 'organization' || level === 'workspace';
 
   return (
-    <nav className={cn(styles.sidebar, rail && styles.rail)} aria-label={t('sidebar')} data-sidebar={rail ? 'rail' : 'open'}>
+    <nav ref={root} className={cn(styles.sidebar, rail && styles.rail)} aria-label={t('sidebar')} data-sidebar={rail ? 'rail' : 'open'}>
       <div className={styles.head}>
         <div className={styles.brand}>
           {rail ? (

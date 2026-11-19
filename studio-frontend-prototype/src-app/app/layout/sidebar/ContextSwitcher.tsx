@@ -53,7 +53,8 @@ export const ContextSwitcher: React.FC<{ rail?: boolean }> = ({ rail = false }) 
   }
   const workspaces = context?.workspaces ?? [];
   // The platform and Admin sit beside the organizations: no workspace there.
-  const workspace = level === 'platform' || level === 'admin' ? null : (context?.workspace ?? null);
+  // The organization's own screens are all its workspaces, as the path says.
+  const workspace = level === 'workspace' || level === 'project' ? (context?.workspace ?? null) : null;
   const where =
     level === 'platform' ? t('level_platform') : workspace ? workspace.name : t('chain_all_workspaces');
   const label = `${t('sidebar_switch_context')}: ${org.name} / ${where}`;
