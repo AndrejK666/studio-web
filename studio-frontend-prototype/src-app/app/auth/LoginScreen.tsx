@@ -6,7 +6,10 @@
  * goes from here to the IdP's token endpoint (`login({ type: 'password' })`);
  * whatever that grant cannot finish continues on the IdP's own page with the
  * e-mail filled in. GitHub goes through Keycloak with `kc_idp_hint`, so no
- * Keycloak page is drawn on the way.
+ * Keycloak page is drawn on the way. Constructor (the IdP behind Constructor
+ * Research, keycloak/CONSTRUCTOR_SSO.md) goes the same way beside it, but only
+ * where the deployment says its realm brokers it (`env.constructorSignIn`):
+ * a hint naming a broker the realm does not have ends on a Keycloak error page.
  *
  * Lives in the light DOM with its own stylesheet: the art is literal colours
  * for the dark field in both themes (see LoginScreen.css).
@@ -20,6 +23,8 @@ import React, { useState } from 'react';
 import { useFrontX } from '@gears-frontx/react';
 import type { AuthLoginInput } from '@gears-frontx/auth';
 import { ACCOUNTS_API_BASE_URL } from '@constructor-studio/mfe-shared';
+import { env } from '@/app/config/env';
+import { useShellText } from '@/app/i18n/shellTranslations';
 import { keycloakOidcProvider, PasswordRejectedError } from './keycloakOidcProvider';
 import './LoginScreen.css';
 
@@ -40,8 +45,15 @@ const GitHubGlyph: React.FC = () => (
   </svg>
 );
 
+/** The Constructor mark: the symbol the screen's brand line shows. */
+const ConstructorGlyph: React.FC = () => (
+  <img src={PRODUCT_MARK} alt="" width={16} height={16} aria-hidden="true" />
+);
+
 export const LoginScreen: React.FC<LoginScreenProps> = ({ sessionExpired, initialError }) => {
   const { auth } = useFrontX();
+  const t = useShellText();
+  const constructorOffered = env.constructorSignIn;
   const [error, setError] = useState<string | undefined>(
     initialError ?? (sessionExpired ? 'Session expired — please sign in again.' : undefined)
   );
@@ -70,6 +82,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ sessionExpired, initia
   };
 
   const github = () => void run({ type: 'oauth', payload: { idpHint: 'github' } });
+  const signInWithConstructor = () => void run({ type: 'oauth', payload: { idpHint: 'constructor' } });
 
   const signIn = (event: React.FormEvent) => {
     event.preventDefault();
@@ -116,6 +129,19 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ sessionExpired, initia
       GitHub
     </button>
   );
+
+  const constructorButton = constructorOffered ? (
+    <button
+      type="button"
+      className="auth-provider"
+      title={t('login_constructor_title')}
+      disabled={busy}
+      onClick={signInWithConstructor}
+    >
+      <ConstructorGlyph />
+      {t('login_constructor')}
+    </button>
+  ) : null;
 
   return (
     <div className="auth-shell">
@@ -219,6 +245,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ sessionExpired, initia
                   organization owner then invites you to its workspaces.
                 </p>
                 {githubButton}
+                {constructorButton}
               </div>
             )}
 
@@ -248,6 +275,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ sessionExpired, initia
           <div className="auth-federated">
             <p className="auth-kicker">Or continue with</p>
             {githubButton}
+            {constructorButton}
           </div>
         </div>
       </div>

@@ -116,7 +116,7 @@ export function InboxGroup({
   useEffect(() => {
     let live = true;
     api
-      .inbox({ view: 'open', offset: 0, limit: INBOX_PAGE })
+      .inbox({ organizationId, view: 'open', offset: 0, limit: INBOX_PAGE })
       .fetch({ staleTime: 0 })
       .then((page) => {
         if (!live) return;
@@ -134,20 +134,20 @@ export function InboxGroup({
     return () => {
       live = false;
     };
-  }, [api, tick, reloadKey, shown, onCount, onFailed, bridge]);
+  }, [api, organizationId, tick, reloadKey, shown, onCount, onFailed, bridge]);
 
   useEffect(() => {
     if (!showHidden) return;
     let live = true;
     api
-      .inbox({ view: 'hidden', offset: 0, limit: INBOX_PAGE })
+      .inbox({ organizationId, view: 'hidden', offset: 0, limit: INBOX_PAGE })
       .fetch({ staleTime: 0 })
       .then((page) => live && setHidden(page))
       .catch((e: unknown) => live && setHidden({ items: [], total: 0, other: 0, unread: [errorMessage(e)] }));
     return () => {
       live = false;
     };
-  }, [api, showHidden, tick, reloadKey]);
+  }, [api, organizationId, showHidden, tick, reloadKey]);
 
   /** The next page of open items, after the ones shown. */
   const readMore = async () => {
@@ -155,7 +155,7 @@ export function InboxGroup({
     setMore(true);
     try {
       const page = await api
-        .inbox({ view: 'open', offset: open.items.length, limit: INBOX_PAGE })
+        .inbox({ organizationId, view: 'open', offset: open.items.length, limit: INBOX_PAGE })
         .fetch({ staleTime: 0 });
       shown({ ...page, items: [...open.items, ...page.items] });
     } catch {

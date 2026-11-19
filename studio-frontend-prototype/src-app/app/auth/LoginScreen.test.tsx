@@ -9,6 +9,7 @@ vi.mock('@gears-frontx/react', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@gears-frontx/react')>()),
   useFrontX: () => ({ auth: mockAuth }),
 }));
+vi.mock('@/app/i18n/shellTranslations', () => import('@frontx-test-utils/shellText'));
 
 import { LoginScreen } from './LoginScreen';
 
@@ -26,6 +27,7 @@ describe('LoginScreen', () => {
     vi.clearAllMocks();
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
+    delete window.__STUDIO_ENV__;
   });
 
   it('signs in with the e-mail and password through the auth runtime', async () => {
@@ -56,6 +58,24 @@ describe('LoginScreen', () => {
     fireEvent.click(screen.getAllByRole('button', { name: /GitHub/ })[0]);
     await waitFor(() =>
       expect(mockAuth.login).toHaveBeenCalledWith({ type: 'oauth', payload: { idpHint: 'github' } })
+    );
+  });
+
+  it('offers no Constructor button where the deployment does not broker it', () => {
+    render(<LoginScreen />);
+    expect(screen.queryByRole('button', { name: /Constructor$/ })).toBeNull();
+  });
+
+  it('goes to Constructor through the IdP hint where the deployment brokers it', async () => {
+    window.__STUDIO_ENV__ = { CONSTRUCTOR_SIGN_IN: 'true' };
+    render(<LoginScreen />);
+    const buttons = screen.getAllByRole('button', { name: /Constructor$/ });
+    // Beside GitHub on the panel; the "Create account" tab is not open.
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0].getAttribute('title')).toBe('Constructor account (via Keycloak identity federation)');
+    fireEvent.click(buttons[0]);
+    await waitFor(() =>
+      expect(mockAuth.login).toHaveBeenCalledWith({ type: 'oauth', payload: { idpHint: 'constructor' } })
     );
   });
 

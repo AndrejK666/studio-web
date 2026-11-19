@@ -9,6 +9,12 @@ import { BaseApiService, RestEndpointProtocol, RestProtocol } from '@gears-front
 import type { Inbox, InboxMark, InboxMarkState, InboxView } from '../inbox/types';
 
 export interface InboxQuery {
+  /**
+   * The organization the Inbox is about. Without it the server reads the
+   * caller's home tenant, which for a person who joined by invitation is the
+   * tenant they signed up in, not the organization on screen.
+   */
+  organizationId: string;
   view: InboxView;
   offset: number;
   limit: number;
@@ -31,8 +37,13 @@ export class InboxApiService extends BaseApiService {
 
   /** One view of the Inbox: `open` (what waits, the server's order) or `hidden` (done or snoozed). */
   readonly inbox = this.protocol(RestEndpointProtocol).queryWith<Inbox, InboxQuery>(
-    ({ view, offset, limit }) =>
-      `/me/inbox?${new URLSearchParams({ view, offset: String(offset), limit: String(limit) })}`
+    ({ organizationId, view, offset, limit }) =>
+      `/me/inbox?${new URLSearchParams({
+        organization_id: organizationId,
+        view,
+        offset: String(offset),
+        limit: String(limit),
+      })}`
   );
 
   /** Mark one item done, snooze it, or open it again. */

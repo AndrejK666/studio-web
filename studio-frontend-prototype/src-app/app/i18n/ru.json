@@ -146,5 +146,7 @@
   "sidebar_switch_context": "Сменить организацию или воркспейс",
   "sidebar_workspaces": "Воркспейсы",
   "sidebar_organizations": "Организации",
-  "sidebar_where": "Где вы сейчас"
+  "sidebar_where": "Где вы сейчас",
+  "login_constructor": "Constructor",
+  "login_constructor_title": "Аккаунт Constructor (через федерацию удостоверений Keycloak)"
 }

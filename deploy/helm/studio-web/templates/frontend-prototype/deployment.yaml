@@ -38,6 +38,14 @@ spec:
               valueFrom: { secretKeyRef: { name: {{ .Values.backend.auth.existingSecret }}, key: issuer_url } }
             - name: STUDIO_OIDC_CLIENT_ID
               valueFrom: { secretKeyRef: { name: {{ .Values.backend.auth.existingSecret }}, key: client_id } }
+            {{- $idp := .Values.keycloak.constructorIdp }}
+            {{- if and .Values.keycloak.enabled $idp.enabled $idp.issuer $idp.clientId }}
+            # The sign-in screen offers Constructor only where the realm
+            # brokers it: the same condition the constructor-idp Job writes the
+            # broker under (keycloak/CONSTRUCTOR_SSO.md).
+            - name: STUDIO_CONSTRUCTOR_SIGN_IN
+              value: "true"
+            {{- end }}
           # The same deregistration pause the backend takes, and for the same
           # reason: endpoint removal and container shutdown are concurrent, so
           # without it a rollout serves 502s for whatever kube-proxy routed
