@@ -27,18 +27,42 @@ has the IdP's `end_session_endpoint` as its logout URL, so Keycloak sends the
 browser there and back to `.../broker/constructor/endpoint/logout_response`.
 That leg was not exercised on the stand.
 
-### Known gap: the portal does not show an organization joined by invitation
+### An organization joined by invitation (fixed 2026-11-19)
 
-Checked on the local stand (2026-11-19) with a Constructor user. The
-invitation is listed and accepted, and `GET /studio-user/v1/me/memberships`
-then shows the membership as active. The portal still shows "You are not in
-an organization yet". It resolves each membership through
-`GET /account-management/v1/tenants/{org}`, which answers 404 for a token
-whose home tenant is the sandbox `…0002`. On the stand that tenant does not
-exist at all. A GitHub, Google or Microsoft user who joins by invitation is in
-the same position, because their mappers set the same tenant. This is the
-ADR-0011 tenant question, not a Constructor one, and the broker does not fix
-it.
+Checked on the local stand with a Constructor user. The invitation was listed
+and accepted, `GET /studio-user/v1/me/memberships` showed the membership as
+active, and the portal still said "You are not in an organization yet": it
+reads each membership's organization through
+`GET /account-management/v1/tenants/{org}`, and that answered 404.
+
+The token's sandbox tenant was not the cause. Whether a person reaches an
+organization is the Studio PDP's answer (`studio-authz-plugin`): the tenant
+their token names plus every organization they hold an active membership in
+(ADR-0011 §2). That PDP was never selected. Its instance was written with the
+legacy `TypesRegistryClient::register`, which types-registry 0.6 does not list
+to the authz resolver, so every decision went to `static-authz-plugin`, which
+clamps to the token's tenant alone. The same held for a GitHub, Google or
+Microsoft user. Dev hid it because its people were assigned to their
+organization through `POST /studio-identity/v1/users/{id}/assignment`, which
+also moves the Keycloak `tenant_id` attribute to the organization.
+
+The PDP is now published from configuration and is the only `constructorfabric`
+authz plugin in the shipped profiles (`docs/design/studio-authz-plugin.md`
+§3.3). The portal's Inbox and its count name the organization on screen
+(`?organization_id=`), since without it the server reads the home tenant. The
+sandbox `tenant_id` mapper stays: the token still needs the claim.
+
+### The sign-in button
+
+The portal's sign-in screen offers **Constructor** beside GitHub
+(`kc_idp_hint=constructor`) only where the deployment says the realm brokers
+it: `STUDIO_CONSTRUCTOR_SIGN_IN` on the portal container, written into
+`env.js`. Helm sets it under the same condition the Job writes the broker
+(`keycloak.enabled`, `constructorIdp.enabled`, `issuer` and `clientId`); a
+missing vault key switches the broker off without the chart knowing, so add
+the key before enabling. Compose passes the broker's issuer, which is empty
+exactly when the broker is off. The dev server takes
+`STUDIO_CONSTRUCTOR_SIGN_IN=true`.
 
 ## Configuration
 

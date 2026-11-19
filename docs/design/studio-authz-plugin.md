@@ -188,11 +188,21 @@ organization-wide. An allow is the clamp.
 - **Technology**: `authz_resolver_sdk::AuthZResolverPluginClient`, in process
 - **Location**: [`studio-backend/src/studio_authz_plugin/mod.rs`](../../studio-backend/src/studio_authz_plugin/mod.rs)
 
-Registered with the types-registry as instance
-`cf.studio.authz_resolver.plugin.v1` (vendor `constructorfabric`, priority 40)
-and on the ClientHub under that instance id. The resolver picks one plugin per
-vendor and the lower priority wins, so it takes precedence over
-`static-authz-plugin` (priority 100 in the shipped profiles).
+Published as instance `cf.studio.authz_resolver.plugin.v1` (vendor
+`constructorfabric`, priority 40) through the gear's GTS publication
+(`gts_publication(entities = ...)`): the runtime admits it before any
+application `init`, and `init` binds the client on the ClientHub under that
+instance id. The resolver picks, among the instances the persisted registry
+lists and that are bound by then, the lowest priority of its vendor, and keeps
+that pick for the life of the process.
+
+So the shipped profiles give `static-authz-plugin` another vendor
+(`constructorfabric-static`): with it in the running, a PDP call made before
+this gear's `init` would choose the static tenant clamp for good. A call that
+early now fails and is asked again. Until 2026-11-19 the instance was written
+with `TypesRegistryClient::register` from `init`, which types-registry 0.6 no
+longer lists to the resolver, and every decision went to the static clamp:
+none of the rules below ran, and a person reached only their token's tenant.
 
 The response is a decision and constraints. Constraints are OR-ed and the
 predicates inside one are AND-ed: `OWNER_TENANT_ID IN` the reachable tenants,
@@ -206,7 +216,7 @@ every constraint.
 
 | Dependency Gear | Interface Used | Purpose |
 |-------------------|----------------|----------|
-| `types_registry` | SDK client | Register the plugin instance |
+| `types_registry` | GTS publication | Admit the plugin instance |
 | `cpt-studio-component-account-management` | SDK client, `resolve_metadata` as the caller | Read an organization's access config |
 | `cpt-studio-component-user` | `OrganizationReader`, looked up on first use | Member organizations, the person's subjects, the platform-admin test, the membership generation |
 
