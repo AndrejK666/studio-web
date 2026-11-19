@@ -348,7 +348,9 @@ fail to compile: `github-connector-plugin`, `gitlab-connector-plugin`,
 `zulip-webhook-connector-plugin`, `discord-connector-plugin`,
 `discord-webhook-connector-plugin`, `kubernetes-connector-plugin`,
 `gear-repository-connector-plugin`, `registry-connector-plugin`,
-`research-connector-plugin`. Each registers its instance (vendor
+`research-connector-plugin`, `assembly-service-connector-plugin` (the service
+an organization kit's assembly strategy runs on: its address and secret, one
+option `strategy`, verified with `GET /v1/info`; ADR-0074). Each registers its instance (vendor
 `constructorfabric`, priority 100 by default) and publishes its
 `ConnectorDriver`. A profile that does not declare the connector contract
 skips the scoped registration instead of failing the boot. Model providers

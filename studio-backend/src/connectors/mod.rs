@@ -32,6 +32,7 @@
 //! private repos needs no secret handling in the browser at all.
 
 mod ai_providers;
+pub(crate) mod assembly_service; // the service an assembly strategy runs on (ADR-0074)
 mod bitbucket;
 pub(crate) mod clone;
 mod discord;
@@ -87,7 +88,7 @@ use service::ConnectorService;
 /// Every driver instance id the assembly knows how to look for. Resolution is
 /// by GTS id through ClientHub, so an id whose plugin gear is not linked
 /// simply yields no driver.
-const KNOWN_DRIVERS: [&str; 15] = [
+const KNOWN_DRIVERS: [&str; 16] = [
     gts::GITLAB_INSTANCE_ID,
     gts::GITHUB_INSTANCE_ID,
     gts::BITBUCKET_INSTANCE_ID,
@@ -103,6 +104,7 @@ const KNOWN_DRIVERS: [&str; 15] = [
     gts::GEAR_REPOSITORY_INSTANCE_ID,
     gts::REGISTRY_INSTANCE_ID,
     gts::RESEARCH_INSTANCE_ID,
+    gts::ASSEMBLY_SERVICE_INSTANCE_ID,
 ];
 
 /// ClientHub key under which the notification sender is published for other

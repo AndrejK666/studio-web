@@ -66,7 +66,7 @@
   "usage_reading": "Читаем статистику…",
   "usage_error": "Не удалось прочитать статистику: {error}",
   "tile_strategies": "Как собираются",
-  "tile_strategies_note": "{matcher} — Gears matcher, {spec} — по спецификациям, {manual} — вручную",
+  "tile_strategies_note": "{matcher} — сервисом подбора, {spec} — по спецификациям, {manual} — вручную",
   "tile_fallbacks": "{count} с откатом",
   "tile_runs": "Запуски",
   "tile_runs_note": "{succeeded} успешно, {partial} частично, {failed} с ошибкой, {cancelled} остановлено, {running} идёт",
@@ -108,5 +108,17 @@
   "source_short_organization": "как в организации",
   "source_short_studio": "по китам",
   "open_project": "Открыть подбор гиров проекта",
-  "calls": "вызовов: {count}"
+  "calls": "вызовов: {count}",
+  "no_match_service": "Подбора {strategy} ещё не было: запустите его кнопкой «Запустить подбор» и предложите снова, когда он закончится.",
+  "run_match": "Запустить подбор",
+  "running_match": "Запускаем…",
+  "match_started": "Подбор {strategy} идёт в фоновых задачах: предложите снова, когда он закончится.",
+  "org_service_of": "Сервис {name}",
+  "org_service_unconnected": "Не подключён",
+  "org_service_runs": "запусков за период: {runs}, вызовов моделей: {calls}",
+  "service_connect_lead": "Эта стратегия приходит с китом организации и работает на сервисе, который предоставляет организация: подключите его адрес и секрет. Они хранятся как подключение, а не в ките.",
+  "service_connect_url": "Адрес сервиса (https://…)",
+  "service_connect_secret": "Общий секрет",
+  "service_connect": "Подключить",
+  "service_connect_admin": "Сервис подключает администратор организации."
 }

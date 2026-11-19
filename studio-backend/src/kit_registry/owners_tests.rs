@@ -41,6 +41,12 @@ fn a_mark_moves_only_from_a_kit_of_studio_s_that_no_longer_brings_it() {
         owners.rehome("components", "project", MarkOn::Property("parts")),
         Some(Rehome::Kit("project-product".into()))
     );
+    // ADR-0074: a stored Product mark on the decisions moves to Spec mapping,
+    // so its uninstall leaves them dormant and Product's leaves them alone.
+    assert_eq!(
+        owners.rehome("project-product", "mapping-decision", MarkOn::Type),
+        Some(Rehome::Kit("spec-mapping".into()))
+    );
     // Where it already is.
     assert_eq!(
         owners.rehome("project-domain-model", "finding", MarkOn::Type),

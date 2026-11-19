@@ -347,3 +347,59 @@ async fn refreshing_the_shelf_keeps_the_installed_manifest_until_upgrade() {
         crate::kit_registry::models::KitModel::Nothing
     ));
 }
+
+/// ADR-0074, amendment: an organization's own kit provides an assembly
+/// strategy run by a service; the shelf checks the section when the kit is
+/// added, and the strategies read where the kit applies include it.
+#[tokio::test]
+async fn an_organization_kit_provides_a_service_strategy() {
+    use crate::kit_registry::port::KitPresence;
+    let (installer, repo) = setup("acme-matcher");
+    let admin = caller(ADMIN, ORG);
+    // Without `requires: gears-matcher` the section does not check.
+    *repo.body.lock().unwrap() = r#"{"slug": "acme-matcher", "name": "Acme",
+        "levels": ["organization", "project"],
+        "assembly_strategy": {"id": "acme_matcher", "name": "Acme matcher",
+            "service": {"contract": "gears-matcher/v1"}}}"#
+        .into();
+    assert!(
+        installer
+            .add_shelf_kit(&admin, ORG, source())
+            .await
+            .is_err()
+    );
+    *repo.body.lock().unwrap() = r#"{"slug": "acme-matcher", "name": "Acme",
+        "levels": ["organization", "project"], "requires": ["gears-matcher"],
+        "assembly_strategy": {"id": "acme_matcher", "name": "Acme matcher",
+            "service": {"contract": "gears-matcher/v1"}}}"#
+        .into();
+    installer
+        .add_shelf_kit(&admin, ORG, source())
+        .await
+        .unwrap();
+    installer
+        .install_for_organization(&admin, ORG, "gears-matcher", None)
+        .await
+        .unwrap();
+    installer
+        .install_for_organization(&admin, ORG, "acme-matcher", None)
+        .await
+        .unwrap();
+    let presence = crate::kit_registry::port::InstalledKits::new(Arc::new(installer));
+    let ids: Vec<(String, Option<String>)> = presence
+        .strategies(&caller(MEMBER, ORG), ORG)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|p| (p.id, p.service))
+        .collect();
+    assert!(
+        ids.contains(&("acme_matcher".into(), Some("gears-matcher/v1".into()))),
+        "{ids:?}"
+    );
+    assert!(
+        ids.contains(&("gears_matcher".into(), Some("gears-matcher/v1".into()))),
+        "{ids:?}"
+    );
+    assert!(ids.contains(&("spec_mapping".into(), None)), "{ids:?}");
+}

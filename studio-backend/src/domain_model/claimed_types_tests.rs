@@ -126,3 +126,86 @@ async fn a_claimed_gear_type_names_its_kit_and_sleeps_without_it() {
     assert_eq!(e["meta"]["kit"], "org-costs");
     assert!(e["meta"]["left_by"].is_null());
 }
+
+/// What studio-artifact-ingest declares for a member's mapping decision.
+fn mapping_decision_need() -> TypeNeed {
+    TypeNeed {
+        declared_by: "studio-artifact-ingest".into(),
+        id: "mapping-decision".into(),
+        name: "Mapping Decision".into(),
+        description: "A member's decision on which gear covers a capability.".into(),
+        extends: Some("record".into()),
+        bucket: Some("content".into()),
+        fields: vec![("title".into(), "string".into(), "What it is called".into())],
+        relations: Vec::new(),
+        held_by: Some("studio-artifact-ingest".into()),
+        searchable: true,
+    }
+}
+
+/// ADR-0074 as amended: the decisions are Spec mapping's. Uninstalling it
+/// leaves them dormant, kept and readable; uninstalling Product does not
+/// touch them.
+#[tokio::test]
+async fn mapping_decisions_sleep_with_spec_mapping_and_stay_readable() {
+    let service = Arc::new(DomainModelService::new(Arc::new(
+        InMemoryDomainStore::default(),
+    )));
+    let port = Objects(service.clone());
+    port.ensure_type(&ctx(), &mapping_decision_need())
+        .await
+        .unwrap();
+    let doc = service.ontology_document(&ctx()).await.unwrap();
+    assert_eq!(
+        entity(&doc, "mapping-decision")["meta"]["kit"],
+        "spec-mapping"
+    );
+    port.put_objects(
+        &ctx(),
+        "mapping-decision",
+        vec![OwnedObject {
+            id: "d-1".into(),
+            scope: String::new(),
+            payload: json!({"title": "auth → authn-resolver"}),
+        }],
+    )
+    .await
+    .unwrap();
+
+    // Product uninstalled: the decisions are not its own any more.
+    service
+        .sync_kit_model(&ctx(), "project-product", "", None)
+        .await
+        .unwrap();
+    let doc = service.ontology_document(&ctx()).await.unwrap();
+    assert!(entity(&doc, "mapping-decision")["meta"]["left_by"].is_null());
+
+    // Spec mapping uninstalled: dormant, and the rows are still there.
+    service
+        .sync_kit_model(&ctx(), "spec-mapping", "", None)
+        .await
+        .unwrap();
+    let doc = service.ontology_document(&ctx()).await.unwrap();
+    assert_eq!(
+        entity(&doc, "mapping-decision")["meta"]["left_by"]["kit"],
+        "spec-mapping"
+    );
+    let kept = port.list(&ctx(), "mapping-decision").await.unwrap();
+    assert_eq!(kept.len(), 1, "the decisions outlive the kit");
+    assert_eq!(kept[0].payload["title"], "auth → authn-resolver");
+
+    // Installed again: Spec mapping's once more, the same rows.
+    service
+        .sync_kit_model(&ctx(), "spec-mapping", "1", Some(&KitOverlay::default()))
+        .await
+        .unwrap();
+    let doc = service.ontology_document(&ctx()).await.unwrap();
+    assert_eq!(
+        entity(&doc, "mapping-decision")["meta"]["kit"],
+        "spec-mapping"
+    );
+    assert_eq!(
+        port.list(&ctx(), "mapping-decision").await.unwrap().len(),
+        1
+    );
+}

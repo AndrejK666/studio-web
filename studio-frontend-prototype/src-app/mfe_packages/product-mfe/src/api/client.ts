@@ -204,10 +204,32 @@ export const api = {
   startGearMatch: (
     _token: string,
     projectId: string,
-    body: { paths?: string[]; glob?: string; extract_max_calls?: number; idempotency_key?: string } = {}
-  ) => svc().startGearMatch(projectId).fetch(body),
-  gearMatches: (_token: string, projectId: string) => svc().gearMatches({ projectId }).fetch(FRESH),
-  gearMatch: (_token: string, projectId: string, matchId = 'latest') => svc().gearMatch({ projectId, matchId }).fetch(FRESH),
+    body: { paths?: string[]; glob?: string; extract_max_calls?: number; idempotency_key?: string } = {},
+    strategy?: string
+  ) => svc().startGearMatch(projectId, strategy).fetch(body),
+  gearMatches: (_token: string, projectId: string, strategy?: string) =>
+    svc().gearMatches({ projectId, strategy }).fetch(FRESH),
+  gearMatch: (_token: string, projectId: string, matchId = 'latest', strategy?: string) =>
+    svc().gearMatch({ projectId, matchId, strategy }).fetch(FRESH),
+  connectStrategyService: (
+    _token: string,
+    organizationId: string,
+    strategy: string,
+    baseUrl: string,
+    secret: string,
+    label: string
+  ) =>
+    svc()
+      .connectStrategyService()
+      .fetch({
+        provider: 'assembly-service',
+        label,
+        base_url: baseUrl,
+        token: secret,
+        options: { strategy },
+        scope: 'organization',
+        owner_tenant_id: organizationId,
+      }),
   gearMatchDiff: (_token: string, projectId: string, matchId: string, base?: string) =>
     svc().gearMatchDiff({ projectId, matchId, base }).fetch(FRESH),
   cancelGearMatch: (_token: string, projectId: string, matchId: string) =>

@@ -195,7 +195,7 @@ describe('AssemblyPanel', () => {
     fireEvent.click(await found('[data-product-assembly-confirm]'));
     await waitFor(() => expect(decide).toHaveBeenCalled());
     expect(decide.mock.calls[0][2]).toMatchObject({ gear_id: 'gears-rust/authn-resolver', decision: 'accepted' });
-    expect(read).toHaveBeenCalledWith('', 'p1', 'm1');
+    expect(read).toHaveBeenCalledWith('', 'p1', 'm1', 'gears_matcher');
   });
 
   it('says when no gear match has finished, and why', async () => {
@@ -255,5 +255,33 @@ describe('AssemblyPanel', () => {
     expect(matcher.disabled).toBe(true);
     expect(matcher.title).toBe('no address');
     expect((document.querySelector('[data-product-assembly-choice="spec_mapping"]') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("proposes from an organization kit's own service strategy and runs its match", async () => {
+    vi.spyOn(api, 'assemblyStrategy').mockResolvedValue(
+      strategy({
+        strategy: 'acme_matcher',
+        chosen: 'acme_matcher',
+        source: 'organization',
+        organization_default: 'acme_matcher',
+        strategies: ['spec_mapping', 'acme_matcher'],
+        strategy_kits: [
+          { id: 'spec_mapping', name: 'Spec mapping', description: '', kit: 'spec-mapping', service: null, offered: true },
+          { id: 'acme_matcher', name: 'Acme matcher', description: 'Acme', kit: 'acme-matcher', service: 'gears-matcher/v1', offered: true },
+        ],
+      })
+    );
+    const list = vi.spyOn(api, 'gearMatches').mockResolvedValue({ items: [MATCH.summary], total: 1 } as never);
+    const read = vi.spyOn(api, 'gearMatch').mockResolvedValue(MATCH);
+    vi.spyOn(api, 'completeProduct').mockResolvedValue({ gears: ['api-gateway', 'authn-resolver'], changes: [], config: {} });
+    const start = vi.spyOn(api, 'startGearMatch').mockResolvedValue({ run_id: 'r', match_id: 'm', state: 'queued' });
+    draw();
+    expect((await found('[data-product-assembly-effective]')).textContent).toContain('Acme matcher');
+    fireEvent.click(await found('[data-product-assembly-run="acme_matcher"]'));
+    await waitFor(() => expect(start).toHaveBeenCalledWith('', 'p1', {}, 'acme_matcher'));
+    fireEvent.click(await found('[data-product-assembly-propose]'));
+    await found('[data-product-assembly-proposal="authn-resolver"]');
+    expect(list).toHaveBeenCalledWith('', 'p1', 'acme_matcher');
+    expect(read).toHaveBeenCalledWith('', 'p1', 'm1', 'acme_matcher');
   });
 });

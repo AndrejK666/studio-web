@@ -17,6 +17,7 @@
 pub mod client;
 pub mod config;
 pub mod report;
+pub mod services;
 pub mod store;
 pub mod task;
 pub mod usage;
@@ -32,6 +33,7 @@ use uuid::Uuid;
 use client::{Matcher, MatcherError};
 use config::MatcherConfig;
 use report::SentDocument;
+use services::{MatcherDirectory, NOT_CONFIGURED, NOT_CONNECTED, SHIPPED_STRATEGY};
 use store::{Change, Match, MatchStore, Note};
 
 /// The matcher's own defaults (`GET /v1/info` `limits`), used when it does
@@ -87,14 +89,21 @@ pub struct StartRequest {
     pub idempotency_key: Option<String>,
 }
 
-/// The matcher, the store and the ports a match needs.
+/// The services, the store and the ports a match needs.
 pub struct GearMatches {
     pub config: MatcherConfig,
+    /// The deployment's own gears-matcher (`config.gears_matcher`): the
+    /// shipped strategy's service where the organization connected none.
     pub matcher: Arc<dyn Matcher>,
     store: Option<Arc<MatchStore>>,
     hub: Arc<ClientHub>,
-    /// The last `GET /v1/info`, for the organization page's live check.
-    info_cache: tokio::sync::Mutex<Option<(std::time::Instant, LiveInfo)>>,
+    /// The services organizations connected for their strategies.
+    directory: Arc<dyn MatcherDirectory>,
+    /// The last `GET /v1/info` per organization and strategy, for the
+    /// organization page's live check.
+    info_cache: tokio::sync::Mutex<
+        std::collections::HashMap<(Uuid, String), (std::time::Instant, LiveInfo)>,
+    >,
 }
 
 /// How long a live check of the service is kept before it is asked again.
@@ -116,31 +125,94 @@ impl GearMatches {
         store: Option<Arc<MatchStore>>,
         hub: Arc<ClientHub>,
     ) -> Self {
+        let directory = Arc::new(services::ConnectionDirectory::new(
+            Arc::clone(&hub),
+            config.request_timeout_secs,
+        ));
         Self {
             config,
             matcher,
             store,
             hub,
-            info_cache: tokio::sync::Mutex::new(None),
+            directory,
+            info_cache: tokio::sync::Mutex::new(std::collections::HashMap::new()),
         }
     }
 
-    /// Whether the service answers now: its `GET /v1/info`, asked at most
-    /// once per [`INFO_TTL`]. `None` when it is not configured (nothing to
-    /// ask).
-    pub async fn live_info(&self) -> Option<LiveInfo> {
-        self.matcher.missing().is_none().then_some(())?;
+    /// The same, finding the strategies' services in `directory` (a test's).
+    #[cfg(test)]
+    pub fn with_directory(mut self, directory: Arc<dyn MatcherDirectory>) -> Self {
+        self.directory = directory;
+        self
+    }
+
+    /// The service that runs `strategy`'s matches in organization `org`: the
+    /// one the organization connected for it, else -- for the shipped
+    /// strategy -- the deployment's own.
+    pub async fn matcher_for(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        strategy: &str,
+    ) -> Result<Arc<dyn Matcher>, Refusal> {
+        match self.directory.connected(ctx, org, strategy).await {
+            Ok(Some(m)) => return Ok(m),
+            Ok(None) => {}
+            Err(why) => tracing::warn!(%org, strategy, "studio-product: {why}"),
+        }
+        if strategy == SHIPPED_STRATEGY {
+            return match self.matcher.missing() {
+                None => Ok(Arc::clone(&self.matcher)),
+                Some(why) => Err(Refusal::Unavailable(why)),
+            };
+        }
+        Err(Refusal::Unavailable(format!(
+            "no service is connected for the `{strategy}` strategy: an organization \
+             administrator connects one on Organization › Gears matcher (its address and \
+             secret, as an assembly service connection)"
+        )))
+    }
+
+    /// Why `strategy`'s matches cannot run in `org`, as a code and a
+    /// sentence; `None` when they can.
+    pub async fn service_refusal(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        strategy: &str,
+    ) -> Option<(&'static str, String)> {
+        if let Err(r) = self.store() {
+            return Some((NOT_CONFIGURED, r.to_string()));
+        }
+        match self.matcher_for(ctx, org, strategy).await {
+            Ok(_) => None,
+            Err(r) if strategy == SHIPPED_STRATEGY => Some((NOT_CONFIGURED, r.to_string())),
+            Err(r) => Some((NOT_CONNECTED, r.to_string())),
+        }
+    }
+
+    /// Whether `strategy`'s service answers now: its `GET /v1/info`, asked
+    /// at most once per [`INFO_TTL`]. `None` when there is no service to ask
+    /// (not configured, not connected).
+    pub async fn live_info(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        strategy: &str,
+    ) -> Option<LiveInfo> {
+        let matcher = self.matcher_for(ctx, org, strategy).await.ok()?;
+        let key = (org, strategy.to_owned());
         let mut cache = self.info_cache.lock().await;
-        if let Some((at, info)) = cache.as_ref()
+        if let Some((at, info)) = cache.get(&key)
             && at.elapsed() < INFO_TTL
         {
             return Some(info.clone());
         }
         let info = LiveInfo {
             checked_at_ms: store::now_ms(),
-            answer: self.matcher.info().await.map_err(|e| e.to_string()),
+            answer: matcher.info().await.map_err(|e| e.to_string()),
         };
-        *cache = Some((std::time::Instant::now(), info.clone()));
+        cache.insert(key, (std::time::Instant::now(), info.clone()));
         Some(info)
     }
 
@@ -153,12 +225,15 @@ impl GearMatches {
         })
     }
 
-    /// The matcher can be called and its reports kept.
-    pub fn available(&self) -> Result<&Arc<MatchStore>, Refusal> {
-        if let Some(why) = self.matcher.missing() {
-            return Err(Refusal::Unavailable(why));
-        }
-        self.store()
+    /// `strategy`'s service can be called in `org` and its reports kept.
+    pub async fn available_for(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        strategy: &str,
+    ) -> Result<(&Arc<MatchStore>, Arc<dyn Matcher>), Refusal> {
+        let store = self.store()?;
+        Ok((store, self.matcher_for(ctx, org, strategy).await?))
     }
 
     fn queue(&self) -> Result<Arc<dyn crate::tasks::TaskQueue>, Refusal> {
@@ -183,9 +258,10 @@ impl GearMatches {
         org: Uuid,
         project: Uuid,
         product: &str,
+        strategy: &str,
         request: StartRequest,
     ) -> Result<Match, Refusal> {
-        let store = self.available()?;
+        let (store, matcher) = self.available_for(ctx, org, strategy).await?;
         let key = match request.idempotency_key.as_deref().map(str::trim) {
             Some(k) if !k.is_empty() => {
                 if !key_ok(k) {
@@ -199,10 +275,14 @@ impl GearMatches {
             _ => None,
         };
         let id = key.as_deref().map_or_else(Uuid::new_v4, |k| {
-            Uuid::new_v5(
-                &Uuid::NAMESPACE_OID,
-                format!("gear-match:{project}:{k}").as_bytes(),
-            )
+            // The shipped strategy's key as before, so a resend after the
+            // upgrade still answers its match.
+            let name = if strategy == SHIPPED_STRATEGY {
+                format!("gear-match:{project}:{k}")
+            } else {
+                format!("gear-match:{project}:{strategy}:{k}")
+            };
+            Uuid::new_v5(&Uuid::NAMESPACE_OID, name.as_bytes())
         });
         if let Some(existing) = store.get(org, project, id).await? {
             return Ok(existing);
@@ -210,7 +290,7 @@ impl GearMatches {
 
         // The service's limits, and the proof that it answers, before
         // anything is read or kept.
-        let info = self.matcher.info().await.map_err(|e| match e {
+        let info = matcher.info().await.map_err(|e| match e {
             MatcherError::NotConfigured(m) => Refusal::Unavailable(m),
             other => Refusal::Unavailable(format!("{other}")),
         })?;
@@ -344,6 +424,7 @@ impl GearMatches {
             usage: None,
             error: None,
             cancel_requested: false,
+            strategy: strategy.to_owned(),
         };
         let queue = self.queue()?;
         store.insert(row.clone()).await?;
@@ -455,10 +536,20 @@ impl GearMatches {
         Ok(self.reconcile(store, row).await)
     }
 
-    /// The project's latest match, if any.
-    pub async fn latest(&self, org: Uuid, project: Uuid) -> Result<Option<Match>, Refusal> {
+    /// The project's latest match of `strategy`, if any.
+    pub async fn latest(
+        &self,
+        org: Uuid,
+        project: Uuid,
+        strategy: &str,
+    ) -> Result<Option<Match>, Refusal> {
         let store = self.store()?;
-        match store.list(org, project, 1).await?.into_iter().next() {
+        match store
+            .list(org, project, Some(strategy), 1)
+            .await?
+            .into_iter()
+            .next()
+        {
             Some(row) => Ok(Some(self.reconcile(store, row).await)),
             None => Ok(None),
         }
@@ -490,7 +581,9 @@ impl GearMatches {
         // stop it too, so it does not spend more calls for nobody.
         if state == store::CANCELLED
             && let Some(mid) = row.matcher_run_id.as_deref()
-            && let Err(e) = self.matcher.cancel(mid).await
+            && let Some(ctx) = services::service_context(row.tenant_id)
+            && let Ok(matcher) = self.matcher_for(&ctx, row.tenant_id, &row.strategy).await
+            && let Err(e) = matcher.cancel(mid).await
         {
             tracing::warn!(error = %e, "studio-product: the matcher's run could not be cancelled");
         }
@@ -698,6 +791,10 @@ pub fn info_summary(info: &Value) -> Value {
         "models": info["models"],
     })
 }
+
+#[cfg(test)]
+#[path = "strategy_service_tests.rs"]
+mod strategy_service_tests;
 
 #[cfg(test)]
 mod tests {

@@ -25,8 +25,10 @@ import { productApi, type GearConfig, type ProductChange, type ProjectProduct } 
 import {
   isFinished,
   matcherProposals,
+  isServiceStrategy,
   matcherUnavailable,
   offeredStrategies,
+  strategyName,
   organizationStrategy,
   projectChoice,
   specMappingProposals,
@@ -121,22 +123,24 @@ export function AssemblyPanel({ round, onChanged }: { round: number; onChanged: 
       // Compared under every spelling (id or crate); what is saved stays as it was.
       const picks = pickNames(saved, index);
       let items: Proposal[];
-      if (a.strategy === 'gears_matcher') {
-        // The latest *finished* match (newest first): a run that is still
-        // going, failed or was stopped since does not hide the one before it.
-        const runs = (await productApi.gearMatches(projectId)).items;
+      if (isServiceStrategy(a, strategy)) {
+        // The latest *finished* match of this strategy (newest first): a run
+        // that is still going, failed or was stopped since does not hide the
+        // one before it. Any service strategy's, the shipped matcher's or an
+        // organization kit's (ADR-0074).
+        const runs = (await productApi.gearMatches(projectId, strategy)).items;
         const finished = runs.find((m) => isFinished(m.state));
         if (!finished) {
           setNote(
             runs.length === 0
-              ? t('no_match')
+              ? t(strategy === 'gears_matcher' ? 'no_match' : 'no_match_service', { strategy: strategyLabel(strategy) })
               : runs.some((m) => isRunning(m.state))
                 ? t('match_not_finished')
                 : t('no_finished_match', { state: t(`run_${runs[0].state}`) })
           );
           return;
         }
-        const match = await productApi.gearMatch(projectId, finished.match_id);
+        const match = await productApi.gearMatch(projectId, finished.match_id, strategy);
         items = matcherProposals(match, picks, names);
         if (items.length === 0) {
           setNote(t('nothing_from_match', { date: new Date(finished.created_at).toLocaleString() }));
@@ -158,6 +162,21 @@ export function AssemblyPanel({ round, onChanged }: { round: number; onChanged: 
     }
   };
 
+  /** Run a match of an organization kit's strategy; the Gear match tab runs the shipped one's. */
+  const runMatch = async () => {
+    if (a.strategy === 'manual') return;
+    setBusy('run');
+    setErr(null);
+    try {
+      await productApi.startGearMatch(projectId, {}, a.strategy);
+      setNote(t('match_started', { strategy: strategyLabel(a.strategy) }));
+    } catch (e) {
+      setErr(errText(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const confirm = async () => {
     if (!pending) return;
     setBusy('confirm');
@@ -171,7 +190,7 @@ export function AssemblyPanel({ round, onChanged }: { round: number; onChanged: 
         config: pending.config,
       });
       // The matcher's proposals that went in are accepted, as Gear match's "Add" does.
-      if (pending.strategy === 'gears_matcher') {
+      if (isServiceStrategy(a, pending.strategy)) {
         await Promise.all(
           pending.items.flatMap((p) =>
             p.decisions.map((d) => productApi.putGearMatchDecision(projectId, { ...d, decision: 'accepted' }).catch(() => undefined))
@@ -188,8 +207,8 @@ export function AssemblyPanel({ round, onChanged }: { round: number; onChanged: 
     }
   };
 
-  const strategyLabel = (s: StrategyUsed) => t(`strategy_${s}`);
   const kits = offeredStrategies(a);
+  const strategyLabel = (s: StrategyUsed) => strategyName(s, t, kits);
   // Why the matcher cannot be chosen, said under the choice rather than only
   // in the disabled button's tooltip, which a pointer-less reader never sees.
   // Only where its kit is installed: a strategy whose kit is not is not offered.
@@ -209,7 +228,12 @@ export function AssemblyPanel({ round, onChanged }: { round: number; onChanged: 
       return {
         id: s as ProjectChoice,
         label: strategyLabel(s),
-        title: kit && !kit.offered ? (kit.reason ?? unavailableText ?? t('not_offered')) : t(`hint_${s}`),
+        title:
+          kit && !kit.offered
+            ? (kit.reason ?? unavailableText ?? t('not_offered'))
+            : s === 'spec_mapping' || s === 'gears_matcher'
+              ? t(`hint_${s}`)
+              : (kit?.description ?? ''),
         // Not usable here: still shown, so the person sees it exists and why not.
         disabled: (!kit || !kit.offered) && projectChoice(a) !== s,
       };
@@ -270,6 +294,18 @@ export function AssemblyPanel({ round, onChanged }: { round: number; onChanged: 
         {a.strategy === 'gears_matcher' && (
           <Button type="button" size="sm" variant="ghost" onClick={() => openTab(bridge, 'gearMatch')}>
             {t('open_gear_match')}
+          </Button>
+        )}
+        {a.strategy !== 'gears_matcher' && isServiceStrategy(a, a.strategy) && (
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={() => void runMatch()}
+            disabled={busy !== null}
+            data-product-assembly-run={a.strategy}
+          >
+            {busy === 'run' ? t('running_match') : t('run_match')}
           </Button>
         )}
       </div>

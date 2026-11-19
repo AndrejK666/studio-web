@@ -17,6 +17,9 @@ use std::sync::Arc;
 
 use toolkit::client_hub::ClientHub;
 
+pub use super::assembly_service::{
+    PROVIDER as ASSEMBLY_SERVICE_PROVIDER, STRATEGY_OPTION as ASSEMBLY_SERVICE_STRATEGY_OPTION,
+};
 /// A working copy on disk: shallow clone, fast-forward, walk. Credentials go
 /// to `git` through a helper, never the URL or argv.
 pub(crate) use super::clone as git_checkout;

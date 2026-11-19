@@ -21,7 +21,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use super::GearMatches;
-use super::client::MatcherError;
+use super::client::{Matcher, MatcherError};
 use super::report;
 use super::store::{self, Change};
 use crate::tasks::sdk::{TaskContext, TaskHandler, TaskOutcome};
@@ -104,10 +104,16 @@ impl TaskHandler for GearMatchTask {
                 TaskOutcome::Failed(why)
             }
         };
-        let matcher = Arc::clone(&self.matches.matcher);
-        if let Some(why) = matcher.missing() {
-            return fail(why).await;
-        }
+        // The service of the strategy the match is for: the organization's
+        // connection, else (the shipped strategy) the deployment's own.
+        let matcher = match self
+            .matches
+            .matcher_for(&ctx.security, tenant, &row.strategy)
+            .await
+        {
+            Ok(m) => m,
+            Err(e) => return fail(e.to_string()).await,
+        };
 
         // 1. Submit, once: the key makes a resend the same run.
         let run_id = match row.matcher_run_id.clone() {
@@ -158,7 +164,9 @@ impl TaskHandler for GearMatchTask {
         let mut last_progress = String::new();
         loop {
             if ctx.cancelled() {
-                return self.stopped(&store, tenant, project, id, &run_id).await;
+                return self
+                    .stopped(matcher.as_ref(), &store, tenant, project, id, &run_id)
+                    .await;
             }
             match matcher.run(&run_id).await {
                 Ok(run) => {
@@ -195,7 +203,16 @@ impl TaskHandler for GearMatchTask {
                     }
                     if matcher_final(&state) {
                         return self
-                            .finish(&store, tenant, project, id, &run_id, &state, &run)
+                            .finish(
+                                matcher.as_ref(),
+                                &store,
+                                tenant,
+                                project,
+                                id,
+                                &run_id,
+                                &state,
+                                &run,
+                            )
                             .await;
                     }
                 }
@@ -236,6 +253,7 @@ impl GearMatchTask {
     /// or to the next read of the match.
     async fn stopped(
         &self,
+        matcher: &dyn Matcher,
         store: &store::MatchStore,
         tenant: Uuid,
         project: Uuid,
@@ -251,7 +269,7 @@ impl GearMatchTask {
         if !asked {
             return TaskOutcome::Retry("stopped before the matcher finished".into());
         }
-        if let Err(e) = self.matches.matcher.cancel(run_id).await {
+        if let Err(e) = matcher.cancel(run_id).await {
             tracing::warn!(error = %e, "studio-product: the matcher's run could not be cancelled");
         }
         let _ = store
@@ -272,6 +290,7 @@ impl GearMatchTask {
     #[allow(clippy::too_many_arguments)]
     async fn finish(
         &self,
+        matcher: &dyn Matcher,
         store: &store::MatchStore,
         tenant: Uuid,
         project: Uuid,
@@ -283,7 +302,7 @@ impl GearMatchTask {
         let usage = Some(run["usage"].to_string());
         match state {
             "succeeded" | "partial" => {
-                let report = match self.matches.matcher.report(run_id).await {
+                let report = match matcher.report(run_id).await {
                     Ok(r) => r,
                     Err(e) if e.is_transient() => return TaskOutcome::Retry(e.to_string()),
                     Err(e) => {

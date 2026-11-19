@@ -77,6 +77,11 @@ pub enum ConnectorCategory {
     /// A platform that builds and runs products on hardware it allocates
     /// (Constructor Research, ADR-0049). Signed in to, not pasted.
     Compute,
+    /// A service an assembly strategy runs on (ADR-0074, amendment): an
+    /// organization's kit names the strategy, the connection holds the
+    /// service's address and secret. Nothing to browse; only the server uses
+    /// it.
+    Service,
 }
 
 impl ConnectorCategory {
@@ -89,6 +94,7 @@ impl ConnectorCategory {
             Self::Registry => "registry",
             Self::Gears => "gears",
             Self::Compute => "compute",
+            Self::Service => "service",
         }
     }
 }
@@ -636,6 +642,7 @@ pub trait ConnectorDriver: Send + Sync + 'static {
             ConnectorCategory::Registry => "username:token",
             ConnectorCategory::Gears => "Read token",
             ConnectorCategory::Compute => "Signed in",
+            ConnectorCategory::Service => "Shared secret",
         }
     }
 

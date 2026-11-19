@@ -15,8 +15,11 @@
 //! - `GET  inbox/gear-match-questions` -- the Inbox's `endpoint` source: the
 //!   open questions of the matches the caller asked for.
 //!
-//! Every route answers 503 saying why when the matcher or the gear's database
-//! is not here; nothing else of the product depends on them.
+//! `?strategy=` names the assembly strategy whose service runs the matches
+//! (ADR-0074, amendment): `gears_matcher` when absent, or an organization's
+//! kit's service strategy. Every route answers 503 saying why when that
+//! service or the gear's database is not here; nothing else of the product
+//! depends on them.
 
 use std::collections::BTreeMap;
 
@@ -32,11 +35,33 @@ pub struct GearMatchQuery {
     pub project_id: Uuid,
 }
 
+/// A route that starts or lists one strategy's matches.
+#[derive(Debug, serde::Deserialize)]
+pub struct GearMatchStrategyQuery {
+    pub project_id: Uuid,
+    /// The service strategy; `gears_matcher` when absent.
+    pub strategy: Option<String>,
+}
+
 #[derive(Debug, serde::Deserialize)]
 pub struct GearMatchDiffQuery {
     pub project_id: Uuid,
     /// The earlier match; the one before `match_id` when absent.
     pub base: Option<Uuid>,
+}
+
+/// The strategy a request names, checked as a kit's id is (`snake_case`).
+fn strategy_param(s: Option<String>) -> ApiResult<String> {
+    match s.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        None => Ok(gear_match::services::SHIPPED_STRATEGY.to_owned()),
+        Some(s) => crate::product::assembly::Strategy::parse(s)
+            .map(|v| v.as_str().to_owned())
+            .ok_or_else(|| {
+                StudioProductError::invalid_argument()
+                    .with_field_violation("strategy", "a strategy's id, snake_case", "INVALID")
+                    .create()
+            }),
+    }
 }
 
 /// What to read.
@@ -104,6 +129,8 @@ pub struct GearMatchTotalsDto {
 #[toolkit_macros::api_dto(response)]
 pub struct GearMatchItemDto {
     pub match_id: String,
+    /// The assembly strategy whose service ran it.
+    pub strategy: String,
     pub run_id: Option<String>,
     /// `queued`, `running`, `cancelling`, `succeeded`, `partial` (some
     /// requirements not assessed), `failed` or `cancelled`.
@@ -237,6 +264,8 @@ pub struct GearMatchDto {
 pub struct GearMatchGetQuery {
     pub project_id: Uuid,
     pub raw: Option<bool>,
+    /// Whose `latest`; `gears_matcher` when absent.
+    pub strategy: Option<String>,
 }
 
 /// How one requirement moved.
@@ -360,6 +389,7 @@ fn totals_dto(t: report::Totals) -> GearMatchTotalsDto {
 fn item_dto(m: &Match) -> GearMatchItemDto {
     GearMatchItemDto {
         match_id: m.id.to_string(),
+        strategy: m.strategy.clone(),
         run_id: m.run_id.map(|r| r.to_string()),
         state: m.state.clone(),
         requested_by: m.requested_by.clone(),
@@ -550,13 +580,26 @@ async fn start_gear_match(
     OrgCtx(ctx): OrgCtx,
     Extension(product): Extension<Product>,
     Extension(matches): Extension<Arc<GearMatches>>,
-    Query(GearMatchQuery { project_id }): Query<GearMatchQuery>,
+    Query(GearMatchStrategyQuery {
+        project_id,
+        strategy,
+    }): Query<GearMatchStrategyQuery>,
     headers: HeaderMap,
     Json(body): Json<StartGearMatchRequest>,
 ) -> ApiResult<(StatusCode, JsonBody<GearMatchStartedDto>)> {
-    // Unconfigured is said before anything is read.
-    matches.available().map_err(problem)?;
+    let strategy = strategy_param(strategy)?;
     let org = organization(&product, &ctx, project_id).await?;
+    // The strategy is one a kit that applies to the project provides
+    // (ADR-0074), and its service is here, before anything is read.
+    let (available, _) =
+        super::assembly_rest::available(&product.hub, Some(&matches), &ctx, project_id).await;
+    if available.installed(&strategy) == Some(false) {
+        return Err(super::assembly_rest::not_installed(&strategy));
+    }
+    matches
+        .available_for(&ctx, org, &strategy)
+        .await
+        .map_err(problem)?;
     let record = product
         .service
         .get_project_product(&ctx, &project_id.to_string())
@@ -581,7 +624,7 @@ async fn start_gear_match(
             .or_else(|| idempotency_header(&headers)),
     };
     let m = matches
-        .start(&ctx, org, project_id, &product_id, request)
+        .start(&ctx, org, project_id, &product_id, &strategy, request)
         .await
         .map_err(problem)?;
     Ok((
@@ -598,12 +641,16 @@ async fn list_gear_matches(
     OrgCtx(ctx): OrgCtx,
     Extension(product): Extension<Product>,
     Extension(matches): Extension<Arc<GearMatches>>,
-    Query(GearMatchQuery { project_id }): Query<GearMatchQuery>,
+    Query(GearMatchStrategyQuery {
+        project_id,
+        strategy,
+    }): Query<GearMatchStrategyQuery>,
 ) -> ApiResult<JsonBody<GearMatchListDto>> {
+    let strategy = strategy_param(strategy)?;
     let store = matches.store().map_err(problem)?;
     let org = organization(&product, &ctx, project_id).await?;
     let rows = store
-        .list(org, project_id, gear_match::HISTORY_MAX)
+        .list(org, project_id, Some(&strategy), gear_match::HISTORY_MAX)
         .await
         .map_err(|e| problem(e.into()))?;
     let items: Vec<GearMatchItemDto> = rows.iter().map(item_dto).collect();
@@ -613,11 +660,17 @@ async fn list_gear_matches(
     }))
 }
 
-/// `latest`, or a match's id.
-async fn one(matches: &GearMatches, org: Uuid, project: Uuid, id: &str) -> ApiResult<Match> {
+/// `latest` (of `strategy`), or a match's id.
+async fn one(
+    matches: &GearMatches,
+    org: Uuid,
+    project: Uuid,
+    id: &str,
+    strategy: &str,
+) -> ApiResult<Match> {
     if id == "latest" {
         return matches
-            .latest(org, project)
+            .latest(org, project, strategy)
             .await
             .map_err(problem)?
             .ok_or_else(|| {
@@ -636,10 +689,15 @@ async fn get_gear_match(
     Extension(product): Extension<Product>,
     Extension(matches): Extension<Arc<GearMatches>>,
     Path(match_id): Path<String>,
-    Query(GearMatchGetQuery { project_id, raw }): Query<GearMatchGetQuery>,
+    Query(GearMatchGetQuery {
+        project_id,
+        raw,
+        strategy,
+    }): Query<GearMatchGetQuery>,
 ) -> ApiResult<JsonBody<GearMatchDto>> {
+    let strategy = strategy_param(strategy)?;
     let org = organization(&product, &ctx, project_id).await?;
-    let m = one(&matches, org, project_id, &match_id).await?;
+    let m = one(&matches, org, project_id, &match_id, &strategy).await?;
     Ok(Json(match_dto(&matches, m, raw.unwrap_or(false)).await?))
 }
 
@@ -651,13 +709,25 @@ async fn get_gear_match_diff(
     Query(GearMatchDiffQuery { project_id, base }): Query<GearMatchDiffQuery>,
 ) -> ApiResult<JsonBody<GearMatchDiffDto>> {
     let org = organization(&product, &ctx, project_id).await?;
-    let head = one(&matches, org, project_id, &match_id).await?;
+    let head = one(
+        &matches,
+        org,
+        project_id,
+        &match_id,
+        gear_match::services::SHIPPED_STRATEGY,
+    )
+    .await?;
     let base = match base {
         Some(b) => matches.read(org, project_id, b).await.map_err(problem)?,
         None => {
             let store = matches.store().map_err(problem)?;
             store
-                .list(org, project_id, gear_match::HISTORY_MAX)
+                .list(
+                    org,
+                    project_id,
+                    Some(&head.strategy),
+                    gear_match::HISTORY_MAX,
+                )
                 .await
                 .map_err(|e| problem(e.into()))?
                 .into_iter()
@@ -894,6 +964,9 @@ async fn list_inbox_gear_match_questions(
     }))
 }
 
+const STRATEGY_PARAM_DOC: &str = "The assembly strategy whose service runs the matches: `gears_matcher` when \
+     absent, or an organization kit's service strategy (ADR-0074)";
+
 pub fn register(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
     let router = OperationBuilder::post("/studio-product/v1/gear-matches")
         .operation_id("studio_product.start_gear_match")
@@ -907,13 +980,16 @@ pub fn register(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
                  its run and keeps the coverage report with the project. Paid model calls: a \
                  run takes minutes. Progress is the run in Background work, `task.*` \
                  studio-events and `GET gear-matches/{match_id}`. The same `Idempotency-Key` \
-                 (header or `idempotency_key`) answers the same match. 503 naming what is \
-                 missing when the matcher is not configured.",
+                 (header or `idempotency_key`) answers the same match. `strategy` names the \
+                 service strategy (default `gears_matcher`): `KIT_NOT_INSTALLED` where no kit \
+                 that applies provides it, 503 naming what is missing when its service is not \
+                 configured or not connected.",
         )
         .tag("StudioProduct")
         .authenticated()
         .require_license_features::<License>([])
         .query_param("project_id", true, "The project (its tenant id)")
+        .query_param("strategy", false, STRATEGY_PARAM_DOC)
         .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
         .handler(start_gear_match)
         .json_request::<StartGearMatchRequest>(openapi, "What to read")
@@ -938,6 +1014,7 @@ pub fn register(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .authenticated()
         .require_license_features::<License>([])
         .query_param("project_id", true, "The project (its tenant id)")
+        .query_param("strategy", false, STRATEGY_PARAM_DOC)
         .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
         .handler(list_gear_matches)
         .json_response_with_schema::<GearMatchListDto>(openapi, StatusCode::OK, "Matches")
@@ -964,6 +1041,11 @@ pub fn register(router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .require_license_features::<License>([])
         .path_param("match_id", "A match's id, or `latest`")
         .query_param("raw", false, "Add the matcher's report as written")
+        .query_param(
+            "strategy",
+            false,
+            "Whose `latest`: the service strategy, `gears_matcher` when absent",
+        )
         .query_param("project_id", true, "The project (its tenant id)")
         .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
         .handler(get_gear_match)

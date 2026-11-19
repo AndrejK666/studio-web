@@ -228,7 +228,20 @@ no list of strategies to offer is kept in its code.
 | Strategy | Kit | What it proposes | Needs |
 |---|---|---|---|
 | `spec_mapping` | Spec mapping (`spec-mapping`, a base kit by default an organization may uninstall) | per capability the specifications name that no pick answers yet, the first gear spec-mapping's plan offers with a contract, a declaration or a member's confirmation behind it, built and in the catalogue the product reads | nothing: instant, free, deterministic |
-| `gears_matcher` | Gears matcher (`gears-matcher`, opt-in) | every gear the project's latest finished match proposes (`covered`/`partial` with code) that nobody rejected and the catalogue holds; on confirmation each one's decision is kept `accepted`, as "Add to product" does | the service configured |
+| `gears_matcher` | Gears matcher (`gears-matcher`, opt-in) | every gear the project's latest finished match proposes (`covered`/`partial` with code) that nobody rejected and the catalogue holds; on confirmation each one's decision is kept `accepted`, as "Add to product" does | the service configured (or connected) |
+| an organization kit's own (e.g. `acme_matcher`) | the organization's kit, which requires `gears-matcher` | the same as `gears_matcher`, from that strategy's latest finished match | the organization's `assembly-service` connection for it |
+
+**Plug-in service strategies** (ADR-0074, amendment §C). A kit's
+`assembly_strategy` may declare `service: {contract: "gears-matcher/v1"}`: a
+service speaking the gears-matcher's API runs it through this pipeline, with no
+code of it in Studio. The organization binds the address and secret as an
+`assembly-service` connection whose `strategy` option names it (Organization ›
+Gears matcher offers the form); a run asks `gear_match::services` for the
+strategy's service: that connection, else, for `gears_matcher` only, the
+deployment's `config.gears_matcher`. Matches carry their `strategy` (`m0005`);
+`gear-matches` routes and the MCP tools take `?strategy=` (default
+`gears_matcher`). Without a connection the strategy falls back with
+`STRATEGY_NOT_CONNECTED`.
 
 **Which one.** The project's choice, else the organization's default, else what
 the kits make it: `spec_mapping` when it is installed, else the only strategy
@@ -247,8 +260,9 @@ organization the project hangs under.
 assembled by one that can (`spec_mapping` first), else by hand, and the read
 says why — `KIT_NOT_INSTALLED` (its kit does not apply, e.g. uninstalled after
 the choice), `KIT_UNKNOWN` (the installed kits could not be read: `spec_mapping`
-is assumed, the paid matcher is not) or `MATCHER_NOT_CONFIGURED` (the 503
-sentence of §1). Choosing a strategy whose kit does not apply is refused
+is assumed, a paid strategy is not), `MATCHER_NOT_CONFIGURED` (the 503 sentence
+of §1) or `STRATEGY_NOT_CONNECTED` (an organization kit's strategy whose service
+nobody connected). Choosing a strategy whose kit does not apply is refused
 (`KIT_NOT_INSTALLED`), for a project and for the organization's default; a
 project can choose `gears_matcher` where the service is down, and falls back
 until it answers.
@@ -292,11 +306,15 @@ Each project's strategy is resolved as §8 resolves it, from its own kits and
 settings, and summed as the strategy split (`spec_mapping`, `gears_matcher`,
 `manual`), by source (`project`, `organization`, `studio`) and by fallback code.
 
-**The service.** Not only "configured": the server asks the matcher's
-`GET /v1/info` and keeps the answer 30 s (`GearMatches::live_info`), and the
-page shows whether it answers, its versions, the catalogue it reads and its
-commit, the models and the limits, and plainly "Configured, but not answering"
-with the error when it does not.
+**The services.** One block per service strategy the organization's kits
+provide (`services`; `service` is the shipped one's). Not only "configured":
+the server asks each service's `GET /v1/info` and keeps the answer 30 s per
+organization and strategy (`GearMatches::live_info`), and the page shows
+whether it answers, its versions, the catalogue it reads and its commit, the
+models and the limits, the strategy's runs and model use in the period, and
+plainly "Configured, but not answering" with the error when it does not. A
+strategy nobody connected shows the connect form (address and secret) to an
+organization administrator.
 
 **On the page.** Tiles: how the projects are assembled, the runs by how they
 ended with the median duration, the tokens and model calls, the decisions, the

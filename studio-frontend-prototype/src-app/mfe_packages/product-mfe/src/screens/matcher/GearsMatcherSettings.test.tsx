@@ -167,4 +167,35 @@ describe('GearsMatcherSettings', () => {
     await waitFor(() => expect(read).toHaveBeenCalledWith('', 'o1', 90));
     expect(window.location.search).toContain('period=90');
   });
+
+  it("shows a block per service strategy and connects an organization kit's service", async () => {
+    vi.spyOn(api, 'organizationAssemblyStrategy').mockResolvedValue(strategy());
+    const shipped = usage().service;
+    vi.spyOn(api, 'gearMatchUsage').mockResolvedValue(
+      usage({
+        services: [
+          { ...shipped, strategy: 'gears_matcher', name: 'Gears matcher', kit: 'gears-matcher', code: null },
+          {
+            strategy: 'acme_matcher',
+            name: 'Acme matcher',
+            kit: 'acme-matcher',
+            code: 'STRATEGY_NOT_CONNECTED',
+            configured: false,
+            missing: 'no service is connected',
+            models: [],
+          },
+        ],
+      })
+    );
+    const connect = vi.spyOn(api, 'connectStrategyService').mockResolvedValue({ id: 'c1' });
+    render(<GearsMatcherSettings orgId="o1" />);
+    await found('[data-gears-matcher-service-card="gears_matcher"]');
+    expect(document.querySelector('[data-gears-matcher-service="unconnected"]')).toBeTruthy();
+    fireEvent.change(await found('[data-gears-matcher-connect-url]'), { target: { value: 'https://acme.example/matcher' } });
+    fireEvent.change(await found('[data-gears-matcher-connect-secret]'), { target: { value: 's3cret' } });
+    fireEvent.click(await found('[data-gears-matcher-connect-submit]'));
+    await waitFor(() =>
+      expect(connect).toHaveBeenCalledWith('', 'o1', 'acme_matcher', 'https://acme.example/matcher', 's3cret', 'Acme matcher')
+    );
+  });
 });

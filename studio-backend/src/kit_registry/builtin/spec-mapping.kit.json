@@ -11,14 +11,6 @@
   ],
   "mcp_tools": [
     {
-      "name": "project_capabilities",
-      "description": "The capabilities a project's documents need"
-    },
-    {
-      "name": "project_requirements",
-      "description": "The non-functional statements a project's documents make"
-    },
-    {
       "name": "project_plan",
       "description": "The gears that could provide each capability"
     },
@@ -31,8 +23,6 @@
     "reads": [
       "GET /studio-spec-mapping/v1/plan",
       "GET /studio-spec-mapping/v1/findings",
-      "GET /studio-spec-mapping/v1/capabilities",
-      "GET /studio-spec-mapping/v1/requirements",
       "GET /studio-spec-mapping/v1/decisions",
       "POST /studio-spec-mapping/v1/plan",
       "POST /studio-spec-mapping/v1/conformance"
@@ -45,13 +35,17 @@
     {
       "gear": "studio-spec-mapping",
       "mcp_tools": [
-        "project_capabilities",
         "project_findings",
-        "project_plan",
-        "project_requirements"
+        "project_plan"
       ],
       "routes": [
         "POST /studio-spec-mapping/v1/decisions"
+      ]
+    },
+    {
+      "gear": "studio-artifact-ingest",
+      "types": [
+        "mapping-decision"
       ]
     }
   ],

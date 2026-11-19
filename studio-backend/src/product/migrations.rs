@@ -15,6 +15,7 @@ impl MigratorTrait for Migrator {
             Box::new(m0002::Migration),
             Box::new(m0003::Migration),
             Box::new(m0004::Migration),
+            Box::new(m0005::Migration),
         ]
     }
 }
@@ -258,6 +259,56 @@ CREATE TABLE IF NOT EXISTS studio_product_assembly_strategies (
             manager
                 .get_connection()
                 .execute_unprepared("DROP TABLE IF EXISTS studio_product_assembly_strategies;")
+                .await?;
+            Ok(())
+        }
+    }
+}
+
+mod m0005 {
+    use toolkit_db::sea_orm_migration::prelude::*;
+    use toolkit_db::sea_orm_migration::sea_orm;
+    use toolkit_db::sea_orm_migration::sea_orm::ConnectionTrait;
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m0005_studio_product_gear_match_strategy"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if manager.get_database_backend() != sea_orm::DatabaseBackend::Postgres {
+                return Err(DbErr::Custom(
+                    "studio-product migrations: only PostgreSQL is supported".to_owned(),
+                ));
+            }
+            manager
+                .get_connection()
+                .execute_unprepared(
+                    r"
+-- The assembly strategy a match ran for (ADR-0074, amendment): every match
+-- before it was the shipped gears-matcher's.
+ALTER TABLE studio_product_gear_matches
+    ADD COLUMN IF NOT EXISTS strategy TEXT NOT NULL DEFAULT 'gears_matcher';
+CREATE INDEX IF NOT EXISTS studio_product_gear_matches_strategy_newest
+    ON studio_product_gear_matches (tenant_id, project_id, strategy, created_at_ms DESC);
+                    ",
+                )
+                .await?;
+            Ok(())
+        }
+
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            manager
+                .get_connection()
+                .execute_unprepared(
+                    "DROP INDEX IF EXISTS studio_product_gear_matches_strategy_newest; \
+                     ALTER TABLE studio_product_gear_matches DROP COLUMN IF EXISTS strategy;",
+                )
                 .await?;
             Ok(())
         }

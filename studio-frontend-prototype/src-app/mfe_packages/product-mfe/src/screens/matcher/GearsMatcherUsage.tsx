@@ -29,6 +29,8 @@ import {
   USAGE_OPTIONS,
   compact,
   countOf,
+  serviceProjects,
+  servicesOf,
   duration,
   periodOf,
   usageRows,
@@ -72,6 +74,8 @@ export function useAddressPeriod(): [Period, (p: Period) => void] {
 interface UsageCells {
   t: T;
   language: string;
+  /** Strategy names by id, for an organization kit's own. */
+  names: Record<string, string>;
 }
 
 const [UsageCellsProvider, useUsageCells] = createGridCells<UsageCells>('GearMatchUsage');
@@ -100,10 +104,11 @@ const ProjectCell: React.FC<{ item: UsageRow }> = ({ item }) => (
 );
 
 const StrategyCell: React.FC<{ item: UsageRow }> = ({ item }) => {
-  const { t } = useUsageCells();
+  const { t, names } = useUsageCells();
+  const known = item.strategy === 'spec_mapping' || item.strategy === 'gears_matcher' || item.strategy === 'manual';
   return (
     <span className={styles.cell} data-gear-match-usage-strategy={item.strategy}>
-      <span>{t(`strategy_${item.strategy}`)}</span>
+      <span>{known ? t(`strategy_${item.strategy}`) : (names[item.strategy] ?? item.strategy)}</span>
       <span className={styles.meta}>
         {t(`source_short_${item.source}`)}
         {item.fallback && (
@@ -219,7 +224,8 @@ function Tile({ label, value, note, children, data }: { label: string; value: st
 /** The organization's sums, one tile each. */
 export function UsageTiles({ usage, t }: { usage: GearMatchUsage; t: T }) {
   const s = usage.summary;
-  const matcher = countOf(s.strategies, 'gears_matcher');
+  // Every service strategy: the shipped matcher and the organization's own.
+  const matcher = serviceProjects(s.strategies);
   const spec = countOf(s.strategies, 'spec_mapping');
   const manual = countOf(s.strategies, 'manual');
   const all = Math.max(1, matcher + spec + manual);
@@ -330,7 +336,11 @@ export function UsageGrid({
       }),
     [bridge, organizationId]
   );
-  const cells = useMemo(() => ({ t, language }), [t, language]);
+  const names = useMemo(
+    () => Object.fromEntries(servicesOf(usage).flatMap((s) => (s.strategy && s.name ? [[s.strategy, s.name]] : []))),
+    [usage]
+  );
+  const cells = useMemo(() => ({ t, language, names }), [t, language, names]);
   const wrappedLoad = useCallback(
     (context: Parameters<typeof load>[0]) => {
       // The search and the order into the address, as the other lists keep theirs.

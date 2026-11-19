@@ -87,6 +87,8 @@ export function orgScoped(path: string, org: string | null = organization): stri
 }
 
 const enc = encodeURIComponent;
+/** `&strategy=` for a strategy other than the shipped one. */
+const strategyParam = (s?: string) => (s && s !== 'gears_matcher' ? `&strategy=${enc(s)}` : '');
 const project = (id: string) => `project_id=${enc(id)}`;
 
 /** The POSTs that start background work: a lost answer retried answers the
@@ -519,22 +521,42 @@ export class ProductApiService extends BaseApiService {
   /* ── gear matches (studio-product, docs/design/product-gear-match.md) ── */
 
   /** Send the project's specifications to the gears-matcher: one background run. */
-  startGearMatch(projectId: string) {
+  /** Start a match; `strategy` is the service strategy (`gears_matcher` when absent, ADR-0074). */
+  startGearMatch(projectId: string, strategy?: string) {
     return this.rest.mutation<
       { run_id: string; match_id: string; state: string },
       { paths?: string[]; glob?: string; extract_max_calls?: number; idempotency_key?: string }
-    >('POST', orgScoped(`/studio-product/v1/gear-matches?${project(projectId)}`));
+    >('POST', orgScoped(`/studio-product/v1/gear-matches?${project(projectId)}${strategyParam(strategy)}`));
   }
 
   readonly gearMatches = this.protocol(RestEndpointProtocol).queryWith<
     { items: GearMatchItem[]; total: number },
-    { projectId: string }
-  >(({ projectId }) => orgScoped(`/studio-product/v1/gear-matches?${project(projectId)}`));
+    { projectId: string; strategy?: string }
+  >(({ projectId, strategy }) => orgScoped(`/studio-product/v1/gear-matches?${project(projectId)}${strategyParam(strategy)}`));
 
-  /** One match (`latest` or its id), read per requirement. */
-  readonly gearMatch = this.protocol(RestEndpointProtocol).queryWith<GearMatch, { projectId: string; matchId: string }>(
-    ({ projectId, matchId }) => orgScoped(`/studio-product/v1/gear-matches/${enc(matchId)}?${project(projectId)}`)
+  /** One match (`latest` of a strategy, or its id), read per requirement. */
+  readonly gearMatch = this.protocol(RestEndpointProtocol).queryWith<
+    GearMatch,
+    { projectId: string; matchId: string; strategy?: string }
+  >(({ projectId, matchId, strategy }) =>
+    orgScoped(`/studio-product/v1/gear-matches/${enc(matchId)}?${project(projectId)}${strategyParam(strategy)}`)
   );
+
+  /** Connect the service an assembly strategy runs on, for the organization (an `assembly-service` connection). */
+  connectStrategyService() {
+    return this.rest.mutation<
+      { id: string },
+      {
+        provider: 'assembly-service';
+        label: string;
+        base_url: string;
+        token: string;
+        options: { strategy: string };
+        scope: 'organization';
+        owner_tenant_id: string;
+      }
+    >('POST', '/studio-connector/v1/connections');
+  }
 
   readonly gearMatchDiff = this.protocol(RestEndpointProtocol).queryWith<
     GearMatchDiff,

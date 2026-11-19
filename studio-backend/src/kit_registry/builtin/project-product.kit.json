@@ -121,12 +121,6 @@
         "PUT /studio-product/v1/gear-explanations/{gear_id}",
         "POST /studio-product/v1/gear-explanations/{gear_id}/generations"
       ]
-    },
-    {
-      "gear": "studio-artifact-ingest",
-      "types": [
-        "mapping-decision"
-      ]
     }
   ]
 }

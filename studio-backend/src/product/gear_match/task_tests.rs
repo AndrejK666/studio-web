@@ -137,6 +137,7 @@ async fn queued(store: &MatchStore) -> (Uuid, Uuid, Uuid) {
             usage: None,
             error: None,
             cancel_requested: false,
+            strategy: "gears_matcher".into(),
         })
         .await
         .unwrap();

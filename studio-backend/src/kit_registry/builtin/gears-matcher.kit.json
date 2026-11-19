@@ -78,6 +78,9 @@
   "assembly_strategy": {
     "id": "gears_matcher",
     "name": "Gears matcher",
-    "description": "The gears the project's latest gear match proposes: the gears-matcher service reads the specifications requirement by requirement. Minutes and paid model calls; the answers vary between runs."
+    "description": "The gears the project's latest gear match proposes: the gears-matcher service reads the specifications requirement by requirement. Minutes and paid model calls; the answers vary between runs.",
+    "service": {
+      "contract": "gears-matcher/v1"
+    }
   }
 }
