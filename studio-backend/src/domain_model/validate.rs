@@ -170,6 +170,28 @@ fn check_scalar(expr: &TypeExpr, value: &Value) -> Option<String> {
     }
 }
 
+/// The JSON schema a declared type expression says, for graph-storage to
+/// check a Project subtype's own fields with (ADR-0073 amendment): `None`
+/// when the expression implies no JSON shape ([`Kind::Unchecked`]). Absence
+/// and `null` always pass, as they do in [`check`]'s reading: whether a
+/// field is required is the model's to say, not the stored schema's.
+pub fn json_schema_of(type_expr: &str) -> Option<Value> {
+    let expr = TypeExpr::parse(type_expr);
+    let scalar = match (&expr.enumeration, &expr.kind) {
+        (Some(alternatives), _) => serde_json::json!({ "enum": alternatives }),
+        (None, Kind::Text) => serde_json::json!({ "type": "string" }),
+        (None, Kind::Number) => serde_json::json!({ "type": "number" }),
+        (None, Kind::Boolean) => serde_json::json!({ "type": "boolean" }),
+        (None, Kind::Unchecked) => return None,
+    };
+    let shape = if expr.array {
+        serde_json::json!({ "type": "array", "items": scalar })
+    } else {
+        scalar
+    };
+    Some(serde_json::json!({ "anyOf": [{ "type": "null" }, shape] }))
+}
+
 /// A parsed declared type: `Name`, `Name?`, `Name[]`, `a | b | c`.
 struct TypeExpr {
     base: String,

@@ -45,6 +45,8 @@ mod mirror;
 mod mutate;
 pub(crate) mod ontology;
 pub mod port;
+#[cfg(test)]
+mod project_subtype_tests;
 mod query;
 mod rehome;
 mod rest;

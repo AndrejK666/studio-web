@@ -25,6 +25,7 @@ mod models;
 mod owners;
 mod phase;
 pub mod port;
+mod project_types;
 mod requires;
 mod rest;
 pub(crate) mod service;

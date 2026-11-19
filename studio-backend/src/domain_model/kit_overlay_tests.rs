@@ -322,7 +322,7 @@ fn a_kits_subtype_of_project_is_derived_from_projects_gts_id() {
     let entity = model.entity("mna-project").unwrap();
     assert_eq!(
         entity["meta"]["gts"],
-        "gts.cf.studio.domain.project.v1~cf.studio.kit.mna.project.v1~"
+        "gts.cf.studio.domain.project.v1~cf.studio.kit_mna.project.v1~"
     );
     // It inherits what a project is and adds its own.
     let fields = model.effective_properties("mna-project");

@@ -21,6 +21,7 @@ import {
   DomainModelApiService,
   PROJECT_CONFIG_TYPE,
   errorMessage,
+  useOrganization,
   type ProjectConfig,
 } from '@constructor-studio/mfe-shared';
 import { ProjectStatusApiService } from '../../../../api/ProjectStatusApiService';
@@ -87,9 +88,11 @@ export const NextSteps: React.FC<{
   reachRoute: (route: string) => string | null;
   open: (route: string | null) => void;
 }> = ({ projectId, orgId = null, path, t, reachRoute, open }) => {
-  const types = useApiQuery(apiRegistry.getService(ProjectStatusApiService).projectTypeKits, {
-    staleTime: Infinity,
-  });
+  const { org } = useOrganization();
+  const types = useApiQuery(
+    apiRegistry.getService(ProjectStatusApiService).projectTypeKits({ organizationId: orgId ?? org?.id ?? null }),
+    { staleTime: Infinity }
+  );
   const { config } = useProjectConfig(projectId);
   const cache = useQueryCache();
   const [busy, setBusy] = useState<string | null>(null);

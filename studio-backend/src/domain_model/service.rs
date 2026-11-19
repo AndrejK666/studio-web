@@ -448,7 +448,7 @@ impl DomainModelService {
     /// Two callers racing a cold tenant may both load; the load is idempotent
     /// and the first result wins, which is the cheaper trade than holding the
     /// lock across the await.
-    async fn model(&self, ctx: &SecurityContext) -> anyhow::Result<Arc<Ontology>> {
+    pub(super) async fn model(&self, ctx: &SecurityContext) -> anyhow::Result<Arc<Ontology>> {
         let tenant = ctx.subject_tenant_id();
         let cached = self
             .tenants_lock()?
@@ -864,7 +864,7 @@ impl DomainModelService {
             .entities()
             .iter()
             .filter_map(|e| e.get("id").and_then(Value::as_str))
-            .map(|id| (gts::node_type_id(id), id.to_owned()))
+            .map(|id| (model.type_id_of(id), id.to_owned()))
             .collect();
         let mut out = std::collections::BTreeMap::new();
         for (type_id, n) in mirror.counts_by_type(ctx.subject_tenant_id()).await? {
@@ -1358,7 +1358,7 @@ impl DomainModelService {
         if !write.admits_owner(ctx, write.owner_of_scope(scope)).await {
             return Err(AccessError::Denied.into());
         }
-        let type_id = gts::node_type_id(&entity_id);
+        let mut type_id = ontology.type_id_of(&entity_id);
         // Types are tenant/platform-shared; an object is scoped by an optional
         // workspace/project key, so the same `key` in two scopes is two objects
         // and a scoped listing shows only its own. The scope is folded into the
@@ -1368,7 +1368,18 @@ impl DomainModelService {
             Some(s) => format!("{s}|{key}"),
             None => key.to_string(),
         };
-        let instance_id = gts::instance_id(&type_id, &instance_key);
+        let mut instance_id = gts::instance_id(&type_id, &instance_key);
+        // A write to `project` keyed like an object stored as one of the
+        // kits' subtypes of it (a typed project's `self`, ADR-0073
+        // amendment) is a write to that object: the same key never makes a
+        // second, plain one beside it.
+        if let Some((sub_type, sub_id)) = self
+            .stored_as_subtype(ctx, &ontology, &type_id, &instance_key)
+            .await?
+        {
+            type_id = sub_type;
+            instance_id = sub_id;
+        }
         if let Some(s) = scope
             && let Some(obj) = payload.as_object_mut()
         {
@@ -1410,6 +1421,168 @@ impl DomainModelService {
             instance_id,
             report,
         })
+    }
+
+    /// Store the object of `from` keyed `key` (in `scope`) as `to`, a type
+    /// that **is a** `from` (a kit's Project subtype of `project`,
+    /// ADR-0073 amendment). `make` answers the payload to store from what is
+    /// there now (the `to` object if one is, else the `from` one, else
+    /// nothing) and the entity `to` resolved to; the subtype's fields are
+    /// validated by graph-storage on the write.
+    ///
+    /// graph-storage never changes a stored node's type, and an object's id
+    /// is derived from its type, so the object gets a new id: the `to`
+    /// object is written, the relations of the `from` one move to it, and
+    /// the `from` one is marked deleted. Idempotent: a second run finds the
+    /// `to` object, writes only what `make` changes on it, and finishes a
+    /// run that stopped between the steps. Answers the new instance id, and
+    /// whether anything was written.
+    pub async fn retype_object(
+        &self,
+        ctx: &SecurityContext,
+        from: &str,
+        to: &str,
+        key: &str,
+        scope: Option<&str>,
+        make: impl FnOnce(Option<&Value>, &str) -> Value + Send,
+    ) -> anyhow::Result<(String, bool)> {
+        let ontology = self.model(ctx).await?;
+        let from = ontology
+            .resolve_entity_id(from)
+            .ok_or_else(|| anyhow::anyhow!("unknown domain type: {from}"))?;
+        let to = ontology
+            .resolve_entity_id(to)
+            .ok_or_else(|| anyhow::anyhow!("unknown domain type: {to}"))?;
+        if to == from || !ontology.ancestors(&to).contains(&from) {
+            return Err(anyhow::anyhow!("{to} is not a kind of {from}"));
+        }
+        refuse_dormant(&ontology, &to)?;
+        let scope = scope.map(str::trim).filter(|s| !s.is_empty());
+        let write = self.policy.access(ctx, access::WRITE, Some(&to)).await?;
+        if !write.admits_owner(ctx, write.owner_of_scope(scope)).await {
+            return Err(AccessError::Denied.into());
+        }
+        let instance_key = match scope {
+            Some(s) => format!("{s}|{key}"),
+            None => key.to_string(),
+        };
+        let old_type = ontology.type_id_of(&from);
+        let new_type = ontology.type_id_of(&to);
+        let old_id = gts::instance_id(&old_type, &instance_key);
+        let new_id = gts::instance_id(&new_type, &instance_key);
+        self.ensure_types(ctx).await?;
+        let old = self.store.get_object(ctx, &old_id).await?;
+        let new = self.store.get_object(ctx, &new_id).await?;
+        let current = new.as_ref().or(old.as_ref()).map(|o| &o.value);
+        let mut payload = make(current, &to);
+        if let (Some(s), Some(obj)) = (scope, payload.as_object_mut()) {
+            obj.insert("_scope".to_string(), Value::String(s.to_string()));
+        }
+        let mut wrote = false;
+        if new.as_ref().map(|n| &n.value) != Some(&payload) {
+            let name = payload
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            self.store
+                .upsert_nodes(
+                    ctx,
+                    &[NodeUpsert {
+                        type_id: new_type.clone(),
+                        node_key: new_id.clone(),
+                        name,
+                        payload,
+                        expected_version: None,
+                    }],
+                )
+                .await?;
+            wrote = true;
+        }
+        if let Some(old) = old {
+            // Its relations, either way, now end at the new object.
+            let edges = self
+                .store
+                .read_edges(ctx, std::slice::from_ref(&old_id))
+                .await?;
+            let moved: Vec<EdgeUpsert> = edges
+                .iter()
+                .filter(|e| e.from == old_id || e.to == old_id)
+                .map(|e| {
+                    let swap = |end: &str| {
+                        if end == old_id {
+                            new_id.clone()
+                        } else {
+                            end.to_owned()
+                        }
+                    };
+                    EdgeUpsert {
+                        type_id: e.type_id.clone(),
+                        from: swap(&e.from),
+                        to: swap(&e.to),
+                        payload: e.relation.as_ref().map(|r| json!({"name": r})),
+                        discriminator: e.relation.clone(),
+                    }
+                })
+                .collect();
+            for chunk in moved.chunks(TRUSTED_BATCH) {
+                self.store.upsert_edges(ctx, chunk).await?;
+            }
+            for e in edges.iter().filter(|e| e.from == old_id || e.to == old_id) {
+                self.store
+                    .delete_relation(ctx, &e.type_id, &e.from, &e.to, e.relation.as_deref())
+                    .await?;
+            }
+            let mut gone = old.value;
+            if let Some(m) = gone.as_object_mut() {
+                m.insert(super::store::DELETED_FIELD.to_string(), Value::Bool(true));
+            }
+            self.store
+                .upsert_nodes_keeping_vectors(
+                    ctx,
+                    &[NodeUpsert {
+                        type_id: old_type,
+                        node_key: old_id.clone(),
+                        name: None,
+                        payload: gone,
+                        expected_version: None,
+                    }],
+                )
+                .await?;
+            self.notify
+                .objects_changed(ctx, &from, std::slice::from_ref(&old_id), "delete");
+            wrote = true;
+        }
+        if wrote {
+            self.notify
+                .objects_changed(ctx, &to, std::slice::from_ref(&new_id), "upsert");
+        }
+        Ok((new_id, wrote))
+    }
+
+    /// The object keyed `instance_key` stored as a type chained onto
+    /// `type_id` (a Project subtype of `project`), when there is a live one:
+    /// its type id and instance id. Asks nothing for a type nothing is
+    /// chained onto, which is every type but `project`.
+    async fn stored_as_subtype(
+        &self,
+        ctx: &SecurityContext,
+        ontology: &Ontology,
+        type_id: &str,
+        instance_key: &str,
+    ) -> anyhow::Result<Option<(String, String)>> {
+        let Some(entity) = ontology.entity_of_type(type_id) else {
+            return Ok(None);
+        };
+        for sub in ontology.type_ids_of(&entity) {
+            if sub == type_id {
+                continue;
+            }
+            let id = gts::instance_id(&sub, instance_key);
+            if self.store.get_object(ctx, &id).await?.is_some() {
+                return Ok(Some((sub, id)));
+            }
+        }
+        Ok(None)
     }
 
     /// One type as it actually is: every field it has, own and inherited, and
@@ -1727,7 +1900,7 @@ impl DomainModelService {
         }
         self.ensure_types(ctx).await?;
         let node = NodeUpsert {
-            type_id: gts::node_type_id(&entity_id),
+            type_id: ontology.type_id_of(&entity_id),
             node_key: id.to_owned(),
             name: None,
             payload,
@@ -1805,7 +1978,7 @@ impl DomainModelService {
         let nodes: Vec<NodeUpsert> = found
             .iter()
             .map(|(id, entity, value)| NodeUpsert {
-                type_id: gts::node_type_id(entity),
+                type_id: root.type_id_of(entity),
                 node_key: id.clone(),
                 name: value
                     .get("name")
@@ -1845,7 +2018,7 @@ impl DomainModelService {
                     m.insert(super::store::DELETED_FIELD.to_string(), Value::Bool(true));
                 }
                 NodeUpsert {
-                    type_id: gts::node_type_id(&entity),
+                    type_id: root.type_id_of(&entity),
                     node_key: id,
                     name: None,
                     payload: value,
@@ -1994,7 +2167,7 @@ impl DomainModelService {
         let entity_id = self
             .admit_trusted_put(ctx, &ontology, entity_ref, &scopes)
             .await?;
-        let type_id = gts::node_type_id(&entity_id);
+        let type_id = ontology.type_id_of(&entity_id);
         let kept = self
             .open_fields_of(ctx, &ontology, &entity_id, &items)
             .await?;
@@ -2067,7 +2240,7 @@ impl DomainModelService {
         if !write.admits_owner(ctx, ctx.subject_tenant_id()).await {
             return Err(AccessError::Denied.into());
         }
-        let type_id = gts::node_type_id(&entity_id);
+        let type_id = ontology.type_id_of(&entity_id);
         let nodes: Vec<NodeUpsert> = ids
             .into_iter()
             .map(|id| NodeUpsert {
@@ -2202,7 +2375,16 @@ impl DomainModelService {
         entities: &[&str],
         limit: u32,
     ) -> anyhow::Result<Vec<ObjectNode>> {
-        let type_ids: Vec<String> = entities.iter().map(|e| gts::node_type_id(e)).collect();
+        let model = self.model(ctx).await?;
+        // A type is read with what is it: `project` with its kits' subtypes.
+        let type_ids: Vec<String> = entities
+            .iter()
+            .flat_map(|e| {
+                model
+                    .resolve_entity_id(e)
+                    .map_or_else(|| vec![gts::node_type_id(e)], |e| model.type_ids_of(&e))
+            })
+            .collect();
         let read = self.policy.access(ctx, access::READ, None).await?;
         let found = self.store.search(ctx, text, &type_ids, limit).await?;
         Ok(read.retain(ctx, found).await)
@@ -2267,7 +2449,7 @@ impl DomainModelService {
             for id in super::kit_overlay::own_types(&current, slug) {
                 let objects = self
                     .store
-                    .list_objects(ctx, &[gts::node_type_id(&id)], None, Some(10))
+                    .list_objects(ctx, &[current.type_id_of(&id)], None, Some(10))
                     .await?;
                 if objects.iter().any(|n| super::store::is_live(&n.value)) {
                     inhabited.push(id);
@@ -2702,7 +2884,8 @@ impl DomainModelService {
         let type_ids: Vec<String> = match type_ref.map(str::trim).filter(|s| !s.is_empty()) {
             None => o.node_types().into_iter().map(|n| n.type_id).collect(),
             Some(r) => match o.resolve_entity_id(r) {
-                Some(entity_id) => vec![gts::node_type_id(&entity_id)],
+                // What is the type: `project` lists its kits' subtypes too.
+                Some(entity_id) => o.type_ids_of(&entity_id),
                 // Unknown type -> no rows, rather than every row.
                 None => Vec::new(),
             },
@@ -2999,7 +3182,7 @@ impl DomainModelService {
                 // Unknown type -> no rows, rather than every row.
                 Some(r) => o
                     .resolve_entity_id(r)
-                    .map(|id| vec![gts::node_type_id(&id)])
+                    .map(|id| o.type_ids_of(&id))
                     .unwrap_or_default(),
             };
             let mut meta: std::collections::HashMap<String, (String, String)> =
@@ -3011,7 +3194,7 @@ impl DomainModelService {
                         .and_then(Value::as_str)
                         .unwrap_or("")
                         .to_string();
-                    meta.insert(gts::node_type_id(id), (id.to_string(), bucket));
+                    meta.insert(o.type_id_of(id), (id.to_string(), bucket));
                 }
             }
             (type_ids, meta)
@@ -3472,11 +3655,9 @@ impl DomainModelService {
         from: &str,
         to: &str,
     ) -> anyhow::Result<u64> {
-        let type_id = gts::node_type_id(entity_id);
-        let objects = self
-            .store
-            .list_objects(ctx, std::slice::from_ref(&type_id), None, None)
-            .await?;
+        // The field is inherited: a Project subtype's objects carry it too.
+        let type_ids = self.model(ctx).await?.type_ids_of(entity_id);
+        let objects = self.store.list_objects(ctx, &type_ids, None, None).await?;
         let mut batch: Vec<NodeUpsert> = Vec::new();
         for object in objects {
             let Some(map) = object.value.as_object() else {
@@ -3491,7 +3672,7 @@ impl DomainModelService {
                 holder.insert(to.to_string(), value);
             }
             batch.push(NodeUpsert {
-                type_id: type_id.clone(),
+                type_id: object.type_id.clone(),
                 node_key: object.instance_id,
                 name: payload
                     .get("name")
@@ -3538,7 +3719,7 @@ impl DomainModelService {
             .access(ctx, access::READ, Some(&entity_id))
             .await?;
         let (objects, truncated) = self
-            .readable_page(ctx, &read, &[gts::node_type_id(&entity_id)], scope, limit)
+            .readable_page(ctx, &read, &[ontology.type_id_of(&entity_id)], scope, limit)
             .await?;
 
         let mut report = Conformance {

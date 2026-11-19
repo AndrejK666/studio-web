@@ -74,8 +74,22 @@ pub fn client_with_budget(max_nodes: u32) -> Arc<dyn GraphStorageClientV1> {
     })
 }
 
+/// The gear admitting derivation chains of `depth` segments, as Studio's
+/// deployments configure it (`ontology_max_chain_depth: 4`): a kit's Project
+/// subtype is node / owned_node / project / subtype.
+pub fn client_with_chain_depth(depth: u8) -> Arc<dyn GraphStorageClientV1> {
+    client_with(GraphStorageConfig {
+        ontology_max_chain_depth: depth,
+        ..GraphStorageConfig::default()
+    })
+}
+
 fn client_with(config: GraphStorageConfig) -> Arc<dyn GraphStorageClientV1> {
-    let store = Arc::new(FakeGraphStore::new());
+    // The in-memory store keeps its own depth bound (the Postgres one reads
+    // the config's), so the config's is handed to it.
+    let store = Arc::new(
+        FakeGraphStore::new().with_max_chain_depth(usize::from(config.ontology_max_chain_depth)),
+    );
     let engine = Arc::new(FakeGraphEngine::new(Arc::clone(&store)));
     let embedding = EmbeddingCoordinator::new(
         Arc::new(FakeEmbeddingProvider::new(384)),

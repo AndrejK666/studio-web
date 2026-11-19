@@ -27,6 +27,7 @@ pub(crate) use super::manifest::{
     KitManifest, PROJECT_CREATION_STEPS, project_type_kit, project_type_kits,
 };
 pub use super::owners::{KitOwners, MarkOn, Rehome};
+pub(crate) use super::project_types::OrgProjectType;
 use super::service::KitRegistryService;
 pub use super::service::{CONSTRUCTOR_RESEARCH_KIT, GEARS_MATCHER_KIT, SPEC_MAPPING_KIT};
 
@@ -81,7 +82,9 @@ pub trait ProjectKitRequests: Send + Sync + 'static {
         version: Option<&str>,
     ) -> anyhow::Result<()>;
 
-    /// Activate the chosen built-in type on the project a creation run just made.
+    /// Activate the chosen type on the project a creation run just made: a
+    /// built-in project type, or one `organization` installed, at the
+    /// version the organization has (ADR-0073 Amendment 2).
     async fn install_project_type(
         &self,
         ctx: &SecurityContext,
@@ -89,6 +92,20 @@ pub trait ProjectKitRequests: Send + Sync + 'static {
         organization: Uuid,
         slug: &str,
     ) -> anyhow::Result<()>;
+
+    /// The project types `organization` offers: the built-in ones, then the
+    /// kits it installed whose model derives a subtype of Project, each at
+    /// the version it comes at. Read as this gear: the caller has been shown
+    /// to reach the organization.
+    async fn project_types(&self, _organization: Uuid) -> anyhow::Result<Vec<OrgProjectType>> {
+        Ok(project_type_kits()
+            .map(|manifest| OrgProjectType {
+                manifest,
+                version: None,
+                shelf: super::service::SHELF_BUILTIN,
+            })
+            .collect())
+    }
 }
 
 /// studio-kits' [`ProjectKitRequests`].
@@ -129,6 +146,13 @@ impl ProjectKitRequests for KitRequests {
                 }
                 other => anyhow::anyhow!("{other:?}"),
             })
+    }
+
+    async fn project_types(&self, organization: Uuid) -> anyhow::Result<Vec<OrgProjectType>> {
+        self.installer
+            .project_types(organization)
+            .await
+            .map_err(|failure| anyhow::anyhow!("{failure:?}"))
     }
 
     async fn requested(

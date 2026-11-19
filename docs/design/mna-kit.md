@@ -66,7 +66,7 @@ another is (ADR-0073 §1).
 
 | Type (entity) | GTS id | Fields |
 |---|---|---|
-| M&A deal (`mna-project`, extends `project`) | `gts.cf.studio.domain.project.v1~cf.studio.kit.mna.project.v1~` | `target`, `thesis`, `deal_phase` (`screening` \| `confirmatory_dd` \| `signing` \| `integration`), `ic_date` (a day), `recommendation` (`proceed` \| `proceed_with_conditions` \| `stop`), `conditions[]`, `signed_off_by`, `signed_off_at` |
+| M&A deal (`mna-project`, extends `project`) | `gts.cf.studio.domain.project.v1~cf.studio.kit_mna.project.v1~` | `target`, `thesis`, `deal_phase` (`screening` \| `confirmatory_dd` \| `signing` \| `integration`), `ic_date` (a day), `recommendation` (`proceed` \| `proceed_with_conditions` \| `stop`), `conditions[]`, `signed_off_by`, `signed_off_at` |
 | Finding (`mna-finding`) | `gts.cf.studio.kit.mna.finding.v1~` | `title`, `severity` (`critical` … `info`), `source` (the repository or part of the target it is about), `evidence`, `origin` (where it came from: `manual`, `spec_check`, `ci`, `git`, `interview`), `status` (`open` \| `accepted` \| `resolved`) |
 | Deal risk (`mna-risk`) | `gts.cf.studio.kit.mna.risk.v1~` | `title`, `likelihood`, `impact`, `owner`, `mitigation`, `finding_id` (the finding it comes from), `status` (`open` \| `mitigating` \| `accepted` \| `closed`) |
 | Open question (`mna-open-question`) | `gts.cf.studio.kit.mna.open_question.v1~` | `what`, `who`, `answer`, `status` (`open` \| `answered` \| `closed`) |

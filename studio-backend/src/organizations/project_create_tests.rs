@@ -314,10 +314,10 @@ fn a_typed_project_ends_by_giving_its_model_object_that_type() {
     assert!(!steps_of(&plan).contains(&"model"));
     plan.config.insert(
         "project_type_id".into(),
-        json!("gts.cf.studio.domain.project.v1~cf.studio.kit.gears_project.project.v1~"),
+        json!("gts.cf.studio.domain.project.v1~cf.studio.kit_gears_project.project.v1~"),
     );
     assert_eq!(steps_of(&plan).last(), Some(&"model"));
-    let id = "gts.cf.studio.domain.project.v1~cf.studio.kit.gears_project.project.v1~";
+    let id = "gts.cf.studio.domain.project.v1~cf.studio.kit_gears_project.project.v1~";
     // None yet: the object the sweep would make, with the type.
     let made = typed_project_object(None, &plan, id, "gears-project-project").unwrap();
     assert_eq!(made["tenant_id"], plan.project_id.to_string());

@@ -596,7 +596,7 @@ fn a_kit_is_a_project_type_by_the_subtype_of_project_its_model_derives() {
     assert_eq!(t.entity, "deals-project");
     assert_eq!(
         t.gts,
-        "gts.cf.studio.domain.project.v1~cf.studio.kit.deals.project.v1~"
+        "gts.cf.studio.domain.project.v1~cf.studio.kit_deals.project.v1~"
     );
     assert_eq!(
         (t.name.as_str(), t.description.as_str()),

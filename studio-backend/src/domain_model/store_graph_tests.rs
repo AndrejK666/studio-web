@@ -18,13 +18,14 @@ use uuid::Uuid;
 use super::gts;
 use super::ontology::NodeType;
 use super::store::{DomainStore, GraphStorageBackend, NodeUpsert};
-use crate::test_graph::{client, client_with_budget, ctx};
+use crate::test_graph::{client, client_with_budget, client_with_chain_depth, ctx};
 
 fn node_type(leaf: &str) -> NodeType {
     NodeType {
         type_id: gts::node_type_id(leaf),
         title: leaf.to_owned(),
         description: String::new(),
+        payload: serde_json::Map::new(),
     }
 }
 
@@ -474,4 +475,91 @@ async fn a_cut_walk_is_walked_again_in_halves_until_every_edge_is_read() {
     }
     let whole = store.read_edges_whole(&ctx, &seeds).await.expect("edges");
     assert_eq!(whole.cut, vec![key(0)]);
+}
+
+/// A kit's Project subtype as the model registers it (ADR-0073 amendment):
+/// derived from Project, so graph-storage validates the subtype's own fields
+/// on every write across the chain, while Project's payload stays open.
+#[tokio::test]
+async fn a_project_subtype_is_registered_on_project_and_its_fields_are_validated() {
+    let mut model = super::ontology::Ontology::load();
+    let deals: super::kit_overlay::KitOverlay = serde_json::from_value(json!({"types": [
+        {"name": "project", "extends": "project", "label": "Deal",
+         "fields": [{"name": "deal_size", "type": "number?"},
+                    {"name": "stage", "type": "sourcing | closing"}]}]}))
+    .expect("overlay");
+    super::kit_overlay::sync(&mut model, "deals", "1", Some(&deals), &|_| false).expect("sync");
+    let sub_id = model.type_id_of("deals-project");
+    assert_eq!(
+        sub_id,
+        "gts.cf.studio.domain.project.v1~cf.studio.kit_deals.project.v1~"
+    );
+    let types: Vec<NodeType> = model
+        .node_types()
+        .into_iter()
+        .filter(|n| n.type_id == sub_id || n.type_id == gts::node_type_id("project"))
+        .collect();
+    assert_eq!(types.len(), 2);
+
+    let deep = client_with_chain_depth(4);
+    let ctx = ctx(Uuid::now_v7());
+    let store = GraphStorageBackend::new(Arc::clone(&deep));
+    let pinned = store
+        .register_types(&ctx, &types, &[])
+        .await
+        .expect("registers");
+    assert!(pinned.is_empty(), "{pinned:?}");
+
+    // A valid subtype object is stored, in a project's scope.
+    store
+        .upsert_nodes(
+            &ctx,
+            &[object(
+                &sub_id,
+                "p1|self",
+                json!({"_scope": "p1", "name": "Acme", "deal_size": 5, "stage": "closing"}),
+            )],
+        )
+        .await
+        .expect("a valid deal is stored");
+    // An invalid field value is refused by graph-storage itself.
+    for bad in [json!({"deal_size": "lots"}), json!({"stage": "won"})] {
+        let refused = store
+            .upsert_nodes(&ctx, &[object(&sub_id, "p2|self", bad.clone())])
+            .await;
+        assert!(refused.is_err(), "{bad} was stored");
+    }
+    // Project's own payload stays open: the same value on a plain project is
+    // not the subtype's business.
+    store
+        .upsert_nodes(
+            &ctx,
+            &[object(
+                &gts::node_type_id("project"),
+                "p3|self",
+                json!({"deal_size": "lots"}),
+            )],
+        )
+        .await
+        .expect("a plain project is not checked against the subtype");
+    // Read as Project, both come back, each with its own type.
+    let rows = store
+        .list_objects(&ctx, &model.type_ids_of("project"), None, None)
+        .await
+        .expect("reads");
+    let mut types_read: Vec<&str> = rows.iter().map(|r| r.type_id.as_str()).collect();
+    types_read.sort_unstable();
+    assert_eq!(
+        types_read,
+        [gts::node_type_id("project").as_str(), sub_id.as_str()]
+    );
+
+    // Under the gear's default depth the subtype cannot register: the
+    // deployment's `ontology_max_chain_depth: 4` is what admits it.
+    let shallow = GraphStorageBackend::new(client());
+    let pinned = shallow
+        .register_types(&ctx, &types, &[])
+        .await
+        .expect("the others register");
+    assert_eq!(pinned, [gts::graph_type_id(&sub_id)]);
 }

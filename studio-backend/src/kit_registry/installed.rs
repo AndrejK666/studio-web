@@ -468,11 +468,6 @@ impl KitInstaller {
         {
             return Err(Refusal::Forbidden(KIT_ADMIN_REQUIRED));
         }
-        if super::manifest::project_type_kit(slug).is_none() {
-            return Err(Refusal::Invalid(format!(
-                "`{slug}` does not define a project type"
-            )));
-        }
         // The run's context reaches the new project and nothing above it, so
         // the project's organization (its workspace's parent) is read as this
         // gear in the organization the plan names, then checked against it.
@@ -482,6 +477,13 @@ impl KitInstaller {
         if org != organization || org == project {
             return Err(Refusal::Forbidden(KIT_ADMIN_REQUIRED));
         }
+        // A built-in project type, or one the organization installed
+        // (ADR-0073 Amendment 2), at the version the organization has.
+        let Some(project_type) = self.project_type(org, slug).await? else {
+            return Err(Refusal::Invalid(format!(
+                "`{slug}` defines no project type this organization offers"
+            )));
+        };
         if let Some(kit) = installed
             .project
             .into_iter()
@@ -489,8 +491,15 @@ impl KitInstaller {
         {
             return Ok(kit);
         }
-        self.install_project_kit(ctx, &reader, project, org, slug.to_owned(), None)
-            .await
+        self.install_project_kit(
+            ctx,
+            &reader,
+            project,
+            org,
+            slug.to_owned(),
+            project_type.version.as_deref(),
+        )
+        .await
     }
 
     /// Install `slug` in `project` of `org` as `ctx`, reading what applies
@@ -504,7 +513,16 @@ impl KitInstaller {
         slug: String,
         version: Option<&str>,
     ) -> Result<InstalledKit, Refusal> {
-        let kit = self.kit_for(org, &slug).await?;
+        let mut kit = self.kit_for(org, &slug).await?;
+        // An organization's own kit at the version it installed, which the
+        // shelf may have moved on from: the manifest kept for it.
+        if let Some(v) = version
+            && kit.shelf == SHELF_ORGANIZATION
+            && v != kit.default_version
+            && let Some(pinned) = self.shelf_kit_at(org, &slug, v).await?
+        {
+            kit = pinned.kit;
+        }
         if !kit.levels.iter().any(|level| level == LEVEL_PROJECT) {
             return Err(Refusal::NotAProjectKit(slug));
         }
@@ -702,6 +720,13 @@ impl KitInstaller {
         let org = self.require_org_admin(ctx, tenant).await?;
         let kit = self.kit_for(org, &slug).await?;
         let record = record_for(&kit, version, ctx, now_rfc3339()?)?;
+        // An organization's own project type creates projects with Studio's
+        // steps and opens Studio's screens only (ADR-0073 Amendment 2).
+        if kit.shelf == SHELF_ORGANIZATION
+            && let Some(manifest) = self.pinned_manifest(org, &slug, &record.version).await?
+        {
+            super::project_types::check_project_type(&manifest).map_err(Refusal::Invalid)?;
+        }
         // What it requires must apply to the organization once it is
         // installed (ADR-0071 §5), before anything changes.
         let root = self

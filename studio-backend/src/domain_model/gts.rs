@@ -221,6 +221,51 @@ pub fn derived_node_schema(type_id: &str) -> serde_json::Value {
     schema
 }
 
+/// The type a chained domain type id derives from: everything before its
+/// last segment (`gts.cf.studio.domain.project.v1~` for
+/// `gts.cf.studio.domain.project.v1~cf.studio.kit_mna.project.v1~`). `None`
+/// for a type of one segment, which derives from its graph-storage family.
+pub fn parent_type_id(type_id: &str) -> Option<&str> {
+    let body = type_id.strip_suffix('~')?;
+    let cut = body.rfind('~')?;
+    Some(&type_id[..=cut])
+}
+
+/// The schema a node type registers with: [`derived_node_schema`] for a type
+/// of one segment, the same for every type, content-free.
+///
+/// A type chained onto another (a Project subtype, ADR-0073 amendment)
+/// derives from that type instead of the family -- its traits and its
+/// `_scope` come down the chain -- and declares its own fields
+/// (`payload`, name to JSON schema), so graph-storage validates them on every
+/// write across the derivation chain. Those fields are the kit's, and a kit
+/// version that changes them re-registers the type: the store asks
+/// graph-storage to update a stored type when the rows it holds still
+/// validate (`registration_options`).
+pub fn node_registration_schema(
+    type_id: &str,
+    payload: &serde_json::Map<String, serde_json::Value>,
+) -> serde_json::Value {
+    let Some(parent) = parent_type_id(type_id) else {
+        return derived_node_schema(type_id);
+    };
+    serde_json::json!({
+        "$id": format!("gts://{}", graph_type_id(type_id)),
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "allOf": [
+            { "$ref": format!("gts://{}", graph_type_id(parent)) },
+            {
+                "type": "object",
+                "properties": { "payload": {
+                    "type": "object",
+                    "properties": payload,
+                } },
+            },
+        ],
+    })
+}
+
 /// The payload field a scoped object names its workspace or project in.
 pub const SCOPE_FIELD: &str = "_scope";
 
@@ -427,6 +472,32 @@ mod tests {
     fn node_and_edge_derive_from_the_right_family() {
         assert!(graph_type_id(&node_type_id("team")).starts_with(OWNED_NODE_FAMILY));
         assert!(graph_type_id(&edge_type_id("owns")).starts_with(STATIC_EDGE_FAMILY));
+    }
+
+    #[test]
+    fn a_chained_type_derives_from_its_parent_and_declares_its_fields() {
+        let sub = "gts.cf.studio.domain.project.v1~cf.studio.kit_mna.project.v1~";
+        assert_eq!(
+            parent_type_id(sub),
+            Some("gts.cf.studio.domain.project.v1~")
+        );
+        assert_eq!(parent_type_id("gts.cf.studio.domain.project.v1~"), None);
+        let mut fields = serde_json::Map::new();
+        fields.insert("deal_size".into(), serde_json::json!({"type": "number"}));
+        let schema = node_registration_schema(sub, &fields);
+        assert_eq!(
+            schema["allOf"][0]["$ref"],
+            "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.project.v1~"
+        );
+        assert_eq!(
+            schema["allOf"][1]["properties"]["payload"]["properties"]["deal_size"]["type"],
+            "number"
+        );
+        // A type of one segment keeps the content-free schema.
+        assert_eq!(
+            node_registration_schema("gts.cf.studio.domain.team.v1~", &fields),
+            derived_node_schema("gts.cf.studio.domain.team.v1~")
+        );
     }
 
     #[test]

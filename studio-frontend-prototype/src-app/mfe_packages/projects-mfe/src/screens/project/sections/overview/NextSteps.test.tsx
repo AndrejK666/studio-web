@@ -14,7 +14,7 @@ vi.mock('@gears-frontx/react', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@gears-frontx/react')>()),
   apiRegistry: {
     getService: () => ({
-      projectTypeKits: 'types',
+      projectTypeKits: () => 'types',
       getTenantMetadata: () => ({ fetch: async () => ({ value: config.value }) }),
       putTenantMetadata: () => ({ fetch: put }),
       query: (orgId: string) => ({ fetch: (body: unknown) => domainQuery(orgId, body) }),

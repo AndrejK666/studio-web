@@ -258,6 +258,16 @@ fn project_tab(label: &str, route: Option<&str>) -> KitScreen {
     tab("project", label, route)
 }
 
+/// The routes of every built-in kit's screens: what a project type's next
+/// step may open besides the shell's own sections (ADR-0073 Amendment 2).
+pub(super) fn builtin_screen_routes() -> Vec<String> {
+    super::service::builtin_catalogue()
+        .iter()
+        .filter_map(|k| builtin_contents(&k.slug))
+        .flat_map(|c| c.screens.into_iter().filter_map(|s| s.route))
+        .collect()
+}
+
 /// A built-in kit's screens: what Studio has for it today, nothing planned.
 /// `None` for a slug that is not a built-in kit.
 ///

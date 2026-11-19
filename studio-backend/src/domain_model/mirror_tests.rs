@@ -1298,3 +1298,38 @@ async fn id_filters_answer_the_same_from_postgres_as_from_the_graph() {
         assert_eq!(out["items"].as_array().unwrap().len(), expected, "{filter}");
     }
 }
+
+/// A project stored as its kit's subtype (ADR-0073 amendment) is a project
+/// to the read model as to the graph: `project` answers it, the row says
+/// the subtype, and the counts file it under the subtype.
+#[tokio::test]
+async fn a_project_subtype_is_a_project_in_both_readers_and_the_counts() {
+    let p = Pair::new(Uuid::new_v4()).await;
+    let deals: super::super::kit_overlay::KitOverlay = serde_json::from_value(json!({"types": [
+        {"name": "project", "extends": "project", "label": "Deal",
+         "fields": [{"name": "deal_size", "type": "number?"}]}]}))
+    .expect("overlay");
+    for service in [&p.sql, &p.graph] {
+        service
+            .sync_kit_model(&p.ctx, "deals", "1", Some(&deals))
+            .await
+            .expect("the kit's model");
+    }
+    p.write(json!([
+        {"op": "upsert", "type": "deals-project", "key": "acme", "value": {"name": "Acme", "deal_size": 5}},
+        {"op": "upsert", "type": "project", "key": "plain", "value": {"name": "Plain"}},
+    ]))
+    .await;
+    p.fill().await;
+    let result = p
+        .same(
+            "project",
+            json!({"order_by": [{"field": "name", "direction": "asc"}]}),
+        )
+        .await;
+    assert_eq!(names(&result), ["Acme", "Plain"]);
+    assert_eq!(result["items"][0]["entity"], "deals-project");
+    let counts = p.sql.type_counts(&p.ctx).await.unwrap().expect("filled");
+    assert_eq!(counts.get("deals-project"), Some(&1));
+    assert_eq!(counts.get("project"), Some(&1));
+}

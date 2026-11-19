@@ -217,7 +217,7 @@ pub struct ProjectSubtype {
     /// The model entity, `<slug>-<name>` (`gears-project-project`).
     pub entity: String,
     /// Its GTS id, derived from Project's
-    /// (`gts.cf.studio.domain.project.v1~cf.studio.kit.gears_project.project.v1~`).
+    /// (`gts.cf.studio.domain.project.v1~cf.studio.kit_gears_project.project.v1~`).
     pub gts: String,
     /// Its label, else the kit's name.
     pub name: String,

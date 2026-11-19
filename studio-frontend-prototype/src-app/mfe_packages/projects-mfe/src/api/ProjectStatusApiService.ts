@@ -136,6 +136,10 @@ export interface ProjectTypeKit {
   /** The optional creation steps it takes: `repository`, `sources`, `scaffold`, `prd`. */
   steps?: string[];
   next_steps?: ProjectNextStep[];
+  /** `builtin`, or `organization`: one the organization installed from its own shelf. */
+  shelf?: string;
+  /** The kit's version a project of this type gets; absent for a built-in kit. */
+  version?: string | null;
 }
 
 /** One row of `GET /rollups` (`RollupDto`): the counts the projects list reads. Null means not asked, not zero. */
@@ -168,8 +172,18 @@ export class ProjectStatusApiService extends BaseApiService {
     ({ projectId }) => `/project-status?${new URLSearchParams({ project_id: projectId })}`
   );
 
-  readonly projectTypeKits = this.protocol(RestEndpointProtocol).query<{ items: ProjectTypeKit[] }>(
-    '/project-creation-types'
+  /**
+   * The project types an organization offers: the built-in ones, then the kits
+   * it installed whose model derives a subtype of Project (ADR-0073 Amendment 2).
+   * Without an organization, the built-in ones only.
+   */
+  readonly projectTypeKits = this.protocol(RestEndpointProtocol).queryWith<
+    { items: ProjectTypeKit[] },
+    { organizationId: string | null }
+  >(({ organizationId }) =>
+    organizationId
+      ? `/project-creation-types?${new URLSearchParams({ organization_id: organizationId })}`
+      : '/project-creation-types'
   );
 
   /** Check a project's creation as the caller and queue it as one run (202). */
