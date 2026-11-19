@@ -110,17 +110,17 @@ describe('ShellSidebar', () => {
     render(<ShellSidebar models={models('org.overview')} level="organization" screens={screens} />);
     expect(screen.getByRole('navigation', { name: 'Studio navigation' })).toBeTruthy();
     const order = Array.from(document.querySelectorAll('[data-sidebar-item]')).map((el) => el.getAttribute('data-sidebar-item'));
-    expect(order.slice(0, 4)).toEqual(['inbox', 'projects', 'components', 'organization']);
+    expect(order.slice(0, 5)).toEqual(['inbox', 'organization', 'workspaces', 'projects', 'components']);
     expect(within(item('inbox')!).getByText('3')).toBeTruthy();
     // Not a platform administrator, not on the platform: no Platform entry.
     expect(item('platform')).toBeNull();
   });
 
-  it("lists the organization's tabs under Organization, Components raised out of them, the open one aria-current", () => {
+  it("lists the organization's tabs under Organization, Components and Workspaces raised out of them, the open one aria-current", () => {
     render(<ShellSidebar models={models('org.people')} level="organization" screens={screens} />);
     const list = document.querySelector('[data-level-tabs="organization"]')!;
     const labels = Array.from(list.querySelectorAll('[data-tab]')).map((el) => el.textContent);
-    expect(labels).toEqual(['Overview', 'Workspaces', 'People']);
+    expect(labels).toEqual(['Overview', 'People']);
     const people = within(list as HTMLElement).getByText('People').closest('button')!;
     expect(people.getAttribute('aria-current')).toBe('page');
     fireEvent.click(people);
@@ -140,6 +140,22 @@ describe('ShellSidebar', () => {
     render(<ShellSidebar models={models('org.overview')} level="organization" screens={screens} />);
     fireEvent.click(item('projects')!);
     expect(mockEventBus.emit).toHaveBeenCalledWith('app/context/screen/requested', { extensionId: 'org.workspaces' });
+  });
+
+  it('puts the workspace in scope under Workspaces with its tabs, between Organization and Projects', () => {
+    render(<ShellSidebar models={models('ws.attributes')} level="workspace" screens={screens} />);
+    const ws = item('workspace')!;
+    expect(item('workspaces')!.closest('li')!.contains(ws)).toBe(true);
+    expect(item('organization')!.closest('li')!.contains(ws)).toBe(false);
+    expect(ws.textContent).toContain('Web');
+    const tabs = document.querySelector('[data-level-tabs="workspace"]')!;
+    // Projects has its own item, so the workspace's list leaves it out.
+    expect(within(tabs as HTMLElement).queryByText('Projects')).toBeNull();
+    expect(within(tabs as HTMLElement).getByText('Attributes').closest('button')!.getAttribute('aria-current')).toBe('page');
+    // The organization's tabs fold away below the organization.
+    expect(document.querySelector('[data-level-tabs="organization"]')).toBeNull();
+    fireEvent.click(item('workspaces')!);
+    expect(mockEventBus.emit).toHaveBeenCalled();
   });
 
   it("puts the open project under Projects with its tabs, folds the organization's away, and lists the recent ones", () => {
