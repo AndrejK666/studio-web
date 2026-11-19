@@ -907,9 +907,14 @@
   "model_create_type": "Создать тип {type}",
   "sys_refused_platform_admin": "Кто сейчас в Studio, видит только администратор платформы.",
   "sys_refused_org_admin": "Отправлять уведомления отсюда может только администратор этой организации или платформы.",
-  "prof_github_reviews_hint": "Входящие привязывают запросы на ревью к подтверждённому аккаунту GitHub. Войдите через GitHub или подключите личный аккаунт GitHub, затем проверьте способы входа и подключения.",
+  "prof_github_reviews_hint": "Входящие привязывают запросы на ревью к подтверждённому аккаунту GitHub. Проверьте существующий вход или подключите личный аккаунт ниже.",
   "prof_back_to_inbox": "Назад во Входящие",
   "model_manage_fields": "Настроить поля в модели Studio",
   "int_personal_title": "Личные подключения",
-  "int_organization_title": "Подключения организации"
+  "int_organization_title": "Подключения организации",
+  "model_open_settings": "Открыть настройки",
+  "prof_github_unavailable": "В этой организации личные подключения GitHub недоступны.",
+  "prof_connect_github": "Подключить личный аккаунт GitHub",
+  "int_add_personal": "Добавить личное подключение",
+  "int_add_for_org": "Добавить подключение для {organization}"
 }

@@ -173,6 +173,7 @@ export function Integrations({ org, personal = false }: { org: OrganizationRef; 
       {!disabled && (
         <ConnectionTable
           org={org}
+          personal={personal}
           providers={offered}
           connections={listed ?? NONE}
           // A failed read stays "reading" under its error, never "nothing connected".

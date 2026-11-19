@@ -289,5 +289,11 @@
   "no_environment_admin": "Окружений пока нет. Попросите администратора организации добавить его.",
   "status_build_outside": "То, что работает в {environment}, собрано вне Studio (в IDE или CI): записи о сборке в Studio нет.",
   "build_outside_hint": "То, что работает в {environment}, собрано вне записей Studio (в IDE или CI). Соберите здесь, в IDE или в CI, чтобы следующая сборка была записана.",
-  "open_build_infrastructure": "Открыть инфраструктуру организации"
+  "open_build_infrastructure": "Открыть инфраструктуру организации",
+  "configure_build_registry": "Подключить реестр",
+  "build_registry_missing": "Чтобы опубликовать сборку Studio, подключите реестр к окружению «{environment}». Также можно собрать продукт в IDE или CI.",
+  "build_environment_missing": "Чтобы опубликовать сборку Studio, добавьте окружение Kubernetes с подключённым реестром. Также можно собрать продукт в IDE или CI.",
+  "build_registry_ready": "Сборок пока нет. Соберите продукт в IDE или запустите сборку проекта в CI.",
+  "build_in_research_hint": "Сборок пока нет. Чтобы собрать и запустить продукт в Constructor Research, перейдите к развёртыванию.",
+  "open_ci_run": "Открыть упавший запуск CI"
 }

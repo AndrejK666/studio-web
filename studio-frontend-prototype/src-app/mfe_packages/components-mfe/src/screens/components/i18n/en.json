@@ -390,5 +390,8 @@
   "item_grade": "grade",
   "item_progress": "progress",
   "sec_unknown": "Not known: the catalogue has no page for it.",
-  "type_from_list_only": "As the list read it."
+  "type_from_list_only": "As the list read it.",
+  "organization_sources": "Organization sources",
+  "sync_organization_catalogue": "Sync organization catalogue",
+  "decision_scope": "Registry for {organization}"
 }

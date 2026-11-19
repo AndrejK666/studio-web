@@ -369,6 +369,7 @@ export function RegistryDecisions({
     <div className={styles.decisions} data-registry-decisions>
       <div className={styles.row}>
         <b>{t('decide')}</b>
+        {!platformAdmin && org && <span className={styles.sub}>{t('decision_scope', { organization: org.name })}</span>}
         {allowedActions(e.state, { curator: platformAdmin, publicationPending: requested || !!e.contribution }).map((a) => (
           <Button
             key={a}

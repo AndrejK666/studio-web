@@ -45,7 +45,7 @@ import {
   TabsList,
   TabsTrigger,
 } from '@gears-frontx/ui-kit';
-import { AccountsApiService, isNotFound, openScreen, useHostChrome, useOrganization } from '@constructor-studio/mfe-shared';
+import { AccountsApiService, isNotFound, openScreen, screenView, useHostChrome, useOrganization } from '@constructor-studio/mfe-shared';
 import { ChevronDown, Lock, MoreHorizontal } from 'lucide-react';
 import type { Connection, DeployEnvironment, Deployment } from '../../api/types';
 import {
@@ -285,6 +285,9 @@ function OrgInfrastructure({ onOpenConnections, onOpenKits }: { onOpenConnection
   const [busy, setBusy] = useState<string | null>(null);
   const [adding, setAdding] = useState<'cluster' | 'registry' | null>(null);
   const [tab, setTab] = useState<Tab>('ladder');
+  const [entryView, setEntryView] = useState(() => screenView(window.location.search));
+  const [focusEnvironment, setFocusEnvironment] = useState<string | null>(null);
+  const [focusRegistry, setFocusRegistry] = useState(false);
   /** The place whose side panel is open. */
   const [panel, setPanel] = useState<string | null>(null);
   /** Each place's answer to a test, asked when the page opens. */
@@ -346,6 +349,23 @@ function OrgInfrastructure({ onOpenConnections, onOpenKits }: { onOpenConnection
   }, [api, org.id, round, t]);
 
   const clusters = useMemo(() => clusterConnections(connections), [connections]);
+  useEffect(() => {
+    if (!environments || !entryView) return;
+    const target = environments.find((environment) => entryView === `build-registry-${environment.id}`
+      || entryView === `environment-${environment.id}`);
+    if (target) {
+      setPanel(target.connection_id);
+      setFocusEnvironment(target.id);
+      if (mayManage && entryView.startsWith('build-registry-') && target.kind !== 'research') {
+        setEditing(target);
+        setFocusRegistry(true);
+      }
+    } else if (mayManage && entryView === 'build-environment' && clusters.length === 1) {
+      setPanel(clusters[0].id);
+      setEditing('new');
+    }
+    setEntryView(undefined);
+  }, [entryView, clusters, environments, mayManage]);
   const registries = useMemo(() => registryConnections(connections), [connections]);
   const researches = useMemo(() => researchConnections(connections), [connections]);
   const cards = useMemo(
@@ -503,6 +523,8 @@ function OrgInfrastructure({ onOpenConnections, onOpenKits }: { onOpenConnection
   const closePanel = () => {
     setPanel(null);
     setEditing(null);
+    setFocusEnvironment(null);
+    setFocusRegistry(false);
   };
   const menuFor = (e: DeployEnvironment) =>
     mayManage ? (
@@ -813,6 +835,7 @@ function OrgInfrastructure({ onOpenConnections, onOpenKits }: { onOpenConnection
         {opened && (
           <PlacePanel
             place={opened}
+            focusEnvironment={focusRegistry ? null : focusEnvironment}
             health={healthOf(opened)}
             onTestAgain={() => testAgain(opened.id)}
             openToProjects={openClusters.includes(opened.id)}
@@ -830,9 +853,14 @@ function OrgInfrastructure({ onOpenConnections, onOpenKits }: { onOpenConnection
                   researches={researches}
                   projects={projects}
                   initialCluster={editing === 'new' ? opened.id : editing.connection_id}
-                  onCancel={() => setEditing(null)}
+                  focusRegistry={focusRegistry}
+                  onCancel={() => {
+                    setEditing(null);
+                    setFocusRegistry(false);
+                  }}
                   onDone={() => {
                     setEditing(null);
+                    setFocusRegistry(false);
                     load();
                   }}
                   onClusterAdded={(c) => setConnections((cs) => [...cs, c])}
@@ -861,6 +889,7 @@ function OrgInfrastructure({ onOpenConnections, onOpenKits }: { onOpenConnection
  *  it (added and changed here), a registry's contents and what runs there. */
 function PlacePanel({
   place,
+  focusEnvironment,
   health,
   onTestAgain,
   openToProjects,
@@ -877,6 +906,7 @@ function PlacePanel({
   t,
 }: {
   place: Place;
+  focusEnvironment: string | null;
   health: Health | null;
   onTestAgain: () => void;
   openToProjects: boolean;
@@ -894,6 +924,12 @@ function PlacePanel({
   t: Text;
 }) {
   const { container } = useInfra();
+  const focusedRow = React.useRef<HTMLLIElement>(null);
+  useEffect(() => {
+    if (!focusEnvironment) return;
+    const frame = requestAnimationFrame(() => focusedRow.current?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [focusEnvironment]);
   const card = place.card;
   const shownRuns = card ? (card.running.length ? card.running : card.deployments.slice(0, 10)) : [];
   return (
@@ -957,7 +993,9 @@ function PlacePanel({
         ) : (
           <ul className={styles.list}>
             {place.environments.map((e) => (
-              <li key={e.id} data-environment={e.name}>
+              <li key={e.id} data-environment={e.name}
+                ref={e.id === focusEnvironment ? focusedRow : undefined}
+                tabIndex={e.id === focusEnvironment ? -1 : undefined}>
                 <div className={styles.line}>
                   <b>{e.name}</b>
                   {e.protected && <Badge variant="info">{t('needs_approval')}</Badge>}

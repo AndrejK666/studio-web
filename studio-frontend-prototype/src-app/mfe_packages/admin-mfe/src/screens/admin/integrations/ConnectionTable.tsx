@@ -241,6 +241,7 @@ const ConnectionsEmpty: React.FC = () => {
 
 export function ConnectionTable({
   org,
+  personal = false,
   providers,
   connections,
   loading,
@@ -253,6 +254,7 @@ export function ConnectionTable({
   onNote,
 }: {
   org: OrganizationRef;
+  personal?: boolean;
   providers: ConnectorProvider[];
   connections: StoredConnection[];
   loading: boolean;
@@ -465,7 +467,7 @@ export function ConnectionTable({
           <h3 className={styles.subtitle}>{t('int_connections')}</h3>
           <span className={own.spacer} />
           <Button size="sm" disabled={adding} onClick={() => onAdd()} data-connection-add>
-            {t('int_add')}
+            {personal ? t('int_add_personal') : t('int_add_for_org', { organization: org.name })}
           </Button>
         </div>
 

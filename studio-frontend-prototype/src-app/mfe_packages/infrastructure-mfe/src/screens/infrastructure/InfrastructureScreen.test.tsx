@@ -153,6 +153,19 @@ describe('Organization › Infrastructure', () => {
     expect(document.querySelector('[data-place="ghcr"][data-place-kind="registry"]')).not.toBeNull();
   });
 
+  it('opens the registry field of the environment linked from Releases', async () => {
+    const current = window.location.href;
+    window.history.replaceState(null, '', '?screen=infrastructure;view=build-registry-e-dev');
+    try {
+      renderScreen();
+      const login = await screen.findByLabelText('field_registry_login');
+      expect(login.closest('[data-place-panel="cluster"]')).toBeTruthy();
+      await waitFor(() => expect(document.activeElement).toBe(login));
+    } finally {
+      window.history.replaceState(null, '', current);
+    }
+  });
+
   it('asks every cluster and registry once when it opens, and says what a cluster may not do', async () => {
     renderScreen();
     await waitFor(() => expect(calls.filter((c) => c.name === 'testConnection').map((c) => c.args[0])).toEqual(['c-k8s', 'c-reg']));
