@@ -12,6 +12,10 @@
 //! resumed (see `service`).
 
 mod access_grants;
+#[cfg(test)]
+pub(crate) use access_grants::{
+    ChangeError as AccessChangeError, save_document as save_access_document,
+};
 mod creation;
 mod events;
 pub mod logo;

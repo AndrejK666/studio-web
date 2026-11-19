@@ -22,7 +22,7 @@ import {
   NativeSelect,
   NativeSelectOption,
 } from '@gears-frontx/ui-kit';
-import { AccountsApiService, useOrganization, type OrganizationRef, type Tenant } from '@constructor-studio/mfe-shared';
+import { AccountsApiService, responseStatus, useOrganization, type OrganizationRef, type Tenant } from '@constructor-studio/mfe-shared';
 import { AdminApiService } from '../../api/AdminApiService';
 import {
   ACCESS_MODELS,
@@ -31,14 +31,12 @@ import {
   type AccessConfig,
   type AccessModel,
   type GrantDef,
+  type RoleDef,
 } from '../../model/access';
 import { byName, fromColleagues, fromMembers, type Member } from '../../model/members';
 import { ErrorLine, Header, errText, useAdmin } from './common';
 import { GrantsGrid } from './GrantsGrid';
 import styles from './Admin.module.css';
-
-/** Where AM keeps the organization's access document. */
-export const ACCESS_TYPE = 'gts.cf.core.am.tenant_metadata.v1~cf.studio.access.config.v1~';
 
 export function AccessSection() {
   const { t } = useAdmin();
@@ -49,7 +47,8 @@ export function AccessSection() {
 }
 
 interface Loaded {
-  cfg: AccessConfig;
+  version: number;
+  defaultRoles: RoleDef[];
   privileges: string[];
   tenant: Tenant | null;
 }
@@ -64,6 +63,7 @@ function Access({ org }: { org: OrganizationRef }) {
   const [dirty, setDirty] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [conflicted, setConflicted] = useState(false);
   // Only individual grants are evaluated by the authorization service.
   const [members, setMembers] = useState<Member[]>([]);
   const [projects, setProjects] = useState<{ id: string; name: string }[]>([]);
@@ -75,9 +75,7 @@ function Access({ org }: { org: OrganizationRef }) {
   useEffect(() => {
     let live = true;
     Promise.all([
-      accounts
-        .getTenantMetadata<Partial<AccessConfig>>({ tenantId: org.id, metadataType: ACCESS_TYPE })
-        .fetch({ staleTime: 0 }),
+      api.accessConfig({ orgId: org.id }).fetch({ staleTime: 0 }),
       api.accessCatalogue.fetch({ staleTime: 0 }),
       accounts
         .getTenant({ tenantId: org.id })
@@ -86,8 +84,8 @@ function Access({ org }: { org: OrganizationRef }) {
     ]).then(
       ([entry, catalogue, tenant]) => {
         if (!live) return;
-        const normalized = normalizeAccessConfig(entry?.value ?? null, catalogue.default_roles);
-        setLoaded({ cfg: normalized, privileges: catalogue.privileges, tenant });
+        const normalized = normalizeAccessConfig(entry.document, catalogue.default_roles);
+        setLoaded({ version: entry.version, defaultRoles: catalogue.default_roles, privileges: catalogue.privileges, tenant });
         setCfg(normalized);
       },
       (e: unknown) => live && setError(errText(e))
@@ -128,6 +126,7 @@ function Access({ org }: { org: OrganizationRef }) {
     && grant.scopeType === 'org' && grant.roleKey === 'owner' && grant.subjectId.trim()) ?? false;
 
   function mutate(next: AccessConfig) {
+    if (busy) return;
     setCfg(next);
     setDirty(true);
     setSaved(false);
@@ -180,13 +179,33 @@ function Access({ org }: { org: OrganizationRef }) {
   }
 
   async function save() {
-    if (!cfg) return;
+    if (!cfg || !loaded || conflicted || busy) return;
     setBusy(true);
     setError(null);
     try {
-      await accounts.putTenantMetadata<AccessConfig>(org.id, ACCESS_TYPE).fetch(cfg);
+      const entry = await api.saveAccessConfig(org.id).fetch({ expected_version: loaded.version, document: cfg });
+      setLoaded({ ...loaded, version: entry.version });
+      setCfg(normalizeAccessConfig(entry.document, loaded.defaultRoles));
       setDirty(false);
       setSaved(true);
+    } catch (e) {
+      if (responseStatus(e) === 409) setConflicted(true);
+      else setError(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function reload() {
+    if (!loaded || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const entry = await api.accessConfig({ orgId: org.id }).fetch({ staleTime: 0 });
+      setLoaded({ ...loaded, version: entry.version });
+      setCfg(normalizeAccessConfig(entry.document, loaded.defaultRoles));
+      setConflicted(false);
+      setDirty(false);
     } catch (e) {
       setError(errText(e));
     } finally {
@@ -202,12 +221,20 @@ function Access({ org }: { org: OrganizationRef }) {
         title={t('access_title')}
         info={<p>{t('access_about', { name: org.name })}</p>}
         action={
-          <Button disabled={!cfg || !dirty || busy || selfManaged} onClick={() => void save()} data-access-save>
+          <Button disabled={!cfg || !dirty || busy || selfManaged || conflicted} onClick={() => void save()} data-access-save>
             {busy ? t('saving') : saved && !dirty ? t('saved') : t('save')}
           </Button>
         }
       />
       {error && <ErrorLine>{error}</ErrorLine>}
+      {conflicted && <Card>
+        <CardContent className={styles.cardBody}>
+          <p role="alert">{t('access_save_conflict')}</p>
+          <Button size="sm" variant="outline" disabled={busy} onClick={() => void reload()}>
+            {t('access_reload_after_conflict')}
+          </Button>
+        </CardContent>
+      </Card>}
 
       {!loaded && !error ? (
         <p className={styles.muted}>{t('reading')}</p>

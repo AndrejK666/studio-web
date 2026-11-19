@@ -339,7 +339,7 @@ membership does not currently contribute to the decision.
 | Scope and policy decisions | Regression coverage includes organization and project grants, older documents, missing privileges, and the service-principal exception. |
 | Admin and Team | Test coverage includes project selection, existing-owner requirements, preservation of Owner grants and assignable project roles. |
 | Catalogue coverage | Map each of the 19 entries in [the catalogue](../../studio-backend/src/access_config.rs) to its actual server decisions. Verify allow and deny for each operation, including connectors, secrets, documents and IDE sessions. |
-| Concurrent access edits | Individual grant changes and owner-grant synchronization check the document version and retry a conflicting write. Grant rekeying refuses a stale write. Admin → Access still submits a whole document through an API whose REST write lacks a version precondition. A versioned editor save remains open. |
+| Concurrent access edits | Individual grant changes and owner-grant synchronization check the document version and retry a conflicting write. Grant rekeying refuses a stale write. Admin → Access sends the version it loaded and shows a conflict without replacing the editor's draft. Reloading the current configuration requires an explicit action. |
 | Stand verification | Exercise changes and revocation in an already signed-in session, including switching between organizations and observing suspended membership. |
 
 The code inventory below records where named checks have been located.

@@ -313,6 +313,52 @@ impl OrganizationService {
             .await
     }
 
+    async fn require_access_organization(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+    ) -> Result<(), super::access_grants::ChangeError> {
+        let tenant = self
+            .am
+            .get_tenant(ctx, org)
+            .await
+            .map_err(|_| super::access_grants::ChangeError::NotFound)?;
+        if tenant.tenant_type.as_deref() != Some(ORGANIZATION_TENANT_TYPE) {
+            return Err(super::access_grants::ChangeError::NotFound);
+        }
+        Ok(())
+    }
+
+    pub async fn access_document(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+    ) -> Result<(serde_json::Value, i64), super::access_grants::ChangeError> {
+        self.require_access_organization(ctx, org).await?;
+        super::access_grants::read_document(self.am.as_ref(), ctx, org).await
+    }
+
+    pub async fn save_access_document(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        expected: i64,
+        draft: serde_json::Value,
+    ) -> Result<(serde_json::Value, i64), super::access_grants::ChangeError> {
+        self.require_access_organization(ctx, org).await?;
+        let saved =
+            super::access_grants::save_document(self.am.as_ref(), ctx, org, expected, draft)
+                .await?;
+        self.announce(
+            ctx,
+            org,
+            super::events::ACCESS_CHANGED,
+            serde_json::json!({}),
+        )
+        .await;
+        Ok(saved)
+    }
+
     /// Change one grant of `org`'s access config as the caller
     /// ([`super::access_grants::change`]), and say so on its channel.
     pub async fn change_access<T>(

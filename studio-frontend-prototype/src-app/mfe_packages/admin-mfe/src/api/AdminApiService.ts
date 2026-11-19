@@ -54,7 +54,9 @@ import type {
   StudioProfile,
   TypeCount,
 } from './types';
-import type { RoleDef } from '../model/access';
+import type { AccessConfig, RoleDef } from '../model/access';
+
+type AccessConfigSnapshot = { version: number; document: Partial<AccessConfig> };
 import type { LooseQuery, LooseResult } from '../model/views-model';
 
 const q = (params: Record<string, string>) => new URLSearchParams(params).toString();
@@ -285,6 +287,16 @@ export class AdminApiService extends BaseApiService {
     privileges: string[];
     default_roles: RoleDef[];
   }>('/studio-organizations/v1/access-catalogue');
+
+  readonly accessConfig = this.protocol(RestEndpointProtocol).queryWith<AccessConfigSnapshot, { orgId: string }>(
+    ({ orgId }) => `/studio-organizations/v1/access-config?${q({ organization_id: orgId })}`
+  );
+
+  saveAccessConfig(orgId: string) {
+    return this.rest.mutation<AccessConfigSnapshot, { expected_version: number; document: AccessConfig }>(
+      'PUT', `/studio-organizations/v1/access-config?${q({ organization_id: orgId })}`
+    );
+  }
 
   /** An organization's logo; 404 when it has none. */
   readonly logo = this.protocol(RestEndpointProtocol).queryWith<OrganizationLogo, { orgId: string }>(

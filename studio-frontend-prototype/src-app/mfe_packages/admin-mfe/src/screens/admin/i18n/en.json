@@ -354,6 +354,8 @@
   "access_model_roles_blurb": "Access is granted through roles — each role is a set of privileges — assigned to members and teams. Fine-grained, but you manage roles.",
   "access_rolling_out": "Roles apply to domain objects and to administrative actions with privilege checks. Organization membership determines which organizations you can reach.",
   "access_owner_required": "Assign an organization owner in Members before enabling role-based access.",
+  "access_save_conflict": "Access settings changed while you were editing. Your draft is still shown. Reload the current settings before editing again.",
+  "access_reload_after_conflict": "Discard draft and reload",
   "access_team_grants_inactive": "Existing team grants do not grant access. Assign roles to individual members.",
   "access_you": "{name} (you)",
   "access_role_name": "Role name",

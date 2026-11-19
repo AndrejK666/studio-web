@@ -413,6 +413,48 @@ async fn owner_sync_keeps_a_grant_saved_concurrently() {
 }
 
 #[tokio::test]
+async fn the_access_editor_refuses_a_write_racing_a_grant_change() {
+    let am = Documents::default();
+    let org = Uuid::new_v4();
+    let ctx = caller(Uuid::new_v4());
+    let initial = json!({
+        "model": "tenant", "roles": crate::access_config::default_roles(),
+        "grants": [{
+            "subjectType": "member", "subjectId": "owner", "roleKey": "owner", "scopeType": "org",
+        }],
+    });
+    am.put(org, initial.clone());
+    let mut concurrent = initial.clone();
+    concurrent["grants"].as_array_mut().unwrap().push(json!({
+        "subjectType": "member", "subjectId": "reader", "roleKey": "viewer", "scopeType": "org",
+    }));
+    *am.next_concurrent_write.lock().unwrap() = Some(concurrent.clone());
+    let mut draft = initial;
+    draft["model"] = json!("roles");
+
+    let first = crate::organizations::save_access_document(&am, &ctx, org, 1, draft.clone()).await;
+    assert!(matches!(
+        first,
+        Err(crate::organizations::AccessChangeError::Stale)
+    ));
+    let second = crate::organizations::save_access_document(&am, &ctx, org, 1, draft).await;
+    assert!(matches!(
+        second,
+        Err(crate::organizations::AccessChangeError::Stale)
+    ));
+    let stored = am
+        .get_metadata(
+            &ctx,
+            org,
+            GtsTypeId::new(crate::access_config::ACCESS_METADATA_TYPE),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stored.version, 2);
+    assert_eq!(stored.value, concurrent);
+}
+
+#[tokio::test]
 async fn an_administrative_grant_requires_active_membership() {
     let (service, store, am) = service().await;
     let (first, second) = (Uuid::new_v4(), Uuid::new_v4());

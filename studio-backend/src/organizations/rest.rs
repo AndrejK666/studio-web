@@ -318,10 +318,67 @@ fn change_refused(error: super::access_grants::ChangeError) -> CanonicalError {
         super::access_grants::ChangeError::Invalid(why) => OrganizationError::invalid_argument()
             .with_constraint(why)
             .create(),
+        super::access_grants::ChangeError::Stale => {
+            OrganizationError::aborted("The access settings changed. Reload them before saving.")
+                .with_reason("ACCESS_CONFIG_VERSION_MISMATCH")
+                .create()
+        }
+        super::access_grants::ChangeError::NotFound => {
+            OrganizationError::not_found("Organization not found")
+                .with_resource("organization")
+                .create()
+        }
         super::access_grants::ChangeError::Internal(e) => {
             CanonicalError::internal(format!("{e:#}")).create()
         }
     }
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct SaveAccessConfigRequest {
+    pub expected_version: i64,
+    pub document: serde_json::Value,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct AccessConfigDto {
+    pub version: i64,
+    pub document: serde_json::Value,
+}
+
+async fn get_access_config(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Option<Arc<OrganizationService>>>,
+    axum::extract::Query(query): axum::extract::Query<AccessGrantQuery>,
+) -> ApiResult<JsonBody<AccessConfigDto>> {
+    let org = grant_org(query.organization_id.as_deref())?;
+    let (document, version) = configured(service)?
+        .access_document(&ctx, org)
+        .await
+        .map_err(change_refused)?;
+    Ok(Json(AccessConfigDto { document, version }))
+}
+
+async fn save_access_config(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Option<Arc<OrganizationService>>>,
+    axum::extract::Query(query): axum::extract::Query<AccessGrantQuery>,
+    Json(request): Json<SaveAccessConfigRequest>,
+) -> ApiResult<JsonBody<AccessConfigDto>> {
+    let service = configured(service)?;
+    let org = grant_org(query.organization_id.as_deref())?;
+    if !service.may_manage_access(&ctx, org).await {
+        return Err(OrganizationError::permission_denied()
+            .with_reason("ACCESS_ADMIN_REQUIRED")
+            .create());
+    }
+    let (document, version) = service
+        .save_access_document(&ctx, org, request.expected_version, request.document)
+        .await
+        .map_err(change_refused)?;
+    Ok(Json(AccessConfigDto { document, version }))
 }
 
 async fn put_access_grant(
@@ -1773,6 +1830,45 @@ pub fn register_routes(
         .error_401(openapi)
         .error_403(openapi)
         .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-organizations/v1/access-config")
+        .operation_id("studio_organizations.get_access_config")
+        .summary("Read an organization's access settings and version")
+        .description("The version identifies the configuration snapshot used by the access editor.")
+        .tag("StudioOrganizations")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param_typed("organization_id", true, "The organization", "string")
+        .handler(get_access_config)
+        .json_response_with_schema::<AccessConfigDto>(
+            openapi,
+            StatusCode::OK,
+            "Access settings and version",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::put("/studio-organizations/v1/access-config")
+        .operation_id("studio_organizations.save_access_config")
+        .summary("Save an organization's access settings at a known version")
+        .description("Saves roles and grants for an access administrator. A concurrent change returns a conflict. Ownership grants follow membership.")
+        .tag("StudioOrganizations")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param_typed("organization_id", true, "The organization", "string")
+        .json_request::<SaveAccessConfigRequest>(openapi, "The edited settings and their starting version")
+        .handler(save_access_config)
+        .json_response_with_schema::<AccessConfigDto>(openapi, StatusCode::OK, "Saved settings and version")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_404(openapi)
+        .error_409(openapi)
         .error_500(openapi)
         .register(router, openapi);
 

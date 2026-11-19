@@ -104,6 +104,13 @@ function serve(over: Record<string, unknown> = {}) {
     getProjects: read('getProjects', { items: [tenant('p1', 'Site', { tenant_type: 'project' })] }),
     getTenantMetadata: read('getTenantMetadata', null),
     putTenantMetadata: write('putTenantMetadata'),
+    accessConfig: read('accessConfig', { version: 0, document: {} }),
+    saveAccessConfig: (orgId: string) => ({
+      fetch: (body: { expected_version: number; document: unknown }) => {
+        calls.push({ what: 'saveAccessConfig', arg: [orgId], body });
+        return Promise.resolve({ version: body.expected_version + 1, document: body.document });
+      },
+    }),
     myMemberships: read('myMemberships', { items: [] }),
     inboundConversions: read('inboundConversions', { items: [] }),
     logo: read('logo', Object.assign(new Error('404'), { response: { status: 404 } })),
@@ -197,22 +204,21 @@ describe('Access', () => {
       id: 'g-owner', subjectType: 'member', subjectId: 'person-owner', subjectName: 'Owner',
       roleKey: 'owner', scopeType: 'org', scopeId: 'o1', scopeName: 'Acme',
     };
-    serve({ getTenantMetadata: read('getTenantMetadata', { value: { model: 'tenant', grants: [owner] } }) });
+    serve({ accessConfig: read('accessConfig', { version: 4, document: { model: 'tenant', grants: [owner] } }) });
     render(<AccessSection />);
     const roles = await screen.findByText('access_model_roles');
     fireEvent.click(roles.closest('label')?.querySelector('input') as HTMLElement);
     await shown('[data-access-grants] [data-access-grant]');
     expect(screen.queryByRole('button', { name: 'remove' })).toBeNull();
     fireEvent.click(document.querySelector('[data-access-save]') as HTMLElement);
-    await waitFor(() => expect(calls.find((c) => c.what === 'putTenantMetadata')).toBeTruthy());
-    const saved = calls.find((c) => c.what === 'putTenantMetadata');
-    expect(saved?.arg).toEqual(['o1', 'gts.cf.core.am.tenant_metadata.v1~cf.studio.access.config.v1~']);
-    expect((saved?.body as { model: string; grants: { subjectId: string }[] }).model).toBe('roles');
-    expect((saved?.body as { grants: unknown[] }).grants).toEqual([owner]);
+    await waitFor(() => expect(calls.find((c) => c.what === 'saveAccessConfig')).toBeTruthy());
+    const saved = calls.find((c) => c.what === 'saveAccessConfig');
+    expect(saved?.arg).toEqual(['o1']);
+    expect(saved?.body).toMatchObject({ expected_version: 4, document: { model: 'roles', grants: [owner] } });
   });
 
   it('offers projects rather than their parent workspaces for grant scope', async () => {
-    serve({ getTenantMetadata: read('getTenantMetadata', { value: { model: 'roles' } }) });
+    serve({ accessConfig: read('accessConfig', { version: 4, document: { model: 'roles' } }) });
     render(<AccessSection />);
     const project = await screen.findByRole('option', { name: 'Site' });
     expect(project.getAttribute('value')).toBe('p1');
@@ -227,7 +233,38 @@ describe('Access', () => {
     await screen.findByText('access_owner_required');
     const roles = document.querySelector<HTMLInputElement>('[data-access-model="roles"]');
     expect(roles?.disabled).toBe(true);
-    expect(calls.some((call) => call.what === 'putTenantMetadata')).toBe(false);
+    expect(calls.some((call) => call.what === 'saveAccessConfig')).toBe(false);
+  });
+
+  it('retains the draft on conflict and reloads the concurrent settings only on request', async () => {
+    const owner = {
+      id: 'g-owner', subjectType: 'member', subjectId: 'person-owner', subjectName: 'Owner',
+      roleKey: 'owner', scopeType: 'org', scopeId: 'o1', scopeName: 'Acme',
+    };
+    const starting = { version: 4, document: { model: 'tenant', grants: [owner] } };
+    const concurrent = { version: 5, document: { ...starting.document, roles: [
+      { key: 'viewer', name: 'Concurrent role', privileges: ['people.view'] },
+    ] } };
+    let snapshot = starting;
+    const save = vi.fn(async () => {
+      snapshot = concurrent;
+      throw Object.assign(new Error('Access changed'), { response: { status: 409 } });
+    });
+    serve({
+      accessConfig: () => ({ fetch: async () => snapshot }),
+      saveAccessConfig: () => ({ fetch: save }),
+    });
+    render(<AccessSection />);
+    const toggle = (await screen.findByText('access_model_roles')).closest('label')?.querySelector('input');
+    fireEvent.click(toggle!);
+    fireEvent.click(await shown('[data-access-save]'));
+    await screen.findByText('access_save_conflict');
+    expect(toggle?.checked).toBe(true);
+    expect((await shown('[data-access-save]') as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'access_reload_after_conflict' }));
+    await waitFor(() => expect(toggle?.checked).toBe(false));
+    expect(save).toHaveBeenCalledOnce();
+    expect(save).toHaveBeenCalledWith(expect.objectContaining({ expected_version: 4 }));
   });
 
   it('shows a notice, not the editor, for a self-managed organization', async () => {
