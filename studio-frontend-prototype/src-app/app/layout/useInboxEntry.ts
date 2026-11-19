@@ -87,6 +87,10 @@ export function useInboxEntry(): InboxEntry {
   const projectId = useAppSelector(
     (state) => (state[APP_CONTEXT_SLICE_KEY] as AppContextState | undefined)?.project?.id ?? null
   );
+  // The count is the organization's on screen, as the Inbox screen's list is.
+  const organizationId = useAppSelector(
+    (state) => (state[APP_CONTEXT_SLICE_KEY] as AppContextState | undefined)?.org?.id ?? null
+  );
   // Read when a read is due, not a dependency of it: a move alone reads nothing.
   const screenReads = useRef(false);
   // Declared before the read below, so a read in the same commit sees the screen it is on.
@@ -109,7 +113,8 @@ export function useInboxEntry(): InboxEntry {
     const read = () => {
       apiRegistry
         .getService(InboxCountApiService)
-        .count.fetch({ staleTime: 0 })
+        .count({ organizationId })
+        .fetch({ staleTime: 0 })
         .then((answer) => live && setCount(typeof answer?.total === 'number' ? answer.total : null))
         .catch(() => live && setCount(null));
     };
@@ -124,7 +129,7 @@ export function useInboxEntry(): InboxEntry {
       live = false;
       clearTimeout(wait);
     };
-  }, [screenId, tick]);
+  }, [screenId, tick, organizationId]);
 
   // What a screen that read the Inbox counted: the same answer the bar would get.
   useEffect(

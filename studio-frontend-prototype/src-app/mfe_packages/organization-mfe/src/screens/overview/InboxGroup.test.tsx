@@ -167,7 +167,7 @@ describe('InboxGroup', () => {
     render(<InboxGroup organizationId="o1" workspaces={1} t={t} onCount={onCount} />);
     expect(screen.getByText('inbox_reading')).toBeTruthy();
     expect(await screen.findByText('Billing spec')).toBeTruthy();
-    expect(inbox).toHaveBeenCalledWith({ view: 'open', offset: 0, limit: 200 });
+    expect(inbox).toHaveBeenCalledWith({ organizationId: 'o1', view: 'open', offset: 0, limit: 200 });
     expect(onCount).toHaveBeenLastCalledWith(2);
     expect(screen.getByText('inbox_overdue')).toBeTruthy();
     // The pull request in the prototype's words for it.
@@ -210,7 +210,7 @@ describe('InboxGroup', () => {
     expect(await screen.findByText('inbox_nothing_new 1')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'inbox_show_them' }));
     expect(await screen.findByText('Billing spec')).toBeTruthy();
-    expect(inbox).toHaveBeenCalledWith({ view: 'hidden', offset: 0, limit: 200 });
+    expect(inbox).toHaveBeenCalledWith({ organizationId: 'o1', view: 'hidden', offset: 0, limit: 200 });
     fireEvent.click(screen.getByRole('button', { name: 'inbox_unmark_all' }));
     await waitFor(() => expect(mark).toHaveBeenCalledWith({ item_key: 'review:r1', state: 'open', until: null }));
   });
