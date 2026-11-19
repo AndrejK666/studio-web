@@ -20,6 +20,7 @@ The product-level view, and how this gear sits among the others, is in
 - [3. Technical Architecture](#3-technical-architecture)
 - [4. Additional context](#4-additional-context)
 - [5. Traceability](#5-traceability)
+- [6. Roles and privileges in practice](#6-roles-and-privileges-in-practice)
 
 ## 1. Architecture Overview
 
@@ -250,8 +251,9 @@ sequenceDiagram
     R-->>PEP: decision + constraints
 ```
 
-**Description**: Today every request takes the clamp branch except a write to
-an access config.
+The role branch handles domain-object reads and writes. The access-config
+write branch checks administrative authority. Other requests use the tenant
+clamp unless their resource has an explicit policy.
 
 ### 3.7 Database schemas & tables
 
@@ -280,3 +282,67 @@ same rule.
 - **Design**: [Constructor Studio](constructor-studio.md)
 - **ADRs**: [ADR index](../adr/README.md)
 - **Code**: [`studio-backend/src/studio_authz_plugin/mod.rs`](../../studio-backend/src/studio_authz_plugin/mod.rs)
+
+## 6. Roles and privileges in practice
+
+### Identity, membership and grants
+
+Signing in identifies a person. Active organization memberships add the
+organizations the person can reach. The tenant in the token also contributes
+to that reach for compatibility. A grant binds a person to a role across an
+organization or within one project. A role is a set of named privileges.
+Grants use the canonical person ID. Legacy grants keyed by a sign-in subject
+still work across the person's linked logins.
+
+| Standard role | Privileges in the default configuration |
+| --- | --- |
+| Owner | All privileges. Studio maintains the organization-wide owner grant from membership. |
+| Admin | All catalogue privileges except `access.manage`. |
+| Editor | Reads people, connectors and secret metadata, edits documents and model objects, and holds `session.open`. |
+| Viewer | The catalogue's read privileges. |
+
+Organization and project grants can coexist. A Viewer grant in one project
+and an Editor grant in another can allow domain-object reads in both and
+writes in the second. A project grant carries no authority to administer an
+organization. Team grant records can exist from older configurations. Team
+membership does not currently contribute to the decision.
+
+### How an operation is authorized
+
+1. Resolve the caller and establish tenant reach.
+2. For mapped resources in **Tenant** mode, apply the tenant constraints.
+   **Roles** mode also requires a grant carrying the requested privilege
+   within the evaluated tenant or project scope. A missing document means
+   Tenant mode. An unreadable document causes a role-gated operation to fail.
+3. Apply the operation's own checks. The PDP maps domain-object reads and
+   writes to `domain.view` and `domain.edit`. Gears such as People, Costs,
+   Environments and Kits use `OrgAuthority` for administrative decisions.
+   Organization administration requires active membership unless a platform
+   administrator is authorized. Ownership transfer and organization deletion
+   have their own checks.
+
+### Coverage and open work
+
+| Area | Status |
+| --- | --- |
+| Identity and membership | Regression coverage includes linked logins, owner-grant projection, and rejection of administrative access after suspension. |
+| Scope and policy decisions | Regression coverage includes organization and project grants, older documents, missing privileges, and the service-principal exception. |
+| Admin and Team | Test coverage includes project selection, existing-owner requirements, preservation of Owner grants and assignable project roles. |
+| Catalogue coverage | Map each of the 19 entries in [the catalogue](../../studio-backend/src/access_config.rs) to its actual server decisions. Verify allow and deny for each operation, including connectors, secrets, documents and IDE sessions. |
+| Concurrent access edits | Individual grant changes and owner-grant synchronization check the document version and retry a conflicting write. Grant rekeying refuses a stale write. Admin → Access still submits a whole document through an API whose REST write lacks a version precondition. A versioned editor save remains open. |
+| Stand verification | Exercise changes and revocation in an already signed-in session, including switching between organizations and observing suspended membership. |
+
+The code inventory below records where named checks have been located.
+Each check still needs operation-level allow and deny tests where coverage
+is absent. An entry in the catalogue alone provides no coverage evidence.
+
+| Catalogue entries | Observed check or gap |
+| --- | --- |
+| `people.view`, `people.invite`, `people.manage` | People handlers check the privilege for member and invitation operations. |
+| `access.manage` | The organization grant service and protected access-config policy check authority. Logo updates also use this privilege. |
+| `domain.view`, `domain.edit`, `domain.model` | The PDP checks object reads and writes. The model service checks administrative operations. |
+| `component.registry`, `environment.manage`, `kit.manage` | Explicit checks exist for registry decisions, environment administration and kit management. |
+| `cost.view`, `cost.manage` | The usage service checks organization cost reads and management operations. |
+| `connector.view`, `connector.manage` | Notification sending checks `connector.manage`. Verify connection listing, creation, updates and removal against the catalogue. |
+| `secret.view`, `secret.manage` | Match the credential-metadata and mutation operations to the intended privileges and scope. |
+| `document.view`, `document.edit`, `session.open` | Match the document and IDE operations to the intended privileges and scope. |

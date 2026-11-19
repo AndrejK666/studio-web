@@ -24,6 +24,7 @@ use account_management_sdk::{AccountManagementClient, UpsertMetadataRequest};
 use anyhow::{Context, Result};
 use gts::GtsTypeId;
 use serde::Deserialize;
+use toolkit_canonical_errors::CanonicalError;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
@@ -327,11 +328,47 @@ pub async fn set_owner_grant(
     owner: bool,
 ) -> Result<()> {
     let type_id = GtsTypeId::new(ACCESS_METADATA_TYPE);
-    let mut config = match am.get_metadata(ctx, tenant_id, type_id.clone()).await {
-        Ok(entry) => entry.value,
-        // No document yet: a fresh organization has none until its first grant.
-        Err(_) => serde_json::json!({ "model": "tenant", "roles": default_roles(), "grants": [] }),
-    };
+    // Retry on a competing role edit by reapplying the owner change to its new document.
+    for _ in 0..4 {
+        let (mut config, version) = match am.get_metadata(ctx, tenant_id, type_id.clone()).await {
+            Ok(entry) => (entry.value, entry.version),
+            Err(CanonicalError::NotFound { .. }) => (
+                serde_json::json!({ "model": "tenant", "roles": default_roles(), "grants": [] }),
+                0,
+            ),
+            Err(error) => {
+                return Err(anyhow::anyhow!(
+                    "cannot read the organization's access config: {error}"
+                ));
+            }
+        };
+        update_owner_grant(&mut config, tenant_id, tenant_name, subject, owner)?;
+        let input =
+            UpsertMetadataRequest::new(type_id.clone(), config).with_expected_version(version);
+        match am.upsert_metadata(ctx, tenant_id, input).await {
+            Ok(_) => return Ok(()),
+            Err(error) if is_metadata_version_mismatch(&error) => continue,
+            Err(error) => {
+                return Err(anyhow::anyhow!(
+                    "cannot update the organization's owner grant: {error}"
+                ));
+            }
+        }
+    }
+    anyhow::bail!("the organization's access config kept changing during the owner grant update")
+}
+
+pub(crate) fn is_metadata_version_mismatch(error: &CanonicalError) -> bool {
+    matches!(error, CanonicalError::Aborted { ctx, .. } if ctx.reason == "METADATA_VERSION_MISMATCH")
+}
+
+fn update_owner_grant(
+    config: &mut serde_json::Value,
+    tenant_id: Uuid,
+    tenant_name: &str,
+    subject: &GrantSubject<'_>,
+    owner: bool,
+) -> Result<()> {
     let object = config
         .as_object_mut()
         .context("organization access config is not an object")?;
@@ -377,10 +414,7 @@ pub async fn set_owner_grant(
         }));
     }
 
-    am.upsert_metadata(ctx, tenant_id, UpsertMetadataRequest::new(type_id, config))
-        .await
-        .map(|_| ())
-        .map_err(|error| anyhow::anyhow!("cannot update the organization's owner grant: {error}"))
+    Ok(())
 }
 
 /// Point every member grant of a document at the key `rekey` gives it.
@@ -464,8 +498,8 @@ where
     Fut: std::future::Future<Output = Result<Option<String>>>,
 {
     let type_id = GtsTypeId::new(ACCESS_METADATA_TYPE);
-    let mut document = match am.get_metadata(ctx, tenant_id, type_id.clone()).await {
-        Ok(entry) => entry.value,
+    let (mut document, version) = match am.get_metadata(ctx, tenant_id, type_id.clone()).await {
+        Ok(entry) => (entry.value, entry.version),
         Err(toolkit_canonical_errors::CanonicalError::NotFound { .. }) => return Ok(0),
         Err(error) => {
             return Err(anyhow::anyhow!(
@@ -495,7 +529,7 @@ where
         am.upsert_metadata(
             ctx,
             tenant_id,
-            UpsertMetadataRequest::new(type_id, document),
+            UpsertMetadataRequest::new(type_id, document).with_expected_version(version),
         )
         .await
         .map_err(|error| {

@@ -36,7 +36,8 @@ use super::store::{IdentityStore, PgStore};
 /// exist, and one metadata document per tenant.
 #[derive(Default)]
 struct Documents {
-    docs: Mutex<HashMap<Uuid, Value>>,
+    docs: Mutex<HashMap<Uuid, (Value, i64)>>,
+    next_concurrent_write: Mutex<Option<Value>>,
 }
 
 impl Documents {
@@ -45,13 +46,15 @@ impl Documents {
             .lock()
             .unwrap()
             .get(&org)
-            .and_then(|d| d.get("grants").cloned())
+            .and_then(|(doc, _)| doc.get("grants").cloned())
             .and_then(|g| g.as_array().cloned())
             .unwrap_or_default()
     }
 
     fn put(&self, org: Uuid, doc: Value) {
-        self.docs.lock().unwrap().insert(org, doc);
+        let mut docs = self.docs.lock().unwrap();
+        let version = docs.get(&org).map_or(1, |(_, version)| version + 1);
+        docs.insert(org, (doc, version));
     }
 
     fn owner_keys(&self, org: Uuid) -> Vec<String> {
@@ -63,12 +66,12 @@ impl Documents {
     }
 }
 
-fn entry(value: Value) -> MetadataEntry {
+fn entry((value, version): (Value, i64)) -> MetadataEntry {
     MetadataEntry::new(
         GtsTypeId::new(crate::access_config::ACCESS_METADATA_TYPE),
         value,
         OffsetDateTime::now_utc(),
-        1,
+        version,
     )
 }
 
@@ -239,8 +242,23 @@ impl AccountManagementClient for Documents {
         tenant: Uuid,
         request: UpsertMetadataRequest,
     ) -> Result<MetadataEntry, CanonicalError> {
-        self.put(tenant, request.value.clone());
-        Ok(entry(request.value))
+        let mut docs = self.docs.lock().unwrap();
+        let mut version = docs.get(&tenant).map_or(0, |(_, version)| *version);
+        if let Some(concurrent) = self.next_concurrent_write.lock().unwrap().take() {
+            version += 1;
+            docs.insert(tenant, (concurrent, version));
+        }
+        if request
+            .expected_version
+            .is_some_and(|expected| expected != version)
+        {
+            return Err(UserProfileError::aborted("access config changed")
+                .with_reason("METADATA_VERSION_MISMATCH")
+                .create());
+        }
+        let written = (request.value, version + 1);
+        docs.insert(tenant, written.clone());
+        Ok(entry(written))
     }
     async fn delete_metadata(
         &self,
@@ -363,6 +381,35 @@ async fn creating_an_organization_grants_the_person_not_the_login() {
     );
     // And somebody else may not.
     assert!(!service.may_dispose(&caller(Uuid::new_v4()), org).await);
+}
+
+#[tokio::test]
+async fn owner_sync_keeps_a_grant_saved_concurrently() {
+    let am = Documents::default();
+    let org = Uuid::new_v4();
+    am.put(org, json!({ "model": "roles", "roles": [], "grants": [] }));
+    let concurrent = json!({
+        "subjectType": "member", "subjectId": "editor", "roleKey": "editor", "scopeType": "org",
+    });
+    *am.next_concurrent_write.lock().unwrap() = Some(json!({
+        "model": "roles", "roles": crate::access_config::default_roles(), "grants": [concurrent],
+    }));
+    crate::access_config::set_owner_grant(
+        &am,
+        &caller(Uuid::new_v4()),
+        org,
+        "Acme",
+        &crate::access_config::GrantSubject {
+            key: "owner",
+            name: "Owner",
+            legacy_keys: &[],
+        },
+        true,
+    )
+    .await
+    .unwrap();
+    assert_eq!(am.owner_keys(org), vec!["owner"]);
+    assert!(am.grants(org).contains(&concurrent));
 }
 
 #[tokio::test]

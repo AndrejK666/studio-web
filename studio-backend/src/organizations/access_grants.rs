@@ -232,7 +232,7 @@ pub async fn change<T>(
             UpsertMetadataRequest::new(type_id.clone(), doc).with_expected_version(version);
         match am.upsert_metadata(ctx, org, request).await {
             Ok(_) => return Ok(out),
-            Err(e) if format!("{e:?}").contains("METADATA_VERSION_MISMATCH") => continue,
+            Err(e) if crate::access_config::is_metadata_version_mismatch(&e) => continue,
             Err(e) => {
                 return Err(ChangeError::Internal(anyhow!(
                     "cannot write the organization's access config: {e}"
