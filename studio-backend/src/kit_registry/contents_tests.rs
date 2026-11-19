@@ -204,7 +204,14 @@ fn the_builtin_screens_are_today_s_tabs() {
         .iter()
         .map(|t| t.name.as_str())
         .collect();
-    assert_eq!(tools, ["project_gear_match", "project_gear_match_report"]);
+    assert_eq!(
+        tools,
+        [
+            "project_gear_match",
+            "project_gear_match_report",
+            "gear_match_usage"
+        ]
+    );
     assert_eq!(matcher.contents.requires, ["project-product"]);
     let inbox: Vec<&str> = matcher
         .contents

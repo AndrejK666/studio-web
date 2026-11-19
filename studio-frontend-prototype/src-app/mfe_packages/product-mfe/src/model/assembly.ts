@@ -17,19 +17,36 @@ import { candidateStrength, couldBecomeGear } from './spec-coverage';
 
 export type StrategyId = 'spec_mapping' | 'gears_matcher';
 
+/** What a product is assembled by: a strategy, or `manual` where none can be used. */
+export type StrategyUsed = StrategyId | 'manual';
+
+/** Every strategy this screen knows how to propose with, in the order to offer them. Which of them a
+ *  project may use is not this list: it is `strategies`, what the installed kits provide (ADR-0074). */
 export const STRATEGIES: readonly StrategyId[] = ['spec_mapping', 'gears_matcher'];
+
+/** A strategy a kit that applies provides. */
+export interface StrategyKit {
+  id: StrategyId;
+  name: string;
+  description: string;
+  /** The kit that provides it. */
+  kit: string;
+  /** It can be used now; else `reason` says why. */
+  offered: boolean;
+  reason?: string | null;
+}
 
 export interface AssemblyStrategy {
   organization_id: string;
   project_id?: string | null;
-  /** What is used. */
-  strategy: StrategyId;
+  /** What is used; `manual` where no strategy can be. */
+  strategy: StrategyUsed;
   /** What the settings ask for. */
-  chosen: StrategyId;
+  chosen: StrategyUsed;
   source: 'project' | 'organization' | 'studio';
   /** The project's own choice; null: it follows the organization's default. */
   project?: StrategyId | null;
-  /** The organization's default; null: Studio's. */
+  /** The organization's default; null: what the installed kits make it. */
   organization_default?: StrategyId | null;
   fallback?: { code: string; reason: string } | null;
   gears_matcher: {
@@ -38,7 +55,10 @@ export interface AssemblyStrategy {
     missing?: string | null;
     offered: boolean;
   };
+  /** The strategies the kits that apply provide; empty: the product is assembled by hand. */
   strategies: StrategyId[];
+  /** The same, with names and whether each can be used now (absent from an older server). */
+  strategy_kits?: StrategyKit[];
   settable: boolean;
   may_set_default: boolean;
 }
@@ -60,9 +80,26 @@ export function matcherUnavailable(a: AssemblyStrategy): MatcherUnavailable | nu
   return a.gears_matcher.configured ? null : 'not_configured';
 }
 
-/** The strategy the organization's default stands for (Studio's when it has none). */
-export function organizationStrategy(a: AssemblyStrategy): StrategyId {
-  return a.organization_default ?? 'spec_mapping';
+/** What nobody's choice falls to: `spec_mapping` when the kits provide it, else the only one, else by hand. */
+export function kitsDefault(strategies: readonly StrategyId[]): StrategyUsed {
+  return strategies.includes('spec_mapping') ? 'spec_mapping' : (strategies[0] ?? 'manual');
+}
+
+/** The strategy the organization's default stands for (the kits' when it has none). */
+export function organizationStrategy(a: AssemblyStrategy): StrategyUsed {
+  return a.organization_default ?? kitsDefault(a.strategies);
+}
+
+/** The strategies to offer, from the kits; an older server's answer lists both with no names. */
+export function offeredStrategies(a: AssemblyStrategy): StrategyKit[] {
+  if (a.strategy_kits) return a.strategy_kits;
+  return a.strategies.map((id) => ({
+    id,
+    name: id,
+    description: '',
+    kit: id === 'gears_matcher' ? 'gears-matcher' : 'spec-mapping',
+    offered: id === 'spec_mapping' || a.gears_matcher.offered,
+  }));
 }
 
 /** One gear a strategy proposes, and what it answers. */

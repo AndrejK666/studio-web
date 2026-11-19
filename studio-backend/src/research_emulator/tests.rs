@@ -353,3 +353,238 @@ async fn a_build_reads_its_dockerfile_from_the_desk_and_streams_its_log() {
     );
     assert!(text.contains("research-emulator: fail"), "{text}");
 }
+
+/* ── the identity provider as an OpenID Connect provider (oidc.rs) ── */
+
+/// A sign-in the way a Keycloak broker makes one: `openid` scope and a nonce.
+async fn broker_code_for(url: &str, email: &str, unverified: bool) -> String {
+    let challenge = challenge("v-broker");
+    let mut form = vec![
+        ("response_type", "code"),
+        ("client_id", "constructor-studio"),
+        ("redirect_uri", CALLBACK),
+        ("scope", "openid email profile"),
+        ("state", "st-1"),
+        ("nonce", "n-0S6_WzA2Mj"),
+        ("code_challenge", challenge.as_str()),
+        ("code_challenge_method", "S256"),
+        ("email", email),
+        ("first_name", "Ann"),
+        ("last_name", "Lee"),
+    ];
+    if unverified {
+        form.push(("email_unverified", "on"));
+    }
+    let res = http()
+        .post(format!("{url}/idp/connect/authorize"))
+        .form(&form)
+        .send()
+        .await
+        .unwrap();
+    assert!(res.status().is_redirection(), "{}", res.status());
+    let to = reqwest::Url::parse(res.headers()["location"].to_str().unwrap()).unwrap();
+    let q: std::collections::HashMap<_, _> = to.query_pairs().into_owned().collect();
+    q["code"].clone()
+}
+
+/// The claims of `token`, after checking its signature against the JWKS.
+async fn verified_claims(url: &str, token: &str) -> Value {
+    use aws_lc_rs::signature::{ECDSA_P256_SHA256_FIXED, UnparsedPublicKey};
+    let jwks: Value = http()
+        .get(format!("{url}/idp/.well-known/openid-configuration/jwks"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let parts: Vec<&str> = token.split('.').collect();
+    assert_eq!(parts.len(), 3, "a compact JWS");
+    let header: Value = serde_json::from_slice(&URL_SAFE_NO_PAD.decode(parts[0]).unwrap()).unwrap();
+    assert_eq!(header["alg"], "ES256");
+    let jwk = jwks["keys"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|k| k["kid"] == header["kid"])
+        .expect("the kid of the token is in the JWKS");
+    let mut point = vec![4u8];
+    point.extend(URL_SAFE_NO_PAD.decode(jwk["x"].as_str().unwrap()).unwrap());
+    point.extend(URL_SAFE_NO_PAD.decode(jwk["y"].as_str().unwrap()).unwrap());
+    UnparsedPublicKey::new(&ECDSA_P256_SHA256_FIXED, point)
+        .verify(
+            format!("{}.{}", parts[0], parts[1]).as_bytes(),
+            &URL_SAFE_NO_PAD.decode(parts[2]).unwrap(),
+        )
+        .expect("the signature verifies with the published key");
+    serde_json::from_slice(&URL_SAFE_NO_PAD.decode(parts[1]).unwrap()).unwrap()
+}
+
+#[tokio::test]
+async fn discovery_names_the_endpoints_a_broker_reads() {
+    let (url, emu) = spawn_for_tests(instant()).await;
+    let d: Value = http()
+        .get(format!("{url}/idp/.well-known/openid-configuration"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(d["issuer"], format!("{url}/idp"));
+    assert_eq!(
+        d["authorization_endpoint"],
+        format!("{url}/idp/connect/authorize")
+    );
+    assert_eq!(d["token_endpoint"], format!("{url}/idp/connect/token"));
+    assert_eq!(
+        d["userinfo_endpoint"],
+        format!("{url}/idp/connect/userinfo")
+    );
+    assert_eq!(
+        d["end_session_endpoint"],
+        format!("{url}/idp/connect/endsession")
+    );
+    // The real provider's path, so a broker configured from either reads the same.
+    assert_eq!(
+        d["jwks_uri"],
+        format!("{url}/idp/.well-known/openid-configuration/jwks")
+    );
+    assert_eq!(d["code_challenge_methods_supported"], json!(["S256"]));
+    assert!(
+        emu.off_list_calls().is_empty(),
+        "{:?}",
+        emu.off_list_calls()
+    );
+}
+
+#[tokio::test]
+async fn an_openid_sign_in_gets_a_signed_id_token_with_the_nonce() {
+    let (url, _) = spawn_for_tests(instant()).await;
+    let code = broker_code_for(&url, "Ann@Example.com", false).await;
+    let tokens: Value = exchange(&url, &code, "v-broker")
+        .await
+        .json()
+        .await
+        .unwrap();
+    let claims = verified_claims(&url, tokens["id_token"].as_str().expect("an id_token")).await;
+    assert_eq!(claims["iss"], format!("{url}/idp"));
+    assert_eq!(claims["aud"], "constructor-studio");
+    assert_eq!(claims["nonce"], "n-0S6_WzA2Mj");
+    assert_eq!(claims["email"], "ann@example.com");
+    assert_eq!(claims["email_verified"], true);
+    assert_eq!(claims["given_name"], "Ann");
+    assert_eq!(claims["family_name"], "Lee");
+    assert!(claims["exp"].as_u64().unwrap() > claims["iat"].as_u64().unwrap());
+    // No preferred_username: a broker names the account by its address.
+    assert!(claims.get("preferred_username").is_none());
+
+    let info: Value = http()
+        .get(format!("{url}/idp/connect/userinfo"))
+        .bearer_auth(tokens["access_token"].as_str().unwrap())
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(info["sub"], claims["sub"]);
+    assert_eq!(info["email"], "ann@example.com");
+    assert_eq!(info["email_verified"], true);
+
+    let anonymous = http()
+        .get(format!("{url}/idp/connect/userinfo"))
+        .bearer_auth("not-a-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(anonymous.status(), 401);
+}
+
+#[tokio::test]
+async fn an_address_signed_in_as_unverified_says_so_in_the_token() {
+    let (url, _) = spawn_for_tests(instant()).await;
+    let code = broker_code_for(&url, "bob@example.com", true).await;
+    let tokens: Value = exchange(&url, &code, "v-broker")
+        .await
+        .json()
+        .await
+        .unwrap();
+    let claims = verified_claims(&url, tokens["id_token"].as_str().unwrap()).await;
+    assert_eq!(claims["email_verified"], false);
+}
+
+#[tokio::test]
+async fn a_sign_in_without_openid_gets_no_id_token() {
+    let (url, _) = spawn_for_tests(instant()).await;
+    let res = http()
+        .post(format!("{url}/idp/connect/authorize"))
+        .form(&[
+            ("response_type", "code"),
+            ("client_id", "constructor-studio"),
+            ("redirect_uri", CALLBACK),
+            ("scope", "profile user platform"),
+            ("state", "s"),
+            ("code_challenge", &challenge("v")),
+            ("code_challenge_method", "S256"),
+            ("email", "ann@example.com"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    let to = reqwest::Url::parse(res.headers()["location"].to_str().unwrap()).unwrap();
+    let q: std::collections::HashMap<_, _> = to.query_pairs().into_owned().collect();
+    let tokens: Value = exchange(&url, &q["code"], "v").await.json().await.unwrap();
+    assert!(tokens["access_token"].is_string());
+    assert!(tokens.get("id_token").is_none());
+}
+
+#[tokio::test]
+async fn the_token_call_takes_the_client_secret_by_basic_auth_too() {
+    let (url, _) = spawn_for_tests(instant()).await;
+    for (secret, status) in [("s3cret", 200), ("wrong", 401)] {
+        let code = broker_code_for(&url, "ann@example.com", false).await;
+        let res = http()
+            .post(format!("{url}/idp/connect/token"))
+            .basic_auth("constructor-studio", Some(secret))
+            .form(&[
+                ("grant_type", "authorization_code"),
+                ("code", code.as_str()),
+                ("redirect_uri", CALLBACK),
+                ("code_verifier", "v-broker"),
+            ])
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), status, "secret {secret}");
+    }
+}
+
+#[tokio::test]
+async fn signing_out_goes_back_only_under_a_registered_callback() {
+    let (url, _) = spawn_for_tests(instant()).await;
+    let back = format!("{CALLBACK}/logout_response");
+    let res = http()
+        .get(format!(
+            "{url}/idp/connect/endsession?post_logout_redirect_uri={}&state=s-9",
+            urlencode(&back)
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert!(res.status().is_redirection());
+    assert_eq!(
+        res.headers()["location"],
+        format!("{back}?state=s-9").as_str()
+    );
+
+    let elsewhere = http()
+        .get(format!(
+            "{url}/idp/connect/endsession?post_logout_redirect_uri={}",
+            urlencode("https://evil.example/")
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(elsewhere.status(), 200, "a page, not a redirect");
+}

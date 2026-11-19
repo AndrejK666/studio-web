@@ -212,9 +212,10 @@ without the portal; each step is the REST route the portal calls for it.
 | | `product_infra` | the infra services as the description says them, merged with the catalogue's passports and the environment's side |
 | | `product_kind` | what the product is: Studio's proposal from the specs with its reasons, and the confirmed kind |
 | | `product_kind_confirm` | *changes:* keeps the kind in the project's configuration |
-| | `product_assembly_strategy` | how the product is assembled: `spec_mapping` or `gears_matcher`, whether that is the project's choice, the organization's default or Studio's, and why it falls back ([ADR-0072](adr/0072-gears-matcher-is-a-kit-and-a-product-is-assembled-by-a-strategy.md)) |
+| | `product_assembly_strategy` | how the product is assembled: one of the strategies the installed kits provide (`spec_mapping`, `gears_matcher`) or `manual`, whether that is the project's choice, the organization's default or the kits', and why it falls back ([ADR-0072](adr/0072-gears-matcher-is-a-kit-and-a-product-is-assembled-by-a-strategy.md), [ADR-0074](adr/0074-spec-mapping-is-a-kit-and-strategies-come-from-kits.md)) |
 | | `project_gear_match` | *changes:* (Gears matcher kit) sends the project's specifications to the gears-matcher service as one background run (paid model calls); answers `match_id` and `run_id` |
 | | `project_gear_match_report` | (Gears matcher kit) a gear match (`latest` or by id): per requirement the verdict, candidate gears with evidence, the passage, and what Studio offers ([design](design/product-gear-match.md)) |
+| | `gear_match_usage` | (Gears matcher kit) how the organization's projects use the matcher over `period_days`: per project the strategy and why, the last run's coverage, runs by state, model calls and tokens, decisions, open questions; summed; and whether the service answers now |
 | Environments | `deploy_targets` | where the product can deploy, the bindings, the secret keys |
 | | `project_environments` | the project's own environments |
 | | `deploy_bindings_set` | *changes:* which profile each environment runs |
@@ -254,9 +255,11 @@ ADR-0069 §4); an agent installs one the way a person does.
 
 **A tool that comes with a kit.** Most tools above belong to a kit, which
 claims them (ADR-0071 §4; `kits_describe` lists them under `gears`): the
-`project_domain_model_*` tools and `project_capabilities`, `project_findings`,
-`project_plan`, `project_requirements` are the Project model's
-(`project-domain-model`); `review_requests`, `review_verdict`, `spec_check`
+`project_domain_model_*` tools are the Project model's
+(`project-domain-model`); `project_capabilities`, `project_findings`,
+`project_plan` and `project_requirements` Spec mapping's (`spec-mapping`, a base
+kit an organization may uninstall, ADR-0074); `project_gear_match*` and
+`gear_match_usage` the Gears matcher's (`gears-matcher`); `review_requests`, `review_verdict`, `spec_check`
 and `spec_check_result` Specs'; `project_phase*` Planning's
 (`project-lifecycle`); the `product_*` tools and `gdl_file` Product's
 (`project-product`); `build_list` and every environments tool but

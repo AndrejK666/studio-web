@@ -20,9 +20,14 @@
 //! dashboard (`/_emulator`), so a change in what Studio calls shows up here
 //! first.
 //!
+//! The identity provider is also an OpenID Connect provider (discovery, JWKS,
+//! ID tokens, userinfo; `oidc`), so Studio's Keycloak can broker it for
+//! signing in, as it brokers Constructor's real one.
+//!
 //! The process is separate from the server (`studio-backend run`) and needs
 //! no profile, database or Keycloak.
 
+mod oidc;
 mod pages;
 mod state;
 
@@ -141,6 +146,8 @@ impl Config {
 pub struct Emulator {
     cfg: Config,
     state: Mutex<State>,
+    /// Signs the ID tokens; made at start-up, published in the JWKS.
+    signer: oidc::Signer,
 }
 
 type Shared = Arc<Emulator>;
@@ -154,6 +161,7 @@ impl Emulator {
         Ok(Arc::new(Self {
             cfg,
             state: Mutex::new(state),
+            signer: oidc::Signer::generate()?,
         }))
     }
 
@@ -384,7 +392,19 @@ fn route(
         ("POST", ["idp", "connect", "authorize"]) => {
             authorize_submit(emu, &form(&String::from_utf8_lossy(&body)))
         }
-        ("POST", ["idp", "connect", "token"]) => token(emu, &form(&String::from_utf8_lossy(&body))),
+        ("POST", ["idp", "connect", "token"]) => {
+            token(emu, headers, &form(&String::from_utf8_lossy(&body)))
+        }
+        // What a Keycloak broker signing people in through it reads besides
+        // (oidc.rs). Keycloak calls these, never Studio's backend.
+        ("GET", ["idp", ".well-known", "openid-configuration"]) => {
+            axum::Json(oidc::discovery(&emu.cfg)).into_response()
+        }
+        ("GET", ["idp", ".well-known", "openid-configuration", "jwks"]) => {
+            axum::Json(json!({ "keys": [emu.signer.jwk()] })).into_response()
+        }
+        ("GET" | "POST", ["idp", "connect", "userinfo"]) => userinfo(emu, headers),
+        ("GET", ["idp", "connect", "endsession"]) => end_session(emu, &form(query)),
 
         ("POST", ["api", "platform-account", "access-keys"]) => make_key(emu, headers, &body),
         (_, ["api", "platform-account", "v1", rest @ ..]) => account(emu, m, rest, headers, &body),
@@ -478,7 +498,9 @@ fn authorize_submit(emu: &Shared, f: &std::collections::HashMap<String, String>)
     let code = new_id();
     {
         let mut st = emu.lock();
-        let user_id = st.sign_in(email, get("first_name"), get("last_name"));
+        // Verified unless the sign-in page was told otherwise.
+        let verified = get("email_unverified").is_empty();
+        let user_id = st.sign_in(email, get("first_name"), get("last_name"), verified);
         st.grants.insert(
             code.clone(),
             state::Grant {
@@ -487,6 +509,8 @@ fn authorize_submit(emu: &Shared, f: &std::collections::HashMap<String, String>)
                 challenge: get("code_challenge").to_owned(),
                 user_id,
                 expires_ms: now_ms() + 5 * 60 * 1000,
+                scope: get("scope").to_owned(),
+                nonce: get("nonce").to_owned(),
             },
         );
     }
@@ -506,9 +530,41 @@ fn authorize_submit(emu: &Shared, f: &std::collections::HashMap<String, String>)
     Redirect::to(back.as_str()).into_response()
 }
 
-fn token(emu: &Shared, f: &std::collections::HashMap<String, String>) -> Response {
+/// The client's id and secret: from the form (`client_secret_post`, what
+/// Studio sends) or from HTTP Basic (`client_secret_basic`, which a broker may
+/// send instead; the real provider takes both).
+fn client_credentials(
+    headers: &HeaderMap,
+    f: &std::collections::HashMap<String, String>,
+) -> (String, String) {
+    let basic = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Basic "))
+        .and_then(|b| {
+            base64::engine::general_purpose::STANDARD
+                .decode(b.trim())
+                .ok()
+        })
+        .and_then(|b| String::from_utf8(b).ok())
+        .and_then(|pair| {
+            pair.split_once(':')
+                .map(|(id, secret)| (unescape(id), unescape(secret)))
+        });
+    basic.unwrap_or_else(|| {
+        let get = |k: &str| f.get(k).cloned().unwrap_or_default();
+        (get("client_id"), get("client_secret"))
+    })
+}
+
+fn token(
+    emu: &Shared,
+    headers: &HeaderMap,
+    f: &std::collections::HashMap<String, String>,
+) -> Response {
     let get = |k: &str| f.get(k).map(String::as_str).unwrap_or("");
-    if get("client_id") != emu.cfg.client_id || get("client_secret") != emu.cfg.client_secret {
+    let (client_id, client_secret) = client_credentials(headers, f);
+    if client_id != emu.cfg.client_id || client_secret != emu.cfg.client_secret {
         return (
             StatusCode::UNAUTHORIZED,
             axum::Json(json!({ "error": "invalid_client" })),
@@ -517,6 +573,8 @@ fn token(emu: &Shared, f: &std::collections::HashMap<String, String>) -> Respons
     }
     let now = now_ms();
     let mut st = emu.lock();
+    // The ID token's nonce, for a sign-in that asked for `openid`.
+    let mut openid: Option<String> = None;
     let user_id = match get("grant_type") {
         "authorization_code" => {
             let Some(g) = st.grants.remove(get("code")) else {
@@ -525,7 +583,7 @@ fn token(emu: &Shared, f: &std::collections::HashMap<String, String>) -> Respons
             if g.expires_ms < now {
                 return oauth_error("invalid_grant", "the code expired");
             }
-            if g.client_id != get("client_id") || g.redirect_uri != get("redirect_uri") {
+            if g.client_id != client_id || g.redirect_uri != get("redirect_uri") {
                 return oauth_error(
                     "invalid_grant",
                     "the code was issued to another client or redirect_uri",
@@ -537,6 +595,9 @@ fn token(emu: &Shared, f: &std::collections::HashMap<String, String>) -> Respons
                     "invalid_grant",
                     "the code_verifier does not match the code_challenge",
                 );
+            }
+            if oidc::wants_openid(&g.scope) {
+                openid = Some(g.nonce);
             }
             g.user_id
         }
@@ -555,15 +616,73 @@ fn token(emu: &Shared, f: &std::collections::HashMap<String, String>) -> Respons
             expires_ms: now + 3600 * 1000,
         },
     );
-    st.refresh_tokens.insert(refresh.clone(), user_id);
-    axum::Json(json!({
+    let mut answer = json!({
         "access_token": access,
         "token_type": "Bearer",
         "expires_in": 3600,
         "refresh_token": refresh,
         "scope": "openid profile user platform",
-    }))
-    .into_response()
+    });
+    if let Some(nonce) = openid
+        && let Some(user) = st.users.get(&user_id)
+    {
+        match oidc::id_token(&emu.cfg, &emu.signer, user, &client_id, &nonce, now) {
+            Ok(t) => answer["id_token"] = json!(t),
+            Err(e) => return oauth_error("server_error", &format!("{e:#}")),
+        }
+    }
+    st.refresh_tokens.insert(refresh.clone(), user_id);
+    axum::Json(answer).into_response()
+}
+
+/// The member an access token from the token call names, OpenID style.
+fn userinfo(emu: &Shared, headers: &HeaderMap) -> Response {
+    let st = emu.lock();
+    let token = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(str::trim)
+        .unwrap_or("");
+    let user = st
+        .idp_tokens
+        .get(token)
+        .filter(|t| t.expires_ms > now_ms())
+        .and_then(|t| st.users.get(&t.user_id));
+    match user {
+        Some(user) => axum::Json(oidc::claims(user)).into_response(),
+        None => (
+            StatusCode::UNAUTHORIZED,
+            [(header::WWW_AUTHENTICATE, "Bearer error=\"invalid_token\"")],
+            axum::Json(json!({ "error": "invalid_token" })),
+        )
+            .into_response(),
+    }
+}
+
+/// Signing out: the emulator keeps no browser session, so there is nothing
+/// to end. Goes back to `post_logout_redirect_uri` when it is under one of
+/// the client's callbacks (a broker sends its own endpoint plus
+/// `/logout_response`), with the `state`; otherwise says it is done.
+fn end_session(emu: &Shared, q: &std::collections::HashMap<String, String>) -> Response {
+    let get = |k: &str| q.get(k).map(String::as_str).unwrap_or("");
+    let back = get("post_logout_redirect_uri");
+    let registered = emu.cfg.redirect_uris.is_empty()
+        || emu
+            .cfg
+            .redirect_uris
+            .iter()
+            .any(|r| back.starts_with(r.as_str()));
+    if !back.is_empty()
+        && registered
+        && let Ok(mut url) = reqwest::Url::parse(back)
+    {
+        if !get("state").is_empty() {
+            url.query_pairs_mut().append_pair("state", get("state"));
+        }
+        return Redirect::to(url.as_str()).into_response();
+    }
+    Html(pages::signed_out()).into_response()
 }
 
 /* ── who is calling ── */

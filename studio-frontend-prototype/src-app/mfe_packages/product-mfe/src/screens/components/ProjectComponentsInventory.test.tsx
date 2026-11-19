@@ -130,6 +130,21 @@ describe('ProjectComponentsInventory', () => {
     expect(screen.getByText('empty_body')).toBeTruthy();
   });
 
+  it('leaves the plan out, and says why, where the Spec mapping kit is not installed', async () => {
+    vi.spyOn(api, 'projectPlan').mockRejectedValue({
+      response: {
+        status: 400,
+        data: {
+          type: 'failed_precondition',
+          context: { violations: [{ type: 'KIT_NOT_INSTALLED', subject: 'spec-mapping', description: 'not installed' }] },
+        },
+      },
+    });
+    draw();
+    expect(await screen.findByText(/partial_plan_kit/)).toBeTruthy();
+    expect(screen.queryByText('retry')).toBeNull();
+  });
+
   it('shows the plan read failure with Retry', async () => {
     vi.spyOn(api, 'projectPlan').mockRejectedValue(new Error('down'));
     draw();

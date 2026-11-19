@@ -145,5 +145,7 @@
   "sidebar_switch_context": "Switch organization or workspace",
   "sidebar_workspaces": "Workspaces",
   "sidebar_organizations": "Organizations",
-  "sidebar_where": "Where you are"
+  "sidebar_where": "Where you are",
+  "login_constructor": "Constructor",
+  "login_constructor_title": "Constructor account (via Keycloak identity federation)"
 }

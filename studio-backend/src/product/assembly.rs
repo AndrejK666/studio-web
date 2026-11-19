@@ -6,17 +6,22 @@
 //!
 //! - [`Strategy::SpecMapping`] — the gears studio-spec-mapping's plan offers
 //!   for the capabilities the project's Functional Requirements name: instant,
-//!   free, deterministic. Studio's default, and what every project did before.
+//!   free, deterministic. Provided by the Spec mapping kit (a base kit by
+//!   default, ADR-0074).
 //! - [`Strategy::GearsMatcher`] — the gears the project's latest gear match
 //!   proposes (the gears-matcher service, `gear_match`): minutes, paid, varies
-//!   between runs. Offered only where the Gears matcher kit applies and the
-//!   service is configured.
+//!   between runs. Provided by the Gears matcher kit, and usable only where
+//!   the service is configured.
 //!
-//! Which one a project uses is a setting: the organization's default (set by
+//! The strategies a project may use are the ones the kits that apply there
+//! declare (`assembly_strategy` in their manifests, ADR-0074), not a list
+//! here. Which one it uses is a setting: the organization's default (set by
 //! an administrator on Organization › Gears matcher), and a project's own
-//! choice over it. Where the chosen strategy cannot be used, the product falls
-//! back to `spec_mapping` and says why ([`Effective::fallback`]). Nothing is
-//! applied silently either way: a strategy only proposes picks.
+//! choice over it; nobody's choice is the only strategy kit installed, else
+//! `spec_mapping`. Where the chosen strategy cannot be used, the product falls
+//! back to one that can and says why ([`Effective::fallback`]); with none, it
+//! is assembled by hand in the configurator. Nothing is applied silently
+//! either way: a strategy only proposes picks.
 //!
 //! The settings are kept in the gear's database (`m0004`), one row per
 //! organization default and per project choice, keyed by the organization the
@@ -29,15 +34,17 @@ use toolkit_db::secure::{SecureDeleteExt, SecureEntityExt, SecureInsertExt, Secu
 use toolkit_security::AccessScope;
 use uuid::Uuid;
 
-/// The kit that brings the `gears_matcher` strategy.
-pub use crate::kit_registry::port::GEARS_MATCHER_KIT;
+/// The kits that bring the two strategies.
+pub use crate::kit_registry::port::{GEARS_MATCHER_KIT, SPEC_MAPPING_KIT};
 
 /// The privilege that sets the organization's default: the one that installs
 /// kits, since the default is the Gears matcher kit's setting.
 pub const DEFAULT_PRIVILEGE: &str = "kit.manage";
 
-/// A way of assembling a product.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// A way of assembling a product this gear knows how to run. Which of them a
+/// project may use is not this list: it is what the kits that apply there
+/// provide (their manifests' `assembly_strategy`, ADR-0074).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Strategy {
     SpecMapping,
     GearsMatcher,
@@ -56,10 +63,24 @@ impl Strategy {
     pub fn parse(s: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|v| v.as_str() == s.trim())
     }
+
+    /// The built-in kit that provides it.
+    pub fn kit(self) -> &'static str {
+        match self {
+            Self::SpecMapping => SPEC_MAPPING_KIT,
+            Self::GearsMatcher => GEARS_MATCHER_KIT,
+        }
+    }
 }
 
-/// What Studio uses where nobody chose.
-pub const STUDIO_DEFAULT: Strategy = Strategy::SpecMapping;
+/// What `strategy` reads as on the wire where a product is assembled by
+/// hand: no strategy kit applies, or none of them can be used.
+pub const MANUAL: &str = "manual";
+
+/// The wire name of a strategy, or [`MANUAL`].
+pub fn wire(s: Option<Strategy>) -> &'static str {
+    s.map_or(MANUAL, Strategy::as_str)
+}
 
 /// Where the chosen strategy comes from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -68,7 +89,8 @@ pub enum Source {
     Project,
     /// The organization's default.
     Organization,
-    /// Nobody chose: Studio's default.
+    /// Nobody chose: what the installed strategy kits make the default (the
+    /// only one, else `spec_mapping`).
     Studio,
 }
 
@@ -82,89 +104,133 @@ impl Source {
     }
 }
 
-/// Whether the gears-matcher strategy can be used where the product is.
+/// Which strategies can be used where the product is.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MatcherState {
-    /// The Gears matcher kit applies (the project's effective kits, or the
-    /// organization's). `None`: it could not be read.
-    pub kit: Option<bool>,
-    /// What is missing for the service to be called (the gear-match routes'
-    /// 503); `None` when it can be.
-    pub missing: Option<String>,
+pub struct Available {
+    /// The strategies the kits that apply here provide, in [`Strategy::ALL`]
+    /// order. `None`: the installed kits could not be read.
+    pub kits: Option<Vec<Strategy>>,
+    /// What is missing for the gears-matcher service to be called (the
+    /// gear-match routes' 503); `None` when it can be.
+    pub matcher_missing: Option<String>,
 }
 
-impl MatcherState {
-    /// Why `gears_matcher` cannot be used, as a code and a sentence; `None`
-    /// when it can.
-    pub fn refusal(&self) -> Option<(&'static str, String)> {
-        match self.kit {
+impl Available {
+    /// Whether the kit providing `s` applies here; `None` when unknown.
+    pub fn installed(&self, s: Strategy) -> Option<bool> {
+        self.kits.as_ref().map(|k| k.contains(&s))
+    }
+
+    /// The strategies the installed kits provide; while they cannot be read,
+    /// `spec_mapping` (a base kit by default, free and harmless), never the
+    /// paid one.
+    pub fn provided(&self) -> Vec<Strategy> {
+        match &self.kits {
+            Some(k) => k.clone(),
+            None => vec![Strategy::SpecMapping],
+        }
+    }
+
+    /// Why `s` cannot be used here, as a code and a sentence; `None` when it
+    /// can.
+    pub fn refusal(&self, s: Strategy) -> Option<(&'static str, String)> {
+        match self.installed(s) {
             Some(false) => {
+                let name = match s {
+                    Strategy::SpecMapping => "Spec mapping",
+                    Strategy::GearsMatcher => "Gears matcher",
+                };
                 return Some((
                     "KIT_NOT_INSTALLED",
-                    "the Gears matcher kit is not installed here: an administrator installs it \
-                     under Organization › Kits, or for one project under Project › Kits"
-                        .to_owned(),
+                    format!(
+                        "the {name} kit (`{}`) is not installed here: an administrator installs \
+                         it under Organization › Kits, or for one project under Project › Kits",
+                        s.kit()
+                    ),
                 ));
             }
-            None => {
+            None if s == Strategy::GearsMatcher => {
                 return Some((
                     "KIT_UNKNOWN",
                     "whether the Gears matcher kit is installed could not be read".to_owned(),
                 ));
             }
-            Some(true) => {}
+            _ => {}
         }
-        self.missing
-            .as_ref()
-            .map(|why| ("MATCHER_NOT_CONFIGURED", why.clone()))
+        match s {
+            Strategy::GearsMatcher => self
+                .matcher_missing
+                .as_ref()
+                .map(|why| ("MATCHER_NOT_CONFIGURED", why.clone())),
+            Strategy::SpecMapping => None,
+        }
+    }
+
+    /// The strategies that can be used here.
+    pub fn usable(&self) -> Vec<Strategy> {
+        self.provided()
+            .into_iter()
+            .filter(|s| self.refusal(*s).is_none())
+            .collect()
+    }
+}
+
+/// What nobody chose: `spec_mapping` when it is one of `provided`, else the
+/// first (so the only one, where one strategy kit is installed); none without
+/// a strategy kit.
+pub fn default_of(provided: &[Strategy]) -> Option<Strategy> {
+    if provided.contains(&Strategy::SpecMapping) {
+        Some(Strategy::SpecMapping)
+    } else {
+        provided.first().copied()
     }
 }
 
 /// The strategy a product is assembled by, and why.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Effective {
-    /// What is used.
-    pub strategy: Strategy,
-    /// What the settings ask for.
-    pub chosen: Strategy,
+    /// What is used; `None`: the product is assembled by hand.
+    pub strategy: Option<Strategy>,
+    /// What the settings ask for; `None` where nothing was chosen and no
+    /// strategy kit applies.
+    pub chosen: Option<Strategy>,
     pub source: Source,
     /// The project's own choice; `None`: the organization's default.
     pub project: Option<Strategy>,
-    /// The organization's default; `None`: Studio's.
+    /// The organization's default; `None`: what the kits make it.
     pub organization_default: Option<Strategy>,
     /// Why `chosen` is not used: a code and a sentence.
     pub fallback: Option<(&'static str, String)>,
-    pub matcher: MatcherState,
+    pub available: Available,
 }
 
-/// The strategy used, from the settings and whether the matcher can be used.
-/// Pure: the rule the REST read and the tests share.
+/// The strategy used, from the settings and what can be used here. Pure: the
+/// rule the REST reads, the usage statistics and the tests share.
 pub fn resolve(
     project: Option<Strategy>,
     organization_default: Option<Strategy>,
-    matcher: MatcherState,
+    available: Available,
 ) -> Effective {
     let (chosen, source) = match (project, organization_default) {
-        (Some(p), _) => (p, Source::Project),
-        (None, Some(o)) => (o, Source::Organization),
-        (None, None) => (STUDIO_DEFAULT, Source::Studio),
+        (Some(p), _) => (Some(p), Source::Project),
+        (None, Some(o)) => (Some(o), Source::Organization),
+        (None, None) => (default_of(&available.provided()), Source::Studio),
     };
-    let fallback = match chosen {
-        Strategy::SpecMapping => None,
-        Strategy::GearsMatcher => matcher.refusal(),
+    let fallback = chosen.and_then(|c| available.refusal(c));
+    let strategy = match (chosen, &fallback) {
+        (Some(c), None) => Some(c),
+        // Falls back to what can be used, `spec_mapping` first; by hand when
+        // nothing can.
+        _ => default_of(&available.usable()),
     };
     Effective {
-        strategy: if fallback.is_some() {
-            Strategy::SpecMapping
-        } else {
-            chosen
-        },
+        strategy,
         chosen,
         source,
         project,
         organization_default,
         fallback,
-        matcher,
+        available,
     }
 }
 
@@ -223,6 +289,22 @@ impl StrategyStore {
             .one(&conn)
             .await?;
         Ok(row.and_then(|r| Strategy::parse(&r.strategy)))
+    }
+
+    /// Every strategy kept in the organization `org`: its default (`scope`
+    /// = `org`) and its projects' choices, by scope. A value this version
+    /// does not know is left out.
+    pub async fn all(&self, org: Uuid) -> anyhow::Result<Vec<(Uuid, Strategy)>> {
+        let conn = self.db.conn()?;
+        let rows = settings::Entity::find()
+            .secure()
+            .scope_with(&AccessScope::for_tenant(org))
+            .all(&conn)
+            .await?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|r| Strategy::parse(&r.strategy).map(|s| (r.scope_id, s)))
+            .collect())
     }
 
     /// Keep `strategy` for `scope`; `None` forgets it.

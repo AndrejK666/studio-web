@@ -21,6 +21,11 @@ export interface InboxTotal {
   workspaces?: number;
 }
 
+export interface InboxCountQuery {
+  /** The organization the count is about; the caller's home tenant when absent. */
+  organizationId: string | null;
+}
+
 export class InboxCountApiService extends BaseApiService {
   constructor() {
     // A cold Inbox still has every source to read before it answers.
@@ -28,5 +33,15 @@ export class InboxCountApiService extends BaseApiService {
     super({ baseURL: '/cf/studio-user/v1' }, restProtocol, new RestEndpointProtocol(restProtocol));
   }
 
-  readonly count = this.protocol(RestEndpointProtocol).query<InboxTotal>('/me/inbox/count');
+  /**
+   * The count in the organization on screen. Without one the server reads the
+   * caller's home tenant, which is not where a person who joined by invitation
+   * works: their token still names the tenant they signed up in.
+   */
+  readonly count = this.protocol(RestEndpointProtocol).queryWith<InboxTotal, InboxCountQuery>(
+    ({ organizationId }) =>
+      organizationId
+        ? `/me/inbox/count?${new URLSearchParams({ organization_id: organizationId })}`
+        : '/me/inbox/count'
+  );
 }

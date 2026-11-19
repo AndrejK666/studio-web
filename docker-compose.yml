@@ -105,6 +105,34 @@ services:
       retries: 30
       start_period: 30s
 
+  # Signing in with a Constructor IdP account (keycloak/CONSTRUCTOR_SSO.md):
+  # writes the realm's `constructor` broker through the admin API once
+  # Keycloak and the IdP answer, then exits. Re-running it rewrites the same
+  # broker; an empty STUDIO_CONSTRUCTOR_IDP_ISSUER in .env switches it off, and
+  # CONSTRUCTOR_IDP_REMOVE=1 deletes it. By default the IdP is the Research
+  # emulator below, which lists the broker's endpoint among its callbacks; the
+  # same script runs as a Job in the Helm chart.
+  keycloak-constructor-idp:
+    image: quay.io/keycloak/keycloak:26.7@sha256:ff4257d0d64efbe99ed1ddfaf07765cc3c36dc7518bf8324d41961327f441c54
+    container_name: studio-keycloak-constructor-idp
+    entrypoint: ["bash", "/scripts/constructor-idp.sh"]
+    restart: "no"
+    environment:
+      KC_SERVER: http://keycloak:8080
+      KC_ADMIN_USER: admin
+      KC_ADMIN_PASSWORD: admin
+      # `-` rather than `:-`: a variable set to nothing means "off".
+      CONSTRUCTOR_IDP_ISSUER: ${STUDIO_CONSTRUCTOR_IDP_ISSUER-http://research.localhost:8095/idp}
+      CONSTRUCTOR_IDP_CLIENT_ID: ${STUDIO_CONSTRUCTOR_IDP_CLIENT_ID-constructor-studio}
+      CONSTRUCTOR_IDP_CLIENT_SECRET: ${STUDIO_CONSTRUCTOR_IDP_CLIENT_SECRET-${STUDIO_RESEARCH_CLIENT_SECRET:-research-emulator}}
+    volumes:
+      - ./deploy/helm/studio-web/files/keycloak/constructor-idp.sh:/scripts/constructor-idp.sh:ro
+    depends_on:
+      keycloak:
+        condition: service_healthy
+      research-emulator:
+        condition: service_healthy
+
   # The Theia session image, as a service — so Compose builds it.
   #
   # It is not something the stack runs: the backend launches this image through
@@ -401,7 +429,11 @@ services:
       RESEARCH_EMULATOR_PUBLIC_URL: http://research.localhost:8095
       RESEARCH_EMULATOR_CLIENT_ID: constructor-studio
       RESEARCH_EMULATOR_CLIENT_SECRET: ${STUDIO_RESEARCH_CLIENT_SECRET:-research-emulator}
-      RESEARCH_EMULATOR_REDIRECT_URIS: http://localhost:8080/connections/oauth/callback,http://localhost:8081/connections/oauth/callback
+      # The portal's Research connection, then Keycloak's `constructor`
+      # broker: signing in to Studio through the emulator's IdP
+      # (keycloak/CONSTRUCTOR_SSO.md). Keycloak's own address, the KC_HOSTNAME
+      # above with no /auth: start-dev serves the realms at the root.
+      RESEARCH_EMULATOR_REDIRECT_URIS: http://localhost:8080/connections/oauth/callback,http://localhost:8081/connections/oauth/callback,https://localhost:8443/realms/studio/broker/constructor/endpoint
     ports:
       - "127.0.0.1:8095:8095"
     networks:
@@ -471,6 +503,9 @@ services:
     environment:
       STUDIO_OIDC_ISSUER: ${STUDIO_OIDC_ISSUER_PUBLIC:-https://localhost:8443/realms/studio}
       STUDIO_OIDC_CLIENT_ID: ${STUDIO_OIDC_PORTAL_CLIENT_ID:-studio-portal}
+      # The sign-in screen offers Constructor where keycloak-constructor-idp
+      # brokers it: the same issuer, so an empty one turns both off.
+      STUDIO_CONSTRUCTOR_SIGN_IN: ${STUDIO_CONSTRUCTOR_IDP_ISSUER-http://research.localhost:8095/idp}
     ports:
       - "127.0.0.1:8081:8080"   # nginx-unprivileged listens on 8080 inside
     depends_on:

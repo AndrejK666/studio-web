@@ -10,61 +10,76 @@ use uuid::Uuid;
 use super::*;
 use crate::product::migrations::Migrator;
 
-fn ready() -> MatcherState {
-    MatcherState {
-        kit: Some(true),
-        missing: None,
+use Strategy::{GearsMatcher, SpecMapping};
+
+fn kits(installed: &[Strategy]) -> Available {
+    Available {
+        kits: Some(installed.to_vec()),
+        matcher_missing: None,
     }
 }
 
+fn both() -> Available {
+    kits(&[SpecMapping, GearsMatcher])
+}
+
 #[test]
-fn nobody_chose_so_studio_s_default_is_used() {
-    let e = resolve(None, None, ready());
-    assert_eq!(e.strategy, Strategy::SpecMapping);
-    assert_eq!(e.chosen, Strategy::SpecMapping);
+fn nobody_chose_so_the_kits_default_is_used() {
+    // Both kits: spec_mapping, as before ADR-0074.
+    let e = resolve(None, None, both());
+    assert_eq!(e.strategy, Some(SpecMapping));
+    assert_eq!(e.chosen, Some(SpecMapping));
     assert_eq!(e.source, Source::Studio);
     assert_eq!(e.fallback, None);
+    // Exactly one strategy kit: it is the default, nothing to choose.
+    let e = resolve(None, None, kits(&[GearsMatcher]));
+    assert_eq!(e.strategy, Some(GearsMatcher));
+    assert_eq!(e.source, Source::Studio);
+    // None: assembled by hand, and nothing falls back.
+    let e = resolve(None, None, kits(&[]));
+    assert_eq!(e.strategy, None);
+    assert_eq!(e.chosen, None);
+    assert_eq!(e.fallback, None);
+    assert_eq!(wire(e.strategy), "manual");
 }
 
 #[test]
 fn the_project_s_choice_wins_over_the_organization_s_default() {
-    let e = resolve(
-        Some(Strategy::SpecMapping),
-        Some(Strategy::GearsMatcher),
-        ready(),
-    );
-    assert_eq!(e.strategy, Strategy::SpecMapping);
+    let e = resolve(Some(SpecMapping), Some(GearsMatcher), both());
+    assert_eq!(e.strategy, Some(SpecMapping));
     assert_eq!(e.source, Source::Project);
-    let e = resolve(None, Some(Strategy::GearsMatcher), ready());
-    assert_eq!(e.strategy, Strategy::GearsMatcher);
+    let e = resolve(None, Some(GearsMatcher), both());
+    assert_eq!(e.strategy, Some(GearsMatcher));
     assert_eq!(e.source, Source::Organization);
     assert_eq!(e.fallback, None);
 }
 
 #[test]
-fn the_matcher_falls_back_to_spec_mapping_and_says_why() {
-    // Without the kit.
-    let e = resolve(
-        Some(Strategy::GearsMatcher),
-        None,
-        MatcherState {
-            kit: Some(false),
-            missing: None,
-        },
-    );
-    assert_eq!(e.chosen, Strategy::GearsMatcher);
-    assert_eq!(e.strategy, Strategy::SpecMapping);
+fn a_choice_whose_kit_went_falls_back_and_says_why() {
+    // The matcher kit uninstalled: spec_mapping, with the reason.
+    let e = resolve(Some(GearsMatcher), None, kits(&[SpecMapping]));
+    assert_eq!(e.chosen, Some(GearsMatcher));
+    assert_eq!(e.strategy, Some(SpecMapping));
+    assert_eq!(e.fallback.as_ref().map(|f| f.0), Some("KIT_NOT_INSTALLED"));
+    assert!(e.fallback.as_ref().unwrap().1.contains("gears-matcher"));
+    // The spec-mapping kit uninstalled, the matcher there: the matcher.
+    let e = resolve(None, Some(SpecMapping), kits(&[GearsMatcher]));
+    assert_eq!(e.strategy, Some(GearsMatcher));
+    assert_eq!(e.fallback.as_ref().map(|f| f.0), Some("KIT_NOT_INSTALLED"));
+    // Neither: by hand, still saying why.
+    let e = resolve(Some(SpecMapping), None, kits(&[]));
+    assert_eq!(e.strategy, None);
     assert_eq!(e.fallback.as_ref().map(|f| f.0), Some("KIT_NOT_INSTALLED"));
     // With the kit, but no service: the gear-match routes' own sentence.
     let e = resolve(
         None,
-        Some(Strategy::GearsMatcher),
-        MatcherState {
-            kit: Some(true),
-            missing: Some("the gears-matcher service has no address".into()),
+        Some(GearsMatcher),
+        Available {
+            kits: Some(vec![SpecMapping, GearsMatcher]),
+            matcher_missing: Some("the gears-matcher service has no address".into()),
         },
     );
-    assert_eq!(e.strategy, Strategy::SpecMapping);
+    assert_eq!(e.strategy, Some(SpecMapping));
     assert_eq!(
         e.fallback,
         Some((
@@ -72,27 +87,47 @@ fn the_matcher_falls_back_to_spec_mapping_and_says_why() {
             "the gears-matcher service has no address".to_owned()
         ))
     );
-    // Unknown kits never pass for installed.
+    // A matcher that is not configured, alone: by hand.
     let e = resolve(
-        Some(Strategy::GearsMatcher),
         None,
-        MatcherState {
-            kit: None,
-            missing: None,
+        None,
+        Available {
+            kits: Some(vec![GearsMatcher]),
+            matcher_missing: Some("x".into()),
         },
     );
-    assert_eq!(e.strategy, Strategy::SpecMapping);
+    assert_eq!(e.strategy, None);
+    assert_eq!(
+        e.fallback.as_ref().map(|f| f.0),
+        Some("MATCHER_NOT_CONFIGURED")
+    );
+}
+
+#[test]
+fn unknown_kits_never_pass_the_paid_strategy_for_installed() {
+    let unknown = Available {
+        kits: None,
+        matcher_missing: None,
+    };
+    let e = resolve(Some(GearsMatcher), None, unknown.clone());
+    assert_eq!(e.strategy, Some(SpecMapping));
     assert_eq!(e.fallback.as_ref().map(|f| f.0), Some("KIT_UNKNOWN"));
-    // spec_mapping never needs the matcher.
-    let e = resolve(
-        Some(Strategy::SpecMapping),
-        None,
-        MatcherState {
-            kit: Some(false),
-            missing: Some("x".into()),
-        },
-    );
+    let e = resolve(None, None, unknown);
+    assert_eq!(e.strategy, Some(SpecMapping));
     assert_eq!(e.fallback, None);
+}
+
+#[test]
+fn every_strategy_has_the_built_in_kit_that_declares_it() {
+    for s in Strategy::ALL {
+        let provided = crate::kit_registry::port::assembly_strategies(&[s.kit().to_owned()]);
+        let ids: Vec<&str> = provided.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, [s.as_str()], "{}", s.kit());
+    }
+    // Only kits that declare one provide one.
+    assert!(
+        crate::kit_registry::port::assembly_strategies(&["project-product".to_owned()]).is_empty()
+    );
 }
 
 #[test]

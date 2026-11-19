@@ -7,8 +7,9 @@ import type { StudioEvent } from '@constructor-studio/mfe-shared';
  * again on a review event and every two minutes; unknown on a failed read.
  */
 
-const { mockEventBus, screens, channel, fetchCount, store } = vi.hoisted(() => ({
+const { mockEventBus, screens, channel, fetchCount, countQueries, store } = vi.hoisted(() => ({
   mockEventBus: { emit: vi.fn() },
+  countQueries: [] as unknown[],
   screens: [] as Array<{ id: string; presentation: { label: string; route: string } }>,
   channel: { listeners: new Set<(event: unknown) => void>() },
   fetchCount: vi.fn(),
@@ -20,7 +21,14 @@ vi.mock('@gears-frontx/react', async (importOriginal) => ({
   eventBus: mockEventBus,
   useDomainExtensions: () => screens,
   useAppSelector: (select: (state: Record<string, unknown>) => unknown) => select(store.state),
-  apiRegistry: { getService: () => ({ count: { fetch: fetchCount } }) },
+  apiRegistry: {
+    getService: () => ({
+      count: (query: unknown) => {
+        countQueries.push(query);
+        return { fetch: fetchCount };
+      },
+    }),
+  },
 }));
 vi.mock('@/app/live/liveChannel', () => ({
   liveChannel: () => ({
@@ -43,9 +51,15 @@ import {
   useInboxEntry,
 } from './useInboxEntry';
 
-/** The person is on `section`, of a project or not. */
-function onSection(section: string | null, project: string | null = null) {
-  store.state = { [APP_CONTEXT_SLICE_KEY]: { section, project: project ? { id: project, name: project } : null } };
+/** The person is on `section`, of a project or not, in organization `org`. */
+function onSection(section: string | null, project: string | null = null, org: string | null = null) {
+  store.state = {
+    [APP_CONTEXT_SLICE_KEY]: {
+      section,
+      project: project ? { id: project, name: project } : null,
+      org: org ? { id: org, name: org } : null,
+    },
+  };
 }
 
 function hear(subject_type: string) {
@@ -60,6 +74,7 @@ describe('useInboxEntry', () => {
     screens.length = 0;
     screens.push({ id: 'ext.inbox', presentation: { label: 'Inbox', route: INBOX_ROUTE } });
     fetchCount.mockReset();
+    countQueries.length = 0;
     fetchCount.mockResolvedValue({ total: 4, unread: [] });
     onSection(null);
     resetInboxCountReports();
@@ -68,6 +83,13 @@ describe('useInboxEntry', () => {
     cleanup();
     vi.useRealTimers();
     channel.listeners.clear();
+  });
+
+  it('counts in the organization on screen, not the home tenant the token names', async () => {
+    onSection(null, null, 'org-joined');
+    const { result } = renderHook(() => useInboxEntry());
+    await waitFor(() => expect(result.current.count).toBe(4));
+    expect(countQueries).toEqual([{ organizationId: 'org-joined' }]);
   });
 
   it('counts what waits and opens the Inbox screen', async () => {

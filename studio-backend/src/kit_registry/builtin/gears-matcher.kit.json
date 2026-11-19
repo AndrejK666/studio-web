@@ -28,6 +28,10 @@
     {
       "name": "project_gear_match_report",
       "description": "A gear match's report, per requirement"
+    },
+    {
+      "name": "gear_match_usage",
+      "description": "How the organization's projects use the gears matcher"
     }
   ],
   "permissions": {
@@ -42,7 +46,8 @@
       "GET /studio-product/v1/gear-matches/{match_id}",
       "GET /studio-product/v1/gear-matches/{match_id}/diff",
       "GET /studio-product/v1/inbox/gear-match-questions",
-      "GET /studio-tasks/v1/runs/{id}"
+      "GET /studio-tasks/v1/runs/{id}",
+      "GET /studio-product/v1/gear-match-usage"
     ],
     "writes": [
       "PUT /studio-product/v1/projects/{project_id}/product",
@@ -58,7 +63,8 @@
       "gear": "studio-product",
       "mcp_tools": [
         "project_gear_match",
-        "project_gear_match_report"
+        "project_gear_match_report",
+        "gear_match_usage"
       ],
       "routes": [
         "POST /studio-product/v1/gear-matches",
@@ -68,5 +74,10 @@
         "PUT /studio-product/v1/assembly-strategy"
       ]
     }
-  ]
+  ],
+  "assembly_strategy": {
+    "id": "gears_matcher",
+    "name": "Gears matcher",
+    "description": "The gears the project's latest gear match proposes: the gears-matcher service reads the specifications requirement by requirement. Minutes and paid model calls; the answers vary between runs."
+  }
 }
