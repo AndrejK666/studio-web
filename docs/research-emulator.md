@@ -36,6 +36,28 @@ Nothing is really built or run.
   keys, projects, images and applications are kept in the state file when one
   is given.
 
+## Signing in to Studio through it
+
+The identity provider is also enough of an OpenID Connect provider for
+Studio's Keycloak to broker it as the `constructor` login
+([`keycloak/CONSTRUCTOR_SSO.md`](../keycloak/CONSTRUCTOR_SSO.md)), as Studio
+brokers Constructor's real one:
+
+| Path | What |
+|---|---|
+| `GET /idp/.well-known/openid-configuration` | discovery |
+| `GET /idp/.well-known/openid-configuration/jwks` | the key ID tokens are signed with (ES256, made at start-up), at the real IdP's path |
+| `POST /idp/connect/token` | also returns an `id_token` (`iss`, `aud`, `nonce`, `email`, `email_verified`, names) when the sign-in asked for `openid`, and takes the client secret by HTTP Basic too |
+| `GET /idp/connect/userinfo` | the same claims, for the access token |
+| `GET /idp/connect/endsession` | back to `post_logout_redirect_uri` when it is under a registered callback |
+
+The sign-in page has a checkbox that signs in with `email_verified: false`.
+There is no `preferred_username`, so Keycloak names the account by its email.
+
+On the compose stand the emulator lists Keycloak's broker endpoint,
+`https://localhost:8443/realms/studio/broker/constructor/endpoint`, among its
+callbacks, and the `keycloak-constructor-idp` service points the broker at it.
+
 ## The gateway, checked
 
 Any request the restricted gateway in front of a real stand would refuse

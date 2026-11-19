@@ -11,6 +11,10 @@ mount an environment-specific `realm-studio.json` from a Secret at
   runtime; the environment realm is mounted separately for first-boot import.
 - **Native social login**: Google / GitHub / Microsoft are Keycloak's built-in
   identity providers; the realm defines all three.
+- **Constructor IdP**: the realm brokers the IdP behind Constructor Research
+  as `constructor`, written by a Helm Job (or the compose stand's one-shot
+  service) from the issuer, client id and a vault key, with the same sandbox
+  `tenant_id` mapper as github; off when they are not set. See [`CONSTRUCTOR_SSO.md`](CONSTRUCTOR_SSO.md).
 - **Restricted GitHub provider**: login is accepted only for active members of
   `constructorfabric` unless the realm sets `requireOrganization: "false"`;
   see [`GITHUB_SSO.md`](GITHUB_SSO.md).
