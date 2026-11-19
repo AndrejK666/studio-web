@@ -26,5 +26,9 @@
   "phase_build": "Разработка",
   "phase_run": "Эксплуатация",
   "phase_since": "с {date}",
-  "phase_move": "Перевести в «{phase}»"
+  "phase_move": "Перевести в «{phase}»",
+  "next_title": "Что дальше: {type}",
+  "next_open": "Открыть",
+  "next_dismiss": "Скрыть",
+  "next_dismiss_failed": "Шаг не скрыт: {error}"
 }

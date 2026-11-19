@@ -311,6 +311,10 @@ next sync on. That cost is stated in the kit's install summary.
   moves to the kit that brings `milestone` (§6).
 - **A relation between two kits** still needs no dependency. It is unresolved and not
   offered while its target's kit is absent (ADR-0070 §2).
+- **A project type** is not a claim either: the kit derives a type of its own from the
+  core Project type in its overlay, and is a project type because of it
+  ([ADR-0073](0073-a-project-type-is-a-kits-subtype-of-project.md)), not because of a
+  manifest flag.
 
 ### 6. The built-in kits, cut by function
 

@@ -73,7 +73,7 @@ export class ProjectPhaseApiService extends BaseApiService {
 
 /** One step of a project's creation. */
 export interface ProjectCreationStep {
-  /** `tenant`, `config`, `repository`, `sources`, `scaffold`, `prd` or `kits`. */
+  /** `tenant`, `config`, `repository`, `sources`, `scaffold`, `prd`, `kits` or `model`. */
   key: string;
   state: 'pending' | 'done' | 'failed';
   detail?: string | null;
@@ -103,10 +103,35 @@ export interface CreateProjectBody {
   idempotency_key?: string;
 }
 
+/** What the person does next once a project of a type exists (the type kit's manifest). */
+export interface ProjectNextStep {
+  /** Unique within the type; a dismissed step is kept by it in `project.config` `next_steps_dismissed`. */
+  id: string;
+  label: string;
+  description: string;
+  /** The shell route of the screen where it is done. */
+  route: string;
+  /** The project path step (`ProjectStatus.path[].step`) whose being done makes this one done. */
+  done_when?: string | null;
+}
+
+/**
+ * A project type (`GET project-creation-types`): a kit's subtype of the core
+ * Project type (ADR-0073). Older servers answer `slug`, `name` and
+ * `description` only.
+ */
 export interface ProjectTypeKit {
+  /** The kit, sent back as `project_type_kit`. */
   slug: string;
+  /** The type's GTS id, derived from Project's. */
+  type_id?: string;
   name: string;
   description: string;
+  kit_name?: string;
+  mode?: string;
+  /** The optional creation steps it takes: `repository`, `sources`, `scaffold`, `prd`. */
+  steps?: string[];
+  next_steps?: ProjectNextStep[];
 }
 
 /** One row of `GET /rollups` (`RollupDto`): the counts the projects list reads. Null means not asked, not zero. */

@@ -1,7 +1,6 @@
 {
   "manifest_version": "1",
   "slug": "constructor-research",
-  "project_type": true,
   "icon": "lucide:atom",
   "name": "Constructor Research",
   "description": "Build a project's product in Constructor Research and run it there as one of its applications.",
@@ -60,6 +59,47 @@
       "POST /studio-environments/v1/project-environments",
       "POST /studio-environments/v1/builds",
       "POST /studio-environments/v1/deployments"
+    ]
+  },
+  "model": {
+    "types": [
+      {
+        "name": "project",
+        "extends": "project",
+        "label": "Constructor Research project",
+        "description": "A project whose product is built and run in Constructor Research, as one of its applications.",
+        "fields": [
+          {
+            "name": "research_project",
+            "type": "string?",
+            "description": "The Research project the product runs in"
+          },
+          {
+            "name": "research_hardware",
+            "type": "string?",
+            "description": "The hardware its services run on in that Research project"
+          }
+        ]
+      }
+    ]
+  },
+  "project_creation": {
+    "mode": "greenfield",
+    "steps": ["sources", "prd"],
+    "next_steps": [
+      {
+        "id": "connect-research-project",
+        "label": "Connect a Research project",
+        "description": "Sign in to Constructor Research and connect the Research project the product runs in, with its hardware.",
+        "route": "/constructor-research"
+      },
+      {
+        "id": "build-and-run",
+        "label": "Build and run it in Research",
+        "description": "Build the product and deploy it to the Research project from Releases.",
+        "route": "/releases",
+        "done_when": "build"
+      }
     ]
   },
   "gears": [

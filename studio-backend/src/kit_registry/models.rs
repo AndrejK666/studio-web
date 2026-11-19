@@ -12,8 +12,10 @@
 //!
 //! The model is the organization's, so only kits that apply to the whole
 //! organization — base kits and the organization's own — bring theirs
-//! ([`KitInstaller::reconcile_models`]). A kit that brings a model is not
-//! installed for one project (`MODEL_KIT_NOT_FOR_PROJECT`).
+//! ([`KitInstaller::reconcile_models`]), and so do the built-in project
+//! types: their type derived from Project is every organization's (ADR-0073).
+//! Any other kit that brings a model is not installed for one project
+//! (`MODEL_KIT_NOT_FOR_PROJECT`).
 //!
 //! **The overlay is copied into each organization's stored model** (marked
 //! with its origin), not layered over a shared one. See
@@ -283,6 +285,30 @@ impl KitInstaller {
                 }
                 KitModel::Unknown => keep.push(kit.kit_slug.clone()),
                 KitModel::Nothing => {}
+            }
+        }
+        // A built-in project type's model is every organization's (ADR-0073):
+        // any of its projects may be of that type, and the type is what the
+        // project's object is in the model, so it stays while the kit is
+        // installed for no more than a project.
+        for kit in super::manifest::project_type_kits() {
+            if keep.contains(&kit.slug) {
+                continue;
+            }
+            let Ok(descriptor) = self.kit_for(org, &kit.slug).await else {
+                continue;
+            };
+            if let KitModel::Overlay(overlay) = self
+                .model_of(org, &descriptor, &descriptor.default_version)
+                .await?
+            {
+                keep.push(kit.slug.clone());
+                if let Err(e) = port
+                    .sync_kit_model(ctx, &kit.slug, &descriptor.default_version, Some(&overlay))
+                    .await
+                {
+                    problems.push(format!("{}: {e:#}", kit.slug));
+                }
             }
         }
         for slug in carried.keys().filter(|s| !keep.contains(*s)) {

@@ -84,6 +84,7 @@ later ADR that retires or amends an earlier one says so under its title.
 | [0070](0070-studio-keeps-a-core-model-and-each-kit-brings-the-types-its-screens-show.md) | Studio keeps a core model, and each kit brings the types its screens show | proposed | 2026-11-10 |
 | [0071](0071-a-kit-claims-its-gear-types-and-the-built-in-kits-are-cut-by-function.md) | A kit claims the gear types, tools and routes it stands for, and the built-in kits are cut by what they do | proposed | 2026-11-12 |
 | [0072](0072-gears-matcher-is-a-kit-and-a-product-is-assembled-by-a-strategy.md) | The gears matcher is a kit of its own, and a product is assembled by a strategy | proposed | 2026-11-18 |
+| [0073](0073-a-project-type-is-a-kits-subtype-of-project.md) | A project type is a kit's subtype of Project | proposed | 2026-11-19 |
 
 ADR-0017 is not on `main`. It is "We own the settings gear for now", written on
 the unmerged branch `AndrejK666/settings-follow-the-person`, and ADR-0018 cites

@@ -23,7 +23,9 @@ pub use super::gate::{
     KIT_NOT_INSTALLED, KitRefusal, require_kit, sync_wanted, tool_refusal, with_claimed_routes,
 };
 use super::installed::{KitInstaller, Refusal};
-pub(crate) use super::manifest::{project_type_kit, project_type_kits};
+pub(crate) use super::manifest::{
+    KitManifest, PROJECT_CREATION_STEPS, project_type_kit, project_type_kits,
+};
 pub use super::owners::{KitOwners, MarkOn, Rehome};
 use super::service::KitRegistryService;
 pub use super::service::{CONSTRUCTOR_RESEARCH_KIT, GEARS_MATCHER_KIT};

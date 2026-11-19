@@ -303,3 +303,32 @@ fn the_patches_undo_what_they_do() {
     .unwrap();
     assert_eq!(&doc, current.document());
 }
+
+#[test]
+fn a_kits_subtype_of_project_is_derived_from_projects_gts_id() {
+    let mut model = Ontology::load();
+    let typed = overlay(json!({"types": [{"name": "project", "extends": "project",
+        "label": "Deal", "fields": [{"name": "deal_size", "type": "string?"}]}]}));
+    assert_eq!(
+        typed.project_subtype().map(|t| t.entity_id("mna")),
+        Some("mna-project".to_owned())
+    );
+    sync(&mut model, "mna", "1", Some(&typed), &|_| false).unwrap();
+    assert!(
+        model
+            .ancestors("mna-project")
+            .contains(&"project".to_owned())
+    );
+    let entity = model.entity("mna-project").unwrap();
+    assert_eq!(
+        entity["meta"]["gts"],
+        "gts.cf.studio.domain.project.v1~cf.studio.kit.mna.project.v1~"
+    );
+    // It inherits what a project is and adds its own.
+    let fields = model.effective_properties("mna-project");
+    assert!(fields.iter().any(|p| p.name == "deal_size"));
+    assert!(fields.iter().any(|p| p.declared_by == "project"));
+    // A type that extends none is not a project type.
+    let plain = overlay(json!({"types": [{"name": "deal"}]}));
+    assert!(plain.project_subtype().is_none());
+}
