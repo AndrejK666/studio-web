@@ -756,12 +756,15 @@ async fn an_opt_in_kit_installs_itself_nowhere_and_its_endpoint_sources_list_onc
             installed.effective.iter().all(|k| k.kit_slug != slug),
             "{slug}"
         );
-        assert!(
-            !org.service
+        // A project type's model (its subtype of Project) is every
+        // organization's (ADR-0073); any other opt-in kit's is nobody's.
+        assert_eq!(
+            org.service
                 .kit_models(&member)
                 .await
                 .unwrap()
                 .contains_key(slug),
+            crate::kit_registry::port::project_type_kit(slug).is_some(),
             "{slug}"
         );
 
