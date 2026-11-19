@@ -42,6 +42,7 @@ pub fn sign_in(cfg: &Config, q: &HashMap<String, String>, st: &State) -> String 
         "state",
         "code_challenge",
         "code_challenge_method",
+        "nonce",
     ]
     .iter()
     .map(|k| {
@@ -58,11 +59,16 @@ pub fn sign_in(cfg: &Config, q: &HashMap<String, String>, st: &State) -> String 
             known,
             "<form method=\"post\" action=\"{}\" style=\"display:inline-block;margin:0 6px 6px 0\">{hidden}\
              <input type=\"hidden\" name=\"email\" value=\"{}\"><input type=\"hidden\" name=\"first_name\" value=\"{}\">\
-             <input type=\"hidden\" name=\"last_name\" value=\"{}\"><button class=\"alt\">{}</button></form>",
+             <input type=\"hidden\" name=\"last_name\" value=\"{}\">{}<button class=\"alt\">{}</button></form>",
             esc(&action),
             esc(&u.email),
             esc(&u.first_name),
             esc(&u.last_name),
+            if u.email_verified {
+                ""
+            } else {
+                "<input type=\"hidden\" name=\"email_unverified\" value=\"on\">"
+            },
             esc(&u.email)
         );
     }
@@ -83,11 +89,21 @@ pub fn sign_in(cfg: &Config, q: &HashMap<String, String>, st: &State) -> String 
              <label>Email</label><input name=\"email\" type=\"email\" required placeholder=\"ann@example.com\">\
              <label>First name</label><input name=\"first_name\" placeholder=\"Ann\">\
              <label>Last name</label><input name=\"last_name\" placeholder=\"Lee\">\
+             <label style=\"display:flex;gap:6px;align-items:center\"><input name=\"email_unverified\" type=\"checkbox\" style=\"width:auto\">\
+             The address is not verified (the ID token says <code>email_verified: false</code>)</label>\
              <p><button>Sign in</button></p></form></div>",
             esc(q.get("client_id").map(String::as_str).unwrap_or("")),
             esc(q.get("scope").map(String::as_str).unwrap_or("")),
             esc(&action)
         ),
+    )
+}
+
+/// Where `endsession` lands without a callback to go back to.
+pub fn signed_out() -> String {
+    page(
+        "Signed out — Research emulator",
+        "<h1>Signed out</h1><p class=\"sub\">The emulator keeps no browser session; there was nothing more to end.</p>",
     )
 }
 

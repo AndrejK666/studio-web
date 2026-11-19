@@ -42,6 +42,16 @@ pub struct User {
     pub email: String,
     pub first_name: String,
     pub last_name: String,
+    /// Whether the identity provider vouches for the address: the
+    /// `email_verified` claim. Chosen on the sign-in page, verified unless
+    /// the person says otherwise; a member kept from before the claim
+    /// existed reads as verified.
+    #[serde(default = "verified")]
+    pub email_verified: bool,
+}
+
+fn verified() -> bool {
+    true
 }
 
 /// A sign-in's code, waiting for the token call.
@@ -52,6 +62,10 @@ pub struct Grant {
     pub challenge: String,
     pub user_id: String,
     pub expires_ms: u64,
+    /// What the sign-in asked for; an `openid` scope gets an ID token.
+    pub scope: String,
+    /// The client's `nonce`, carried into the ID token unchanged.
+    pub nonce: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -267,7 +281,13 @@ impl State {
 
     /// The member a sign-in names, made on the first sign-in with a project
     /// of their own.
-    pub fn sign_in(&mut self, email: &str, first_name: &str, last_name: &str) -> String {
+    pub fn sign_in(
+        &mut self,
+        email: &str,
+        first_name: &str,
+        last_name: &str,
+        email_verified: bool,
+    ) -> String {
         let email = email.trim().to_lowercase();
         let id = uuid::Uuid::new_v5(
             &uuid::Uuid::NAMESPACE_URL,
@@ -280,6 +300,7 @@ impl State {
             email: email.clone(),
             first_name: first_name.trim().to_owned(),
             last_name: last_name.trim().to_owned(),
+            email_verified,
         };
         self.users.insert(id.clone(), user);
         if !self.projects.values().any(|p| p.owner == id) {
