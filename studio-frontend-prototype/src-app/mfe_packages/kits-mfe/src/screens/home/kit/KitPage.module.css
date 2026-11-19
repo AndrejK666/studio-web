@@ -331,6 +331,14 @@
 .list {
   display: grid;
   gap: var(--space-1);
+  /* A grid item is as wide as its widest line by default: a file's text or a
+     long route would spill over the next column. */
+  min-width: 0;
+}
+
+/* An open file takes the whole row; the other lists move below it. */
+.list[data-kit-files][data-open] {
+  grid-column: 1 / -1;
 }
 
 .listTitle {
