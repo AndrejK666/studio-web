@@ -85,6 +85,10 @@ const TRUSTED_BATCH: usize = 500;
 const EMBEDDED_BATCH: usize = 32;
 /// Offending objects named in the sample.
 const CONFORMANCE_SAMPLE: usize = 5;
+/// The most objects a bounded read asks the store for while it looks for
+/// enough the caller may read (`readable_page`): the graph's own traversal
+/// budget, so a refill costs no more than one of its walks.
+const READABLE_READ_MAX: usize = 10_000;
 
 /// Everything about one object write except the object: where it is scoped,
 /// whether it may replace what is there, and how hard it is checked.
@@ -250,6 +254,10 @@ pub struct Revision {
     pub undo: Value,
 }
 
+/// The largest model-version payload stored with its patches: graph-storage's
+/// `payload_max_bytes` (64 KiB) less room for the summary.
+const REVISION_PAYLOAD_MAX_BYTES: usize = 60 * 1024;
+
 impl Revision {
     fn new(version: u64, ctx: &SecurityContext, op: &str, target: &str, summary: String) -> Self {
         Self {
@@ -272,8 +280,13 @@ impl Revision {
         self
     }
 
+    /// The version node's payload. graph-storage refuses a node over
+    /// [`REVISION_PAYLOAD_MAX_BYTES`], and a kit's overlay coming or going
+    /// patches hundreds of KB: such a version keeps its summary and drops
+    /// its patches, so it is recorded and nothing is reverted past it (an
+    /// empty inverse, as for an import).
     fn payload(&self) -> Value {
-        json!({
+        let full = json!({
             "version": self.version,
             "at": self.at,
             "by": self.by,
@@ -282,6 +295,23 @@ impl Revision {
             "summary": self.summary,
             "patch": self.patch,
             "undo": self.undo,
+        });
+        if full.to_string().len() <= REVISION_PAYLOAD_MAX_BYTES {
+            return full;
+        }
+        json!({
+            "version": self.version,
+            "at": self.at,
+            "by": self.by,
+            "op": self.op,
+            "target": self.target,
+            "summary": format!(
+                "{} (too large to keep its patches: the model cannot be reverted past it)",
+                self.summary
+            ),
+            "patch": [],
+            "undo": [],
+            "patches_omitted": true,
         })
     }
 
@@ -1501,7 +1531,8 @@ impl DomainModelService {
                 to,
                 Some(&declared.name),
             )
-            .await?;
+            .await?
+            .removed();
         if removed {
             self.notify
                 .objects_changed(ctx, &declared.source, &[from.to_owned()], "unrelate");
@@ -1876,6 +1907,74 @@ impl DomainModelService {
             .collect())
     }
 
+    /// Would [`Self::put_objects_trusted`] of `entity_ref` objects in these
+    /// scopes be admitted? Writes nothing: a caller about to read a large
+    /// set in order to write it asks first, so a refusal costs no read.
+    pub async fn check_put_trusted(
+        &self,
+        ctx: &SecurityContext,
+        entity_ref: &str,
+        scopes: &[String],
+    ) -> anyhow::Result<()> {
+        let ontology = self.model(ctx).await?;
+        let scopes: Vec<&str> = scopes.iter().map(String::as_str).collect();
+        self.admit_trusted_put(ctx, &ontology, entity_ref, &scopes)
+            .await
+            .map(|_| ())
+    }
+
+    /// The type a trusted write names, once the caller may write it in each
+    /// of `scopes` (empty is organization-wide). A refusal says who was
+    /// refused what, where: on its own "not permitted" names neither the
+    /// subject nor the owner, and a refused sweep cannot be diagnosed from it.
+    async fn admit_trusted_put(
+        &self,
+        ctx: &SecurityContext,
+        ontology: &Ontology,
+        entity_ref: &str,
+        scopes: &[&str],
+    ) -> anyhow::Result<String> {
+        let entity_id = ontology
+            .resolve_entity_id(entity_ref)
+            .ok_or_else(|| anyhow::anyhow!("unknown domain type: {entity_ref}"))?;
+        let who = |why: &str| {
+            format!(
+                "subject {} ({}) in tenant {} may not write `{entity_id}` objects: {why}",
+                ctx.subject_id(),
+                ctx.subject_type().unwrap_or("no subject type"),
+                ctx.subject_tenant_id()
+            )
+        };
+        let write = match self
+            .policy
+            .access(ctx, access::WRITE, Some(&entity_id))
+            .await
+        {
+            Ok(write) => write,
+            Err(e) => {
+                let cause = who("refused for the type as a whole");
+                warn!(%cause, error = %e, "studio-domain-model: a trusted write was refused");
+                return Err(anyhow::Error::from(e).context(cause));
+            }
+        };
+        let mut scopes = scopes.to_vec();
+        scopes.sort_unstable();
+        scopes.dedup();
+        for scope in scopes {
+            let scope = Some(scope).filter(|s| !s.is_empty());
+            let owner = write.owner_of_scope(scope);
+            if !write.admits_owner(ctx, owner).await {
+                let cause = who(&format!(
+                    "the grant does not reach owner {owner} (scope `{}`)",
+                    scope.unwrap_or("")
+                ));
+                warn!(%cause, "studio-domain-model: a trusted write was refused");
+                return Err(anyhow::Error::from(AccessError::Denied).context(cause));
+            }
+        }
+        Ok(entity_id)
+    }
+
     /// Write a batch of objects of one type for a gear that owns their shape
     /// and their ids (ADR-0066 §8a): unchecked against the type, a graph
     /// write per few hundred objects, and the caller's right to write asked
@@ -1891,22 +1990,10 @@ impl DomainModelService {
             return Ok(0);
         }
         let ontology = self.model(ctx).await?;
-        let entity_id = ontology
-            .resolve_entity_id(entity_ref)
-            .ok_or_else(|| anyhow::anyhow!("unknown domain type: {entity_ref}"))?;
-        let write = self
-            .policy
-            .access(ctx, access::WRITE, Some(&entity_id))
+        let scopes: Vec<&str> = items.iter().map(|(_, s, _)| s.as_str()).collect();
+        let entity_id = self
+            .admit_trusted_put(ctx, &ontology, entity_ref, &scopes)
             .await?;
-        let mut scopes: Vec<&str> = items.iter().map(|(_, s, _)| s.as_str()).collect();
-        scopes.sort_unstable();
-        scopes.dedup();
-        for scope in scopes {
-            let scope = Some(scope).filter(|s| !s.is_empty());
-            if !write.admits_owner(ctx, write.owner_of_scope(scope)).await {
-                return Err(AccessError::Denied.into());
-            }
-        }
         let type_id = gts::node_type_id(&entity_id);
         let kept = self
             .open_fields_of(ctx, &ontology, &entity_id, &items)
@@ -2263,15 +2350,106 @@ impl DomainModelService {
         ))
     }
 
+    /// The `kit-rename` sweep for the caller's organization (ADR-0071 §8):
+    /// every kit mark of Studio's own kits, and the kits' property sources,
+    /// moved to the kit that brings the piece now ([`KitOwners`]), as one
+    /// model version `op = "kit-rename"` with no inverse (a revert past it is
+    /// refused). Nothing is written when every mark is current. Answers what
+    /// moved.
+    ///
+    /// [`KitOwners`]: crate::kit_registry::port::KitOwners
+    pub async fn rename_kit_marks(&self, ctx: &SecurityContext) -> anyhow::Result<Vec<String>> {
+        let owners = crate::kit_registry::port::KitOwners::builtin();
+        self.ensure_persisted(ctx).await?;
+        for attempt in 0..EDIT_ATTEMPTS {
+            let current = self.model_current(ctx).await?;
+            let mut next = (*current).clone();
+            let moved = next.rename_kit_marks(&|kit, entity, on| owners.rehome(kit, entity, on))?;
+            if moved.is_empty() || next.document() == current.document() {
+                return Ok(Vec::new());
+            }
+            let patch = json!(json_patch::diff(current.document(), next.document()));
+            let version_no = self.next_version(ctx)?;
+            let shown: Vec<&str> = moved.iter().take(12).map(String::as_str).collect();
+            let rev = Revision::new(
+                version_no,
+                ctx,
+                "kit-rename",
+                "",
+                format!(
+                    "kit-rename: {} mark(s) now name the kit that brings them: {}{}",
+                    moved.len(),
+                    shown.join("; "),
+                    if moved.len() > shown.len() {
+                        "; …"
+                    } else {
+                        ""
+                    }
+                ),
+            )
+            // No inverse: the old slugs are not something to go back to.
+            .with_patches(patch, json!([]));
+            if !self.claim_version(ctx, &rev).await? {
+                warn!(
+                    attempt,
+                    version = version_no,
+                    "studio-domain-model: model version taken, retrying the kit rename"
+                );
+                self.reload(ctx).await?;
+                continue;
+            }
+            let mut nodes = Vec::new();
+            for e in next.entities() {
+                let Some(id) = e.get("id").and_then(Value::as_str) else {
+                    continue;
+                };
+                if current.entity(id) == Some(e) {
+                    continue;
+                }
+                let node = next
+                    .object_type_node(id)
+                    .ok_or_else(|| anyhow::anyhow!("unknown domain type: {id}"))?;
+                nodes.push(NodeUpsert {
+                    type_id: gts::META_OBJECT_TYPE.to_string(),
+                    node_key: gts::instance_id(gts::META_OBJECT_TYPE, id),
+                    name: Some(node.name.clone()),
+                    payload: node.payload.clone(),
+                    expected_version: None,
+                });
+            }
+            nodes.push(self.model_node(&next, version_no));
+            self.store.upsert_nodes(ctx, &nodes).await?;
+            if let Some(m) = self.tenants_lock()?.get_mut(&ctx.subject_tenant_id()) {
+                m.ontology = Arc::new(next);
+                m.version = version_no;
+            }
+            info!(
+                moved = moved.len(),
+                "studio-domain-model: kit marks renamed to the kits that bring them"
+            );
+            return Ok(moved);
+        }
+        Err(anyhow::anyhow!(
+            "the model is being edited concurrently — no version could be claimed in \
+             {EDIT_ATTEMPTS} attempts"
+        ))
+    }
+
     /// The kits the caller's organization's model carries, with the version
-    /// each overlay was applied at.
+    /// each overlay was applied at; a kit that only claims gear types the
+    /// model marks with it (ADR-0071 §3) is carried at no version, so the
+    /// kits' reconciliation leaves those types dormant where it does not
+    /// apply.
     pub async fn kit_models(
         &self,
         ctx: &SecurityContext,
     ) -> anyhow::Result<std::collections::BTreeMap<String, String>> {
-        Ok(super::kit_overlay::carried(
-            &*self.model_current(ctx).await?,
-        ))
+        let model = self.model_current(ctx).await?;
+        let mut carried = super::kit_overlay::carried(&model);
+        for kit in super::kit_overlay::claiming(&model) {
+            carried.entry(kit).or_default();
+        }
+        Ok(carried)
     }
 
     /// One versioned edit of some entities: `edit` changes a copy of the
@@ -2770,6 +2948,41 @@ impl DomainModelService {
     /// unbounded version answered in 26 s with every payload inlined. `limit`
     /// caps the nodes; `type_ref` and `scope` narrow which ones, with the same
     /// meaning they have on `GET /objects`.
+    /// Up to `limit` objects of `type_ids` the caller may read, and whether
+    /// more readable ones are there.
+    ///
+    /// The bound is applied after access, not before: cutting the store's
+    /// read at `limit + 1` and then dropping what the PDP hides would hand
+    /// back a short page and say there is nothing more when there is. When
+    /// the access hides rows, the read is repeated with a larger bound until
+    /// `limit + 1` readable ones are in hand or the store has no more, up to
+    /// [`READABLE_READ_MAX`]; past that the page says there may be more.
+    async fn readable_page(
+        &self,
+        ctx: &SecurityContext,
+        read: &access::Access,
+        type_ids: &[String],
+        scope: Option<&str>,
+        limit: usize,
+    ) -> anyhow::Result<(Vec<ObjectNode>, bool)> {
+        let want = limit.saturating_add(1);
+        let mut asked = want;
+        loop {
+            let rows = self
+                .store
+                .list_objects(ctx, type_ids, scope, Some(asked))
+                .await?;
+            let exhausted = rows.len() < asked;
+            let mut kept = read.retain(ctx, rows).await;
+            if kept.len() >= want || exhausted || asked >= READABLE_READ_MAX {
+                let more = kept.len() > limit || (!exhausted && kept.len() < want);
+                kept.truncate(limit);
+                return Ok((kept, more));
+            }
+            asked = asked.saturating_mul(4).min(READABLE_READ_MAX).max(want);
+        }
+    }
+
     pub async fn objects_graph(
         &self,
         ctx: &SecurityContext,
@@ -2803,16 +3016,11 @@ impl DomainModelService {
             }
             (type_ids, meta)
         };
-        // One over the bound: if it comes back, there was more to show.
         let scope = scope.map(str::trim).filter(|s| !s.is_empty());
-        let mut objs = self
-            .store
-            .list_objects(ctx, &type_ids, scope, Some(limit + 1))
-            .await?;
         let read = self.policy.access(ctx, access::READ, type_ref).await?;
-        let mut objs = read.retain(ctx, std::mem::take(&mut objs)).await;
-        let truncated = objs.len() > limit;
-        objs.truncate(limit);
+        let (objs, truncated) = self
+            .readable_page(ctx, &read, &type_ids, scope, limit)
+            .await?;
         let nodes = objs
             .iter()
             .map(|o| {
@@ -3323,25 +3531,15 @@ impl DomainModelService {
             .ok_or_else(|| anyhow::anyhow!("unknown domain type: {type_ref}"))?;
         let properties = ontology.effective_properties(&entity_id);
 
-        // One over the bound: if it comes back, there was more to check.
-        let mut objects = self
-            .store
-            .list_objects(
-                ctx,
-                &[gts::node_type_id(&entity_id)],
-                scope,
-                Some(limit + 1),
-            )
-            .await?;
-        let truncated = objects.len() > limit;
-        objects.truncate(limit);
         // It reports payload samples, so it reads what the caller may read and
         // nothing else (ADR-0035 §5).
         let read = self
             .policy
             .access(ctx, access::READ, Some(&entity_id))
             .await?;
-        let objects = read.retain(ctx, objects).await;
+        let (objects, truncated) = self
+            .readable_page(ctx, &read, &[gts::node_type_id(&entity_id)], scope, limit)
+            .await?;
 
         let mut report = Conformance {
             checked: objects.len() as u64,

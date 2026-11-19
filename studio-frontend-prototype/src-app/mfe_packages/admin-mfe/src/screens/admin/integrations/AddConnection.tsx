@@ -33,6 +33,7 @@ export function AddConnection({
   org,
   providers,
   category,
+  initialProvider,
   personal = false,
   onClose,
   onAdded,
@@ -41,13 +42,14 @@ export function AddConnection({
   providers: ConnectorProvider[];
   /** Open on one kind, from the "Not connected yet" line. */
   category?: string;
+  initialProvider?: ConnectorProvider;
   /** From the profile: the connection is the caller's own, never the organization's. */
   personal?: boolean;
   onClose: () => void;
   onAdded: (r: ConnectorIdentity) => void;
 }) {
   const { t } = useAdmin();
-  const [picked, setPicked] = useState<ConnectorProvider | null>(null);
+  const [picked, setPicked] = useState<ConnectorProvider | null>(initialProvider ?? null);
   const [find, setFind] = useState('');
   const startReach: Reach = personal ? 'personal' : 'organization';
   const [reach, setReach] = useState<Reach>(startReach);

@@ -1,5 +1,5 @@
 /**
- * Admin › Project tenants — the prototype's `WorkspacesView` (`App.tsx`)
+ * Admin › Workspace tenants (the prototype named it Project tenants) — the prototype's `WorkspacesView` (`App.tsx`)
  * carried over (ADR-0069): the raw list of workspace tenants behind the
  * projects, across every organization, so the hierarchy stays administrable —
  * open one, create one in an organization, delete one.

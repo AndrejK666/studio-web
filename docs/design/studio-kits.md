@@ -201,7 +201,10 @@ and never written back in the old shape.
 | Method | Path | Description | Stability |
 |--------|------|-------------|-----------|
 | `GET` | `/studio-kits/v1/catalog` | Every kit of the library, each with its `shelf` (`builtin`, `official`, `organization`) and `levels`; `?shelf=` filters; `?organization_id=` adds that organization's own kits | unstable |
-| `GET` | `/studio-kits/v1/catalog/{kit_slug}` | One kit and what is inside it (`contents` by the sections of a kit manifest, `manifest` = where that came from, `origin` for an organization's own kit); 404 for an unknown slug | unstable |
+| `GET` | `/studio-kits/v1/catalog/{kit_slug}` | One kit and what is inside it (`contents` by the sections of a kit manifest, `manifest` = where that came from, `origin` for an organization's own kit, `gdl_rendered_from`, `source_manifest`); 404 for an unknown slug | unstable |
+| `GET` | `/studio-kits/v1/catalog/{kit_slug}/kit.gdl` | The kit's manifest as `kit.gdl` text: authored, or rendered by the server (§3.14) | unstable |
+| `GET` | `/studio-kits/v1/catalog/{kit_slug}/manifest` | The kit's source manifest as written (`kit.json`, `.cf-studio-kit.toml` or `kit.gdl`); 404 when none describes it (§3.14) | unstable |
+| `GET` | `/studio-kits/v1/catalog/{kit_slug}/archive` | A `.tar.gz` of the kit's contents: manifests, model, claims, working material, bundles (§3.14) | unstable |
 | `GET` | `/studio-kits/v1/organization-shelf` | The organization's own kits (`?organization_id=`), each described with its `origin`; any member | unstable |
 | `POST` | `/studio-kits/v1/organization-shelf/preview` | Read a kit from a repository (`{connection_id, repository, path?, ref?, slug?}`) without keeping it; kit administrators | unstable |
 | `POST` | `/studio-kits/v1/organization-shelf` | Read, pin and keep a kit on the shelf; a library slug is 400 `KIT_SLUG_TAKEN` | unstable |
@@ -336,10 +339,35 @@ slot?}`), `model` (the overlay, §3.10), `rules` and `services` and
 `mcp_tools` (`{name, description?}`), `functions` (`{name, runtime:
 wasm|agent, description?}`), `inbox` (`{id, label, kind?: query|endpoint,
 query?, path?, title?, workspace_field?}`, §3.11), `permissions` (`{reads,
-writes, listens}`), `material` (`{path, description?}`), `kinds`, `docs`. A
+writes, listens}`), `material` (`{path, description?}`), `kinds`, `docs`,
+`requires` (ADR-0071 §5: the slugs of the kits it cannot work without), and
+`gears` (ADR-0071 §2): per gear, `{gear, types?, mcp_tools?, routes?,
+sync_only_with_kit?}`, the gear's types, MCP tools and **write** routes the
+kit claims. A claimed route is `METHOD /<gear>/v1/…`, never a `GET`, and is
+also in `permissions.writes`; nothing is claimed twice in one manifest, and a
+shelf kit may not claim what a built-in kit claims, a core gear type or a
+shell tool (`KIT_MODEL_CONFLICT`). `kit.gdl` takes the same shape
+(`gears = [kit_gear_claim(gear = …, types = […], …)]`). A
 kit described only by `.cf-studio-kit.toml` brings working material: its
 resources' install paths and its artifact kinds; a manifest that lists
 several kits needs `slug` to say which.
+
+A kit is a **project type** when its `model` derives one type of its own from
+the core Project type (`{name, extends: "project", label?, description?,
+fields?}`, catalogued as
+`gts.cf.studio.domain.project.v1~cf.studio.kit.<slug>.project.v1~`; ADR-0073).
+`project_type: true` is only a cache of that and is refused without the
+subtype; a project type names the `project` level. Only a project type may
+carry **`project_creation`**: `mode` (`greenfield` | `modernize`, what
+`project.config` starts with), `steps` (the optional creation steps it takes,
+of `repository`, `sources`, `scaffold` — which needs `repository` — and
+`prd`; absent section: all) and `next_steps` (at most 8, in order: `{id,
+label, description?, route, done_when?}`, `id` lowercase with `-`, `route` a
+shell screen's route, `done_when` a step of the project path that
+`project-status` answers — `repos`, `types`, `model`, `findings`, `kind`,
+`product`, `build`). The built-in project types' overlays are carried by every
+organization's model, so installing one in a single project is not
+`MODEL_KIT_NOT_FOR_PROJECT`.
 
 The shelf is visible to that organization only: `GET /catalog` lists it
 only with `organization_id`, and `GET /catalog/{kit_slug}` finds it in the
@@ -560,8 +588,24 @@ it"): `{route?, mcp_tool?}`, the kit's screen that answers an item (one of its
 each Inbox item carry it; without one an item opens the kit's workspace.
 
 A screen may say which domain types another kit brings it shows,
-`screens[].needs` (`["milestone"]` for Project activity's Timeline): the kit's
-detail lists it, and the shell hides the screen where one is not installed.
+`screens[].needs`, each by its GTS id (ADR-0071 §5:
+`gts.cf.studio.domain.<type>.v1~`, the type's id with `-` as `_`; a bare
+entity id is refused when the manifest is read): the kit's detail lists it,
+and the shell hides the screen where one is not installed. A section inside
+a screen that shows another kit's type declares it the same way (Tests'
+open pull requests section `needs` `gts.cf.studio.domain.pull_request.v1~`;
+in the portal, `presentation.sectionNeeds`): the screen stays, the section
+goes where the type is not installed.
+
+A kit that cannot work without another names it in **`requires`** (ADR-0071
+§5, ADR-0068 open question 2): `constructor-research` requires the delivery
+kit, `project-domain-model` requires `project-specs`. The installer refuses
+an install where a required kit would not apply (`KIT_REQUIRES_KIT`) and an
+uninstall that would leave a kit that still applies on that level without it
+(`KIT_REQUIRED_BY`), with one violation per kit involved, so a client can
+offer to install or uninstall both; it never does either on its own. A base
+kit's requirements are base kits; an organization's are met by base and
+organization kits; a project's by what applies to it.
 
 `GET /studio-user/v1/me/inbox?organization_id=` reads the organization on
 screen (its workspaces from the tenant tree, the walk `/rollups` makes but
@@ -790,10 +834,10 @@ Its compiled-in `kit.json` is `kit_registry/builtin/constructor-research.kit.jso
 | Part | What | Where |
 |---|---|---|
 | tab | Organization › Constructor Research (`/constructor-research`): the member's own sign-in, the steps sign in → connect a Research project → build and deploy from Releases, and each Research environment with its project and hardware, Test, Change and what each project runs there (status, logs, address) | `infrastructure-mfe`, second entry `./researchLifecycle` |
-| function | the gate: studio-environments asks studio-kits (`KitPresence`) before it adds or changes a Research environment, lists a connection's Research projects or hardware, or starts a build, deploy or rollback to Research; without the kit, 400 `failed_precondition` `KIT_NOT_INSTALLED` naming the kit | `environments/service.rs` `require_research_kit` |
+| function | the gate: studio-environments asks studio-kits (`KitPresence`) before it adds or changes a Research environment, lists a connection's Research projects or hardware, or starts a build, deploy or rollback to Research; without the kit, 400 `failed_precondition` `KIT_NOT_INSTALLED` naming the kit, studio-kits' one shared answer (ADR-0071 §4) | `environments/service.rs` `require_research_kit` → `kit_registry::port::require_kit` |
 | inbox-source | `deploy-failed` and `sign-in-expires`, both of kind `endpoint` (§3.11) | `GET /studio-environments/v1/research/inbox/deploys`, `…/research/inbox/sign-in` |
 | mcp-tool | `research_projects`, `research_hardware`; the build and deploy themselves are `build_start` and `deploy_request` on a Research environment | `environments/mcp.rs` |
-| permissions | the routes its screen and its Inbox sources call (`contents.rs`, `kit.json`) | |
+| permissions | the routes its screen and its Inbox sources call (`kit.json`) | |
 
 **Where the gate looks.** A request about a project -- a build, a deploy, a
 rollback, the project's own Research environment -- asks the project's
@@ -844,6 +888,154 @@ kit. Reinstalling opens the gate on the same environments.
 - Listing Research projects for a project's own Research environment: the
   listing asks the organization's kits, so a project-only installation types
   the Research project's id.
+
+### 3.14 A kit's type and its files
+
+Every catalogue entry (`GET /catalog`, `kit` of `GET /catalog/{kit_slug}`,
+`kits_catalog`, `kits_describe`) carries `kind` and `brings`, computed on the
+server from what the kit brings (`kit_registry/kind.rs`), by the tiers of
+ADR-0068 §8:
+
+| `kind` | The kit | Classified so today |
+| --- | --- | --- |
+| `runtime` | brings its own code that runs in Studio: micro-frontend bundles loaded at run time (`mfe`, ADR-0068 phase 5), WebAssembly or agent `functions`, or a kit `services` container | a bundle kit (`STUDIO_KIT_BUNDLES_DIR`, e.g. `hello-kit`); an organization's `kit.json` with `mfe`, `functions` or `services` |
+| `gears` | built on Studio's gears: its screens are Studio's own (a built-in kit, or a screen with no bundle of the kit's) and its data is held by gears it claims (`gears`) or calls (`permissions`) | all 18 built-in kits |
+| `model` | types, fields, relations, tabs or rules only, no code: the generic screens show its objects | an organization's `kit.json` with only a `model` |
+| `material` | working material only: files `cfs` writes into a checkout (`material`, artifact `kinds`) | `sdlc`, `compete` |
+
+`kind` is the strongest tier the kit brings, in the order of the table;
+`brings` lists them all, strongest first (a built-in kit with types is
+`["gears", "model"]`). A kit nothing describes falls back on its shelf: built-in
+`gears`, any other `material`. The portal shows it as the "Kit type" column,
+filter and tile line of Platform, Organization and Project › Kits.
+
+**`kit.gdl`.** `GET /catalog/{kit_slug}/kit.gdl` (and the MCP tool `kit_gdl`)
+answers the kit's manifest in the GDL 1.7 shape of ADR-0068 §3 with ADR-0071
+§2's `gears`: `kit(slug, name, version, description, publisher, icon,
+levels, types = [kit_type(gts, id, name, adopts, fields)], model =
+path("model/overlay.json"), extends = [kit_field | kit_relation], tabs =
+[kit_tab(level, label, route | name, shows)], sections, mfe, rules,
+functions, services = [use_service(...)], inbox = [kit_inbox_source(...)],
+mcp_tools, gears = [kit_gear_claim(...)], permissions = permissions(reads,
+writes, listens), material = [path(...)], kinds, docs)`. `types`, `tabs`,
+`mcp_tools`, `permissions` and `material` are always written, the rest only
+when non-empty. No kit is authored in that shape yet, so the server renders it
+(`kit_registry/gdl.rs`) from the manifest Studio read — a built-in kit's
+compiled-in `kit.json` and its screens, an official kit's `.cf-studio-kit.toml`
+copy, an organization kit's kept `kit.json` / `.cf-studio-kit.toml` — and says
+so in its first line, in the `x-kit-gdl-rendered-from` header and in
+`gdl_rendered_from` of the detail. A bundle kit's authored `kit.gdl` is served
+as written (its `kit(name = …)` is the passport shape `components_catalog`
+reads, where `name` is the slug). Golden files hold the rendering:
+`kit_registry/golden/*.kit.gdl` (`UPDATE_GOLDEN=1` rewrites them).
+
+**The source manifest.** `GET /catalog/{kit_slug}/manifest` answers it as
+written: the built-in `kit.json`, the official kit's `.cf-studio-kit.toml` copy
+at its pin, an organization kit's manifest read at its pinned commit through
+its connection (the shelf's kept `kit.json`, marked `x-kit-manifest-copy`, when
+the repository does not answer), a bundle kit's `kit.gdl`. 404 when nothing
+describes the kit.
+
+**The archive.** `GET /catalog/{kit_slug}/archive` answers
+`application/gzip`, `attachment; filename="<slug>-<version>.tar.gz"` (a commit
+shortened to 12), every entry under `<slug>/`:
+
+```text
+README.md            what is here, where it came from, what is missing ("Partial")
+kit.gdl              authored or rendered
+kit.json | .cf-studio-kit.toml   the source manifest as written
+model/overlay.json   the model overlay as written (types, fields, relations, tabs, lifecycles)
+model/contents.json  the types as Studio reads them: gts, id, new/existing, fields; model fields, relations, tabs
+claims.json          gear claims, MCP tools with descriptions, Inbox sources, rules, functions, permissions
+material/…           each resource's source at the pinned commit, at its install path
+mfe/<package>/…      the bundles the kit serves at run time
+```
+
+Material and bundles are read where the kit has a repository: an official kit
+through the caller's organization's first GitHub connection, an organization's
+kit through the connection its shelf names, both as this gear's service
+identity in the organization; a bundle kit's from its directory (regular files
+only). A built-in kit has none: its README says its screens ship in Studio's
+portal image. A read that fails leaves its files out and the README lists
+what and why. Limits: 8 MiB a file, 64 MiB and 2000 files in all, 60 s of
+repository reads (8 at a time); every entry path is relative, with no `..`,
+`.`, empty segment, backslash, drive or control character. The archive is
+built in memory within those limits, then sent.
+
+### 3.15 Merged kits and their slug aliases
+
+ADR-0071 §6 cut the built-in kits by function, and step 5 merged four of
+them under other slugs. For one release the old slugs are aliases
+(`kit_registry/aliases.rs`, the portal's mirror `mfe-shared` `kitAliases`):
+
+| Retired slug | Resolves to |
+| --- | --- |
+| `project-issues` | `project-domain-model`, `project-git` |
+| `project-activity` | `project-git`, `project-lifecycle` |
+| `product-releases` | `project-product`, `delivery` |
+| `org-infrastructure` | `delivery` |
+| `org-connections`, `project-team`, `project-artifacts` | the shell (no kit; step 6) |
+
+Step 6 gave Connections (Organization › Connections), the project's People
+(`/projects/team`) and Artifacts back to the shell: `organization.connectors`,
+`project.people` and `project.artifacts` return to the core, and the sweep
+adopts them there (`adopted_from` = the old kit, never dormant).
+`assignment`, which nothing writes, is in `dropped_from_core`: an
+organization with objects of it keeps it dormant, left by Studio; one without
+loses it. Catalogue (`components`) writes no connection any more.
+
+- **Installations.** Every installed-kits document is read through the
+  table: a base, organization or project installation of a retired slug is
+  one of each kit it resolves to. `removed_builtin`: a surviving kit stays
+  removed only where it and every slug merged into it were removed; a kit
+  the merge brought (`delivery`, `project-product`) where every slug merged
+  into it was. Otherwise the merged kit applies, and the document records
+  what is shown again (`renamed.shown_again`, answered by
+  `GET /installed-kits` as `renamed` and `shown_again`). The first write of
+  a document stores it migrated, and the start-up `kit-rename` sweep writes
+  every tenant's. A request naming a retired slug acts on what it resolves to.
+- **Old clients.** `GET /installed-kits` and `KitPresence` list a retired
+  slug in `effective` (`retired: true`) wherever everything it resolves to
+  applies.
+- **The model.** The `kit-rename` sweep (`DomainObjects::rename_kit_marks`,
+  run first and last in every kit reconciliation and once per organization
+  at start) moves `meta.kit`, `left_by.kit`, a property's and a lifecycle's
+  `kit` of Studio's own kits to the kit that brings the piece now
+  (`kit_registry/owners.rs`, read from the built-in manifests), with the
+  kit's property source and the organization's overrides, as one model
+  version `op = "kit-rename"` with no inverse. The ADR-0070 §5 equality
+  check compares marks as the sweep leaves them.
+- **Removal (step 7, #1089).** One release after step 5 reached every
+  environment — the sweep has run in every organization and no portal,
+  desktop, Theia or script reads or sends a retired slug — the table, its
+  readers (the store's migration, `with_retired`, the request mapping, the
+  portal's `kitIn`) and the old slugs in tests and docs go. Until then
+  `aliases_tests.rs` and `kitAliases.test.ts` list every alias with that
+  note, and the backend test fails on a Studio version past `REMOVE_AFTER`;
+  `no_code_names_a_retired_slug_outside_the_alias_readers` holds every other
+  backend file free of a quoted retired slug, and the portal's contract test
+  every `mfe.json`.
+
+  Before step 7, check: every organization's model has a version
+  `op = "kit-rename"` or names no retired slug (`domain_model_versions`), and
+  no installed-kits document names one (the start-up sweep logs each it
+  wrote; `GET /installed-kits` `renamed` shows what a document named). Then
+  remove, in one change:
+
+  1. `kit_registry/aliases.rs` (`ALIASES`, `resolve`, `migrate`,
+     `with_retired`) and `aliases_tests.rs`; `installed::MigratingStore`
+     (the installer keeps the store it is given), `requested()` and the
+     `*_one` split in `installed.rs`; `InstalledKit::retired` and the
+     `retired`, `renamed`, `shown_again` fields of `GET /installed-kits`
+     (an API removal: `api-contract --accept` records it);
+     `InstalledDocument::renamed`; `owners.rs`'s retired branch of `rehome`.
+  2. Keep the `kit-rename` sweep (`sweep.rs`, `rename_kit_marks`) only if
+     another merge is planned; it is idempotent and costs one model read per
+     reconciliation.
+  3. In the portal: `mfe-shared` `kitAliases.ts` and its test, `kitIn` in
+     `screenShows` and `kitAvailable` (back to `has`).
+  4. The retired slugs in tests (`MAY_NAME_A_RETIRED_SLUG`), fixtures and
+     docs (this section's table becomes history in ADR-0071).
 
 ## 4. Additional context
 

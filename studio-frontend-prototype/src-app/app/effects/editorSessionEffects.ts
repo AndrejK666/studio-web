@@ -35,7 +35,7 @@ import {
   type StudioRun,
   type StudioRunState,
 } from '@constructor-studio/mfe-shared';
-import { StudioSessionApiService, type StudioSession } from '@/app/api';
+import { CloneStatusApiService, StudioSessionApiService, type SourceCloneStatus, type StudioSession } from '@/app/api';
 import { connectEditorBridge, type EditorMessage, type EditorTheme } from '@/app/mfe/editorBridge';
 import type { FrameHook } from '@/app/mfe/MfeHandlerIframe';
 import { showNotice } from '@/app/mfe/notifyAction';
@@ -45,12 +45,14 @@ import { readSessionProfile } from '@/app/slices/appSessionSlice';
 import { DEFAULT_THEME_ID } from '@/app/themes/default';
 import { LIGHT_THEME_ID } from '@/app/themes/light';
 import {
+  editorSessionClones,
   editorSessionFailed,
   editorSessionLaunching,
   editorSessionReady,
   editorSessionReset,
   editorSessionShown,
   readEditorSession,
+  type EditorCloneProblem,
   type EditorSessionFailure,
 } from '@/app/slices/editorSessionSlice';
 
@@ -116,6 +118,20 @@ function endOf(read: StudioRun | 'gone' | null): Outcome | null {
 }
 
 
+/** The failed rows of a project's clone status, as the editor's status shows them. */
+export function cloneProblems(items: readonly SourceCloneStatus[]): EditorCloneProblem[] {
+  return items
+    .filter((s) => s.state === 'failed')
+    .map((s) => ({
+      repository: s.full_path,
+      cause: s.cause ?? null,
+      causeText: s.cause_text ?? null,
+      action: s.action ?? null,
+      actionText: s.action_text ?? null,
+      detail: s.detail ?? null,
+    }));
+}
+
 function launchRefusal(error: unknown): EditorSessionFailure {
   return isNotFound(error)
     ? { kind: 'unavailable' }
@@ -173,6 +189,18 @@ export function createEditorSession(app: FrontXApp): EditorSession {
     ]);
     const sources = config?.value?.sources ?? [];
     return { repos: sessionSources(sources, connections.items), sources };
+  };
+
+  /** The project's sources whose last clone failed, into the status; best effort, a failed read says nothing. */
+  const readClones = async (projectId: string, superseded: () => boolean): Promise<void> => {
+    if (!apiRegistry.has(CloneStatusApiService)) return;
+    try {
+      const list = await apiRegistry.getService(CloneStatusApiService).cloneStatus({ projectId }).fetch({ staleTime: 0 });
+      if (superseded()) return;
+      dispatch(editorSessionClones(cloneProblems(list.items)));
+    } catch (error) {
+      console.warn('[editor-session] clone status unreadable:', errorMessage(error));
+    }
   };
 
   /** The run on the stream from `cursor`; read every two seconds when the stream cannot answer */
@@ -285,6 +313,8 @@ export function createEditorSession(app: FrontXApp): EditorSession {
     }
     if (superseded()) return null;
     projectSources = read.sources;
+    // Beside the launch, not before it: a source that cannot be cloned is opened without, and the status says why.
+    void readClones(projectId, superseded);
 
     let session: StudioSession;
     try {

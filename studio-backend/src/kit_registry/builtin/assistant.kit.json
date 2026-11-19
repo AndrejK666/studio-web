@@ -412,5 +412,13 @@
         }
       }
     ]
+  },
+  "permissions": {
+    "reads": [
+      "GET /studio-llm/v1/client-config",
+      "GET /studio-llm/v1/workspaces/{workspace_id}/client-config",
+      "POST /studio-llm/v1/chat/completions",
+      "POST /studio-llm/v1/workspaces/{workspace_id}/chat/completions"
+    ]
   }
 }

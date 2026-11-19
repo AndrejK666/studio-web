@@ -1,10 +1,12 @@
-# issues-mfe — the Issues kit
+# issues-mfe — Open questions, the Project model's screen
 
-Project › Issues, carried over from the prototype (ADR-0069): everything to
+Project › Open questions (the prototype's Issues tab, at `/issues`), carried over from the prototype (ADR-0069): everything to
 decide about a project in one table — what stops a build, what to look at,
-how the documentation could be better, what was decided. A built-in kit
-(`project-issues`, ADR-0068 §7) and, until a platform administrator removes
-it, a base kit (ADR-0069 §4).
+how the documentation could be better, what was decided. It shows the open
+questions of the project's domain model, not tracker issues, so it is the
+`project-domain-model` kit's screen (ADR-0071 §6, step 4; the tab was named
+Issues and kit `project-issues` before), a base kit until a platform
+administrator removes it (ADR-0069 §4).
 
 - The queue, its groups (`blocks`, `look`, `decided`), each row's passages and
   the actions it offers are the server's (`GET /studio-documents/v1/project-domain-model/issues`),

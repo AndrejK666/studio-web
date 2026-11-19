@@ -118,6 +118,49 @@ fn gone_files<'a>(
         .collect()
 }
 
+/// What [`DocumentClassifier::adopt_ingested`] is given after a walk of
+/// `repo_id`: the file ids the scope keeps, and this walk's path → id for the
+/// paths no other kept repository has.
+///
+/// `repos` and `files` are the scope's as stored, `walked` this walk's files.
+/// Kept are this walk's files and the stored files of every repository that is
+/// neither this one (the walk replaces its files) nor an older attachment of
+/// the same path (the sync forgets those once it is stored).
+fn adoption_inputs(
+    repos: &[GtsNode],
+    files: &[super::port::IngestedFile],
+    repo_id: &str,
+    repo_full_path: &str,
+    walked: impl Iterator<Item = (String, String)>,
+) -> (HashSet<String>, HashMap<String, String>) {
+    let superseded: HashSet<&str> = repos
+        .iter()
+        .filter(|r| {
+            r.instance_id != repo_id
+                && r.value.get("full_path").and_then(serde_json::Value::as_str)
+                    == Some(repo_full_path)
+        })
+        .map(|r| r.instance_id.as_str())
+        .collect();
+    let mut alive: HashSet<String> = HashSet::new();
+    let mut elsewhere: HashSet<&str> = HashSet::new();
+    for f in files {
+        if f.repo == repo_id || superseded.contains(f.repo.as_str()) {
+            continue;
+        }
+        alive.insert(f.node_id.clone());
+        elsewhere.insert(f.path.as_str());
+    }
+    let mut by_path = HashMap::new();
+    for (path, id) in walked {
+        alive.insert(id.clone());
+        if !elsewhere.contains(path.as_str()) {
+            by_path.insert(path, id);
+        }
+    }
+    (alive, by_path)
+}
+
 /// The content nodes that go with `gone` files.
 ///
 /// Named rather than read: a content node's id is derived from its file's, so
@@ -278,7 +321,18 @@ pub struct IngestService {
     /// sync that names a token: nothing could say it is the organization's.
     connectors: Option<crate::connectors::sdk::Connectors>,
     platform: Option<PlatformClient>,
+    /// Where studio-kits answers whether a kit applies: a claim that opts in
+    /// (`sync_only_with_kit`, ADR-0071 §4) lets a sync skip the CI runs and
+    /// jobs, or the build outputs, where its kit does not. `None` syncs
+    /// everything.
+    kits: Option<Arc<toolkit::client_hub::ClientHub>>,
+    /// Where a sync says its fetch of the shared checkout found the source's
+    /// branch gone (#1071's clone status). `None` without the gear's database.
+    clone_outcomes: Option<Arc<dyn super::port::CloneOutcomes>>,
 }
+
+/// This gear, as the kits' claims name it.
+const GEAR_NAME: &str = "studio-artifact-ingest";
 
 pub struct PlatformClient {
     /// The configured OAuth client; the Studio PDP recognises the sync by it.
@@ -360,12 +414,51 @@ impl IngestService {
             clone_failures: std::sync::Mutex::new(HashMap::new()),
             connectors: None,
             platform: None,
+            kits: None,
+            clone_outcomes: None,
         }
+    }
+
+    /// Ask studio-kits, through `hub`, whether an opted-in claim's kit
+    /// applies before an expensive part of a sync (ADR-0071 §4).
+    #[must_use]
+    pub fn with_kits(mut self, hub: Arc<toolkit::client_hub::ClientHub>) -> Self {
+        self.kits = Some(hub);
+        self
+    }
+
+    /// Whether this sync reads `type_id` where `tenant` is: always, unless the
+    /// kit claiming it opted in to `sync_only_with_kit` and does not apply
+    /// there. Then the data starts from the first sync after an install.
+    async fn sync_wanted(&self, ctx: &SecurityContext, tenant: Uuid, type_id: &str) -> bool {
+        use crate::kit_registry::port::{Claims, KitPresence, sync_wanted};
+        let presence = self
+            .kits
+            .as_ref()
+            .and_then(|hub| hub.get::<dyn KitPresence>().ok());
+        sync_wanted(
+            Claims::builtin(),
+            presence.as_deref(),
+            ctx,
+            tenant,
+            GEAR_NAME,
+            type_id,
+        )
+        .await
     }
 
     #[must_use]
     pub fn with_platform(mut self, platform: Option<PlatformClient>) -> Self {
         self.platform = platform;
+        self
+    }
+
+    #[must_use]
+    pub fn with_clone_outcomes(
+        mut self,
+        outcomes: Option<Arc<dyn super::port::CloneOutcomes>>,
+    ) -> Self {
+        self.clone_outcomes = outcomes;
         self
     }
 
@@ -843,8 +936,11 @@ impl IngestService {
         {
             progress.set("reading workspace files…");
             let (username, password) = driver.clone_credentials(token);
+            let source = project_id
+                .and_then(|p| Uuid::parse_str(p).ok())
+                .zip(driver.clone_url(clone_base_url, repo_full_path).ok());
             match self
-                .walk_shared_checkout(dir, username.to_string(), password.to_string())
+                .walk_shared_checkout(dir, username.to_string(), password.to_string(), source)
                 .await
             {
                 Ok(v) => Some(v),
@@ -1021,6 +1117,24 @@ impl IngestService {
                     }
                 }
             }
+        }
+
+        // Before anything is classified: the decisions recorded against this
+        // repository's files under the ids an older attachment gave them move
+        // onto the ids this walk gives them, so the pass below finds them
+        // decided rather than guessing again, and the prune of the older
+        // attachment at the end has nothing of a person's left to forget.
+        if listing_complete {
+            self.adopt_moved_bindings(
+                ctx,
+                workspace_id,
+                project_id,
+                &repo_id,
+                repo_full_path,
+                connector_id,
+                &file_paths,
+            )
+            .await;
         }
 
         // Decide what every file is, now, while the whole repository's text is
@@ -1300,24 +1414,44 @@ impl IngestService {
         let mut ci_error: Option<String> = None;
         // Completed runs, for their jobs: (created_at, run node, run id, attempt).
         let mut finished_runs: Vec<(Option<String>, String, i64, Option<i64>)> = Vec::new();
-        let reads: Vec<(Option<i64>, u32)> = match driver
-            .list_workflows(&auth, repo_full_path)
-            .await
-        {
-            Ok(workflows) if !workflows.is_empty() => workflows
-                .iter()
-                .filter(|w| w.state.as_deref().is_none_or(|s| s == "active"))
-                .take(MAX_WORKFLOWS)
-                .map(|w| (Some(w.id), 1))
-                .collect(),
-            Ok(_) => vec![(None, MAX_RUN_PAGES)],
-            Err(e) => {
-                tracing::warn!(
-                    error = %e,
-                    repo = repo_full_path,
-                    "studio-artifact-ingest: workflow listing failed — reading runs repository-wide"
-                );
-                vec![(None, MAX_RUN_PAGES)]
+        // A kit that claims the runs or the outputs and opted in to
+        // `sync_only_with_kit` (ADR-0071 §4) skips them where it does not
+        // apply; without the flag they are read as always.
+        let kit_tenant = project_id
+            .or(workspace_id)
+            .and_then(|t| Uuid::parse_str(t).ok())
+            .unwrap_or_else(|| ctx.subject_tenant_id());
+        let ci_wanted = self.sync_wanted(ctx, kit_tenant, "ci-run").await;
+        let outputs_wanted = self.sync_wanted(ctx, kit_tenant, "build-artifact").await;
+        let releases_wanted = self.sync_wanted(ctx, kit_tenant, "release").await;
+        if !ci_wanted || !outputs_wanted || !releases_wanted {
+            tracing::info!(
+                repo = repo_full_path,
+                ci_wanted,
+                outputs_wanted,
+                releases_wanted,
+                "studio-artifact-ingest: skipping what a kit that is not installed here claims"
+            );
+        }
+        let reads: Vec<(Option<i64>, u32)> = if !ci_wanted {
+            Vec::new()
+        } else {
+            match driver.list_workflows(&auth, repo_full_path).await {
+                Ok(workflows) if !workflows.is_empty() => workflows
+                    .iter()
+                    .filter(|w| w.state.as_deref().is_none_or(|s| s == "active"))
+                    .take(MAX_WORKFLOWS)
+                    .map(|w| (Some(w.id), 1))
+                    .collect(),
+                Ok(_) => vec![(None, MAX_RUN_PAGES)],
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        repo = repo_full_path,
+                        "studio-artifact-ingest: workflow listing failed — reading runs repository-wide"
+                    );
+                    vec![(None, MAX_RUN_PAGES)]
+                }
             }
         };
         'reads: for (workflow, pages) in reads {
@@ -1392,7 +1526,7 @@ impl IngestService {
         let mut outputs = 0usize;
         // Pipelines' manifests (ADR-0048 §4): read after the listing.
         let mut manifests: Vec<RemoteBuildArtifact> = Vec::new();
-        'artifacts: for page in 1..=MAX_OUTPUT_PAGES {
+        'artifacts: for page in 1..=(if outputs_wanted { MAX_OUTPUT_PAGES } else { 0 }) {
             let batch = match driver
                 .list_build_artifacts(&auth, repo_full_path, page, PER_PAGE)
                 .await
@@ -1441,7 +1575,7 @@ impl IngestService {
             )
             .await;
         }
-        'releases: for page in 1..=MAX_OUTPUT_PAGES {
+        'releases: for page in 1..=(if releases_wanted { MAX_OUTPUT_PAGES } else { 0 }) {
             let batch = match driver
                 .list_releases(&auth, repo_full_path, page, PER_PAGE)
                 .await
@@ -1740,34 +1874,84 @@ impl IngestService {
     /// be lost), then read it. A failed fetch -- no network, no credential --
     /// reads the checkout as it stands and says so, which is no worse than
     /// before.
+    ///
+    /// `source` is the project and the source's clone URL: a branch found gone
+    /// is recorded as the source's clone status, and a fetch that finds it
+    /// again forgets that.
     async fn walk_shared_checkout(
         &self,
         dir: PathBuf,
         username: String,
         password: String,
+        source: Option<(Uuid, String)>,
     ) -> anyhow::Result<(PathBuf, git_checkout::Walk, Option<String>)> {
-        tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
-            match git_checkout::update_shared_checkout(&dir, &username, &password) {
-                Ok(git_checkout::CheckoutUpdate::Advanced { from, to }) => tracing::info!(
-                    dir = %dir.display(), %from, %to,
-                    "studio-artifact-ingest: pulled the shared checkout up to the remote"
-                ),
-                Ok(git_checkout::CheckoutUpdate::Kept { reason }) => tracing::warn!(
-                    dir = %dir.display(), %reason,
-                    "studio-artifact-ingest: shared checkout not updated — reading it as it stands"
-                ),
-                Ok(git_checkout::CheckoutUpdate::Current) => {}
-                Err(e) => tracing::warn!(
-                    error = %e, dir = %dir.display(),
-                    "studio-artifact-ingest: could not fetch the shared checkout's branch — reading it as it stands"
-                ),
-            }
+        use super::port::{CloneCause, CloneChannel, CloneFailure, CloneOutcome, clone_order};
+        // `None` when the fetch failed for another reason: it says nothing
+        // about the branch, so nothing is recorded or forgotten.
+        let (read, branch, order) = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
+            let branch = match git_checkout::update_shared_checkout(&dir, &username, &password) {
+                Ok(git_checkout::CheckoutUpdate::Advanced { from, to }) => {
+                    tracing::info!(
+                        dir = %dir.display(), %from, %to,
+                        "studio-artifact-ingest: pulled the shared checkout up to the remote"
+                    );
+                    Some(None)
+                }
+                Ok(git_checkout::CheckoutUpdate::Kept { reason }) => {
+                    tracing::warn!(
+                        dir = %dir.display(), %reason,
+                        "studio-artifact-ingest: shared checkout not updated — reading it as it stands"
+                    );
+                    Some(None)
+                }
+                Ok(git_checkout::CheckoutUpdate::Current) => Some(None),
+                Ok(git_checkout::CheckoutUpdate::BranchGone { branch }) => {
+                    tracing::warn!(
+                        dir = %dir.display(), %branch,
+                        "studio-artifact-ingest: the shared checkout's branch is gone from the remote — reading it as it stands"
+                    );
+                    Some(Some(branch))
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e, dir = %dir.display(),
+                        "studio-artifact-ingest: could not fetch the shared checkout's branch — reading it as it stands"
+                    );
+                    None
+                }
+            };
+            // When the fetch learnt it, not when the store gets to it (#1070
+            // review): a newer outcome recorded meanwhile -- an IDE launch, a
+            // desktop fetch -- must not be overwritten by this one's.
+            let order = clone_order();
             let commit = git_checkout::head_commit(&dir);
             let walked = git_checkout::walk(&dir, &synced_text)?;
-            Ok((dir, walked, commit))
+            Ok(((dir, walked, commit), branch, order))
         })
         .await
-        .map_err(|e| anyhow!("workspace read did not finish: {e}"))?
+        .map_err(|e| anyhow!("workspace read did not finish: {e}"))??;
+        if let (Some(outcomes), Some((project, url)), Some(gone)) =
+            (&self.clone_outcomes, source, branch)
+        {
+            let noted = match gone {
+                Some(branch) => {
+                    let failure = CloneFailure::new(CloneCause::BranchNotFound).with_detail(branch);
+                    let failed = CloneOutcome::failed(CloneChannel::Sync, failure);
+                    outcomes
+                        .record(project, &url, CloneOutcome { order, ..failed })
+                        .await
+                }
+                None => {
+                    outcomes
+                        .clear_failure(project, &url, CloneChannel::Sync, order)
+                        .await
+                }
+            };
+            if let Err(e) = noted {
+                tracing::warn!(%project, error = %format!("{e:#}"), "studio-artifact-ingest: the source's clone status was not recorded");
+            }
+        }
+        Ok(read)
     }
 
     /// Walk an existing checkout on a blocking thread (no clone), reading text
@@ -2014,6 +2198,87 @@ impl IngestService {
                 .is_some_and(|p| p.eq_ignore_ascii_case(repo_full_path))
         })
         .await
+    }
+
+    /// Hand the documents gear the bindings to move after this repository's
+    /// files got new ids (see [`DocumentClassifier::adopt_ingested`]).
+    ///
+    /// Live are the files of every repository the scope has, except older
+    /// attachments of this one, which the end of the sync forgets, and this
+    /// repository's stored files, which this walk replaces. A path that a
+    /// live file of another repository also has is left out: a binding knows
+    /// its path but not its repository, so it could belong to either.
+    ///
+    /// Best-effort, like the prunes: a failure is logged and the next sync
+    /// tries again.
+    #[allow(clippy::too_many_arguments)]
+    async fn adopt_moved_bindings(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Option<&str>,
+        project_id: Option<&str>,
+        repo_id: &str,
+        repo_full_path: &str,
+        connector_id: &str,
+        file_paths: &HashSet<String>,
+    ) {
+        let (Some(classifier), Some(workspace)) = (
+            self.classifier.as_ref(),
+            workspace_id.and_then(|w| Uuid::parse_str(w).ok()),
+        ) else {
+            return;
+        };
+        if file_paths.is_empty() {
+            return;
+        }
+        let scope = project_id.or(workspace_id).unwrap_or("unscoped");
+        let read = async {
+            let repos = self
+                .graph
+                .list_in_scope(ctx, Some(gts::REPO_TYPE), scope)
+                .await?;
+            let files = self.graph.files_in_scope(ctx, scope).await?;
+            anyhow::Ok((repos, files))
+        };
+        let (repos, files) = match read.await {
+            Ok(v) => v,
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    repo = repo_full_path,
+                    "studio-artifact-ingest: could not read the scope's files; bindings stay where they are this sync"
+                );
+                return;
+            }
+        };
+        let (alive, by_path) = adoption_inputs(
+            &repos,
+            &files,
+            repo_id,
+            repo_full_path,
+            file_paths.iter().map(|path| {
+                (
+                    path.clone(),
+                    gts::file_instance_id(scope, connector_id, repo_full_path, path),
+                )
+            }),
+        );
+        let project = project_id.and_then(|p| Uuid::parse_str(p).ok());
+        match classifier
+            .adopt_ingested(ctx, workspace, project, alive, by_path)
+            .await
+        {
+            Ok(0) => {}
+            Ok(moved) => info!(
+                repo = repo_full_path,
+                moved, "studio-artifact-ingest: bindings moved onto the files' new ids"
+            ),
+            Err(e) => warn!(
+                error = %e,
+                repo = repo_full_path,
+                "studio-artifact-ingest: could not move bindings onto the files' new ids; the next sync retries"
+            ),
+        }
     }
 
     /// After a sync of `repo_full_path`: forget the same repository as it was
@@ -2427,6 +2692,18 @@ impl IngestService {
         scope: &str,
     ) -> anyhow::Result<Vec<GtsNode>> {
         self.graph.list_in_scope(ctx, type_filter, scope).await
+    }
+
+    /// A window of movement per repository of `scope`
+    /// (`/source-activity`), counted where the store can count it.
+    pub async fn repo_activity(
+        &self,
+        ctx: &SecurityContext,
+        scope: &str,
+        now: i64,
+        days: usize,
+    ) -> anyhow::Result<std::collections::BTreeMap<String, super::activity::RepoActivity>> {
+        self.graph.repo_activity(ctx, scope, now, days).await
     }
 
     /// One page of the listing, as `/nodes` asks for it.
@@ -3352,6 +3629,10 @@ fn open_pulls_of(nodes: Vec<GtsNode>, now: i64) -> Vec<super::port::OpenPull> {
                 }
             }
             super::port::OpenPull {
+                id: w.id,
+                number: w.number,
+                title: w.title,
+                url: w.url,
                 project_id: w.project_id,
                 author: w.facts.author,
                 waiting: w.verdict.waiting.as_str().to_owned(),
@@ -3372,6 +3653,15 @@ impl super::port::ArtifactFiles for IngestService {
         scope: &str,
     ) -> anyhow::Result<Vec<super::port::IngestedFile>> {
         self.graph.files_in_scope(ctx, scope).await
+    }
+
+    async fn repos_of_files(
+        &self,
+        ctx: &SecurityContext,
+        scope: &str,
+        node_ids: &[String],
+    ) -> anyhow::Result<HashMap<String, String>> {
+        self.graph.repos_of_files(ctx, scope, node_ids).await
     }
 
     async fn reviews(
@@ -3643,6 +3933,83 @@ mod search_hit_tests {
         super::name_repositories(&mut hits, &repos);
         assert_eq!(hits[0].value["repository"], "acme/web");
         assert!(hits[1].value.get("repository").is_none());
+    }
+}
+
+#[cfg(test)]
+mod adoption_input_tests {
+    //! What a walk hands `adopt_ingested`: which files the scope keeps and
+    //! which paths a dead binding may move to.
+    use super::super::graph::GtsNode;
+    use super::super::port::IngestedFile;
+    use serde_json::json;
+
+    fn repo(id: &str, path: &str) -> GtsNode {
+        GtsNode {
+            type_id: super::super::gts::REPO_TYPE,
+            instance_id: id.into(),
+            value: json!({"full_path": path}),
+        }
+    }
+
+    fn file(id: &str, path: &str, repo: &str) -> IngestedFile {
+        IngestedFile {
+            node_id: id.into(),
+            path: path.into(),
+            repo: repo.into(),
+        }
+    }
+
+    fn walked(pairs: &[(&str, &str)]) -> impl Iterator<Item = (String, String)> {
+        pairs
+            .iter()
+            .map(|(p, n)| ((*p).to_string(), (*n).to_string()))
+            .collect::<Vec<_>>()
+            .into_iter()
+    }
+
+    #[test]
+    fn an_older_attachment_of_the_repository_is_not_kept() {
+        let repos = [repo("now", "acme/web"), repo("before", "acme/web")];
+        let files = [
+            file("old-a", "docs/a.md", "before"),
+            file("stored-a", "docs/a.md", "now"),
+        ];
+        let (alive, by_path) = super::adoption_inputs(
+            &repos,
+            &files,
+            "now",
+            "acme/web",
+            walked(&[("docs/a.md", "new-a")]),
+        );
+        assert!(
+            !alive.contains("old-a"),
+            "the older attachment is forgotten"
+        );
+        assert!(
+            !alive.contains("stored-a"),
+            "the walk replaces this repo's files"
+        );
+        assert!(alive.contains("new-a"));
+        assert_eq!(by_path.get("docs/a.md").map(String::as_str), Some("new-a"));
+    }
+
+    /// A binding knows its path, not its repository: a path another kept
+    /// repository has too could be that repository's binding.
+    #[test]
+    fn a_path_another_repository_has_is_not_offered() {
+        let repos = [repo("now", "acme/web"), repo("docs", "acme/docs")];
+        let files = [file("docs-readme", "README.md", "docs")];
+        let (alive, by_path) = super::adoption_inputs(
+            &repos,
+            &files,
+            "now",
+            "acme/web",
+            walked(&[("README.md", "web-readme"), ("docs/a.md", "new-a")]),
+        );
+        assert!(alive.contains("docs-readme"));
+        assert!(!by_path.contains_key("README.md"));
+        assert!(by_path.contains_key("docs/a.md"));
     }
 }
 

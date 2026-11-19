@@ -141,6 +141,16 @@ pub struct Neighbourhood {
     pub truncated: bool,
 }
 
+/// What [`DomainStore::read_edges_whole`] answers.
+#[derive(Debug, Clone, Default)]
+pub struct EdgeRead {
+    /// The edges read, deduplicated.
+    pub edges: Vec<EdgeView>,
+    /// Seeds whose own walk the graph's budget still cut: some of their
+    /// edges are missing from `edges`.
+    pub cut: Vec<String>,
+}
+
 /// The marker an upsert refused by its compare-and-set carries, so a caller
 /// can tell "another writer got there first" from a real failure without
 /// matching on the storage gear's own wording.
@@ -149,6 +159,52 @@ pub const VERSION_TAKEN: &str = "domain-model: node version already taken";
 /// True for the refusal above.
 pub fn is_version_taken(e: &anyhow::Error) -> bool {
     e.to_string().contains(VERSION_TAKEN)
+}
+
+/// The marker a write the graph refused at admission carries: one ingest is
+/// atomic, so a refusal (a payload that does not validate, a missing
+/// endpoint, a denied caller) stored nothing. Any other failure — a deadline,
+/// an outage — may have come after the graph committed, and the read model
+/// can then no longer tell what the graph holds.
+pub const WRITE_REFUSED: &str = "domain-model: the graph refused the write, nothing was stored";
+
+/// True for the refusal above, or for a compare-and-set refusal: either way
+/// nothing reached the graph.
+pub fn wrote_nothing(e: &anyhow::Error) -> bool {
+    let text = e.to_string();
+    text.contains(WRITE_REFUSED) || text.contains(VERSION_TAKEN)
+}
+
+/// What [`DomainStore::delete_relation`] answers when it cannot tell whether
+/// the relation is there: the walk that looks for the edge was cut by the
+/// graph's budget before it reached it. Nothing was removed.
+pub const RELATION_UNSEEN: &str = "domain-model: the relation was not found within the graph's traversal budget, so nothing was removed";
+
+/// True for the answer above.
+pub fn is_relation_unseen(e: &anyhow::Error) -> bool {
+    e.to_string().contains(RELATION_UNSEEN)
+}
+
+/// What [`DomainStore::delete_relation`] removed, so the read model can drop
+/// exactly the rows the graph dropped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RelationRemoval {
+    /// The graph has no such edge: the walk saw all of `from`'s edges of
+    /// that relation and none reached `to`.
+    Absent,
+    /// The edge naming the relation (or, with no relation asked, every edge
+    /// of the verb between the two). An older edge naming none may remain.
+    Named,
+    /// No edge named the relation; an older one naming none stood for it,
+    /// and that one went.
+    Unnamed,
+}
+
+impl RelationRemoval {
+    /// Was there an edge to remove?
+    pub fn removed(self) -> bool {
+        self != Self::Absent
+    }
 }
 
 /// True when an object belongs to `scope`. `None` matches everything; the
@@ -263,6 +319,21 @@ pub trait DomainStore: Send + Sync {
         seeds: &[String],
     ) -> anyhow::Result<Vec<EdgeView>>;
 
+    /// [`Self::read_edges`] for a reader that must have every edge (the read
+    /// model's fill): a walk the graph's budget cuts is walked again over
+    /// fewer seeds, and the seeds whose edges still could not be read whole
+    /// are named. The default reads them whole.
+    async fn read_edges_whole(
+        &self,
+        ctx: &SecurityContext,
+        seeds: &[String],
+    ) -> anyhow::Result<EdgeRead> {
+        Ok(EdgeRead {
+            edges: self.read_edges(ctx, seeds).await?,
+            cut: Vec::new(),
+        })
+    }
+
     /// The objects of the hop's node types reached from `seeds` by one edge
     /// of the hop, with those edges. One call per relation and nesting level
     /// of a query, for every row at once, rather than one read per row.
@@ -317,8 +388,10 @@ pub trait DomainStore: Send + Sync {
     }
 
     /// Remove the relation `from` → `to` of `edge_type_id`. With `relation`,
-    /// only the edge naming that declared relation (or naming none). Answers
-    /// whether an edge was there to remove.
+    /// the edge naming that declared relation, or when there is none, an
+    /// older edge naming no relation (which stands for every relation of its
+    /// verb). Without, every edge of the verb between the two. Answers what
+    /// went; [`RELATION_UNSEEN`] when the graph could not say.
     async fn delete_relation(
         &self,
         _ctx: &SecurityContext,
@@ -326,7 +399,7 @@ pub trait DomainStore: Send + Sync {
         _from: &str,
         _to: &str,
         _relation: Option<&str>,
-    ) -> anyhow::Result<bool> {
+    ) -> anyhow::Result<RelationRemoval> {
         anyhow::bail!("this domain store cannot remove relations")
     }
 
@@ -439,21 +512,25 @@ impl DomainStore for InMemoryDomainStore {
         from: &str,
         to: &str,
         relation: Option<&str>,
-    ) -> anyhow::Result<bool> {
+    ) -> anyhow::Result<RelationRemoval> {
         let mut map = self
             .edges
             .lock()
             .map_err(|_| anyhow::anyhow!("domain store lock poisoned"))?;
+        let pair = |e: &EdgeView| e.type_id == edge_type_id && e.from == from && e.to == to;
         let before = map.len();
-        map.retain(|_, e| {
-            !(e.type_id == edge_type_id
-                && e.from == from
-                && e.to == to
-                && (relation.is_none()
-                    || e.relation.is_none()
-                    || e.relation.as_deref() == relation))
-        });
-        Ok(map.len() != before)
+        // The named edge (or with no name asked, every edge of the pair).
+        map.retain(|_, e| !(pair(e) && (relation.is_none() || e.relation.as_deref() == relation)));
+        if map.len() != before {
+            return Ok(RelationRemoval::Named);
+        }
+        // Then an older edge naming none, which stands for the relation.
+        map.retain(|_, e| !(pair(e) && e.relation.is_none()));
+        Ok(if map.len() == before {
+            RelationRemoval::Absent
+        } else {
+            RelationRemoval::Unnamed
+        })
     }
 
     async fn get_object(
@@ -631,10 +708,99 @@ mod graph_backend {
                     if e.to_string().contains("expected version") {
                         anyhow::anyhow!("{}: {e}", super::VERSION_TAKEN)
                     } else {
-                        anyhow::anyhow!("graph-storage node batch ingest: {e}")
+                        write_error("graph-storage node batch ingest", &e)
                     }
                 })?;
             Ok(res.counts.nodes_inserted + res.counts.nodes_updated)
+        }
+
+        /// The edges of `edge_type_id` from `from` to `to`, by one depth-1
+        /// walk outgoing from `from`, narrowed in the graph to `relation`'s
+        /// discriminator when one is given. The flag says the walk was cut
+        /// by the graph's budget, so an edge not found may still be there.
+        async fn edges_between(
+            &self,
+            ctx: &SecurityContext,
+            edge_type_id: &str,
+            from: &str,
+            to: &str,
+            relation: Option<&str>,
+        ) -> anyhow::Result<(Vec<graph_storage_sdk::models::EdgeRef>, bool)> {
+            let res = self
+                .client
+                .traverse(
+                    ctx,
+                    TraverseRequest {
+                        seeds: vec![from.to_string()],
+                        depth: 1,
+                        edge_type_patterns: vec![gts::graph_type_id(edge_type_id)],
+                        direction: Some(Direction::Outgoing),
+                        edge_discriminators: relation
+                            .map(|r| vec![r.to_string()])
+                            .unwrap_or_default(),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .map_err(|e| anyhow::anyhow!("graph-storage traversal: {e}"))?;
+            let found = res
+                .edges
+                .into_iter()
+                .filter(|e| e.src == from && e.dst == to)
+                .collect();
+            Ok((found, res.truncated.is_some()))
+        }
+
+        async fn delete_edges(
+            &self,
+            ctx: &SecurityContext,
+            edges: &[graph_storage_sdk::models::EdgeRef],
+        ) -> anyhow::Result<()> {
+            for e in edges {
+                self.client
+                    .delete_edge(ctx, &e.edge_key)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("graph-storage edge delete: {e}"))?;
+            }
+            Ok(())
+        }
+
+        fn unseen(
+            edge_type_id: &str,
+            from: &str,
+            to: &str,
+            relation: Option<&str>,
+        ) -> anyhow::Error {
+            tracing::warn!(
+                edge_type_id,
+                from,
+                to,
+                relation,
+                "studio-domain-model: the walk for a relation to delete was cut by the traversal budget; nothing removed"
+            );
+            anyhow::anyhow!("{} ({edge_type_id} {from} -> {to})", super::RELATION_UNSEEN)
+        }
+    }
+
+    /// A failed ingest, marked [`super::WRITE_REFUSED`] when the gear refused
+    /// it before writing. An ingest is one transaction, so a refusal stored
+    /// nothing; a deadline or an outage may have come after the commit.
+    fn write_error(what: &str, e: &CanonicalError) -> anyhow::Error {
+        let refused = matches!(
+            e,
+            CanonicalError::InvalidArgument { .. }
+                | CanonicalError::NotFound { .. }
+                | CanonicalError::AlreadyExists { .. }
+                | CanonicalError::PermissionDenied { .. }
+                | CanonicalError::FailedPrecondition { .. }
+                | CanonicalError::Aborted { .. }
+                | CanonicalError::OutOfRange { .. }
+                | CanonicalError::Unauthenticated { .. }
+        );
+        if refused {
+            anyhow::anyhow!("{what}: {}: {e}", super::WRITE_REFUSED)
+        } else {
+            anyhow::anyhow!("{what}: {e}")
         }
     }
 
@@ -950,13 +1116,20 @@ mod graph_backend {
             self.client
                 .ingest(ctx, ingest_one(Vec::new(), vec![edge]))
                 .await
-                .map_err(|e| anyhow::anyhow!("graph-storage domain relation ingest: {e}"))?;
+                .map_err(|e| write_error("graph-storage domain relation ingest", &e))?;
             Ok(())
         }
 
         /// The edge is found by a depth-1 walk from its source, because a
         /// delete names the edge's key and only a read reports it. A deleted
         /// edge comes back when the same relation is created again.
+        ///
+        /// The walk carries only the relation asked for — its verb, its
+        /// discriminator, outgoing from `from` — so on a busy node it spends
+        /// its budget on that relation's edges and not on every edge the node
+        /// has. When the budget still cuts it short of `to`, the answer is
+        /// [`super::RELATION_UNSEEN`]: "not found" would be a guess, and the
+        /// read model would drop a row the graph keeps.
         async fn delete_relation(
             &self,
             ctx: &SecurityContext,
@@ -964,39 +1137,48 @@ mod graph_backend {
             from: &str,
             to: &str,
             relation: Option<&str>,
-        ) -> anyhow::Result<bool> {
-            let res = self
-                .client
-                .traverse(
-                    ctx,
-                    TraverseRequest {
-                        seeds: vec![from.to_string()],
-                        depth: 1,
-                        edge_type_patterns: vec![gts::graph_type_id(edge_type_id)],
-                        // The edge leaves `from`; graph-storage 0.3 walks one way.
-                        direction: Some(Direction::Outgoing),
-                        ..Default::default()
-                    },
-                )
-                .await
-                .map_err(|e| anyhow::anyhow!("graph-storage traversal: {e}"))?;
-            let mut removed = false;
-            for e in res.edges {
-                // The named relation, or an edge that names none.
-                let same_relation = match (relation, e.discriminator.as_deref()) {
-                    (None, _) | (_, None | Some("")) => true,
-                    (Some(want), Some(is)) => want == is,
-                };
-                if e.src != from || e.dst != to || !same_relation {
-                    continue;
-                }
-                self.client
-                    .delete_edge(ctx, &e.edge_key)
-                    .await
-                    .map_err(|e| anyhow::anyhow!("graph-storage edge delete: {e}"))?;
-                removed = true;
+        ) -> anyhow::Result<super::RelationRemoval> {
+            use super::RelationRemoval;
+            let named = relation.filter(|r| !r.is_empty());
+            // The named edge; with no name asked, every edge of the verb.
+            let (found, truncated) = self
+                .edges_between(ctx, edge_type_id, from, to, named)
+                .await?;
+            let found: Vec<_> = found
+                .into_iter()
+                .filter(|e| named.is_none() || e.discriminator.as_deref() == named)
+                .collect();
+            // A cut walk that found the named edge found the one edge that
+            // name can be (its key is derived from the pair and the name).
+            if truncated && (found.is_empty() || named.is_none()) {
+                return Err(Self::unseen(edge_type_id, from, to, relation));
             }
-            Ok(removed)
+            if !found.is_empty() {
+                self.delete_edges(ctx, &found).await?;
+                return Ok(RelationRemoval::Named);
+            }
+            if named.is_none() {
+                return Ok(RelationRemoval::Absent);
+            }
+            // No edge names the relation. An older edge naming none stands
+            // for it; the discriminator filter cannot select "none", so this
+            // walk carries every edge of the verb and is the expensive one —
+            // which is why it runs only when the named edge is not there.
+            let (found, truncated) = self
+                .edges_between(ctx, edge_type_id, from, to, None)
+                .await?;
+            let unnamed: Vec<_> = found
+                .into_iter()
+                .filter(|e| e.discriminator.as_deref().is_none_or(str::is_empty))
+                .collect();
+            if !unnamed.is_empty() {
+                self.delete_edges(ctx, &unnamed).await?;
+                return Ok(RelationRemoval::Unnamed);
+            }
+            if truncated {
+                return Err(Self::unseen(edge_type_id, from, to, relation));
+            }
+            Ok(RelationRemoval::Absent)
         }
 
         async fn get_object(
@@ -1109,7 +1291,7 @@ mod graph_backend {
                 .client
                 .ingest(ctx, ingest_one(Vec::new(), specs))
                 .await
-                .map_err(|e| anyhow::anyhow!("graph-storage edge batch ingest: {e}"))?;
+                .map_err(|e| write_error("graph-storage edge batch ingest", &e))?;
             Ok(res.counts.edges_inserted + res.counts.edges_updated)
         }
 
@@ -1165,6 +1347,72 @@ mod graph_backend {
                 }
             }
             Ok(out)
+        }
+
+        /// Chunks as [`Self::read_edges`] walks them. A chunk the budget cuts
+        /// is split in two and each half walked again, down to single seeds;
+        /// a seed whose own walk is still cut is reported in `cut`. Halving
+        /// costs about two walks per cut level, against one walk per seed
+        /// for re-walking a cut chunk seed by seed.
+        async fn read_edges_whole(
+            &self,
+            ctx: &SecurityContext,
+            seeds: &[String],
+        ) -> anyhow::Result<super::EdgeRead> {
+            let mut read = super::EdgeRead::default();
+            let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+            let mut pending: Vec<Vec<String>> = seeds
+                .chunks(TRAVERSE_SEEDS)
+                .rev()
+                .map(<[String]>::to_vec)
+                .collect();
+            let mut walks = 0usize;
+            while let Some(chunk) = pending.pop() {
+                walks += 1;
+                let res = self
+                    .client
+                    .traverse(
+                        ctx,
+                        TraverseRequest {
+                            seeds: chunk.clone(),
+                            depth: 1,
+                            ..Default::default()
+                        },
+                    )
+                    .await
+                    .map_err(|e| anyhow::anyhow!("graph-storage traversal: {e}"))?;
+                let cut = res.truncated.is_some();
+                if cut && chunk.len() > 1 {
+                    // Walked again in halves; this walk's edges come back
+                    // with them.
+                    let (a, b) = chunk.split_at(chunk.len() / 2);
+                    pending.push(b.to_vec());
+                    pending.push(a.to_vec());
+                    continue;
+                }
+                if cut {
+                    read.cut.extend(chunk);
+                }
+                for e in res.edges {
+                    if seen.insert(e.edge_key.clone()) {
+                        read.edges.push(EdgeView {
+                            type_id: gts::our_type_from_graph(&e.edge_type_id),
+                            from: e.src,
+                            to: e.dst,
+                            relation: e.discriminator.filter(|d| !d.is_empty()),
+                            key: Some(e.edge_key),
+                        });
+                    }
+                }
+            }
+            tracing::debug!(
+                seeds = seeds.len(),
+                walks,
+                edges = read.edges.len(),
+                cut = read.cut.len(),
+                "studio-domain-model: edges read whole"
+            );
+            Ok(read)
         }
 
         async fn search(

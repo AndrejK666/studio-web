@@ -1,0 +1,464 @@
+/* The sidebar layout (ADR-0069 levels, the designer's left navigation).
+   Colours are the kit's --sidebar-* tokens, so light and dark follow the theme. */
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  width: 16rem;
+  height: 100%;
+  min-height: 0;
+  background-color: var(--sidebar);
+  color: var(--sidebar-foreground);
+}
+
+.rail {
+  width: 3.5rem;
+}
+
+.head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-2) var(--space-2);
+}
+
+.rail .head {
+  align-items: center;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 2.25rem;
+  padding-inline: var(--space-1);
+}
+
+.switcher {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-md);
+  border: var(--border-width, 1px) solid var(--sidebar-border);
+  background-color: var(--sidebar-accent);
+  color: var(--sidebar-accent-foreground);
+  text-align: start;
+  outline: none;
+}
+
+.switcher:hover {
+  border-color: color-mix(in oklab, var(--sidebar-foreground) 25%, transparent);
+}
+
+.switcher:focus-visible,
+.search:focus-visible,
+.link:focus-visible,
+.toggle:focus-visible,
+.iconButton:focus-visible,
+.railButton:focus-visible,
+.unpin:focus-visible {
+  outline: 2px solid var(--sidebar-ring);
+  outline-offset: -2px;
+}
+
+.switcherText {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  line-height: 1.2;
+}
+
+.switcherOrg {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-body-size);
+  font-weight: 600;
+}
+
+.switcherWhere {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-label-size);
+  color: var(--muted-foreground);
+}
+
+.search {
+  display: flex;
+  text-align: start;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  height: 2rem;
+  padding-inline: var(--space-2);
+  border-radius: var(--radius-md);
+  color: var(--muted-foreground);
+  font-size: var(--text-body-size);
+  outline: none;
+}
+
+.search:hover:not(:disabled) {
+  background-color: var(--sidebar-accent);
+  color: var(--sidebar-accent-foreground);
+}
+
+.search:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.kbd {
+  margin-inline-start: auto;
+  padding: 0 var(--space-1);
+  border: var(--border-width, 1px) solid var(--sidebar-border);
+  border-radius: var(--radius-xs);
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  line-height: 1.125rem;
+  color: var(--muted-foreground);
+}
+
+.railButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  padding: 0;
+  border-radius: var(--radius-md);
+  color: var(--sidebar-foreground);
+  outline: none;
+}
+
+.railButton:hover {
+  background-color: var(--sidebar-accent);
+}
+
+.nav {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-1) var(--space-2) var(--space-3);
+}
+
+.list,
+.sub {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sub {
+  margin-inline-start: var(--space-4);
+}
+
+.item {
+  position: relative;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+}
+
+.link {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-2);
+  height: 2rem;
+  padding-inline: var(--space-2);
+  border-radius: var(--radius-md);
+  color: var(--sidebar-foreground);
+  font-size: var(--text-body-size);
+  text-align: start;
+  outline: none;
+}
+
+.subLink {
+  height: 1.75rem;
+  color: color-mix(in oklab, var(--sidebar-foreground) 80%, transparent);
+}
+
+.link:hover {
+  background-color: var(--sidebar-accent);
+  color: var(--sidebar-accent-foreground);
+}
+
+.link[data-active] {
+  background-color: color-mix(in oklab, var(--sidebar-foreground) 9%, transparent);
+  color: var(--sidebar-foreground);
+  font-weight: 600;
+}
+
+.link[data-holds-active] {
+  font-weight: 600;
+}
+
+.railLink {
+  flex: none;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  padding: 0;
+  margin-inline: auto;
+}
+
+.railLink[data-holds-active] {
+  background-color: var(--sidebar-accent);
+}
+
+.glyph {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 1.125rem;
+  height: 1.125rem;
+}
+
+.glyph > svg {
+  width: 1.125rem;
+  height: 1.125rem;
+  stroke-width: 1.75;
+}
+
+.glyph > .tabGlyph,
+.tabGlyph {
+  width: 1rem;
+  height: 1rem;
+  stroke-width: 1.5;
+  color: var(--muted-foreground);
+}
+
+.link[data-active] .tabGlyph {
+  color: inherit;
+}
+
+.label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.where {
+  color: var(--muted-foreground);
+  font-weight: 400;
+}
+
+.toggle {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  margin-inline-start: 2px;
+  border-radius: var(--radius-sm);
+  color: var(--muted-foreground);
+  outline: none;
+}
+
+.toggle:hover {
+  background-color: var(--sidebar-accent);
+  color: var(--sidebar-accent-foreground);
+}
+
+.chevron {
+  width: 0.875rem;
+  height: 0.875rem;
+  transition: transform 120ms ease;
+}
+
+.chevronOpen {
+  transform: rotate(90deg);
+}
+
+.caption {
+  padding: var(--space-2) var(--space-2) var(--space-1);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+.count {
+  min-width: 1.25rem;
+  padding: 0 0.3rem;
+  border-radius: var(--radius-full);
+  background-color: var(--sidebar-primary);
+  color: var(--sidebar-primary-foreground);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  line-height: 1.125rem;
+  text-align: center;
+}
+
+.countRail {
+  position: absolute;
+  top: 0;
+  right: 0;
+  min-width: 1rem;
+  padding: 0 0.2rem;
+  font-size: 0.625rem;
+  line-height: 1rem;
+}
+
+.exp {
+  padding: 0 0.3rem;
+  border-radius: 0.25rem;
+  background: color-mix(in oklab, var(--warning, #d97706) 18%, transparent);
+  color: var(--warning-foreground, #b45309);
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  line-height: 1.4;
+}
+
+.pinned {
+  margin-top: var(--space-3);
+  padding-top: var(--space-2);
+  border-top: var(--border-width, 1px) solid var(--sidebar-border);
+}
+
+.pinRow {
+  display: flex;
+  align-items: center;
+}
+
+.unpin {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: var(--radius-sm);
+  color: var(--muted-foreground);
+  opacity: 0;
+  outline: none;
+}
+
+.pinRow:hover .unpin,
+.unpin:focus-visible {
+  opacity: 1;
+}
+
+.unpin:hover {
+  background-color: var(--sidebar-accent);
+  color: var(--sidebar-accent-foreground);
+}
+
+.railPins {
+  display: flex;
+  justify-content: center;
+  margin-top: var(--space-3);
+  padding-top: var(--space-2);
+  border-top: var(--border-width, 1px) solid var(--sidebar-border);
+}
+
+.foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  border-top: var(--border-width, 1px) solid var(--sidebar-border);
+}
+
+.footRail {
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.iconButton {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: var(--radius-md);
+  color: var(--muted-foreground);
+  outline: none;
+}
+
+.iconButton:hover {
+  background-color: var(--sidebar-accent);
+  color: var(--sidebar-accent-foreground);
+}
+
+/* The bar over the screen in the sidebar layout. */
+.screenBar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 3rem;
+  padding: var(--space-2) var(--space-6);
+  border-block-end: var(--border-width, 1px) solid var(--border);
+  background-color: var(--card);
+}
+
+.screenTitle {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  line-height: 1.2;
+}
+
+.screenWhere {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-label-size);
+  color: var(--muted-foreground);
+}
+
+.screenName {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-body-size);
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.screenActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  margin-inline-start: auto;
+}
+
+/* Under 900px the sidebar is a drawer over the screen. */
+.drawerBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background-color: color-mix(in oklab, var(--foreground) 35%, transparent);
+}
+
+/* Over the screen, the drawer needs an edge of its own. */
+.drawer .sidebar {
+  border-inline-end: var(--border-width, 1px) solid var(--sidebar-border);
+}
+
+.drawer {
+  position: fixed;
+  inset-block: 0;
+  inset-inline-start: 0;
+  z-index: 41;
+  max-width: calc(100vw - 3rem);
+  box-shadow: 0 10px 40px color-mix(in oklab, var(--foreground) 25%, transparent);
+}

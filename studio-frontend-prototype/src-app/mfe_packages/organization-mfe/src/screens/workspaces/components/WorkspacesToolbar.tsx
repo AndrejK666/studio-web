@@ -1,24 +1,19 @@
 import React from "react";
-import { Search } from "lucide-react";
-import { Button, Input, Skeleton } from "@gears-frontx/ui-kit";
+import { Button, Skeleton } from "@gears-frontx/ui-kit";
 import { useMfeBridge } from "@gears-frontx/react";
 import { openWorkspaceForm } from "../../../actions/overlayActions";
 import type { ScreenText } from "@constructor-studio/mfe-shared";
 import { useWorkspacesText } from "../../../i18n";
-import { MANAGED_FILTERS, type ManagedFilter } from "../model";
 import styles from "../WorkspacesScreen.module.css";
 
+/** The screen's head: its title, the counts, and New workspace. The search and the managed filter are the grid's (#1076). */
 interface WorkspacesToolbarProps {
-  query: string;
-  onQueryChange: (query: string) => void;
   busy: boolean;
   canCreate: boolean;
   total?: number;
   projectTotal?: number;
   /** The organization the list is of, said beside the counts as the prototype did. */
   organizationName?: string;
-  managed?: ManagedFilter;
-  onManagedChange?: (filter: ManagedFilter) => void;
 }
 
 function totalsLine(t: ScreenText, total: number, projectTotal: number, organizationName?: string): string {
@@ -26,22 +21,12 @@ function totalsLine(t: ScreenText, total: number, projectTotal: number, organiza
   return organizationName ? `${counts} ${t("in_org", { name: organizationName })}` : counts;
 }
 
-const MANAGED_LABEL: Record<ManagedFilter, string> = {
-  all: "filter_all",
-  self: "filter_self",
-  org: "filter_org",
-};
-
 export const WorkspacesToolbar: React.FC<WorkspacesToolbarProps> = ({
-  query,
-  onQueryChange,
   busy,
   canCreate,
   total,
   projectTotal,
   organizationName,
-  managed,
-  onManagedChange,
 }) => {
   const bridge = useMfeBridge();
   const t = useWorkspacesText();
@@ -62,31 +47,6 @@ export const WorkspacesToolbar: React.FC<WorkspacesToolbarProps> = ({
       </div>
 
       <div className={styles.controls}>
-        {managed && onManagedChange && (
-          <div className={styles.chips} role="group" aria-label={t("filter_label")}>
-            {MANAGED_FILTERS.map((filter) => (
-              <Button
-                key={filter}
-                size="sm"
-                variant={managed === filter ? "secondary" : "ghost"}
-                aria-pressed={managed === filter}
-                onClick={() => onManagedChange(filter)}
-                data-workspace-filter={filter}
-              >
-                {t(MANAGED_LABEL[filter])}
-              </Button>
-            ))}
-          </div>
-        )}
-        <Input
-          className={styles.search}
-          type="search"
-          value={query}
-          icon={<Search size={16} strokeWidth={1.3} />}
-          placeholder={t("search_placeholder")}
-          onChange={(event) => onQueryChange(event.target.value)}
-          aria-label={t("search_placeholder")}
-        />
         {/* @cpt-dod:cpt-studiofrontend-dod-workspaces-screen-create-moves:p1 */}
         <Button
           size="sm"

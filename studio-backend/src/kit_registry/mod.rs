@@ -5,20 +5,29 @@
 //! desired installations; `cfs` remains the only component that materializes
 //! kit files into a checkout.
 
+mod aliases;
+mod archive;
 mod bundles;
+mod claims;
 mod contents;
 mod events;
+mod gate;
+mod gdl;
 mod inbox;
 pub(crate) mod installed;
+mod kind;
 mod manifest;
 mod mcp;
 mod models;
+mod owners;
 mod phase;
 pub mod port;
+mod requires;
 mod rest;
 pub(crate) mod service;
 mod shelf;
 mod shelf_bundles;
+mod sweep;
 
 pub(crate) use installed::KITS_INSTALLED_METADATA_TYPE;
 pub(crate) use mcp::tools as mcp_tools;
@@ -89,9 +98,10 @@ impl Gear for StudioKitsGear {
         // The kits a new project asked for, for its creation run
         // (studio-organizations, `organizations.project_create`).
         ctx.client_hub()
-            .register::<dyn port::ProjectKitRequests>(Arc::new(port::KitRequests::new(Arc::clone(
-                &service,
-            )))
+            .register::<dyn port::ProjectKitRequests>(Arc::new(port::KitRequests::new(
+                Arc::clone(&service),
+                Arc::clone(&installer),
+            ))
                 as Arc<dyn port::ProjectKitRequests>);
         // Whether a kit applies to an organization, for the gears that act
         // only where a kit is installed (studio-environments: Research).
@@ -99,6 +109,9 @@ impl Gear for StudioKitsGear {
             .register::<dyn port::KitPresence>(Arc::new(port::InstalledKits::new(Arc::clone(
                 &installer,
             ))) as Arc<dyn port::KitPresence>);
+        // The kit-rename sweep (ADR-0071 §8): every installation and every
+        // organization's model moved off the retired slugs, once after start.
+        crate::model_sweep::register(Arc::new(sweep::KitRenameSweep(Arc::clone(&installer))));
         self.service
             .set(service)
             .map_err(|_| anyhow::anyhow!("studio-kits already initialized"))?;
@@ -116,7 +129,7 @@ impl Gear for StudioKitsGear {
 impl toolkit::contracts::RestApiCapability for StudioKitsGear {
     fn register_rest(
         &self,
-        _ctx: &GearCtx,
+        ctx: &GearCtx,
         router: Router,
         openapi: &dyn OpenApiRegistry,
     ) -> anyhow::Result<Router> {
@@ -135,8 +148,13 @@ impl toolkit::contracts::RestApiCapability for StudioKitsGear {
             .get()
             .ok_or_else(|| anyhow::anyhow!("studio-kits not initialized"))?
             .clone();
-        Ok(rest::register_routes(
-            router, openapi, service, installer, access,
+        let router = rest::register_routes(router, openapi, service, installer, access);
+        // The write routes a kit claims answer KIT_NOT_INSTALLED without it
+        // (ADR-0071 §4): Project lifecycle's `PUT /project-phase`.
+        Ok(gate::with_claimed_routes(
+            router,
+            ctx.client_hub(),
+            "studio-kits",
         ))
     }
 }

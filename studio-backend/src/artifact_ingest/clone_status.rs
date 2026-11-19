@@ -57,6 +57,8 @@ pub enum CloneChannel {
     Desktop,
     /// A portal IDE session, at its launch.
     IdeSession,
+    /// The server's own sync, fetching the checkout the IDE shares.
+    Sync,
 }
 
 impl CloneChannel {
@@ -64,6 +66,7 @@ impl CloneChannel {
         match self {
             Self::Desktop => "desktop",
             Self::IdeSession => "ide_session",
+            Self::Sync => "sync",
         }
     }
 }
@@ -81,6 +84,8 @@ pub enum CloneAction {
     CheckRepository,
     /// Nothing is wrong on Studio's side; try again later.
     Retry,
+    /// The source names a branch the repository no longer has.
+    PickBranch,
 }
 
 impl CloneAction {
@@ -91,6 +96,7 @@ impl CloneAction {
             Self::AskAdmin => "ask_admin",
             Self::CheckRepository => "check_repository",
             Self::Retry => "retry",
+            Self::PickBranch => "pick_branch",
         }
     }
 
@@ -108,6 +114,9 @@ impl CloneAction {
                 "Check the repository's name and URL, and that the connection can see it."
             }
             Self::Retry => "Try again later; the repository's host did not answer.",
+            Self::PickBranch => {
+                "Point the source at a branch that exists, or connect the repository again on its default branch."
+            }
         }
     }
 }
@@ -136,10 +145,14 @@ pub enum CloneCause {
     ProviderError,
     /// The source is not an http(s) repository.
     NotHttp,
+    /// The branch the source names is gone from the repository (deleted
+    /// after a merge, say); `detail` names it.
+    BranchNotFound,
 }
 
 impl CloneCause {
-    const ALL: [Self; 10] = [
+    const ALL: [Self; 11] = [
+        Self::BranchNotFound,
         Self::NoConnection,
         Self::ConnectionNotFound,
         Self::ConnectionPersonal,
@@ -164,6 +177,7 @@ impl CloneCause {
             Self::Unreachable => "unreachable",
             Self::ProviderError => "provider_error",
             Self::NotHttp => "not_http",
+            Self::BranchNotFound => "branch_not_found",
         }
     }
 
@@ -181,6 +195,7 @@ impl CloneCause {
             Self::HeldOutside => CloneAction::AskAdmin,
             Self::RepositoryNotFound | Self::NotHttp => CloneAction::CheckRepository,
             Self::Unreachable | Self::ProviderError => CloneAction::Retry,
+            Self::BranchNotFound => CloneAction::PickBranch,
         }
     }
 
@@ -206,6 +221,9 @@ impl CloneCause {
             Self::ProviderError => "The repository's host failed to answer.",
             Self::NotHttp => {
                 "The source is not an http(s) repository, so it cannot be cloned through Studio."
+            }
+            Self::BranchNotFound => {
+                "The branch the source names no longer exists on the repository's host."
             }
         }
     }
@@ -590,18 +608,20 @@ pub struct SourceCloneStatusDto {
     pub state: String,
     /// RFC 3339; absent when never.
     pub at: Option<String>,
-    /// Who: `desktop` (Studio's Git remote) or `ide_session` (a portal IDE
+    /// Who: `desktop` (Studio's Git remote), `sync` (the server's own sync of
+    /// the shared checkout) or `ide_session` (a portal IDE
     /// session's launch); absent when never.
     pub by: Option<String>,
     /// Why it failed: `no_connection`, `connection_not_found`,
     /// `connection_personal`, `held_outside`, `token_unreadable`,
     /// `provider_refused`, `repository_not_found`, `unreachable`,
-    /// `provider_error` or `not_http`. Absent unless failed.
+    /// `provider_error`, `not_http` or `branch_not_found` (`detail` names the
+    /// branch). Absent unless failed.
     pub cause: Option<String>,
     /// The cause in a plain sentence.
     pub cause_text: Option<String>,
     /// What fixes it: `connect`, `reconnect`, `ask_admin`,
-    /// `check_repository` or `retry`. Absent unless failed.
+    /// `check_repository`, `retry` or `pick_branch`. Absent unless failed.
     pub action: Option<String>,
     /// The action in a plain sentence.
     pub action_text: Option<String>,

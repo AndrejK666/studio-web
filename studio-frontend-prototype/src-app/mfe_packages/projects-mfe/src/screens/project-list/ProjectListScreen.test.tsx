@@ -1,23 +1,25 @@
 import React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-/** The list's header and search (DoD `...-workspace-scope-no-workspace`). */
+/**
+ * The list's header and its states around the grid (DoD
+ * `...-workspace-scope-no-workspace`). The grid itself is `ProjectsGrid.test`.
+ */
 
-const { list, queries, bridge, openProjectWizard } = vi.hoisted(() => ({
-  list: {
+const { scope, bridge, openProjectWizard, retry } = vi.hoisted(() => ({
+  scope: {
     current: {
       loading: false,
       failed: false,
       org: { id: 'org-1', name: 'Acme' } as unknown,
       workspace: { id: 'ws-1', name: 'Platform' } as unknown,
-      rows: [] as unknown[],
-      total: 0,
+      projects: [] as unknown[],
     },
   },
-  queries: [] as string[],
   bridge: { id: 'bridge' },
   openProjectWizard: vi.fn(),
+  retry: vi.fn(),
 }));
 
 vi.mock('@gears-frontx/react', async (importOriginal) => ({
@@ -30,35 +32,31 @@ vi.mock('../../i18n', () => ({
   useProjectListScreenTranslations: () => ({ isLoaded: true, error: null }),
 }));
 
-vi.mock('../../shared/useProjectList', () => ({
-  useProjectList: (query: string) => {
-    queries.push(query);
-    return list.current;
-  },
-}));
 vi.mock('../../shared/workspaceProjects', () => ({
   WorkspaceProjectsProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  useWorkspaceProjects: () => ({ ...scope.current, retry }),
 }));
+vi.mock('../../shared/useProjectPhases', () => ({ useProjectPhases: () => ({}) }));
 vi.mock('../../actions/wizardActions', () => ({ openProjectWizard }));
-vi.mock('./components/ProjectsTable', () => ({
-  ProjectsTable: ({ empty }: { empty: React.ReactNode }) => <div>{empty}</div>,
+vi.mock('./components/ProjectsGrid', () => ({
+  ProjectsGrid: () => <div data-testid="grid" />,
 }));
 
 import { ProjectListScreen } from './ProjectListScreen';
 
 const newProject = () => screen.getByRole('button', { name: 'new_project' }) as HTMLButtonElement;
-const search = () => screen.getByRole('searchbox', { name: 'search_placeholder' }) as HTMLInputElement;
-const lastQuery = () => queries[queries.length - 1];
 
 beforeEach(() => {
-  queries.length = 0;
   openProjectWizard.mockClear();
-  list.current = { ...list.current, workspace: { id: 'ws-1', name: 'Platform' }, rows: [], total: 0 };
+  retry.mockClear();
+  scope.current = { ...scope.current, loading: false, failed: false, workspace: { id: 'ws-1', name: 'Platform' } };
 });
+
+afterEach(cleanup);
 
 describe('the projects list header', () => {
   it('disables New project and says why while no workspace is current', () => {
-    list.current = { ...list.current, workspace: null };
+    scope.current = { ...scope.current, workspace: null };
     render(<ProjectListScreen />);
 
     expect(newProject().disabled).toBe(true);
@@ -74,16 +72,28 @@ describe('the projects list header', () => {
   });
 });
 
-describe('the projects list search', () => {
-  it('narrows the list by the query, and Clear search empties it', () => {
-    list.current = { ...list.current, rows: [], total: 2 };
+describe('the projects list states', () => {
+  it('shows a skeleton while the projects are read', () => {
+    scope.current = { ...scope.current, loading: true };
     render(<ProjectListScreen />);
 
-    fireEvent.change(search(), { target: { value: 'bil' } });
-    expect(lastQuery()).toBe('bil');
+    expect(document.querySelector('[data-projects-loading]')).not.toBeNull();
+    expect(screen.queryByTestId('grid')).toBeNull();
+  });
 
-    fireEvent.click(screen.getByRole('button', { name: 'clear_search' }));
-    expect(lastQuery()).toBe('');
-    expect(search().value).toBe('');
+  it('says the read failed, with a retry, in place of the grid', () => {
+    scope.current = { ...scope.current, failed: true };
+    render(<ProjectListScreen />);
+
+    expect(screen.getByRole('alert').textContent).toBe('error_title');
+    expect(screen.queryByTestId('grid')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'retry' }));
+    expect(retry).toHaveBeenCalledTimes(1);
+  });
+
+  it('draws the grid once the projects are in', () => {
+    render(<ProjectListScreen />);
+
+    expect(screen.getByTestId('grid')).toBeTruthy();
   });
 });

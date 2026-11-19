@@ -2,7 +2,7 @@
 
 Organization › Infrastructure (ADR-0056 §2), carried over from the prototype's
 `OrgInfrastructure` (`src/environments-screen.tsx` at `00828880`, ADR-0069 §5).
-The built-in kit `org-infrastructure` (ADR-0068 §7) and, until a platform
+The built-in kit `delivery` (Builds, releases & environments, ADR-0071 step 5) (ADR-0068 §7) and, until a platform
 administrator removes it, a base kit (ADR-0069 §4).
 
 Its second entry, `./researchLifecycle` (`src/researchLifecycle.tsx`,
@@ -26,7 +26,7 @@ its Kits.
   open clusters, deploys and decisions, status, logs, readiness, Research
   projects and hardware, namespace assignments, image retention, registries),
   `studio-connector` (the places: list, connect, test) and
-  `account-management` users (names in deploy lines).
+  `studio-user` organization members (names in deploy lines).
 - `src/assets/bootstrap.yaml` — a copy of the repository's
   `deploy/k8s/studio-environments/bootstrap.yaml`, shown by "Connect a
   cluster" (imported with `?raw`). The portal's image builds from

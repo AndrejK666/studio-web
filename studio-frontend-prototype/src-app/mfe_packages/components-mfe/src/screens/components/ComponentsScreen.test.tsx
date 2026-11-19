@@ -1,9 +1,13 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChildMfeBridge } from '@gears-frontx/react';
+import { stubResizeObserver } from '@frontx-test-utils/stubResizeObserver';
 import type { CatalogNode, PublicationRequest, RegistryEntry } from '../../api/types';
 import en from './i18n/en.json';
 import ru from './i18n/ru.json';
+
+// The kit's DataGrid measures its table.
+stubResizeObserver();
 
 const { service, org, calls, opened } = vi.hoisted(() => ({
   service: {} as Record<string, unknown>,
@@ -66,6 +70,22 @@ const entry = (name: string, patch: Partial<RegistryEntry> = {}): RegistryEntry 
   ...patch,
 });
 
+/** What the catalogue answers for a component's page. */
+const DETAIL = {
+  name: 'billing',
+  component_type: 'gear',
+  type_reason: 'the catalogue files it as a gear',
+  version: '1.2.0',
+  repository: 'https://github.com/acme/app',
+  path: 'gears/billing',
+  passport: { label: 'gear.gdl', path: 'gears/billing/gear.gdl', url: 'https://github.com/acme/app/blob/HEAD/gears/billing/gear.gdl' },
+  docs: [],
+  provides: { capabilities: ['invoices'], hosts: [], extension_points: [], plugins: [], mcp_tools: [], types: [], screens: [], ports: [], variables: [] },
+  needs: { components: [], services: [], databases: [], runtime: [], connections: [] },
+  used_by: { components: [], kits: [{ kit: 'project-tests', kit_name: 'Tests', gear: 'billing', types: ['ci-run'], mcp_tools: [], routes: [] }] },
+  engine: [],
+};
+
 function serve(over: Record<string, unknown> = {}, home = 'o1') {
   for (const key of Object.keys(service)) delete service[key];
   Object.assign(service, {
@@ -88,6 +108,8 @@ function serve(over: Record<string, unknown> = {}, home = 'o1') {
       items: [{ project_id: 'p1', project_name: 'App', at: '', repos: [{ repo: 'acme/app', status: 'read', components: 2 }] }],
       total: 1,
     }),
+    componentDetail: read('componentDetail', DETAIL),
+    screenPreviews: read('screenPreviews', { items: [], total: 0 }),
     registryEntry: read('registryEntry', { ...entry('billing'), decisions: [] }),
     decide: write('decide', { ...entry('billing', { state: 'registered' }), decisions: [] }),
     saveExcludedProjects: write('saveExcludedProjects', { project_ids: ['p1'] }),
@@ -147,7 +169,7 @@ describe('ComponentsScreen', () => {
     expect(await screen.findByText('own REST surface (+3)')).toBeTruthy();
   });
 
-  it('a row opens under itself, and Register records the decision with its owner', async () => {
+  it('a row opens its page, and Register records the decision with its owner', async () => {
     render(<ComponentsScreen bridge={bridgeFor('organization')} />);
     fireEvent.click(await screen.findByText('billing', { selector: '[data-registry-row] span' }));
     const detail = await screen.findByText('decide');
@@ -174,10 +196,78 @@ describe('ComponentsScreen', () => {
     render(<ComponentsScreen bridge={bridgeFor('platform')} />);
     fireEvent.click(await screen.findByText('audit'));
     expect(screen.queryByText('billing')).toBeNull();
+    // The field profile is the page's second tab.
+    fireEvent.mouseDown(await screen.findByText('tab_profile'));
+    fireEvent.click(screen.getByText('tab_profile'));
     expect(await screen.findByText('MIT')).toBeTruthy();
     expect(calls.find((c) => c.name === 'versions')?.params).toEqual({ org: 'o1', crate: 'audit' });
     fireEvent.click(screen.getByText(/back_to_list/));
     expect(await screen.findByText('audit')).toBeTruthy();
+  });
+
+  it('Platform › Components searches its grid, and Clear filters brings the rows back', async () => {
+    render(<ComponentsScreen bridge={bridgeFor('platform')} />);
+    expect(await screen.findByText('audit')).toBeTruthy();
+    fireEvent.change(screen.getByPlaceholderText('search_components'), { target: { value: 'zzz' } });
+    expect(await screen.findByText('nothing_matches')).toBeTruthy();
+    fireEvent.click(screen.getByText('clear_filters'));
+    expect(await screen.findByText('audit')).toBeTruthy();
+  });
+
+  it('Platform › Components: a catalogue that did not load says why and retries', async () => {
+    let fail = true;
+    serve({
+      components: () => ({
+        fetch: () => (fail ? Promise.reject(new Error('catalogue down')) : Promise.resolve({ nodes: [gear('audit', 'platform')] })),
+      }),
+    });
+    render(<ComponentsScreen bridge={bridgeFor('platform')} />);
+    expect((await screen.findByRole('alert')).textContent).toContain('catalogue down');
+    fail = false;
+    fireEvent.click(screen.getByText('retry'));
+    expect(await screen.findByText('audit')).toBeTruthy();
+  });
+
+  it('a registry row opens its page like a kit’s, every section counted, and Back returns to the list', async () => {
+    render(<ComponentsScreen bridge={bridgeFor('organization')} />);
+    // The row carries its type's glyph and word.
+    const name = await screen.findByText('billing', { selector: '[data-registry-row] span' });
+    const row = name.closest('[data-registry-row]') as HTMLElement;
+    expect(row.querySelector('[data-component-type-icon="gear"]')).toBeTruthy();
+    fireEvent.click(name);
+    const page = await waitFor(() => {
+      const el = document.querySelector('[data-component-view="billing"]');
+      expect(el).toBeTruthy();
+      return el as HTMLElement;
+    });
+    expect(calls.find((c) => c.name === 'componentDetail')?.params).toEqual({ org: 'o1', name: 'billing' });
+    // The header: the passport links to its file; the list's header is gone.
+    await waitFor(() => expect(page.querySelector('[data-component-passport="gear.gdl"] a')?.getAttribute('href')).toContain('gear.gdl'));
+    expect(screen.queryByText('organization_title')).toBeNull();
+    // Each block says how many it holds, and an empty one says so.
+    const count = (id: string) => page.querySelector(`[data-component-block="${id}"] [data-block-count]`)?.getAttribute('data-block-count');
+    expect(count('provides')).toBe('1');
+    expect(count('needs')).toBe('0');
+    expect(page.querySelector('[data-component-block="needs"] [data-block-empty]')?.textContent).toBe('sec_needs_empty');
+    // Declared in App, and claimed by the Tests kit.
+    expect(count('used')).toBe('2');
+    expect(within(page).getByText('Tests')).toBeTruthy();
+    // The registry's own panel, with its decisions, is in Lifecycle.
+    expect(within(page.querySelector('[data-component-block="lifecycle"]') as HTMLElement).getByText('decide')).toBeTruthy();
+    fireEvent.click(screen.getByText(/back_to_list/));
+    expect(await screen.findByText('billing', { selector: '[data-registry-row] span' })).toBeTruthy();
+    expect(screen.getByText('organization_title')).toBeTruthy();
+  });
+
+  it('a page the catalogue does not know says so and still shows the registry', async () => {
+    serve({ componentDetail: read('componentDetail', refused(404)) });
+    render(<ComponentsScreen bridge={bridgeFor('organization')} />);
+    fireEvent.click(await screen.findByText('scoring', { selector: '[data-registry-row] span' }));
+    expect(await screen.findByText('detail_none')).toBeTruthy();
+    // Not read is not "none": What it provides says it is not known.
+    expect(document.querySelector('[data-component-block="provides"] [data-block-unknown]')?.textContent).toBe('sec_unknown');
+    expect(document.querySelector('[data-component-block="provides"] [data-block-empty]')).toBeNull();
+    expect(document.querySelector('[data-component-view="scoring"] [data-registry-entry="scoring"]')).toBeTruthy();
   });
 
   it('offers Repositories & sync to a platform administrator only', async () => {

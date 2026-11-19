@@ -1,15 +1,21 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { stubResizeObserver } from '@frontx-test-utils/stubResizeObserver';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { service, org, calls } = vi.hoisted(() => ({
+// The kit's DataGrid measures its table.
+stubResizeObserver();
+
+const { service, org, calls, openScreen } = vi.hoisted(() => ({
   service: {} as Record<string, unknown>,
   org: { value: { id: 'o1', name: 'Acme' } as { id: string; name: string } | null },
   calls: [] as { what: string; arg?: unknown; body?: unknown }[],
+  openScreen: vi.fn(),
 }));
 
 vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@constructor-studio/mfe-shared')>()),
   useOrganization: () => ({ org: org.value, loading: false, failed: false }),
+  openScreen,
 }));
 vi.mock('@gears-frontx/react', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@gears-frontx/react')>()),
@@ -136,6 +142,7 @@ function serve(over: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   calls.length = 0;
+  openScreen.mockClear();
   org.value = { id: 'o1', name: 'Acme' };
   serve();
 });
@@ -204,6 +211,28 @@ describe('Profile', () => {
     });
     expect(note.textContent).toContain('prof_confirmed');
     expect(note.textContent).toContain('prof_skipped_shared');
+  });
+
+  it.each(['confirmed', 'claimed'])('returns to Inbox only after GitHub is confirmed (%s)', async (confidence) => {
+    const current = window.location.href;
+    window.history.replaceState(null, '', '?screen=profile;view=github-reviews');
+    try {
+      serve({
+        myAliases: read('myAliases', {
+          aliases: [{ kind: 'github', external_id: 'ann', confidence, attributes: true, added_at_epoch_ms: 1 }],
+        }),
+      });
+      render(<ProfileSection />);
+      fireEvent.click(await screen.findByText('prof_check'));
+      if (confidence === 'confirmed') {
+        await waitFor(() => expect(openScreen).toHaveBeenCalledWith(null, '/inbox'));
+      } else {
+        await waitFor(() => expect(document.querySelector('[data-profile-note]')).toBeTruthy());
+        expect(openScreen).not.toHaveBeenCalled();
+      }
+    } finally {
+      window.history.replaceState(null, '', current);
+    }
   });
 
   it('lists only the person own connections, per active membership', async () => {

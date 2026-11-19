@@ -52,6 +52,13 @@ impl RestApiCapability for SpecMappingGear {
         openapi: &dyn OpenApiRegistry,
     ) -> anyhow::Result<Router> {
         let router = rest::register_routes(router, openapi, rest::Ports::new(ctx.client_hub()));
+        // The write routes a kit claims answer KIT_NOT_INSTALLED without it
+        // (ADR-0071 §4): studio-kits' one shared check.
+        let router = crate::kit_registry::port::with_claimed_routes(
+            router,
+            ctx.client_hub(),
+            "studio-spec-mapping",
+        );
         // The catalogue is kept per organization: a request that names one is
         // read there, as the catalogue's own routes are (`crate::org_scope`).
         Ok(

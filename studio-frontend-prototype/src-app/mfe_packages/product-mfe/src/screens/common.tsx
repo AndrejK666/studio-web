@@ -46,7 +46,7 @@ export function useScope(): Scope {
 /**
  * The portal's project tabs a Product screen opens (the prototype's
  * `onOpenTab`). Releases is not ported yet: `/releases` is the route its kit
- * (`product-releases`) is to take, and opens nothing until it does.
+ * (`project-product`) is to take, and opens nothing until it does.
  */
 export const PROJECT_ROUTES = {
   releases: '/releases',
@@ -55,6 +55,8 @@ export const PROJECT_ROUTES = {
   specs: '/projects/specs',
   sources: '/projects/sources',
   tests: '/tests',
+  /** The Gears matcher kit's (ADR-0072): shown only where it is installed. */
+  gearMatch: '/gear-match',
 } as const;
 
 /** Open another tab of the project. */
@@ -145,7 +147,7 @@ export function Segmented<T extends string>({
   label,
   dataAttr,
 }: {
-  items: { id: T; label: ReactNode; title?: string; state?: string; dot?: Tone }[];
+  items: { id: T; label: ReactNode; title?: string; state?: string; dot?: Tone; disabled?: boolean }[];
   value: T;
   onChange: (id: T) => void;
   label: string;
@@ -162,6 +164,7 @@ export function Segmented<T extends string>({
           size="sm"
           variant={value === it.id ? 'secondary' : 'ghost'}
           aria-selected={value === it.id}
+          disabled={it.disabled}
           title={it.title}
           onClick={() => onChange(it.id)}
           {...(dataAttr ? { [dataAttr]: it.id } : {})}

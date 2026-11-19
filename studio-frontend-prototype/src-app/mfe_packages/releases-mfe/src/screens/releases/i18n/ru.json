@@ -26,7 +26,6 @@
   "close": "Закрыть",
   "cancel": "Отмена",
   "next": "Дальше:",
-
   "newest_build": "новейшая сборка:",
   "nothing_published": "пока ничего не опубликовано",
   "col_environment": "Окружение",
@@ -59,7 +58,6 @@
   "promote_title": "Развернуть {version}, которая работает в {from}, в {environment}",
   "promote_title_replaces": "Развернуть {version}, которая работает в {from}, в {environment} вместо {replaces}",
   "what_promote": "Продвижение {version} в {environment}",
-
   "asked_queued": "{what}: в очереди.",
   "asked_waits": "{what}: ждёт одобрения администратора.",
   "environment": "Окружение",
@@ -130,7 +128,6 @@
   "place_cluster_title": "Кластер Kubernetes",
   "cluster": "кластер",
   "research_signin": "ваш вход в Research: нет → Подключить",
-
   "build_in_ci_title": "Сборка в CI",
   "builds_title": "Сборки",
   "ci_unreadable": "Studio не смогла прочитать запуски CI в {repo}: {error}. Возможно, у подключения нет доступа на чтение к Actions репозитория.",
@@ -163,8 +160,13 @@
   "published": "опубликовано",
   "run_number": "запуск {number}",
   "attempt": "попытка {attempt}",
-  "show_newest": "Показать {count} новейших",
-  "show_all_runs": "Показать все запуски ({count})",
+  "search_runs": "Поиск запусков…",
+  "no_runs_match": "Ни один запуск не подходит под поиск.",
+  "search_builds": "Поиск сборок…",
+  "no_builds_match": "Ни одна сборка не подходит под поиск.",
+  "no_deploys_match": "Ни одно развёртывание не подходит под поиск.",
+  "clear_search": "Очистить поиск",
+  "no_data": "Нет данных",
   "lost": "потеряна",
   "the_product": "Продукт",
   "revision": "ред. {revision}",
@@ -181,7 +183,6 @@
   "log_following": "следим",
   "log_empty": "(пока ничего не записано)",
   "log_no_step": "Ни один шаг ещё не начался.",
-
   "own_environments": "Окружения этого проекта",
   "own_environments_sub": "какой профиль работает в каждом окружении",
   "bindings_title": "Какой профиль работает в каждом окружении",
@@ -195,7 +196,6 @@
   "save": "Сохранить",
   "saved": "Сохранено.",
   "bindings_saved": "Привязки сохранены.",
-
   "search_deploys": "Поиск развёртываний…",
   "col_state": "Состояние",
   "col_what": "Что",
@@ -210,7 +210,6 @@
   "no_workloads": "В {namespace} нет рабочих нагрузок.",
   "unknown_user": "кто-то",
   "unknown_user_id": "пользователь {id}…",
-
   "path_title": "Путь к запуску",
   "path_checklist": "Что нужно для деплоя",
   "check_done": "есть",
@@ -286,5 +285,15 @@
   "research_building": "Сборка {build} в Constructor Research…",
   "research_deploying": "Запуск приложения в Constructor Research…",
   "research_runs": "Продукт работает в Constructor Research.",
-  "research_build_failed": "Сборка в Constructor Research не удалась."
+  "research_build_failed": "Сборка в Constructor Research не удалась.",
+  "no_environment_admin": "Окружений пока нет. Попросите администратора организации добавить его.",
+  "status_build_outside": "То, что работает в {environment}, собрано вне Studio (в IDE или CI): записи о сборке в Studio нет.",
+  "build_outside_hint": "То, что работает в {environment}, собрано вне записей Studio (в IDE или CI). Соберите здесь, в IDE или в CI, чтобы следующая сборка была записана.",
+  "open_build_infrastructure": "Открыть инфраструктуру организации",
+  "configure_build_registry": "Подключить реестр",
+  "build_registry_missing": "Чтобы опубликовать сборку Studio, подключите реестр к окружению «{environment}». Также можно собрать продукт в IDE или CI.",
+  "build_environment_missing": "Чтобы опубликовать сборку Studio, добавьте окружение Kubernetes с подключённым реестром. Также можно собрать продукт в IDE или CI.",
+  "build_registry_ready": "Сборок пока нет. Соберите продукт в IDE или запустите сборку проекта в CI.",
+  "build_in_research_hint": "Сборок пока нет. Чтобы собрать и запустить продукт в Constructor Research, перейдите к развёртыванию.",
+  "open_ci_run": "Открыть упавший запуск CI"
 }

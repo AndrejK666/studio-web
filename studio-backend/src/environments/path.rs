@@ -592,6 +592,32 @@ fn running_step(f: &PathFacts, target: Option<Uuid>, ready: bool) -> PathStep {
     s
 }
 
+/// A product that runs was built, whether or not Studio kept the build: one
+/// published from the IDE or CI before builds were recorded, say. Without
+/// this the path said "runs in dev" and "Nothing is built yet" together
+/// (walk 2026-11-16). Only when no build is recorded at all: a recorded
+/// build that fails after a deploy is news, and stays.
+fn built_elsewhere(
+    f: &PathFacts,
+    build: PathStep,
+    image: PathStep,
+    running: &PathStep,
+) -> (PathStep, PathStep) {
+    if !f.builds.is_empty() || running.state != StepState::Done {
+        return (build, image);
+    }
+    let said = "What runs was built outside Studio's records (the IDE or CI): build here to \
+                record the next one.";
+    let mut b = PathStep::new("build", StepState::Done, said);
+    b.action = Some(PathAction::new("build", "Build"));
+    let i = PathStep::new(
+        "image",
+        StepState::Done,
+        "What runs was published outside Studio's records.",
+    );
+    (b, i)
+}
+
 /// The path of a project, from what it keeps.
 pub fn project_path(f: &PathFacts) -> ProjectPath {
     let target = target_environment(&f.environments, &f.deployments);
@@ -601,6 +627,7 @@ pub fn project_path(f: &PathFacts) -> ProjectPath {
     let environment = environment_step(f, target);
     let ready = image.state == StepState::Done && environment.state == StepState::Done;
     let running = running_step(f, target, ready);
+    let (build, image) = built_elsewhere(f, build, image, &running);
     let mut steps = vec![product, build, image, environment, running];
     // What runs already counts whatever the steps before it say now: a
     // product deployed once runs while its next build fails.

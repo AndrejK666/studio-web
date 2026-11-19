@@ -18,11 +18,15 @@ export {
 export {
   isAvailableScreens,
   kitAvailable,
+  typeAvailable,
   routeAvailable,
+  shellTabsOf,
   useScreenAvailability,
   type AvailableScreens,
   type ScreenAvailability,
+  type ShellTab,
 } from './host/screens';
+export { KIT_ALIASES, kitIn, resolveKit } from './host/kitAliases';
 export { STUDIO_MFE_ENTRY_IFRAME } from './host/hostTypes';
 export {
   STUDIO_ACTION_CONTEXT_PUBLISH,
@@ -30,6 +34,7 @@ export {
   STUDIO_ACTION_ARTIFACT_OPEN,
   STUDIO_ACTION_NOTIFY,
   STUDIO_ACTION_SCREEN_OPEN,
+  screenView,
   STUDIO_ACTION_PLACE_OPEN,
   openScreen,
   openPlace,
@@ -57,12 +62,24 @@ export {
 } from './host/chainOutcome';
 export { useNotify } from './host/useNotify';
 export {
+  BUILT_PREVIEWS_DIR,
+  BUILT_PREVIEWS_INDEX,
+  builtPreviewsOf,
+  forgetBuiltPreviews,
+  isPicture,
+  loadScreenPreviews,
+  newestBuild,
+  pictureFor,
+  type ScreenPreview,
+} from './host/screenPreviews';
+export {
   MFE_PREFERENCE_KEY,
   MFE_PREFERENCE_MAX_LENGTH,
   STUDIO_ACTION_PREFERENCE_SET,
   STUDIO_SHARED_PROPERTY_UI_PREFERENCES,
   useHostPreference,
 } from './host/preferences';
+export { STUDIO_ACTION_INBOX_COUNT, reportInboxCount } from './host/inboxCount';
 export { StudioMfeLifecycle } from './mfe/StudioMfeLifecycle';
 export { authShared } from './auth/authShared';
 export {
@@ -232,6 +249,14 @@ export {
   type RunFollower,
   type RunFollowerOptions,
 } from './tasks/followRuns';
+// Polling that rests while the tab is hidden.
+export {
+  isPageHidden,
+  pollWhileVisible,
+  runWhenVisible,
+  usePollWhileVisible,
+  type PollWhileVisibleOptions,
+} from './polling/pollWhileVisible';
 
 // The Studio domain model at run time (ADR-0066): the shell's model tabs and
 // the generic screens that list a type's objects.
@@ -303,6 +328,15 @@ export {
 } from './domain/DomainModelApiService';
 // People and teams (people-mfe, team-mfe).
 export * from './people';
+// What a component is, in one word and one glyph: the catalogue's type.
+export {
+  COMPONENT_TYPES,
+  ComponentTypeIcon,
+  catalogueComponentType,
+  isComponentType,
+  registryComponentType,
+  type ComponentType,
+} from './components/componentType';
 
 // A list on the kit's DataGrid (#1076) has its own entry, `@constructor-studio/mfe-shared/grid`
 // (`grid.ts`), so importing this one does not load the kit's DataGrid.

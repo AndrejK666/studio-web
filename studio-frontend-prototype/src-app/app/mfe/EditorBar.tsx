@@ -11,6 +11,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { apiRegistry, eventBus, useAppSelector } from '@gears-frontx/react';
+import { runWhenVisible } from '@constructor-studio/mfe-shared';
 import { Button } from '@gears-frontx/ui-kit/button';
 import { DesktopApiService } from '@/app/api/DesktopApiService';
 import { DESKTOP_DOWNLOAD_URL, NO_APP_AFTER_MS, desktopLink, desktopNames, type DesktopSession } from '@/app/desktop/desktopLink';
@@ -24,13 +25,17 @@ import { EDITOR_SESSION_SLICE_KEY, type EditorSessionState } from '@/app/slices/
 /** How often the desktops are read when the backend does not say (its heartbeat). */
 const DEFAULT_HEARTBEAT_SECS = 30;
 
-/** The desktops a project is open on, re-read as often as they renew; none on a Studio without them. */
+/**
+ * The desktops a project is open on, re-read as often as they renew (not while
+ * the tab is hidden); none on a Studio without them.
+ */
 function useDesktopSessions(projectId: string | null): DesktopSession[] {
   const [sessions, setSessions] = useState<{ project: string; items: DesktopSession[] } | null>(null);
   useEffect(() => {
     if (!projectId || !apiRegistry.has(DesktopApiService)) return;
     let alive = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let shown: (() => void) | undefined;
     const read = async () => {
       let every = DEFAULT_HEARTBEAT_SECS;
       try {
@@ -43,12 +48,13 @@ function useDesktopSessions(projectId: string | null): DesktopSession[] {
         // Nothing to show, and no error: the button is still the way to open one.
         if (alive) setSessions({ project: projectId, items: [] });
       }
-      if (alive) timer = setTimeout(() => void read(), every * 1000);
+      if (alive) timer = setTimeout(() => (shown = runWhenVisible(() => void read())), every * 1000);
     };
     void read();
     return () => {
       alive = false;
       clearTimeout(timer);
+      shown?.();
     };
   }, [projectId]);
   return sessions && sessions.project === projectId ? sessions.items : [];

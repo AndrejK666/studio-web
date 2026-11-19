@@ -42,7 +42,10 @@ vi.mock('@gears-frontx/react', () => ({
   },
   useQueryCache: () => ({ invalidate }),
 }));
-vi.mock('@gears-frontx/ui-kit', () => ({ useDataGrid: () => ({ triggerLoad }) }));
+vi.mock('@gears-frontx/ui-kit', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@gears-frontx/ui-kit')>(),
+  useDataGrid: () => ({ triggerLoad }),
+}));
 vi.mock('@constructor-studio/mfe-shared', () => ({
   AccountsApiService: class {},
   ConnectorsApiService: class {},

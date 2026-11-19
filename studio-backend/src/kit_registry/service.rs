@@ -74,7 +74,7 @@ pub const SHELF_BUILTIN: &str = "builtin";
 /// only where someone asks for them"). An organization installs one for
 /// itself, or a platform administrator makes it a base kit for every
 /// organization; until then it is in the library and applies nowhere.
-pub const OPT_IN_BUILTIN: &[&str] = &[CONSTRUCTOR_RESEARCH_KIT];
+pub const OPT_IN_BUILTIN: &[&str] = &[CONSTRUCTOR_RESEARCH_KIT, GEARS_MATCHER_KIT, "gears-project"];
 
 /// The Constructor Research kit (`docs/design/studio-kits.md` §3.13): building
 /// a project's product in Constructor Research and running it there as one of
@@ -82,6 +82,32 @@ pub const OPT_IN_BUILTIN: &[&str] = &[CONSTRUCTOR_RESEARCH_KIT];
 /// Research environment is added or changed, or a build, deploy or rollback
 /// to one starts.
 pub const CONSTRUCTOR_RESEARCH_KIT: &str = "constructor-research";
+
+/// The Gears matcher kit (ADR-0072): which gears cover a project's
+/// specifications, as the gears-matcher service reads them, and a product
+/// assembled from what it proposes. studio-product asks for it before a
+/// project's product is assembled by the `gears_matcher` strategy.
+pub const GEARS_MATCHER_KIT: &str = "gears-matcher";
+
+/// The Spec mapping kit (ADR-0074): studio-spec-mapping's plan -- the gears
+/// that could provide each capability a project's specifications name -- and
+/// the product's `spec_mapping` assembly strategy. A base kit by default, so
+/// an organization that never thought about it keeps what it had; one of the
+/// base kits an organization may uninstall for itself
+/// ([`ORGANIZATION_REMOVABLE_BASE`]).
+pub const SPEC_MAPPING_KIT: &str = "spec-mapping";
+
+/// Base kits an organization administrator may uninstall for that
+/// organization alone (ADR-0074): the uninstall is recorded in the
+/// organization's own document (`removed_base`), and installing the kit
+/// again for the organization takes it back. Every other base kit is the
+/// platform's to remove.
+pub const ORGANIZATION_REMOVABLE_BASE: &[&str] = &[SPEC_MAPPING_KIT];
+
+/// May an organization uninstall the base kit `slug` for itself?
+pub fn is_organization_removable_base(slug: &str) -> bool {
+    ORGANIZATION_REMOVABLE_BASE.contains(&slug)
+}
 
 /// Is `slug` a built-in kit only where somebody installs it?
 pub fn is_opt_in_builtin(slug: &str) -> bool {
@@ -260,7 +286,26 @@ impl KitRegistryService {
     /// One kit of the library with what it brings (ADR-0068 §4: shown before
     /// it is installed). `None` for a slug the library does not hold.
     pub fn kit(&self, slug: &str) -> Option<super::contents::KitDetail> {
-        super::contents::find(self.catalogue(), slug)
+        super::contents::find(self.catalogue(), slug).map(|d| self.with_local(d))
+    }
+
+    /// One kit of the library with what it brings, as [`Self::kit`] finds it.
+    pub fn describe(&self, kit: KitDescriptor) -> super::contents::KitDetail {
+        self.with_local(super::contents::describe(kit))
+    }
+
+    /// A bundle kit (`STUDIO_KIT_BUNDLES_DIR`) is described by its authored
+    /// `kit.gdl`: its bundles, docs and artifact kinds.
+    fn with_local(&self, mut detail: super::contents::KitDetail) -> super::contents::KitDetail {
+        if detail.kit.source == super::bundles::SOURCE_BUNDLE_DIR
+            && let Some(local) = self.bundles.local_kit(&detail.kit.slug)
+        {
+            detail.contents.mfe = local.mfe;
+            detail.contents.docs = local.docs;
+            detail.contents.kinds = local.kinds;
+            detail.manifest = Some(super::contents::MANIFEST_KIT_GDL);
+        }
+        detail
     }
 
     /// The kits the IDE's installer can write into a checkout: the official
@@ -760,21 +805,19 @@ pub const BUILTIN_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// `kit.json` names the same one there (`builtin_kits_name_their_icon_once`).
 pub const BUILTIN_ICONS: &[(&str, &str)] = &[
     ("project-lifecycle", "lucide:route"),
-    ("project-issues", "lucide:circle-dot"),
     ("project-tests", "lucide:flask-conical"),
-    ("project-artifacts", "lucide:files"),
-    ("project-activity", "lucide:history"),
     ("org-costs", "lucide:wallet"),
     ("org-reports", "lucide:chart-column"),
     ("project-specs", "lucide:file-text"),
     ("studio-api-docs", "lucide:book-open"),
     ("components", "lucide:package"),
-    ("org-infrastructure", "lucide:server"),
-    ("product-releases", "lucide:rocket"),
+    ("delivery", "lucide:rocket"),
+    ("project-product", "lucide:package"),
     ("project-domain-model", "lucide:shapes"),
-    ("org-connections", "lucide:plug"),
-    ("project-team", "lucide:users"),
     (CONSTRUCTOR_RESEARCH_KIT, "lucide:atom"),
+    (GEARS_MATCHER_KIT, "lucide:scan-search"),
+    (SPEC_MAPPING_KIT, "lucide:git-compare-arrows"),
+    ("gears-project", "lucide:boxes"),
     ("assistant", "lucide:sparkles"),
     ("project-git", "lucide:git-pull-request"),
 ];
@@ -808,32 +851,14 @@ pub fn builtin_catalogue() -> Vec<KitDescriptor> {
     vec![
         kit(
             "project-lifecycle",
-            "Project lifecycle",
-            "Project status and phases, and their filters.",
+            "Planning",
+            "Project phases and templates, milestones, risks and delivery scope, and the project's Timeline.",
             &["organization", "workspace", "project"],
-        ),
-        kit(
-            "project-issues",
-            "Issues",
-            "The project's Issues tab: the issues of its repositories.",
-            &["project"],
         ),
         kit(
             "project-tests",
             "Tests",
             "The project's Tests tab: its test runs and their results.",
-            &["project"],
-        ),
-        kit(
-            "project-artifacts",
-            "Artifacts",
-            "The project's Artifacts tab: what its builds and documents produce.",
-            &["project"],
-        ),
-        kit(
-            "project-activity",
-            "Activity",
-            "The project's Activity tab, beyond the shell's own run list.",
             &["project"],
         ),
         kit(
@@ -862,38 +887,32 @@ pub fn builtin_catalogue() -> Vec<KitDescriptor> {
         ),
         kit(
             "components",
-            "Components",
+            "Catalogue",
             "The platform's and the organization's component catalogue and registry, their gear repositories and publication requests.",
             &["platform", "organization", "project"],
         ),
         kit(
-            "org-infrastructure",
-            "Infrastructure",
-            "The places an organization holds, the environments it defines on them, and what runs where.",
-            &["organization"],
+            "delivery",
+            "Builds, releases & environments",
+            "From a build to a running environment: the places an organization holds and the environments on them, a project's builds, images, its own environments and deploys up the ladder.",
+            &["organization", "project"],
         ),
         kit(
-            "product-releases",
-            "Product & Releases",
-            "A project's product (its map, configurator and frontend), its builds and its deploys up the environment ladder.",
+            "project-product",
+            "Product",
+            "What a project's product is made of: its map, configurator, description and frontend, and the project's Components.",
             &["project"],
         ),
         kit(
             "project-domain-model",
-            "Project domain model",
-            "What a project's documents say the application is, and the issues they leave to decide (not the Studio domain model).",
+            "Project model",
+            "What a project's documents say the application is, and the open questions they leave to decide (not the Studio domain model).",
             &["project"],
         ),
         kit(
-            "org-connections",
-            "Connections",
-            "An organization's connections to Git hosts, clusters, registries and model providers, and Admin's view of all of them.",
-            &["organization"],
-        ),
-        kit(
-            "project-team",
-            "Team",
-            "A project's Team tab: who works on it and in which role.",
+            "gears-project",
+            "Gears",
+            "Compose a product from Gears, configure its components and ship it through Releases.",
             &["project"],
         ),
         // Not a base kit by default (`OPT_IN_BUILTIN`): an organization that
@@ -904,6 +923,22 @@ pub fn builtin_catalogue() -> Vec<KitDescriptor> {
             "Build a project's product in Constructor Research and run it there as one of its applications: the Research projects, their hardware, and the deploys, rollbacks and addresses of what runs there. For the whole organization, or for one project.",
             &["organization", "project"],
         ),
+        // Not a base kit by default either (ADR-0072): an organization that
+        // has the gears-matcher service and wants its paid reading installs it.
+        kit(
+            GEARS_MATCHER_KIT,
+            "Gears matcher",
+            "Which gears of the catalogue cover a project's specifications, as the gears-matcher service reads them requirement by requirement, and a product assembled from what it proposes. For the whole organization, or for one project.",
+            &["organization", "project"],
+        ),
+        // A base kit by default (ADR-0074), which an organization may
+        // uninstall for itself (`ORGANIZATION_REMOVABLE_BASE`).
+        kit(
+            SPEC_MAPPING_KIT,
+            "Spec mapping",
+            "The gears that could provide each capability a project's specifications name, matched by words and contracts: the plan on Components, the product map and the gear match, and a product assembled from it. Instant, free and deterministic. For the whole organization, or for one project.",
+            &["organization", "project"],
+        ),
         kit(
             "assistant",
             "Assistant",
@@ -912,8 +947,8 @@ pub fn builtin_catalogue() -> Vec<KitDescriptor> {
         ),
         kit(
             "project-git",
-            "Git",
-            "A project's Git host workflow: the pull requests of its repositories and what waits on review.",
+            "Git collaboration",
+            "Work on a project's Git host: the pull requests of its repositories, its tracker issues, the discussion on both, and the project's Activity.",
             &["organization", "project"],
         ),
     ]
@@ -1246,21 +1281,19 @@ mod tests {
             slugs,
             [
                 "project-lifecycle",
-                "project-issues",
                 "project-tests",
-                "project-artifacts",
-                "project-activity",
                 "org-costs",
                 "org-reports",
                 "project-specs",
                 "studio-api-docs",
                 "components",
-                "org-infrastructure",
-                "product-releases",
+                "delivery",
+                "project-product",
                 "project-domain-model",
-                "org-connections",
-                "project-team",
+                "gears-project",
                 "constructor-research",
+                "gears-matcher",
+                "spec-mapping",
                 "assistant",
                 "project-git"
             ]

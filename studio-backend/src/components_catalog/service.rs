@@ -44,6 +44,8 @@ use crate::catalog_graph::{GraphNodeType, MemorySink};
 /// `2000+` is the more useful thing to read anyway: it says "more than this
 /// page can hold", which is the decision the reader is actually making.
 const TYPE_COUNT_CAP: usize = 2000;
+/// How many of those counts are asked of the graph at once.
+const TYPE_COUNT_CONCURRENCY: usize = 8;
 
 /// How many nodes of one type the graph holds.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1583,28 +1585,33 @@ impl CatalogService {
     /// from and never instantiated, so its count is zero by construction and
     /// asking the graph would be a query to learn nothing.
     pub async fn count_types(&self, ctx: &SecurityContext) -> anyhow::Result<Vec<TypeCount>> {
+        use futures_util::stream::{self, StreamExt, TryStreamExt};
         let types = self.sink.node_types(ctx).await?;
-        let mut out = Vec::with_capacity(types.len());
-        for t in types {
-            if t.is_abstract {
-                out.push(TypeCount {
+        // A few counts at a time, in the types' order: one after another,
+        // 113 types took 7-8 s on the local stand and 13 s on the walk of
+        // 2026-11-17, and Admin › Objects waited for all of them.
+        stream::iter(types)
+            .map(|t| async move {
+                if t.is_abstract {
+                    return Ok(TypeCount {
+                        leaf_id: t.leaf_id,
+                        count: 0,
+                        capped: false,
+                    });
+                }
+                let (count, capped) = self
+                    .sink
+                    .count_of_type(ctx, &t.type_id, TYPE_COUNT_CAP)
+                    .await?;
+                Ok::<_, anyhow::Error>(TypeCount {
                     leaf_id: t.leaf_id,
-                    count: 0,
-                    capped: false,
-                });
-                continue;
-            }
-            let (count, capped) = self
-                .sink
-                .count_of_type(ctx, &t.type_id, TYPE_COUNT_CAP)
-                .await?;
-            out.push(TypeCount {
-                leaf_id: t.leaf_id,
-                count,
-                capped,
-            });
-        }
-        Ok(out)
+                    count,
+                    capped,
+                })
+            })
+            .buffered(TYPE_COUNT_CONCURRENCY)
+            .try_collect()
+            .await
     }
 
     /// The nodes the Components page lists: every node of every type this

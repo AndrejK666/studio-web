@@ -1,16 +1,19 @@
 /**
  * The New project wizard — this MFE's second mounted root, drawn inside the
- * shell's overlay frame.
+ * shell's overlay frame. It asks for a name, the project type, a goal and
+ * shows the owner; the type decides what the creation does and what the
+ * project's Overview offers next (ADR-0073).
  */
 
 // @cpt-dod:cpt-studiofrontend-dod-project-create-steps:p1
 import React, { useEffect } from 'react';
-import { eventBus, useMfeBridge } from '@gears-frontx/react';
+import { apiRegistry, eventBus, useApiQuery, useMfeBridge } from '@gears-frontx/react';
 import { useAppDispatch, useAppSelector } from '@gears-frontx/react';
 import { Button, Skeleton } from '@gears-frontx/ui-kit';
 import {
   OrganizationProvider,
   WorkspaceProvider,
+  isNotFound,
   useEverLoaded,
   useHostChrome,
   useOrganization,
@@ -20,29 +23,17 @@ import { useProjectCreateScreenTranslations, useProjectCreateText } from '../../
 import { closeProjectWizard, requestProjectCreate } from '../../actions/wizardActions';
 import { announceCreatedProject } from '../../actions/projectsActions';
 import '../../events/wizardEvents';
-import {
-  CREATE_SLICE_KEY,
-  clearProvider,
-  editDraft,
-  goToStep,
-  resetWizard,
-} from '../../slices/createSlice';
+import { CREATE_SLICE_KEY, editDraft, goToStep, resetWizard } from '../../slices/createSlice';
 import { useCurrentUser } from '../../shared/useCurrentUser';
 import { isFinalStep, nextStep, prevStep, stepFor, type WizardStepKey } from '../../model/wizardSteps';
 import { DetailsStep } from './steps/DetailsStep';
-import { RepositoriesStep } from './steps/RepositoriesStep';
-import { RepositoriesFooterNote } from './steps/RepositoriesFooterNote';
+import { ProjectStatusApiService, type ProjectTypeKit } from '../../api/ProjectStatusApiService';
 import frame from '../../components/OverlayFrame.module.css';
 import styles from './NewProjectWizard.module.css';
 
 /** One entry per step key. Adding a step touches this map and `WIZARD_STEPS`. */
-const STEP_BODIES: Record<WizardStepKey, React.FC> = {
+const STEP_BODIES: Record<WizardStepKey, React.FC<{ projectTypes: readonly ProjectTypeKit[] }>> = {
   details: DetailsStep,
-  repositories: RepositoriesStep,
-};
-
-const STEP_FOOTER_NOTES: Partial<Record<WizardStepKey, React.FC>> = {
-  repositories: RepositoriesFooterNote,
 };
 
 const WizardBody: React.FC = () => {
@@ -57,10 +48,13 @@ const WizardBody: React.FC = () => {
   const submitting = useAppSelector((state) => state[CREATE_SLICE_KEY].submitting);
   const error = useAppSelector((state) => state[CREATE_SLICE_KEY].error);
   const progress = useAppSelector((state) => state[CREATE_SLICE_KEY].progress);
-  const providerId = useAppSelector((state) => state[CREATE_SLICE_KEY].providerId);
   const { loading: orgLoading } = useOrganization();
   const { workspace, loading: workspaceLoading } = useWorkspace();
   const workspaceId = workspace?.id ?? null;
+  const types = useApiQuery(apiRegistry.getService(ProjectStatusApiService).projectTypeKits);
+  const projectTypes = types.data?.items ?? [];
+  const typeReadFailed = types.isError && !isNotFound(types.error);
+  const typeMissing = projectTypes.length > 0 && !projectTypes.some((kit) => kit.slug === draft.typeKit);
 
   useEffect(() => {
     dispatch(resetWizard());
@@ -81,10 +75,6 @@ const WizardBody: React.FC = () => {
   const back = prevStep(draft, step.key);
   const final = isFinalStep(draft, step.key);
   const Body = STEP_BODIES[step.key];
-  const FooterNote = STEP_FOOTER_NOTES[step.key];
-  // Until a provider is chosen the repositories step is a small card with Back alone.
-  const choosingProvider = step.key === 'repositories' && !providerId;
-  const frameStep = choosingProvider ? 'providers' : step.key;
 
   useEffect(() => {
     const subscription = eventBus.on(
@@ -108,13 +98,12 @@ const WizardBody: React.FC = () => {
   };
 
   const onSecondary = (): void => {
-    if (step.key === 'repositories' && providerId) dispatch(clearProvider());
-    else if (back) dispatch(goToStep(back.key));
+    if (back) dispatch(goToStep(back.key));
     else closeProjectWizard(bridge);
   };
 
   return (
-    <div ref={containerRef} className={frame.card} data-theme={dataTheme} data-step={frameStep}>
+    <div ref={containerRef} className={frame.card} data-theme={dataTheme} data-step={step.key}>
       {showSkeleton ? (
         <Skeleton className={frame.titleSkeleton} />
       ) : (
@@ -139,7 +128,7 @@ const WizardBody: React.FC = () => {
             {!submitting && progress.state !== 'succeeded' && <p className={styles.progressHint}>{t('retry_hint')}</p>}
           </section>
         ) : (
-          <Body />
+          <Body projectTypes={projectTypes} />
         )}
       </div>
 
@@ -154,29 +143,33 @@ const WizardBody: React.FC = () => {
               : t('error_no_workspace')}
         </p>
       )}
+      {types.isLoading && <p role="status">{t('project_types_loading')}</p>}
+      {typeReadFailed && <p className={frame.error} role="alert">
+        {t('project_types_error')}{' '}
+        <Button type="button" variant="ghost" size="sm" onClick={() => void types.refetch()}>{t('project_types_retry')}</Button>
+      </p>}
 
       <div className={frame.footer}>
-        <div className={frame.footerNote}>
-          {FooterNote && !choosingProvider ? <FooterNote /> : null}
-        </div>
+        <div className={frame.footerNote} />
         <Button variant="ghost" size="sm" onClick={onSecondary} disabled={submitting}>
           {back ? t('back') : t('cancel')}
         </Button>
-        {choosingProvider ? null : (
-          <Button
-            size="sm"
-            onClick={onPrimary}
-            disabled={
-              submitting ||
-              orgLoading ||
-              workspaceLoading ||
-              !step.isComplete(draft) ||
-              (final && !workspaceId)
-            }
-          >
-            {final ? t('create') : t('continue')}
-          </Button>
-        )}
+        <Button
+          size="sm"
+          onClick={onPrimary}
+          disabled={
+            submitting ||
+            orgLoading ||
+            workspaceLoading ||
+            types.isLoading ||
+            typeReadFailed ||
+            typeMissing ||
+            !step.isComplete(draft) ||
+            (final && !workspaceId)
+          }
+        >
+          {final ? t('create') : t('continue')}
+        </Button>
       </div>
     </div>
   );

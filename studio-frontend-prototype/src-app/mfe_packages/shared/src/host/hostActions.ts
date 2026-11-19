@@ -88,6 +88,8 @@ export interface StudioPlace {
   organizationId: string;
   workspaceId?: string;
   projectId?: string;
+  route?: string;
+  view?: string;
 }
 
 /** `loading` stays up until a notice with its `id` replaces it, so a `loading` notice needs an `id`. */
@@ -144,8 +146,16 @@ export function requestFromHost(bridge: ChildMfeBridge | null, action: HostActio
 }
 
 /** Open the shell's screen whose manifest route is `route` (STUDIO_ACTION_SCREEN_OPEN). */
-export function openScreen(bridge: ChildMfeBridge | null, route: string): void {
-  sendToHost(bridge, { type: STUDIO_ACTION_SCREEN_OPEN, target: FRONTX_SCREEN_DOMAIN, payload: { route } });
+export function openScreen(bridge: ChildMfeBridge | null, route: string, view?: string): void {
+  sendToHost(bridge, {
+    type: STUDIO_ACTION_SCREEN_OPEN, target: FRONTX_SCREEN_DOMAIN, payload: { route, ...(view ? { view } : {}) },
+  });
+}
+
+/** Read the optional initial view from the shell's screen address. */
+export function screenView(search: string): string | undefined {
+  return new URLSearchParams(search).get('screen')?.split(';')
+    .find((param) => param.startsWith('view='))?.slice('view='.length);
 }
 
 /** Go to `place` (STUDIO_ACTION_PLACE_OPEN), from the domain the MFE is mounted in. */

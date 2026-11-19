@@ -250,12 +250,13 @@ pub fn broken_connections(runs: &[RunSummary]) -> Vec<Broken> {
     out
 }
 
-/// Failed runs that are not a refused connection: counted, never listed.
+fn is_other_failure(run: &RunSummary) -> bool {
+    run.state == "failed" && refusal(run.last_error.as_deref()).is_none()
+}
+
+/// Failed runs other than refused connections.
 pub fn other_failures(runs: &[RunSummary]) -> u32 {
-    let n = runs
-        .iter()
-        .filter(|r| r.state == "failed" && refusal(r.last_error.as_deref()).is_none())
-        .count();
+    let n = runs.iter().filter(|r| is_other_failure(r)).count();
     u32::try_from(n).unwrap_or(u32::MAX)
 }
 
@@ -312,7 +313,7 @@ pub fn waiting_on(stuck: &[&OpenPull], member: &dyn Fn(&str) -> Option<Member>) 
     };
     for p in stuck {
         let days = idle_days(p);
-        if p.waiting_on.is_empty() {
+        if p.waiting == "nobody" {
             add(None, None, days);
         }
         for login in &p.waiting_on {
@@ -811,6 +812,9 @@ pub struct Overview {
     pub hub: Arc<ClientHub>,
     /// Answers kept for a minute, per organization and caller.
     pub answers: Answers,
+    /// One project's health lines kept for a minute, per project and caller
+    /// ([`Overview::project_health`]).
+    pub project_lines: Answers<ProjectHealth>,
 }
 
 /// How long one caller's overview of one organization is reused. A leader's
@@ -904,6 +908,137 @@ impl Overview {
         Ok(answer)
     }
 
+    /// One project's health line, as the organization's overview would show
+    /// it, without reading the organization: `project-status` used to build
+    /// the whole overview (every project's rollup, every tenant's runs) to
+    /// find this one line (`overview read rows=15 elapsed_ms=5551` on Dev).
+    ///
+    /// From the overview the caller already has when there is one; otherwise
+    /// from the project's rollup row, the runs of the organization, the
+    /// project's workspace and the project (where its repositories' runs are
+    /// recorded), and the project's open pull requests. Kept a minute per
+    /// (project, caller), as the overview is. Spend plays no part in the line
+    /// `project-status` reads, so it is not read.
+    pub async fn project_health(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        project: &Rollup,
+        now: OffsetDateTime,
+    ) -> Result<ProjectHealth, Refusal> {
+        self.admit(ctx, org).await?;
+        let caller = ctx.subject_id();
+        let workspace = project.parent_id.unwrap_or(org);
+        if let Some(kept) = self.answers.get(org, caller)
+            && let Some(line) = kept
+                .workspaces
+                .iter()
+                .flat_map(|w| w.projects.iter())
+                .find(|p| p.id == project.id.to_string())
+        {
+            return Ok(health_of_line(project.id, workspace, line));
+        }
+        if let Some(kept) = self.project_lines.get(project.id, caller) {
+            return Ok(kept);
+        }
+        let started = std::time::Instant::now();
+        let runs = async {
+            let Ok(source) = self.hub.get::<dyn RecentRuns>() else {
+                return Vec::new();
+            };
+            let mut tenants = vec![org, project.id];
+            if workspace != org {
+                tenants.push(workspace);
+            }
+            let reads = futures_util::future::join_all(
+                tenants
+                    .iter()
+                    .map(|t| source.recent_runs(*t, RUNS_PER_TENANT)),
+            )
+            .await;
+            let mut all: Vec<RunSummary> =
+                reads.into_iter().filter_map(Result::ok).flatten().collect();
+            all.sort_by_key(|r| std::cmp::Reverse(r.created_at));
+            all
+        };
+        let pulls = async {
+            let Ok(source) = self.hub.get::<dyn OpenPullRequests>() else {
+                return Vec::new();
+            };
+            source.open_pulls_in(ctx, &[project.id.to_string()]).await
+        };
+        let (kits, runs, pulls) = tokio::join!(self.kits(ctx, org), runs, pulls);
+        // Pull requests are project-git's: without it nobody waits on one.
+        let pulls = if kits.has(Some(GIT_KIT)) {
+            pulls
+        } else {
+            Vec::new()
+        };
+        let key = project.id.to_string();
+        let broken: BTreeSet<String> = broken_connections(&runs)
+            .into_iter()
+            .flat_map(|b| b.projects)
+            .filter(|p| *p == key)
+            .collect();
+        let stuck_here = stuck(&pulls, STUCK_DAYS)
+            .into_iter()
+            .filter(|p| p.project_id.as_deref() == Some(key.as_str()))
+            .count();
+        let stuck_by = BTreeMap::from([(key, count(stuck_here))]);
+        let line = project_health(
+            &row_of(project),
+            workspace,
+            &HealthInputs {
+                spend: None,
+                previous: None,
+                stuck: &stuck_by,
+                broken: &broken,
+                now,
+            },
+        );
+        tracing::info!(
+            %org,
+            project = %project.id,
+            elapsed_ms = started.elapsed().as_millis(),
+            "organizations: one project's health read"
+        );
+        self.project_lines.put(project.id, caller, line.clone());
+        Ok(line)
+    }
+}
+
+/// A project's line of an overview already composed, back as the health
+/// [`Overview::project_health`] answers.
+fn health_of_line(id: Uuid, workspace_id: Uuid, line: &OverviewProjectDto) -> ProjectHealth {
+    let mut reasons = Vec::new();
+    for r in &line.reasons {
+        let n = r.value.map_or(0, |v| v.round() as u32);
+        reasons.push(match r.kind.as_str() {
+            "refused" => Reason::Refused,
+            "specs_failing" => Reason::SpecsFailing(n),
+            "stuck" => Reason::Stuck(n),
+            "spend_grows" => Reason::SpendGrows(r.value.unwrap_or(0.0)),
+            "quiet" => Reason::Quiet(n),
+            _ => continue,
+        });
+    }
+    ProjectHealth {
+        id,
+        name: line.name.clone(),
+        workspace_id,
+        specs_failing: line.specs_failing,
+        open_findings: line.open_findings,
+        spend: line.spend,
+        previous: line.previous,
+        stuck: line.stuck,
+        quiet_days: line.quiet_days,
+        broken: line.broken,
+        reasons,
+        score: line.score,
+    }
+}
+
+impl Overview {
     /// The organization as the caller reads it, or [`Refusal::NotFound`] when
     /// they do not reach it or it is not an organization.
     pub(super) async fn admit(
@@ -1105,7 +1240,8 @@ impl Overview {
 use super::rest::{
     OrganizationOverviewDto, OverviewDecisionsDto, OverviewDeliveryDto, OverviewMoneyDto,
     OverviewMoneyRowDto, OverviewNeedDto, OverviewPeopleDto, OverviewPersonDto, OverviewProjectDto,
-    OverviewQueueDto, OverviewReasonDto, OverviewSpecsDto, OverviewSpendDto, OverviewWorkspaceDto,
+    OverviewPullDto, OverviewQueueDto, OverviewReasonDto, OverviewRunFailureDto, OverviewSpecsDto,
+    OverviewSpendDto, OverviewWorkspaceDto,
 };
 
 const GROUPS: [(GroupBy, &str); 5] = [
@@ -1272,6 +1408,7 @@ pub fn compose(org: Uuid, read: &Read, now: OffsetDateTime) -> OrganizationOverv
         let who = attribute(&s.current, &subjects);
         OverviewSpendDto {
             currency: s.current.currency.clone(),
+            has_prices: s.current.has_prices(),
             current: current.total,
             previous,
             forecast: forecast(month, w.elapsed_days, w.month_days),
@@ -1302,7 +1439,7 @@ pub fn compose(org: Uuid, read: &Read, now: OffsetDateTime) -> OrganizationOverv
                 .count(),
         )
     };
-    let undecided = states("candidate") + states("declared");
+    let undecided = states("candidate");
     let needs = needs(&NeedInputs {
         broken: &broken,
         project_names: &places,
@@ -1464,6 +1601,35 @@ pub fn compose(org: Uuid, read: &Read, now: OffsetDateTime) -> OrganizationOverv
                     who: q.who,
                     count: q.count,
                     oldest_days: q.oldest_days,
+                })
+                .collect()
+        }),
+        pulls_without_reviewers: read.pulls.as_ref().filter(|_| git).map(|_| {
+            let mut rows: Vec<_> = stuck_pulls
+                .iter()
+                .filter(|p| p.waiting == "nobody")
+                .map(|p| OverviewPullDto {
+                    id: p.id.clone(),
+                    number: p.number,
+                    title: p.title.clone(),
+                    url: p.url.clone(),
+                    project: p.project_id.as_ref().and_then(|id| places.get(id)).cloned(),
+                    quiet_days: idle_days(p),
+                })
+                .collect();
+            rows.sort_by_key(|p| std::cmp::Reverse(p.quiet_days));
+            rows
+        }),
+        recent_failures: read.runs.as_ref().map(|runs| {
+            let mut recent: Vec<_> = runs.iter().filter(|r| is_other_failure(r)).collect();
+            recent.sort_by_key(|r| std::cmp::Reverse(r.created_at));
+            recent
+                .into_iter()
+                .map(|r| OverviewRunFailureDto {
+                    id: r.id.to_string(),
+                    tenant_id: r.tenant_id.to_string(),
+                    task_type: r.task_type.clone(),
+                    created_at: rfc3339(r.created_at),
                 })
                 .collect()
         }),

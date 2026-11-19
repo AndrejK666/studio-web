@@ -41,6 +41,7 @@ declare module '@gears-frontx/react' {
       extensionId: string;
       /** One of the sections the screen answers, when it answers a family of them (`type:<name>`, a tab the Studio domain model adds); ignored otherwise. */
       section?: string;
+      view?: string;
     };
     /** A member asked to open one artifact of a project (#319's action); the shell navigates to the editor (#320). */
     'app/context/artifact/requested': StudioArtifactRequest;
@@ -64,7 +65,7 @@ declare module '@gears-frontx/react' {
       route: { token: string; org?: string; workspace?: string; project?: string; section?: string };
     };
     /** Go to a place an MFE found (Search): the deepest level named, on its entry screen. */
-    'app/context/place/requested': { organizationId: string; workspaceId?: string; projectId?: string };
+    'app/context/place/requested': { organizationId: string; workspaceId?: string; projectId?: string; route?: string; view?: string };
     /** "Try again" on the editor whose session failed to come up. */
     'app/editor/session/retry': void;
     /** The editor bar's Reload: a fresh frame, the session keeps running. */

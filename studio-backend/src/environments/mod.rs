@@ -208,6 +208,13 @@ impl RestApiCapability for StudioEnvironmentsGear {
         // records here too (ADR-0062 §4).
         images_sink::set(Arc::clone(&service));
         let router = rest::register_routes(router, openapi, service);
+        // The write routes a kit claims answer KIT_NOT_INSTALLED without it
+        // (ADR-0071 §4): studio-kits' one shared check.
+        let router = crate::kit_registry::port::with_claimed_routes(
+            router,
+            ctx.client_hub(),
+            "studio-environments",
+        );
         // `?organization_id=` resolves through it; without it a request that
         // names an organization is refused rather than served from the
         // caller's home tenant.

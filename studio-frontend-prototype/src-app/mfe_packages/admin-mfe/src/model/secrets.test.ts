@@ -37,4 +37,13 @@ describe('the secret references the portal knows about', () => {
   it('is empty when no workspace names one', () => {
     expect(knownSecretRefs([{ name: 'Alpha', connections: [] }])).toEqual([]);
   });
+
+  it("names the organization's own connections' tokens, used by a source or not", () => {
+    expect(
+      knownSecretRefs([
+        { name: 'Acme', listsConnections: true, connections: [{ id: 'c1', name: 'GitHub', secret_ref: 'gh' }, { id: 'c2', secret_ref: null }] },
+        { name: 'Main / Web', sources: [source('org/web', 'c1')], connections: [{ id: 'c1', secret_ref: 'gh' }] },
+      ])
+    ).toEqual([{ ref: 'gh', usedBy: ['Acme · GitHub', 'Main / Web / web'] }]);
+  });
 });

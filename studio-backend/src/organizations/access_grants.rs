@@ -18,6 +18,7 @@ use account_management_sdk::{AccountManagementClient, UpsertMetadataRequest};
 use anyhow::{Context, Result, anyhow, bail};
 use gts::GtsTypeId;
 use serde_json::{Value, json};
+use toolkit_canonical_errors::CanonicalError;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
@@ -86,7 +87,14 @@ fn is(grant: &Value, key: &GrantKey) -> bool {
     field(grant, "subjectType") == Some(key.subject_type.as_str())
         && field(grant, "subjectId") == Some(key.subject_id.as_str())
         && field(grant, "scopeType") == Some(key.scope_type.as_str())
-        && (key.scope_type == "org" || field(grant, "scopeId") == key.scope_id.as_deref())
+        && (key.scope_type == "org"
+            || field(grant, "scopeId")
+                .zip(key.scope_id.as_deref())
+                .is_some_and(|(stored, requested)| {
+                    Uuid::parse_str(stored.trim()).ok().is_some_and(|project| {
+                        Uuid::parse_str(requested.trim()).ok() == Some(project)
+                    })
+                }))
 }
 
 fn grants(doc: &mut Value) -> Result<&mut Vec<Value>> {
@@ -104,6 +112,12 @@ fn grants(doc: &mut Value) -> Result<&mut Vec<Value>> {
 /// subject held on that scope. Refused for the owner role, for an owner grant
 /// already there, and for a role the document does not define.
 pub fn put(doc: &mut Value, org: Uuid, grant: &Grant) -> Result<Value, String> {
+    check_key(&grant.key)?;
+    if grant.key.subject_type == "team" {
+        return Err(
+            "team grants are not supported yet; assign a role to individual members".into(),
+        );
+    }
     if grant.role_key == ROLE_OWNER {
         return Err("the owner grant follows an owner membership (studio-user), not this".into());
     }
@@ -137,7 +151,13 @@ pub fn put(doc: &mut Value, org: Uuid, grant: &Grant) -> Result<Value, String> {
     let scope_id = if grant.key.scope_type == "org" {
         org.to_string()
     } else {
-        grant.key.scope_id.clone().unwrap_or_default()
+        grant
+            .key
+            .scope_id
+            .as_deref()
+            .and_then(|id| Uuid::parse_str(id.trim()).ok())
+            .ok_or("a project grant requires a project UUID")?
+            .to_string()
     };
     let written = json!({
         "id": kept_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
@@ -173,8 +193,104 @@ pub fn remove(doc: &mut Value, key: &GrantKey) -> Result<bool, String> {
 pub enum ChangeError {
     /// 400 with this constraint.
     Invalid(String),
+    /// The editor's snapshot has been superseded.
+    Stale,
+    NotFound,
     /// Anything else.
     Internal(anyhow::Error),
+}
+
+pub async fn read_document(
+    am: &dyn AccountManagementClient,
+    ctx: &SecurityContext,
+    org: Uuid,
+) -> Result<(Value, i64), ChangeError> {
+    match am
+        .get_metadata(ctx, org, GtsTypeId::new(ACCESS_METADATA_TYPE))
+        .await
+    {
+        Ok(entry) => Ok((entry.value, entry.version)),
+        Err(CanonicalError::NotFound { .. }) => Ok((
+            json!({ "model": "tenant", "roles": crate::access_config::default_roles(), "grants": [] }),
+            0,
+        )),
+        Err(error) => Err(ChangeError::Internal(anyhow!(
+            "cannot read the organization's access config: {error}"
+        ))),
+    }
+}
+
+fn editor_document(mut current: Value, draft: Value) -> Result<Value, ChangeError> {
+    let invalid = |reason: &str| ChangeError::Invalid(reason.to_owned());
+    let model = field(&draft, "model")
+        .filter(|model| matches!(*model, "tenant" | "roles"))
+        .ok_or_else(|| invalid("access model must be tenant or roles"))?;
+    let roles = draft
+        .get("roles")
+        .filter(|roles| roles.is_array())
+        .ok_or_else(|| invalid("roles must be an array"))?;
+    let submitted = draft["grants"]
+        .as_array()
+        .ok_or_else(|| invalid("grants must be an array"))?;
+    let prior = grants(&mut current).map_err(ChangeError::Internal)?;
+    let owner = |grant: &Value| field(grant, "roleKey") == Some(ROLE_OWNER);
+    if !prior
+        .iter()
+        .filter(|grant| owner(grant))
+        .eq(submitted.iter().filter(|grant| owner(grant)))
+    {
+        return Err(invalid(
+            "owner grants are changed through organization membership",
+        ));
+    }
+    if model == "roles"
+        && !prior.iter().any(|grant| {
+            owner(grant)
+                && field(grant, "subjectType") == Some("member")
+                && field(grant, "scopeType") == Some("org")
+        })
+    {
+        return Err(invalid(
+            "an organization owner is required for role-based access",
+        ));
+    }
+    if submitted
+        .iter()
+        .any(|grant| field(grant, "subjectType") == Some("team") && !prior.contains(grant))
+    {
+        return Err(invalid("team grants are not supported"));
+    }
+    current["model"] = json!(model);
+    current["roles"] = roles.clone();
+    current["grants"] = draft["grants"].clone();
+    serde_json::from_value::<crate::access_config::AccessConfig>(current.clone())
+        .map_err(|_| invalid("one or more roles or grants are invalid"))?;
+    Ok(current)
+}
+
+pub async fn save_document(
+    am: &dyn AccountManagementClient,
+    ctx: &SecurityContext,
+    org: Uuid,
+    expected: i64,
+    draft: Value,
+) -> Result<(Value, i64), ChangeError> {
+    let (current, version) = read_document(am, ctx, org).await?;
+    if expected != version {
+        return Err(ChangeError::Stale);
+    }
+    let next = editor_document(current, draft)?;
+    let request = UpsertMetadataRequest::new(GtsTypeId::new(ACCESS_METADATA_TYPE), next)
+        .with_expected_version(expected);
+    match am.upsert_metadata(ctx, org, request).await {
+        Ok(entry) => Ok((entry.value, entry.version)),
+        Err(error) if crate::access_config::is_metadata_version_mismatch(&error) => {
+            Err(ChangeError::Stale)
+        }
+        Err(error) => Err(ChangeError::Internal(anyhow!(
+            "cannot write the organization's access config: {error}"
+        ))),
+    }
 }
 
 impl From<anyhow::Error> for ChangeError {
@@ -194,20 +310,13 @@ pub async fn change<T>(
 ) -> Result<T, ChangeError> {
     let type_id = GtsTypeId::new(ACCESS_METADATA_TYPE);
     for _ in 0..ATTEMPTS {
-        let (mut doc, version) = match am.get_metadata(ctx, org, type_id.clone()).await {
-            Ok(entry) => (entry.value, entry.version),
-            // No document yet: the first grant creates it.
-            Err(_) => (
-                json!({ "model": "tenant", "roles": crate::access_config::default_roles(), "grants": [] }),
-                0,
-            ),
-        };
+        let (mut doc, version) = read_document(am, ctx, org).await?;
         let out = change(&mut doc).map_err(ChangeError::Invalid)?;
         let request =
             UpsertMetadataRequest::new(type_id.clone(), doc).with_expected_version(version);
         match am.upsert_metadata(ctx, org, request).await {
             Ok(_) => return Ok(out),
-            Err(e) if format!("{e:?}").contains("METADATA_VERSION_MISMATCH") => continue,
+            Err(e) if crate::access_config::is_metadata_version_mismatch(&e) => continue,
             Err(e) => {
                 return Err(ChangeError::Internal(anyhow!(
                     "cannot write the organization's access config: {e}"
@@ -344,5 +453,73 @@ mod tests {
         assert!(key_of("member", "x", "workspace", None).is_err());
         assert!(key_of("member", "x", "project", Some("nope")).is_err());
         assert!(key_of("team", "t", "org", None).is_ok());
+    }
+
+    #[test]
+    fn updating_a_project_grant_canonicalizes_its_id_without_duplicating_it() {
+        let mut d = doc();
+        let legacy = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        d["grants"][1]["scopeId"] = json!(legacy);
+        let key = key_of(
+            "member",
+            "bob",
+            "project",
+            Some("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+        )
+        .unwrap();
+        let result = put(
+            &mut d,
+            Uuid::nil(),
+            &Grant {
+                key,
+                role_key: "editor".into(),
+                subject_name: None,
+                scope_name: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(result["id"], "g2");
+        assert_eq!(result["scopeId"], "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+        assert_eq!(d["grants"].as_array().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn team_grants_are_removable_but_cannot_be_created() {
+        let mut d = doc();
+        let key = key_of("team", "team", "org", None).unwrap();
+        let grant = Grant {
+            key: key.clone(),
+            role_key: "viewer".into(),
+            subject_name: None,
+            scope_name: None,
+        };
+        assert!(put(&mut d, Uuid::nil(), &grant).is_err());
+        assert!(!remove(&mut d, &key).unwrap());
+    }
+
+    #[test]
+    fn the_access_editor_preserves_unrelated_fields_and_existing_owners() {
+        let mut current = doc();
+        current["future_setting"] = json!("keep");
+        let mut draft = doc();
+        draft["grants"][1]["roleKey"] = json!("editor");
+        let edited = editor_document(current.clone(), draft.clone()).unwrap();
+        assert_eq!(edited["future_setting"], "keep");
+        assert_eq!(edited["grants"][1]["roleKey"], "editor");
+        draft["grants"][0]["subjectId"] = json!("different");
+        assert!(matches!(
+            editor_document(current, draft),
+            Err(ChangeError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn the_access_editor_requires_an_owner_for_roles() {
+        let mut ownerless = doc();
+        ownerless["grants"].as_array_mut().unwrap().remove(0);
+        assert!(matches!(
+            editor_document(ownerless.clone(), ownerless),
+            Err(ChangeError::Invalid(_))
+        ));
     }
 }

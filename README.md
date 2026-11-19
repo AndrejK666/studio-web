@@ -278,9 +278,9 @@ CI's own image, so Docker is the only prerequisite — no Rust toolchain, linker
 or Visual Studio Build Tools on the host:
 
 ```bash
-scripts/backend-check.sh                      # fmt, clippy, build, features, test
-scripts/backend-check.sh clippy               # one gate
-scripts/backend-check.sh test studio_session  # a gate plus cargo arguments
+scripts/backend-gate.sh                       # fmt, clippy, tests: summary + exit code
+scripts/backend-gate.sh studio_session        # ... tests filtered by name
+scripts/backend-check.sh build                # one named gate (fmt|clippy|build|features|test|all)
 ```
 
 **Portal.** `npm run dev:all` in `studio-frontend/` faces the shared `dev`

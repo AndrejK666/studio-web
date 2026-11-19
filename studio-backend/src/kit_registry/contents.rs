@@ -26,6 +26,9 @@ pub const MANIFEST_CF_STUDIO_KIT: &str = ".cf-studio-kit.toml";
 /// `manifest` of a kit described by Studio's interim `kit.json` (an
 /// organization's own kit, or a built-in kit that brings a model).
 pub const MANIFEST_KIT_JSON: &str = "kit.json";
+/// `manifest` of a kit described by an authored `kit.gdl` (a bundle kit,
+/// `STUDIO_KIT_BUNDLES_DIR`).
+pub const MANIFEST_KIT_GDL: &str = "kit.gdl";
 
 /// One kit of the library and what it brings.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -49,12 +52,20 @@ pub struct KitContents {
     pub services: Vec<KitNamed>,
     pub inbox: Vec<KitInboxSource>,
     pub mcp_tools: Vec<KitNamed>,
+    /// What it claims of the gears it stands for: types, tools and write
+    /// routes (ADR-0071 §2).
+    pub gears: Vec<super::manifest::ManifestGearClaim>,
     pub permissions: KitPermissions,
     pub material: Vec<KitMaterial>,
     pub kinds: Vec<String>,
     pub docs: Vec<String>,
     /// The built micro-frontends it carries, `mfe/<package>`.
     pub mfe: Vec<String>,
+    /// The kits it cannot work without (ADR-0071 §5).
+    pub requires: Vec<String>,
+    /// What its model overlay adds beside its own types: fields and
+    /// relations on other types, and the tabs the model shows.
+    pub model: KitModel,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -77,6 +88,65 @@ pub struct KitType {
     pub gts: String,
     pub name: String,
     pub description: Option<String>,
+    /// The type's id in the model: `<slug>-<name>`, or the id it declares.
+    pub id: String,
+    /// Declared by an id Studio's core already has (ADR-0070 §4): an
+    /// organization that has the type keeps its definition and its objects,
+    /// and one the core left dormant becomes this kit's again.
+    pub adopts: bool,
+    /// Its fields, relations aside.
+    pub fields: Vec<KitField>,
+}
+
+/// `origin` of a field or relation the kit declares itself.
+pub const ORIGIN_KIT: &str = "kit";
+/// `origin` of one that moved out of Studio's core into the kit as the
+/// core had it (ADR-0070 phase 5).
+pub const ORIGIN_CORE: &str = "core";
+
+/// A field of a kit's model: on one of its types, or on another (`on`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KitField {
+    /// The type it is on, by its model id; `None` inside [`KitType::fields`].
+    pub on: Option<String>,
+    pub name: String,
+    pub type_name: String,
+    pub description: Option<String>,
+    pub required: bool,
+    /// [`ORIGIN_KIT`] or [`ORIGIN_CORE`].
+    pub origin: &'static str,
+}
+
+/// A relation a kit's model declares, between two types by their model ids.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KitRelation {
+    pub on: String,
+    pub name: String,
+    pub target: String,
+    pub label: Option<String>,
+    /// `references`, `owns`, `member`, `composes`, `derives`...
+    pub verb: Option<String>,
+    pub origin: &'static str,
+}
+
+/// A tab the kit's model shows on a level (a `shows` relation).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KitModelTab {
+    /// `organization`, `workspace` or `project`.
+    pub level: String,
+    pub name: String,
+    pub label: String,
+    /// The type it lists, by its model id.
+    pub target: String,
+}
+
+/// What a kit's model adds beside its own types.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct KitModel {
+    /// Fields it adds to types it does not bring.
+    pub fields: Vec<KitField>,
+    pub relations: Vec<KitRelation>,
+    pub tabs: Vec<KitModelTab>,
 }
 
 /// A rule, a service or an MCP tool: a name and what it is.
@@ -134,13 +204,16 @@ pub fn describe(kit: KitDescriptor) -> KitDetail {
         SHELF_BUILTIN => match builtin_contents(&kit.slug) {
             Some(mut contents) => {
                 // What its compiled-in `kit.json` adds: a model, Inbox
-                // sources, MCP tools and the routes behind them.
+                // sources, MCP tools, what it claims of the gears, and the
+                // routes it calls (`permissions`, only there: ADR-0071 §2).
                 if let Some(m) = super::manifest::builtin_manifest(&kit.slug) {
                     let more = super::manifest::contents_of(&m);
                     contents.screens.extend(more.screens);
                     contents.types.extend(more.types);
                     contents.inbox.extend(more.inbox);
                     contents.mcp_tools.extend(more.mcp_tools);
+                    contents.gears.extend(more.gears);
+                    contents.requires.extend(more.requires);
                     contents.rules.extend(more.rules);
                     contents.functions.extend(more.functions);
                     contents.permissions.reads.extend(more.permissions.reads);
@@ -149,6 +222,9 @@ pub fn describe(kit: KitDescriptor) -> KitDetail {
                         .permissions
                         .listens
                         .extend(more.permissions.listens);
+                    contents.model.fields.extend(more.model.fields);
+                    contents.model.relations.extend(more.model.relations);
+                    contents.model.tabs.extend(more.model.tabs);
                 }
                 (contents, Some(MANIFEST_BUILTIN))
             }
@@ -182,31 +258,29 @@ fn project_tab(label: &str, route: Option<&str>) -> KitScreen {
     tab("project", label, route)
 }
 
-fn owned(items: &[&str]) -> Vec<String> {
-    items.iter().map(|item| (*item).to_owned()).collect()
-}
-
-/// A built-in kit's contents: what Studio has for it today, nothing planned.
+/// A built-in kit's screens: what Studio has for it today, nothing planned.
 /// `None` for a slug that is not a built-in kit.
 ///
+/// Everything else is in the kit's compiled-in `kit.json`
+/// (`builtin/<slug>.kit.json`), one source per kit (ADR-0071 §2): its model,
+/// what it claims of the gears (`gears`), and `permissions`. There,
 /// `permissions.reads` names the gears' routes the kit's screen calls, as
 /// `METHOD /path`, and only routes it calls today; a `POST` that only
 /// computes an answer (a plan, a preview, a check, a test of a connection) is
-/// a read. `permissions.writes` names the routes that change something.
+/// a read. `permissions.writes` names the routes that change something, and
+/// every route the kit claims.
 fn builtin_contents(slug: &str) -> Option<KitContents> {
     let contents = match slug {
         // Project status and phases, which have no screen of their own yet;
-        // and the project templates a workspace offers (`project-templates-mfe`).
+        // the project templates a workspace offers (`project-templates-mfe`);
+        // and the project's Timeline (`activity-mfe`, section `timeline`),
+        // which shows this kit's `milestone`, so it needs no other kit
+        // (moved from `project-activity`, ADR-0071 step 4).
         "project-lifecycle" => KitContents {
-            screens: vec![tab(
-                "workspace",
-                "Project templates",
-                Some("/project-templates"),
-            )],
-            permissions: KitPermissions {
-                reads: owned(&["GET /studio-organizations/v1/project-types"]),
-                ..KitPermissions::default()
-            },
+            screens: vec![
+                tab("workspace", "Project templates", Some("/project-templates")),
+                project_tab("Timeline", Some("/projects/timeline")),
+            ],
             ..KitContents::default()
         },
         // The project's Specs section of `projects-mfe`, and the document types
@@ -216,102 +290,30 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
                 tab("workspace", "Document types", Some("/document-types")),
                 project_tab("Specs", Some("/projects/specs")),
             ],
-            permissions: KitPermissions {
-                reads: owned(&[
-                    "GET /studio-documents/v1/workspaces/{workspace_id}/types",
-                    "GET /studio-documents/v1/spec-rows",
-                    "GET /studio-spec-quality/v1/status",
-                ]),
-                ..KitPermissions::default()
-            },
             ..KitContents::default()
         },
         // `reports-mfe`: the organization's reports (studio-reports).
         "org-reports" => KitContents {
             screens: vec![tab("organization", "Reports", Some("/reports"))],
-            permissions: KitPermissions {
-                reads: owned(&[
-                    "GET /studio-reports/v1/reports",
-                    "GET /studio-reports/v1/reports/{report_id}",
-                ]),
-                ..KitPermissions::default()
-            },
-            ..KitContents::default()
-        },
-        // The Issues tab: what a project has to decide before it builds from
-        // its documents, computed by studio-documents.
-        "project-issues" => KitContents {
-            screens: vec![project_tab("Issues", Some("/issues"))],
-            permissions: KitPermissions {
-                reads: owned(&[
-                    "GET /studio-documents/v1/project-domain-model/issues",
-                    "GET /studio-documents/v1/project-domain-model/readiness",
-                    "GET /studio-documents/v1/project-domain-model/doc-quality",
-                    "GET /studio-documents/v1/project-domain-model",
-                ]),
-                writes: owned(&[
-                    "POST /studio-documents/v1/project-domain-model/reviews",
-                    "POST /studio-documents/v1/project-domain-model/findings/{fingerprint}/decision",
-                    "POST /studio-documents/v1/project-domain-model/issues",
-                    "POST /studio-documents/v1/project-domain-model/entities",
-                    "POST /studio-documents/v1/project-domain-model/sentences/proposals",
-                    "POST /studio-documents/v1/project-domain-model/glossary/decisions",
-                ]),
-                ..KitPermissions::default()
-            },
             ..KitContents::default()
         },
         // `tests-mfe`: CI runs, the repositories and their open pull
-        // requests, document checks and spec-to-code conformance.
+        // requests, document checks and spec-to-code conformance. Its open
+        // pull requests section shows project-git's `pull-request` and
+        // `needs` it (ADR-0071 §5): without that type the tab shows the CI
+        // runs and the conformance and no pull request.
         "project-tests" => KitContents {
-            screens: vec![project_tab("Tests", Some("/tests"))],
-            permissions: KitPermissions {
-                reads: owned(&[
-                    "GET /studio-artifact-ingest/v1/runs",
-                    "GET /studio-artifact-ingest/v1/nodes",
-                    "GET /studio-artifact-ingest/v1/open-pull-requests",
-                    "POST /studio-documents/v1/pull-request-checks",
-                    "GET /studio-documents/v1/workspaces/{workspace_id}/capabilities",
-                    "GET /studio-spec-mapping/v1/capabilities",
-                    "POST /studio-spec-mapping/v1/conformance",
-                ]),
-                ..KitPermissions::default()
-            },
-            ..KitContents::default()
-        },
-        // A section of `projects-mfe` today: the project's ingested
-        // artifacts.
-        "project-artifacts" => KitContents {
-            screens: vec![project_tab("Artifacts", Some("/projects/artifacts"))],
-            permissions: KitPermissions {
-                reads: owned(&["GET /studio-artifact-ingest/v1/nodes"]),
-                ..KitPermissions::default()
-            },
-            ..KitContents::default()
-        },
-        // `activity-mfe`: the project's Activity (the checks and comments
-        // studio-artifact-ingest keeps) and its Timeline, which shows
-        // project-lifecycle's `milestone` objects (ADR-0070 §2, §7). The
-        // Timeline's extension declares `needs: ["milestone"]`, so the portal
-        // hides it where that type is not installed; Activity needs no other
-        // kit.
-        "project-activity" => KitContents {
             screens: vec![
-                project_tab("Activity", Some("/projects/activity")),
+                project_tab("Tests", Some("/tests")),
                 KitScreen {
-                    needs: vec!["milestone".to_owned()],
-                    ..project_tab("Timeline", Some("/projects/timeline"))
+                    kind: "section",
+                    level: "project".to_owned(),
+                    label: "Open pull requests".to_owned(),
+                    route: Some("/tests".to_owned()),
+                    slot: Some("tests".to_owned()),
+                    needs: vec![super::manifest::domain_type_gts("pull-request")],
                 },
             ],
-            permissions: KitPermissions {
-                reads: owned(&[
-                    "GET /studio-artifact-ingest/v1/activity",
-                    "GET /studio-domain-model/v1/types",
-                    "POST /studio-domain-model/v1/query",
-                ]),
-                writes: owned(&["POST /studio-domain-model/v1/mutate"]),
-                ..KitPermissions::default()
-            },
             ..KitContents::default()
         },
         // `costs-mfe`: the organization's costs, its price list and budgets
@@ -325,15 +327,6 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
                 slot: None,
                 needs: Vec::new(),
             }],
-            permissions: KitPermissions {
-                reads: owned(&[
-                    "GET /studio-usage/v1/costs",
-                    "GET /studio-usage/v1/prices",
-                    "GET /studio-usage/v1/budgets",
-                    "GET /studio-usage/v1/budget-status",
-                ]),
-                ..KitPermissions::default()
-            },
             ..KitContents::default()
         },
         // `api-docs-mfe`, opened from the product menu: the gateway's
@@ -347,20 +340,16 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
                 slot: Some("product-menu".to_owned()),
                 needs: Vec::new(),
             }],
-            permissions: KitPermissions {
-                reads: owned(&["GET /openapi.json"]),
-                ..KitPermissions::default()
-            },
             ..KitContents::default()
         },
         // `components-mfe` (ADR-0042, ADR-0046): the platform's catalogue,
         // its gear repositories and the publication requests it answers;
-        // the organization's catalogue and registry; and a project's
-        // inventory, which has no screen in the new portal yet. The routes
-        // are the ones the old prototype's screens call
+        // and the organization's catalogue and registry. A project's
+        // inventory (Components) is product-releases' since ADR-0071 step 4.
+        // The routes are the ones the old prototype's screens call
         // (`components-catalog`, `component-registry`,
         // `catalogue-levels-view`, `platform-sources`,
-        // `publication-requests`, `project-components-view`).
+        // `publication-requests`).
         "components" => KitContents {
             screens: vec![
                 tab("platform", "Components", Some("/platform/components")),
@@ -371,246 +360,45 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
                     Some("/platform/publication-requests"),
                 ),
                 tab("organization", "Components", Some("/components")),
-                project_tab("Components", Some("/project-components")),
             ],
-            permissions: KitPermissions {
-                reads: owned(&[
-                    "GET /studio-components-catalog/v1/components",
-                    "GET /studio-components-catalog/v1/components/{name}/docs",
-                    "GET /studio-components-catalog/v1/profiles",
-                    "GET /studio-components-catalog/v1/versions",
-                    "GET /studio-components-catalog/v1/component-values",
-                    "GET /studio-components-catalog/v1/component-history",
-                    "GET /studio-components-catalog/v1/field-schemas",
-                    "GET /studio-components-catalog/v1/sources",
-                    "GET /studio-components-catalog/v1/platform/sources",
-                    "GET /studio-components-catalog/v1/platform/pins",
-                    "GET /studio-components-catalog/v1/platform/publication-requests",
-                    "GET /studio-components-catalog/v1/platform/curators",
-                    "GET /studio-components-catalog/v1/publications",
-                    "GET /studio-components-catalog/v1/registry",
-                    "GET /studio-components-catalog/v1/registry/{name}",
-                    "GET /studio-components-catalog/v1/registry/{name}/readiness",
-                    "POST /studio-components-catalog/v1/registry/{name}/suggest",
-                    "GET /studio-components-catalog/v1/registry/projects",
-                    "GET /studio-components-catalog/v1/registry/excluded-projects",
-                    "GET /studio-components-catalog/v1/registry/gear-repository",
-                    "GET /studio-components-catalog/v1/project-components",
-                    "GET /studio-tasks/v1/runs/{id}",
-                    "GET /studio-kits/v1/catalog",
-                    "GET /studio-product/v1/gearbox",
-                    "GET /studio-product/v1/projects/{project_id}/product",
-                    "GET /studio-connector/v1/connections",
-                    "POST /studio-connector/v1/connections/{id}/test",
-                    "GET /studio-user/v1/me",
-                    "GET /studio-user/v1/me/colleagues",
-                    "GET /studio-user/v1/organizations/{org_id}/members",
-                    "GET /studio-documents/v1/workspaces/{workspace_id}/capabilities",
-                    "GET /studio-documents/v1/project-domain-model",
-                    "GET /studio-documents/v1/project-domain-model/glossary",
-                    "GET /studio-spec-mapping/v1/plan",
-                    "GET /studio-spec-mapping/v1/capabilities",
-                    "POST /studio-spec-mapping/v1/conformance",
-                ]),
-                writes: owned(&[
-                    "POST /studio-components-catalog/v1/sync",
-                    "POST /studio-components-catalog/v1/platform/sync",
-                    "POST /studio-components-catalog/v1/project-catalogue/sync",
-                    "PUT /studio-components-catalog/v1/sources",
-                    "PUT /studio-components-catalog/v1/platform/sources",
-                    "PUT /studio-components-catalog/v1/platform/pins",
-                    "PUT /studio-components-catalog/v1/platform/curators",
-                    "POST /studio-components-catalog/v1/platform/publication-requests/{name}/decisions",
-                    "POST /studio-components-catalog/v1/publications",
-                    "POST /studio-components-catalog/v1/publications/{id}/decisions",
-                    "POST /studio-components-catalog/v1/components/{name}/profile",
-                    "POST /studio-components-catalog/v1/registry/{name}/decisions",
-                    "POST /studio-components-catalog/v1/registry/{name}/declare",
-                    "PUT /studio-components-catalog/v1/registry/excluded-projects",
-                    "PUT /studio-components-catalog/v1/registry/gear-repository",
-                    "DELETE /studio-components-catalog/v1/registry/gear-repository",
-                    "POST /studio-components-catalog/v1/registry/gear-repository/create",
-                    "POST /studio-components-catalog/v1/registry/scaffold",
-                    "POST /studio-connector/v1/connections",
-                    "PATCH /studio-connector/v1/connections/{id}",
-                    "DELETE /studio-connector/v1/connections/{id}",
-                ]),
-                ..KitPermissions::default()
-            },
             ..KitContents::default()
         },
+        // From a build to a running environment (ADR-0071 §6, step 5:
+        // org-infrastructure and product-releases' Releases, merged).
         // `infrastructure-mfe` (ADR-0056 §2): the places an organization
         // holds, the environments on them, their namespaces, registries and
-        // image retention, and the deploys waiting on a decision. The routes
-        // are the ones the old prototype's `OrgInfrastructure` calls
-        // (`environments-screen`, `namespace-assignments-view`,
-        // `registry-browser-view`).
-        "org-infrastructure" => KitContents {
-            screens: vec![tab(
-                "organization",
-                "Infrastructure",
-                Some("/infrastructure"),
-            )],
-            permissions: KitPermissions {
-                reads: owned(&[
-                    "GET /studio-environments/v1/environments",
-                    "GET /studio-environments/v1/environments/{environment_id}/readiness",
-                    "POST /studio-environments/v1/environments/{environment_id}/test",
-                    "GET /studio-environments/v1/deployments",
-                    "GET /studio-environments/v1/deployments/{deployment_id}/status",
-                    "GET /studio-environments/v1/deployments/{deployment_id}/logs",
-                    "GET /studio-environments/v1/research/projects",
-                    "GET /studio-environments/v1/research/projects/{project}/hardware",
-                    "GET /studio-environments/v1/namespace-assignments",
-                    "GET /studio-environments/v1/image-retention",
-                    "GET /studio-environments/v1/registries",
-                    "GET /studio-environments/v1/registries/{connection_id}/repositories",
-                    "GET /studio-environments/v1/registries/{connection_id}/repositories/{repository}/tags",
-                    "GET /studio-environments/v1/registries/{connection_id}/orphans",
-                    "GET /studio-connector/v1/connections",
-                    "POST /studio-connector/v1/connections/{id}/test",
-                    // Whether a Research place may be added (constructor-research).
-                    "GET /studio-kits/v1/installed-kits",
-                ]),
-                writes: owned(&[
-                    "POST /studio-environments/v1/environments",
-                    "PUT /studio-environments/v1/environments/{environment_id}",
-                    "DELETE /studio-environments/v1/environments/{environment_id}",
-                    "PUT /studio-environments/v1/open-clusters",
-                    "POST /studio-environments/v1/deployments/{deployment_id}/decisions",
-                    "PUT /studio-environments/v1/namespace-assignments",
-                    "PUT /studio-environments/v1/image-retention",
-                    "DELETE /studio-environments/v1/registries/{connection_id}/repositories/{repository}/versions/{digest}",
-                ]),
-                ..KitPermissions::default()
-            },
-            ..KitContents::default()
-        },
-        // A project's Product (ADR-0043, ADR-0045, ADR-0056) — its map,
-        // configurator, frontend and description — and its Releases: builds,
-        // images, its own environments and deploys. Neither has a screen in
-        // the new portal yet. The routes are the ones the old prototype's
-        // `product-*-view`, `frontend-constructor-view`, `kits` (its product
-        // part), `releases-tab`, `builds-tab`, `deploy-actions`,
-        // `project-images` and `ProjectEnvironments` call.
-        "product-releases" => KitContents {
+        // image retention, and the deploys waiting on a decision; and
+        // `releases-mfe`: a project's builds, images, its own environments
+        // and deploys up the ladder.
+        "delivery" => KitContents {
             screens: vec![
-                project_tab("Product", Some("/product")),
+                tab("organization", "Infrastructure", Some("/infrastructure")),
                 project_tab("Releases", Some("/releases")),
             ],
-            permissions: KitPermissions {
-                reads: owned(&[
-                    "GET /studio-product/v1/projects/{project_id}/product",
-                    "POST /studio-product/v1/projects/{project_id}/product/preview",
-                    "GET /studio-product/v1/projects/{project_id}/gear-repo",
-                    "GET /studio-product/v1/product-description",
-                    "GET /studio-product/v1/product-description-revisions",
-                    "GET /studio-product/v1/product-description-revisions/{revision}",
-                    "GET /studio-product/v1/product-description-branches",
-                    "POST /studio-product/v1/product-description-outlines",
-                    "GET /studio-product/v1/product-infra",
-                    "GET /studio-product/v1/product-kind",
-                    "GET /studio-product/v1/gdl-file",
-                    "GET /studio-product/v1/gearbox",
-                    "GET /studio-product/v1/gearbox/catalogue",
-                    "POST /studio-product/v1/gearbox/complete",
-                    "POST /studio-product/v1/gearbox/brings",
-                    "POST /studio-product/v1/gearbox/config-schema",
-                    "GET /studio-product/v1/gear-explanations",
-                    "GET /studio-components-catalog/v1/components",
-                    "GET /studio-components-catalog/v1/profiles",
-                    "GET /studio-components-catalog/v1/sources",
-                    "GET /studio-components-catalog/v1/screen-previews",
-                    "GET /studio-components-catalog/v1/project-components",
-                    "GET /studio-environments/v1/targets",
-                    // The project's path to running (#1050), one read.
-                    "GET /studio-environments/v1/project-path",
-                    "GET /studio-environments/v1/config-secrets",
-                    "GET /studio-environments/v1/deployments/{deployment_id}",
-                    // The Research targets of the one deploy dialog (#1053),
-                    // answered only where constructor-research applies.
-                    "GET /studio-environments/v1/research/my-projects",
-                    "GET /studio-environments/v1/research/my-projects/{research_project}/hardware",
-                    "GET /studio-environments/v1/environments",
-                    "GET /studio-environments/v1/environments/{environment_id}/infra-plan",
-                    "GET /studio-environments/v1/project-environments",
-                    "GET /studio-environments/v1/infra-services",
-                    "GET /studio-environments/v1/project-build",
-                    "POST /studio-environments/v1/builds/plan",
-                    "GET /studio-environments/v1/builds/{build_id}/log",
-                    "GET /studio-environments/v1/deployments",
-                    "GET /studio-environments/v1/deployments/{deployment_id}/status",
-                    "GET /studio-environments/v1/deployments/{deployment_id}/logs",
-                    "GET /studio-environments/v1/images",
-                    "GET /studio-environments/v1/images/{image_id}",
-                    "GET /studio-environments/v1/image-retention",
-                    "GET /studio-artifact-ingest/v1/nodes",
-                    "GET /studio-tasks/v1/runs/{id}",
-                    "GET /studio-connector/v1/connections",
-                    "GET /studio-documents/v1/workspaces/{workspace_id}/capabilities",
-                    "GET /studio-documents/v1/project-domain-model",
-                    "GET /studio-documents/v1/project-domain-model/glossary",
-                    "GET /studio-spec-mapping/v1/plan",
-                    "GET /studio-spec-mapping/v1/capabilities",
-                    "GET /studio-spec-mapping/v1/requirements",
-                    "POST /studio-spec-mapping/v1/conformance",
-                ]),
-                writes: owned(&[
-                    "PUT /studio-product/v1/projects/{project_id}/product",
-                    "POST /studio-product/v1/product-description-revisions",
-                    "PUT /studio-product/v1/product-infra",
-                    "PUT /studio-product/v1/product-kind",
-                    "PUT /studio-product/v1/gear-explanations/{gear_id}",
-                    "POST /studio-product/v1/gear-explanations/{gear_id}/generations",
-                    "POST /studio-spec-mapping/v1/decisions",
-                    "POST /studio-components-catalog/v1/sync",
-                    "PUT /studio-components-catalog/v1/sources",
-                    "PUT /studio-environments/v1/bindings",
-                    "PUT /studio-environments/v1/infra-services",
-                    "PUT /studio-environments/v1/project-build",
-                    "POST /studio-environments/v1/project-environments",
-                    "PUT /studio-environments/v1/project-environments/{environment_id}",
-                    "DELETE /studio-environments/v1/project-environments/{environment_id}",
-                    "POST /studio-environments/v1/builds",
-                    "POST /studio-environments/v1/build-workflows",
-                    "POST /studio-artifact-ingest/v1/builds/dispatch",
-                    "POST /studio-environments/v1/deployments",
-                    "POST /studio-environments/v1/deployments/{deployment_id}/decisions",
-                    "DELETE /studio-environments/v1/previews/{deployment_id}",
-                    "PUT /studio-environments/v1/config-secrets/{key}",
-                    "DELETE /studio-environments/v1/config-secrets/{key}",
-                    "POST /studio-environments/v1/images/imports",
-                    "POST /studio-environments/v1/images/{image_id}/promotions",
-                    "PUT /studio-environments/v1/images/{image_id}/pin",
-                    "DELETE /studio-environments/v1/images/{image_id}/pin",
-                    "DELETE /studio-environments/v1/images/{image_id}",
-                    "PUT /studio-environments/v1/image-retention",
-                ]),
-                ..KitPermissions::default()
-            },
             ..KitContents::default()
         },
-        // The Project domain model (ADR-0066, ADR-0067; not the Studio domain
-        // model): the model a project's documents make, the findings and
-        // issues they leave to decide, the glossary, traces to work. The
-        // portal's screen is `domain-model-mfe`; the routes are the ones the
-        // old prototype's `spec-model-tab` called, under their new path.
-        // `admin-mfe`'s Integrations section, shown for the organization in
-        // scope. Admin › Integrations stays the platform administrator's.
-        "org-connections" => KitContents {
-            screens: vec![tab("organization", "Connections", Some("/connections"))],
+        // What a project's product is made of (ADR-0071 §6, step 5: Product
+        // out of product-releases): `product-mfe`'s Product — its map,
+        // configurator, frontend and description — and the project's
+        // Components, its inventory (ADR-0043, ADR-0045, ADR-0056).
+        "project-product" => KitContents {
+            screens: vec![
+                project_tab("Product", Some("/product")),
+                project_tab("Components", Some("/project-components")),
+            ],
             ..KitContents::default()
         },
+        "gears-project" => KitContents::default(),
         // Building and running a product in Constructor Research (ADR-0049,
         // docs/design/studio-kits.md §3.13). Not a base kit by default
         // (`OPT_IN_BUILTIN`); installed for an organization or one project.
         // Its screen is Organization › Constructor Research, an entry
         // of `infrastructure-mfe`; a project's build, deploy and rollback to
-        // Research stay on its Releases tab (product-releases), and
+        // Research stay on its Releases tab (delivery, which it requires), and
         // studio-environments refuses them with `KIT_NOT_INSTALLED` where
         // this kit is not installed. Where it applies, the project's path
         // answers `research_kit` and the one "Deploy to…" dialog of
-        // product-releases lists the caller's Research projects as a target
+        // delivery's Releases lists the caller's Research projects as a target
         // (#1053); without it the target is absent.
         "constructor-research" => KitContents {
             // Its Inbox sources, MCP tools and the routes behind the sources
@@ -621,52 +409,35 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
                 "Constructor Research",
                 Some("/constructor-research"),
             )],
-            permissions: KitPermissions {
-                reads: owned(&[
-                    "GET /studio-environments/v1/environments",
-                    "POST /studio-environments/v1/environments/{environment_id}/test",
-                    "GET /studio-environments/v1/research/projects",
-                    "GET /studio-environments/v1/research/projects/{project}/hardware",
-                    // The Research target it adds to product-releases' one
-                    // deploy dialog (#1053): the caller's own projects and
-                    // hardware, the deploy, its log and where it answers.
-                    "GET /studio-environments/v1/research/my-projects",
-                    "GET /studio-environments/v1/research/my-projects/{research_project}/hardware",
-                    "GET /studio-environments/v1/deployments",
-                    "GET /studio-environments/v1/deployments/{deployment_id}",
-                    "GET /studio-environments/v1/deployments/{deployment_id}/status",
-                    "GET /studio-environments/v1/deployments/{deployment_id}/logs",
-                    "GET /studio-environments/v1/builds/{build_id}/log",
-                    "GET /studio-connector/v1/connections",
-                ]),
-                writes: owned(&[
-                    "POST /studio-environments/v1/environments",
-                    "PUT /studio-environments/v1/environments/{environment_id}",
-                    "POST /studio-environments/v1/project-environments",
-                    "POST /studio-environments/v1/builds",
-                    "POST /studio-environments/v1/deployments",
-                ]),
-                ..KitPermissions::default()
-            },
             ..KitContents::default()
         },
-        // `team-mfe`: a project's Team, the role grants scoped to it in the
-        // organization's access config. That config is account-management's
-        // tenant metadata (read and written whole, as the old prototype did),
-        // a platform route outside this backend's contract, so it is not
-        // listed here.
-        "project-team" => KitContents {
-            screens: vec![project_tab("Team", Some("/projects/team"))],
-            permissions: KitPermissions {
-                reads: owned(&[
-                    "GET /studio-user/v1/organizations/{org_id}/members",
-                    "GET /studio-user/v1/me/colleagues",
-                    "GET /studio-organizations/v1/access-catalogue",
-                ]),
-                ..KitPermissions::default()
-            },
+        // What the gears-matcher service reads in a project's specifications
+        // (ADR-0072, docs/design/product-gear-match.md). Not a base kit by
+        // default (`OPT_IN_BUILTIN`); requires project-product, whose product
+        // its proposals go into. Its screens are `product-mfe`'s second entry:
+        // Project › Gear match (was a section of Project › Product) and
+        // Organization › Gears matcher, where the organization's default way
+        // of assembling a product is set. The code stays in studio-product;
+        // the kit claims its gear-match writes and tools, so they answer
+        // `KIT_NOT_INSTALLED` where it does not apply, and the product's
+        // `gears_matcher` assembly strategy is offered only where it does.
+        "gears-matcher" => KitContents {
+            // Its Inbox source, MCP tools and claims are in its compiled-in
+            // kit.json (`builtin/gears-matcher.kit.json`).
+            screens: vec![
+                project_tab("Gear match", Some("/gear-match")),
+                tab("organization", "Gears matcher", Some("/gears-matcher")),
+            ],
             ..KitContents::default()
         },
+        // studio-spec-mapping's plan (ADR-0074). No screen of its own: the
+        // plan is drawn inside other kits' screens -- Project › Components'
+        // plan, the product map's spec plan, the gear match's "also in the
+        // spec plan" -- which hide it where this kit does not apply (the plan
+        // then answers `KIT_NOT_INSTALLED`). A base kit by default that an
+        // organization may uninstall; its tools and the decision route are
+        // claimed in `builtin/spec-mapping.kit.json`.
+        "spec-mapping" => KitContents::default(),
         // `assistant-mfe`: Studio AI, docked in the shell's sidebar beside
         // whatever screen is open (the old prototype's `studio-ai.tsx`). No
         // route: it is not a tab. It answers through studio-llm-proxy on the
@@ -682,60 +453,29 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
                 slot: Some("sidebar".to_owned()),
                 needs: Vec::new(),
             }],
-            permissions: KitPermissions {
-                reads: owned(&[
-                    "GET /studio-llm/v1/client-config",
-                    "GET /studio-llm/v1/workspaces/{workspace_id}/client-config",
-                    "POST /studio-llm/v1/chat/completions",
-                    "POST /studio-llm/v1/workspaces/{workspace_id}/chat/completions",
-                ]),
-                ..KitPermissions::default()
-            },
             ..KitContents::default()
         },
-        // `project-git`: a Git host's workflow (ADR-0070 phase 5, #1036): the
-        // pull requests of a project's repositories, `repository.hosts`. No
-        // screen of its own yet; its Inbox source and status signal follow
-        // with #1039. The model comes from its `kit.json`.
-        "project-git" => KitContents::default(),
+        // `project-git`, Git collaboration (ADR-0071 §6, step 5): work on a
+        // Git host — pull requests (`repository.hosts`), tracker issues
+        // (`work-item`, from project-issues) and the discussion on both
+        // (`comment`) — and the project's Activity (`activity-mfe`, from
+        // project-activity). The model comes from its `kit.json`.
+        "project-git" => KitContents {
+            screens: vec![project_tab("Activity", Some("/projects/activity"))],
+            ..KitContents::default()
+        },
+        // The Project model (ADR-0066, ADR-0067; not the Studio domain model):
+        // the model a project's documents make, the glossary, traces to work
+        // (`domain-model-mfe`; the routes are the ones the old prototype's
+        // `spec-model-tab` called, under their new path). Its open questions (`issues-mfe`, the prototype's Issues tab, at
+        // `/issues`) moved here from `project-issues` with `finding`: they
+        // are what the project's documents leave to decide (ADR-0071 step 4,
+        // open question 2: the tab is "Open questions").
         "project-domain-model" => KitContents {
-            screens: vec![project_tab("Project domain model", Some("/domain-model"))],
-            permissions: KitPermissions {
-                reads: owned(&[
-                    "GET /studio-documents/v1/project-domain-model",
-                    "GET /studio-documents/v1/project-domain-model/build-estimate",
-                    "GET /studio-documents/v1/project-domain-model/findings",
-                    "GET /studio-documents/v1/project-domain-model/reviews",
-                    "GET /studio-documents/v1/project-domain-model/requirements",
-                    "GET /studio-documents/v1/project-domain-model/related",
-                    "GET /studio-documents/v1/project-domain-model/trace",
-                    "GET /studio-documents/v1/project-domain-model/work",
-                    "GET /studio-documents/v1/project-domain-model/check-methods",
-                    "GET /studio-documents/v1/project-domain-model/glossary",
-                    "GET /studio-documents/v1/project-domain-model/glossary/document",
-                    "GET /studio-spec-mapping/v1/findings",
-                    "GET /studio-spec-mapping/v1/plan",
-                    "GET /studio-kits/v1/projects/{project_id}/installations",
-                    "GET /studio-user/v1/organizations/{org_id}/members",
-                    "GET /studio-user/v1/organizations/{org_id}/members/{user_id}/identities",
-                ]),
-                writes: owned(&[
-                    "POST /studio-documents/v1/project-domain-model/builds",
-                    "POST /studio-documents/v1/project-domain-model/entities",
-                    "POST /studio-documents/v1/project-domain-model/reviews",
-                    "POST /studio-documents/v1/project-domain-model/issues",
-                    "POST /studio-documents/v1/project-domain-model/findings/{fingerprint}/decision",
-                    "POST /studio-documents/v1/project-domain-model/findings/{fingerprint}/proposals",
-                    "POST /studio-documents/v1/project-domain-model/files/proposals",
-                    "POST /studio-documents/v1/project-domain-model/sentences/proposals",
-                    "POST /studio-documents/v1/project-domain-model/glossary/decisions",
-                    "POST /studio-documents/v1/project-domain-model/glossary/distinct",
-                    "POST /studio-documents/v1/project-domain-model/glossary/proposals",
-                    "POST /studio-documents/v1/project-domain-model/glossary/document/proposals",
-                    "POST /studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/documents",
-                ]),
-                ..KitPermissions::default()
-            },
+            screens: vec![
+                project_tab("Project domain model", Some("/domain-model")),
+                project_tab("Open questions", Some("/issues")),
+            ],
             ..KitContents::default()
         },
         _ => return None,
@@ -781,12 +521,20 @@ fn same_repository(left: &str, right: &str) -> bool {
 /// What an official kit brings, from the copy of its manifest -- only when
 /// the catalogue offers it from that repository at that commit.
 fn official_contents(kit: &KitDescriptor) -> Option<KitContents> {
-    let copy = MANIFEST_COPIES.iter().find(|copy| {
-        copy.slug == kit.slug
-            && copy.commit == kit.default_version
-            && same_repository(copy.repository_url, &kit.repository_url)
-    })?;
-    read_manifest(copy.body, copy.slug)
+    read_manifest(official_manifest_text(kit)?, &kit.slug)
+}
+
+/// The copy of an official kit's `.cf-studio-kit.toml`, as written, when the
+/// catalogue offers it from that repository at that commit.
+pub fn official_manifest_text(kit: &KitDescriptor) -> Option<&'static str> {
+    MANIFEST_COPIES
+        .iter()
+        .find(|copy| {
+            copy.slug == kit.slug
+                && copy.commit == kit.default_version
+                && same_repository(copy.repository_url, &kit.repository_url)
+        })
+        .map(|copy| copy.body)
 }
 
 /// The material and artifact kinds of kit `slug` in a `.cf-studio-kit.toml`

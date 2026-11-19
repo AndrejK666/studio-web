@@ -49,6 +49,7 @@ import {
 import { useOverviewSectionTranslations } from '../../../../i18n';
 import styles from './OverviewSection.module.css';
 import { PhaseChip } from './PhaseChip';
+import { NextSteps } from './NextSteps';
 
 type Text = ReturnType<typeof useOverviewSectionTranslations>['t'];
 
@@ -117,6 +118,14 @@ export const OverviewSection: React.FC<{ projectId: string }> = ({ projectId }) 
     <>
       {/* Project lifecycle's phase, only where the kit applies. */}
       <PhaseChip projectId={projectId} t={t} />
+      {/* What the project's type says to do next, until done or dismissed. */}
+      <NextSteps
+        projectId={projectId}
+        path={read.data.path}
+        t={t}
+        reachRoute={(route) => (availability.route(route) ? route : null)}
+        open={open}
+      />
       <StatusView
         status={read.data}
         t={t}

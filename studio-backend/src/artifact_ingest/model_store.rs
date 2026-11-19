@@ -245,7 +245,7 @@ const GEAR: &str = "studio-artifact-ingest";
 const SHARED_KINDS: [&str; 3] = ["work-item", "comment", "finding"];
 
 /// The types and relations the model needs before the first write.
-fn needs() -> Vec<TypeNeed> {
+pub(super) fn needs() -> Vec<TypeNeed> {
     let new_type = |id: &str, name: &str, description: &str| TypeNeed {
         declared_by: GEAR.to_owned(),
         id: id.to_string(),
@@ -513,6 +513,10 @@ impl ModelGraphStore {
     async fn move_tenant(&self, ctx: &SecurityContext) -> anyhow::Result<()> {
         let port = self.port()?;
         self.ensure_types(ctx, port.as_ref()).await?;
+        // Asked before the walk, not learnt from the first write after it: a
+        // refused move used to read the whole old store first (10 000+ nodes
+        // on Dev), fail, and do it again at every retry.
+        self.may_move(ctx, port.as_ref()).await?;
         let mut moved: Vec<GtsNode> = Vec::new();
         for (artifact_type, _) in KINDS {
             let found = self.legacy.list(ctx, Some(artifact_type)).await?;
@@ -560,6 +564,37 @@ impl ModelGraphStore {
             skipped,
             "studio-artifact-ingest: artifacts moved into the domain model"
         );
+        Ok(())
+    }
+
+    /// May this caller write what the move writes? Every model type an
+    /// artifact becomes and the marker, organization-wide: the grant the
+    /// sweep's identity needs in the tenant. A refusal names the subject, the
+    /// type and the owner (`check_put`), so the cause is in the log.
+    async fn may_move(
+        &self,
+        ctx: &SecurityContext,
+        port: &dyn DomainObjects,
+    ) -> anyhow::Result<()> {
+        let org = [String::new()];
+        let mut entities: Vec<&str> = KINDS.iter().map(|(_, entity)| *entity).collect();
+        entities.push("sync-state");
+        entities.sort_unstable();
+        entities.dedup();
+        for entity in entities {
+            if let Err(e) = port.check_put(ctx, entity, &org).await {
+                warn!(
+                    tenant = %ctx.subject_tenant_id(),
+                    subject = %ctx.subject_id(),
+                    entity,
+                    error = %format!("{e:#}"),
+                    "studio-artifact-ingest: the move into the domain model is refused before reading the old store"
+                );
+                return Err(e.context(format!(
+                    "the artifact move may not write `{entity}` objects in this tenant; the old store was not read"
+                )));
+            }
+        }
         Ok(())
     }
 
@@ -1043,12 +1078,47 @@ impl GraphStore for ModelGraph {
         ctx: &SecurityContext,
         scope: &str,
     ) -> anyhow::Result<Vec<IngestedFile>> {
+        let s = &self.0;
+        if !s.ready(ctx).await {
+            // The old store's own file read: the index reads three columns.
+            return s.legacy.files_in_scope(ctx, scope).await;
+        }
         Ok(self
             .list_in_scope(ctx, Some(gts::FILE_TYPE), scope)
             .await?
             .iter()
             .filter_map(ingested_file)
             .collect())
+    }
+
+    async fn repos_of_files(
+        &self,
+        ctx: &SecurityContext,
+        scope: &str,
+        node_ids: &[String],
+    ) -> anyhow::Result<HashMap<String, String>> {
+        let s = &self.0;
+        if !s.ready(ctx).await {
+            return s.legacy.repos_of_files(ctx, scope, node_ids).await;
+        }
+        super::graph::repos_of_listed_files(self, ctx, scope, node_ids).await
+    }
+
+    async fn repo_activity(
+        &self,
+        ctx: &SecurityContext,
+        scope: &str,
+        now: i64,
+        days: usize,
+    ) -> anyhow::Result<std::collections::BTreeMap<String, super::activity::RepoActivity>> {
+        let s = &self.0;
+        if !s.ready(ctx).await {
+            return s.legacy.repo_activity(ctx, scope, now, days).await;
+        }
+        // The model's types do not declare the fields the window is on
+        // (`created_at` of a commit, `merged` of a pull request), so it
+        // cannot count them: both are read, side by side.
+        super::graph::activity_of_listing(self, ctx, scope, now, days).await
     }
 
     async fn page(
@@ -1242,6 +1312,25 @@ impl GraphStore for ReturningGraph {
     ) -> anyhow::Result<Vec<IngestedFile>> {
         self.0.back_to_graph(ctx).await;
         self.0.legacy.files_in_scope(ctx, scope).await
+    }
+    async fn repos_of_files(
+        &self,
+        ctx: &SecurityContext,
+        scope: &str,
+        node_ids: &[String],
+    ) -> anyhow::Result<HashMap<String, String>> {
+        self.0.back_to_graph(ctx).await;
+        self.0.legacy.repos_of_files(ctx, scope, node_ids).await
+    }
+    async fn repo_activity(
+        &self,
+        ctx: &SecurityContext,
+        scope: &str,
+        now: i64,
+        days: usize,
+    ) -> anyhow::Result<std::collections::BTreeMap<String, super::activity::RepoActivity>> {
+        self.0.back_to_graph(ctx).await;
+        self.0.legacy.repo_activity(ctx, scope, now, days).await
     }
     async fn page(
         &self,

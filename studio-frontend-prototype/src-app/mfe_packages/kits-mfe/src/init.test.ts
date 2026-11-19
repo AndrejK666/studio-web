@@ -40,6 +40,7 @@ vi.mock('@constructor-studio/mfe-shared', () => ({ authShared }));
 vi.mock('./api/KitsApiService', () => ({
   KitsApiService: class KitsApiService {},
   ConnectionsApiService: class ConnectionsApiService {},
+  KitPageApiService: class KitPageApiService {},
 }));
 
 vi.mock('./slices/homeSlice', () => ({
@@ -67,8 +68,9 @@ describe('_blank-mfe init', () => {
     const module = await import('./init');
 
     // The template's service, the kit library's catalogue, and the
-    // organization's connections (a kit from a repository).
-    expect(register).toHaveBeenCalledTimes(3);
+    // organization's connections (a kit from a repository), and what a kit's
+    // page reads beside them (screen previews, the model).
+    expect(register).toHaveBeenCalledTimes(4);
     expect(initialize).toHaveBeenCalledTimes(1);
     expect(createFrontX).toHaveBeenCalledTimes(1);
     expect(effects).toHaveBeenCalledTimes(1);

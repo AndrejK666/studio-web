@@ -14,6 +14,9 @@ import { useShellText } from '@/app/i18n/shellTranslations';
 import { cn } from '@/app/lib/utils';
 import styles from './LevelTabs.module.css';
 
+/** The panel's width (`.editor`, 20rem) in pixels, with its margin. */
+const EDITOR_WIDTH_PX = 336;
+
 export interface EditorTab {
   /** The tab's model name, what `hidden_tabs` stores. */
   id: string;
@@ -35,6 +38,10 @@ export const LevelTabsEditor: React.FC<LevelTabsEditorProps> = ({ tabs, hidden, 
   const [off, setOff] = useState<Set<string> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // The panel hangs from the button's end; a button near the left edge (the
+  // tab row wrapped, and Tabs starts its second line) hangs it from its start
+  // instead, or the panel opens off the screen.
+  const [fromStart, setFromStart] = useState(false);
   const panel = useRef<HTMLDivElement | null>(null);
   const editing = off !== null;
 
@@ -85,6 +92,8 @@ export const LevelTabsEditor: React.FC<LevelTabsEditorProps> = ({ tabs, hidden, 
             return;
           }
           setError(null);
+          const at = panel.current?.getBoundingClientRect();
+          setFromStart(!!at && at.right < EDITOR_WIDTH_PX);
           setOff(new Set(hidden.filter((name) => ids.includes(name))));
         }}
       >
@@ -92,7 +101,7 @@ export const LevelTabsEditor: React.FC<LevelTabsEditorProps> = ({ tabs, hidden, 
         {t('level_tabs_customize')}
       </button>
       {off && (
-        <div className={styles.editor} role="dialog" aria-label={t('level_tabs_customize_title')}>
+        <div className={cn(styles.editor, fromStart && styles.editorFromStart)} role="dialog" aria-label={t('level_tabs_customize_title')}>
           <strong>{t('level_tabs_customize_title')}</strong>
           <p className={styles.editorNote}>{t('level_tabs_customize_note')}</p>
           <ul className={styles.editorList}>

@@ -19,6 +19,7 @@ vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
 vi.mock('./map/ProductMap', () => ({ ProductMap: () => <div data-testid="map" /> }));
 vi.mock('./configurator/ProductBackend', () => ({ ProductBackend: () => <div data-testid="backend" /> }));
 vi.mock('./flow/ProductFlow', () => ({ ProductFlow: () => null }));
+vi.mock('./assembly/AssemblyPanel', () => ({ AssemblyPanel: () => <div data-testid="assembly" /> }));
 vi.mock('./flow/ProductKindStep', () => ({ ProductKindStep: () => null }));
 vi.mock('./frontend/ProductFrontend', () => ({ ProductFrontend: () => <div data-testid="frontend" /> }));
 vi.mock('./infra/ProductInfrastructure', () => ({ ProductInfrastructure: () => <div data-testid="infra" /> }));

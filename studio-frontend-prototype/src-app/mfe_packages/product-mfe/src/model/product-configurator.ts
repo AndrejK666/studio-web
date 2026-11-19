@@ -594,3 +594,38 @@ export async function inBatches<T>(
   await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, lane));
   return r;
 }
+
+/**
+ * Every name the catalogue knows a gear by: its engine id (`durable-execution`,
+ * what the product's picks and the gears matcher spell) and its crate
+ * (`cf-gears-durable-execution`, what the spec plan spells). A set of only
+ * one spelling made every gear the matcher proposed "not in the catalogue".
+ */
+export function catalogueNames(index: CatalogueIndex): Set<string> {
+  const out = new Set<string>();
+  for (const g of index.gears) {
+    out.add(g.id);
+    if (g.package?.crate_name) out.add(g.package.crate_name);
+    out.add(index.name(g));
+  }
+  return out;
+}
+
+/**
+ * The product's picks under every name the catalogue knows them by, so a
+ * pick spelled by its id answers a candidate spelled by its crate and the
+ * other way round. Names the catalogue does not know stay as they are.
+ */
+export function pickNames(picks: readonly string[], index: CatalogueIndex | null): string[] {
+  if (!index) return [...picks];
+  const out = new Set(picks);
+  for (const p of picks) {
+    const g = index.find(p);
+    if (g) {
+      out.add(g.id);
+      if (g.package?.crate_name) out.add(g.package.crate_name);
+      out.add(index.name(g));
+    }
+  }
+  return [...out];
+}

@@ -33,6 +33,8 @@ import type {
   RunState,
 } from './types';
 
+import type { StrategyId } from '../model/assembly';
+
 export * from './types';
 
 /** Fired with the project's id after its product record was written. */
@@ -198,6 +200,40 @@ export const api = {
   declaredCapabilities: (_token: string, projectId: string) => svc().declaredCapabilities({ projectId }).fetch(FRESH),
   declaredRequirements: (_token: string, projectId: string) => svc().declaredRequirements({ projectId }).fetch(FRESH),
   projectPlan: (_token: string, projectId: string) => svc().projectPlan({ projectId }).fetch(FRESH),
+
+  startGearMatch: (
+    _token: string,
+    projectId: string,
+    body: { paths?: string[]; glob?: string; extract_max_calls?: number; idempotency_key?: string } = {}
+  ) => svc().startGearMatch(projectId).fetch(body),
+  gearMatches: (_token: string, projectId: string) => svc().gearMatches({ projectId }).fetch(FRESH),
+  gearMatch: (_token: string, projectId: string, matchId = 'latest') => svc().gearMatch({ projectId, matchId }).fetch(FRESH),
+  gearMatchDiff: (_token: string, projectId: string, matchId: string, base?: string) =>
+    svc().gearMatchDiff({ projectId, matchId, base }).fetch(FRESH),
+  cancelGearMatch: (_token: string, projectId: string, matchId: string) =>
+    svc().cancelGearMatch(projectId, matchId).fetch({}),
+  putGearMatchDecision: (
+    _token: string,
+    projectId: string,
+    body: { requirement_id: string; gear_id: string; decision: 'accepted' | 'rejected' | 'undecided'; match_id?: string }
+  ) => svc().putGearMatchDecision(projectId).fetch(body),
+  putGearMatchAnswer: (
+    _token: string,
+    projectId: string,
+    body: { question_id: string; text: string; topic?: string; match_id?: string }
+  ) => svc().putGearMatchAnswer(projectId).fetch(body),
+  assemblyStrategy: (_token: string, projectId: string) => svc().assemblyStrategy({ projectId }).fetch(FRESH),
+  setAssemblyStrategy: (_token: string, projectId: string, strategy: StrategyId | null) =>
+    svc().setAssemblyStrategy(projectId).fetch({ strategy }),
+  organizationAssemblyStrategy: (_token: string, organizationId: string) =>
+    svc().organizationAssemblyStrategy({ organizationId }).fetch(FRESH),
+  gearMatchUsage: (_token: string, organizationId: string, periodDays: number) =>
+    svc().gearMatchUsage({ organizationId, periodDays }).fetch(FRESH),
+  setOrganizationAssemblyStrategy: (
+    _token: string,
+    organizationId: string,
+    strategy: StrategyId | null
+  ) => svc().setOrganizationAssemblyStrategy(organizationId).fetch({ strategy }),
   conformance: (_token: string, projectId: string, capabilities: string[], vocabulary: readonly Capability[]) => {
     const terms: Record<string, string[]> = {};
     const contracts: Record<string, string[]> = {};
@@ -211,6 +247,9 @@ export const api = {
   connections: (_token: string, tenant: string) => svc().connections({ tenant }).fetch(FRESH),
   glossary: (_token: string, projectId: string) => svc().glossary({ projectId }).fetch(FRESH),
   specModel: (_token: string, projectId: string) => svc().specModel({ projectId }).fetch(FRESH),
+  /** The project's sources whose last clone or fetch failed: why a product built from them cannot resolve. */
+  cloneFailures: async (_token: string, projectId: string) =>
+    (await svc().cloneStatus({ projectId }).fetch(FRESH)).items.filter((s) => s.state === 'failed'),
 
   listArtifactNodes: (
     _token: string,

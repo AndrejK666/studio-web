@@ -36,6 +36,9 @@ vi.mock('@gears-frontx/react', async (importOriginal) => ({
     id.includes('screens.available') ? available.value : id.includes('last_event') ? live.value : null,
 }));
 
+// The type's next steps read their own data; NextSteps.test.tsx covers them.
+vi.mock('./NextSteps', () => ({ NextSteps: () => null }));
+
 import { OverviewSection } from './OverviewSection';
 
 const blocked: ProjectStatus = {
@@ -139,7 +142,7 @@ describe('OverviewSection', () => {
   });
 
   it("offers no button to a kit's tab where that kit is not installed for the project", () => {
-    // Releases (product-releases) and Specs (project-specs) are not installed here.
+    // Releases (delivery) and Specs (project-specs) are not installed here.
     available.value = { routes: ['/projects/overview', '/projects/sources', '/space'], kits: [] };
     render(<OverviewSection projectId="p1" />);
     expect(screen.queryByRole('button', { name: 'Open Releases' })).toBeNull();
@@ -160,8 +163,8 @@ describe('OverviewSection', () => {
     };
     const named: ProjectStatus = {
       ...blocked,
-      signals: blocked.signals.map((s) => ({ ...s, kit: s.key === 'build' ? 'product-releases' : 'project-git' })),
-      path: blocked.path.map((p) => ({ ...p, kit: p.step === 'types' ? 'project-specs' : p.step === 'build' ? 'product-releases' : null })),
+      signals: blocked.signals.map((s) => ({ ...s, kit: s.key === 'build' ? 'delivery' : 'project-git' })),
+      path: blocked.path.map((p) => ({ ...p, kit: p.step === 'types' ? 'project-specs' : p.step === 'build' ? 'delivery' : null })),
       kits: ['project-specs'],
     };
     query.mockReturnValue(ok(named));

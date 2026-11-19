@@ -263,10 +263,6 @@
   white-space: nowrap;
 }
 
-.search {
-  max-width: 20rem;
-}
-
 .next {
   display: flex;
   flex-wrap: wrap;

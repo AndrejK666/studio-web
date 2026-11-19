@@ -14,18 +14,9 @@ import {
   useMfeBridge,
   useSharedProperty,
 } from "@gears-frontx/react";
-import { Folder } from "lucide-react";
+import { Button, Skeleton } from "@gears-frontx/ui-kit";
 import {
-  Button,
-  Empty,
-  EmptyActions,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-  Skeleton,
-} from "@gears-frontx/ui-kit";
-import {
+  openPlace,
   useOrganization,
   AccountsApiService,
   STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE,
@@ -37,16 +28,18 @@ import { OverviewApiService } from "../../api/OverviewApiService";
 import { ConfirmDialog, NameDialog } from "../../components/dialogs";
 import { useWorkspacesScreenTranslations, useWorkspacesText } from "../../i18n";
 import { WorkspacesToolbar } from "./components/WorkspacesToolbar";
-import { WorkspacesTable } from "./components/WorkspacesTable";
-import { healthOf, visibleWorkspaces, type ManagedFilter } from "./model";
+import { WorkspacesGrid } from "./components/WorkspacesGrid";
+import { healthOf, projectCountOf } from "./model";
 import styles from "./WorkspacesScreen.module.css";
 
 /** A sum in the reader's language and the overview's currency. */
 function money(value: number, currency: string, language: string): string {
+  // A sum that rounds to nothing is $0, not -$0: a forecast or difference can come back as -0.2 (walk 2026-11-16).
+  const whole = Math.round(value) === 0 ? 0 : value;
   try {
-    return new Intl.NumberFormat(language, { style: "currency", currency, maximumFractionDigits: 0 }).format(value);
+    return new Intl.NumberFormat(language, { style: "currency", currency, maximumFractionDigits: 0 }).format(whole);
   } catch {
-    return `${Math.round(value)} ${currency}`;
+    return `${Math.round(whole)} ${currency}`;
   }
 }
 
@@ -58,8 +51,6 @@ const WorkspaceList: React.FC<{
   const bridge = useMfeBridge();
   const accounts = apiRegistry.getService(AccountsApiService);
   const t = useWorkspacesText();
-  const [query, setQuery] = useState("");
-  const [managed, setManaged] = useState<ManagedFilter>("all");
   const [renaming, setRenaming] = useState<Tenant | null>(null);
   const [deleting, setDeleting] = useState<Tenant | null>(null);
   const container = useRef<HTMLDivElement>(null);
@@ -99,13 +90,12 @@ const WorkspaceList: React.FC<{
 
   const all = useMemo(() => data?.items ?? [], [data]);
 
+  // The same count as each row's: the overview's projects, else the child count.
   const projectTotal = useMemo(
-    () => all.reduce((sum, row) => sum + (row.child_count ?? 0), 0),
-    [all],
+    () => all.reduce((sum, row) => sum + (projectCountOf(row, healthOf(overview, row.id)) ?? 0), 0),
+    [all, overview],
   );
 
-  const rows = useMemo(() => visibleWorkspaces(all, query, managed), [all, query, managed]);
-  const narrowed = query.trim() !== "" || managed !== "all";
 
   const health = useCallback((row: Tenant) => healthOf(overview, row.id), [overview]);
   const cash = useCallback(
@@ -118,6 +108,13 @@ const WorkspaceList: React.FC<{
     (row: Tenant) => {
       requestWorkspace(bridge, { id: row.id, name: row.name }, organization.id);
     },
+    [bridge, organization.id],
+  );
+  const openProject = useCallback(
+    (workspaceId: string, projectId: string, failingSpecs = false) => openPlace(bridge, {
+      organizationId: organization.id, workspaceId, projectId,
+      ...(failingSpecs ? { route: '/projects/specs', view: 'failing-specs' } : {}),
+    }),
     [bridge, organization.id],
   );
 
@@ -138,15 +135,11 @@ const WorkspaceList: React.FC<{
   return (
     <div className={styles.screen} ref={container}>
       <WorkspacesToolbar
-        query={query}
-        onQueryChange={setQuery}
         busy={pending}
         canCreate
         total={all.length}
         projectTotal={projectTotal}
         organizationName={organization.name}
-        managed={managed}
-        onManagedChange={setManaged}
       />
 
       <div className={styles.panel}>
@@ -171,48 +164,21 @@ const WorkspaceList: React.FC<{
                 </Button>
               </div>
             )}
-            <WorkspacesTable
-              rows={rows}
-              // The organization's count, not the search's: the caption reads
-              // "1-2 of 10", and passing `rows` would make it say "1-2 of 2".
-              total={all.length}
-              empty={
-                narrowed && all.length > 0 ? (
-                  <Empty className={styles.empty}>
-                    <EmptyHeader>
-                      <EmptyDescription>{t("empty_search")}</EmptyDescription>
-                    </EmptyHeader>
-                    <EmptyActions>
-                      <Button
-                        variant="link"
-                        onClick={() => {
-                          setQuery("");
-                          setManaged("all");
-                        }}
-                      >
-                        {t("clear_search")}
-                      </Button>
-                    </EmptyActions>
-                  </Empty>
-                ) : isError ? null : (
-                  <Empty className={styles.empty}>
-                    <EmptyHeader>
-                      <EmptyMedia variant="icon">
-                        <Folder />
-                      </EmptyMedia>
-                      <EmptyTitle>{t("empty_title")}</EmptyTitle>
-                      <EmptyDescription>{t("empty_hint")}</EmptyDescription>
-                    </EmptyHeader>
-                  </Empty>
-                )
-              }
-              onOpen={open}
-              onRename={setRenaming}
-              onDelete={setDeleting}
-              health={health}
-              stuckDays={overview?.stuck_days ?? 7}
-              cash={cash}
-            />
+            {/* A failed read with nothing kept shows only the error, not "no workspaces yet". */}
+            {!(isError && all.length === 0) && (
+              <WorkspacesGrid
+                // A new organization starts the grid clean; a new list of its workspaces reloads it.
+                key={organization.id}
+                workspaces={all}
+                health={health}
+                stuckDays={overview?.stuck_days ?? 7}
+                cash={cash}
+                onOpen={open}
+                onOpenProject={openProject}
+                onRename={setRenaming}
+                onDelete={setDeleting}
+              />
+            )}
           </>
         )}
       </div>
@@ -255,8 +221,6 @@ export const WorkspacesScreen: React.FC = () => {
     return (
       <div className={styles.screen} data-state="no-organization">
         <WorkspacesToolbar
-          query=""
-          onQueryChange={() => {}}
           busy={loading || translationsPending}
           canCreate={false}
         />

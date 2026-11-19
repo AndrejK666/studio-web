@@ -2144,6 +2144,18 @@ impl DocumentClassifier for DocumentsService {
         DocumentsService::forget_ingested(self, ctx, workspace_id, project_id, &node_ids).await
     }
 
+    async fn adopt_ingested(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Uuid,
+        project_id: Option<Uuid>,
+        alive: std::collections::HashSet<String>,
+        by_path: std::collections::HashMap<String, String>,
+    ) -> Result<usize> {
+        DocumentsService::adopt_ingested(self, ctx, workspace_id, project_id, &alive, &by_path)
+            .await
+    }
+
     async fn existing_documents(
         &self,
         ctx: &SecurityContext,
@@ -4618,6 +4630,100 @@ impl DocumentsService {
         self.sources_changed(workspace_id);
         Ok(usize::try_from(deleted).unwrap_or(usize::MAX))
     }
+
+    /// Move this scope's bindings whose file node is gone onto the file that
+    /// now has their path (see [`DocumentClassifier::adopt_ingested`]).
+    ///
+    /// A binding's row id is derived from its node id, so a move is a new row
+    /// with every field of the old one (the type, the state a person settled,
+    /// the last validation) and the old row deleted. The verdicts about the
+    /// old row are copied onto the new one first, because deleting it takes
+    /// them with it.
+    pub async fn adopt_ingested(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Uuid,
+        project_id: Option<Uuid>,
+        alive: &std::collections::HashSet<String>,
+        by_path: &std::collections::HashMap<String, String>,
+    ) -> Result<usize> {
+        if by_path.is_empty() {
+            return Ok(0);
+        }
+        let (bindings, _) = self
+            .data
+            .list_bindings(ctx, workspace_id, binding_scope(project_id), 0, None)
+            .await?;
+        let own: Vec<document_binding::Model> = bindings
+            .into_iter()
+            .filter(|b| b.project_id == project_id)
+            .collect();
+        let moves = plan_adoption(&own, alive, by_path);
+        if moves.is_empty() {
+            return Ok(0);
+        }
+        let old_ids: Vec<Uuid> = moves.iter().map(|(b, _)| b.id).collect();
+        let mut new_id_of: BTreeMap<Uuid, Uuid> = BTreeMap::new();
+        let moved: Vec<document_binding::Model> = moves
+            .into_iter()
+            .map(|(b, node)| {
+                let mut m = b.clone();
+                m.id = binding_row_id(workspace_id, project_id, &node);
+                m.node_id = node;
+                new_id_of.insert(b.id, m.id);
+                m
+            })
+            .collect();
+        self.data.upsert_bindings(ctx, &moved).await?;
+        let verdicts = self
+            .data
+            .list_binding_analyses(ctx, workspace_id, &old_ids)
+            .await?;
+        for mut v in verdicts {
+            let Some(new_binding) = v.binding_id.and_then(|old| new_id_of.get(&old).copied())
+            else {
+                continue;
+            };
+            v.id = analysis_row_id(new_binding, &v.detector);
+            v.binding_id = Some(new_binding);
+            self.data.upsert_analysis(ctx, v).await?;
+        }
+        self.data
+            .delete_bindings(ctx, workspace_id, &old_ids)
+            .await?;
+        self.sources_changed(workspace_id);
+        Ok(moved.len())
+    }
+}
+
+/// Which of `bindings` move, and to which node: a binding whose node is not
+/// `alive` (no file of the scope has its id any more) goes to the node that
+/// `by_path` gives its path, when that node has no binding of its own yet.
+///
+/// A node that already has one keeps it: two bindings of one file would be
+/// two answers to "what is this file", and the one recorded against the file
+/// that exists is the current answer.
+fn plan_adoption(
+    bindings: &[document_binding::Model],
+    alive: &std::collections::HashSet<String>,
+    by_path: &std::collections::HashMap<String, String>,
+) -> Vec<(document_binding::Model, String)> {
+    let mut taken: std::collections::HashSet<&str> =
+        bindings.iter().map(|b| b.node_id.as_str()).collect();
+    let mut moves = Vec::new();
+    for b in bindings {
+        if alive.contains(&b.node_id) {
+            continue;
+        }
+        let Some(node) = by_path.get(&b.path) else {
+            continue;
+        };
+        if node == &b.node_id || !taken.insert(node.as_str()) {
+            continue;
+        }
+        moves.push((b.clone(), node.clone()));
+    }
+    moves
 }
 
 fn rfc3339(t: OffsetDateTime) -> String {
@@ -5864,4 +5970,115 @@ const STUDIO_SOURCES_MAX: u64 = 200;
 /// the document's id, never a repository path.
 pub fn studio_source_path(id: Uuid) -> String {
     format!("studio:{id}")
+}
+
+#[cfg(test)]
+mod adoption_tests {
+    //! Which bindings move onto a file's new id after its repository was
+    //! attached again (`plan_adoption`).
+
+    use std::collections::{HashMap, HashSet};
+
+    use time::OffsetDateTime;
+
+    use super::*;
+
+    fn binding(node: &str, path: &str, state: &str) -> document_binding::Model {
+        let now = OffsetDateTime::now_utc();
+        document_binding::Model {
+            id: Uuid::new_v4(),
+            tenant_id: Uuid::nil(),
+            project_id: None,
+            node_id: node.into(),
+            path: path.into(),
+            type_key: Some("prd".into()),
+            state: state.into(),
+            confidence: None,
+            source: Some("manual".into()),
+            candidates: "[]".into(),
+            conforms: Some(true),
+            validation: "{}".into(),
+            capabilities: "[]".into(),
+            requirements: "[]".into(),
+            inferred_capabilities: "[]".into(),
+            content_sha: "sha".into(),
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    fn set(ids: &[&str]) -> HashSet<String> {
+        ids.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    fn paths(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+        pairs
+            .iter()
+            .map(|(p, n)| ((*p).to_string(), (*n).to_string()))
+            .collect()
+    }
+
+    /// The stand's case: every binding names a node of an attachment that is
+    /// gone, and the same paths are now files under new ids.
+    #[test]
+    fn a_binding_whose_node_is_gone_moves_to_the_file_at_its_path() {
+        let old = binding("old-1", "docs/prd.md", "confirmed");
+        let moves = plan_adoption(
+            std::slice::from_ref(&old),
+            &set(&["new-1"]),
+            &paths(&[("docs/prd.md", "new-1")]),
+        );
+        assert_eq!(moves.len(), 1);
+        assert_eq!(moves[0].0.id, old.id);
+        assert_eq!(moves[0].1, "new-1");
+    }
+
+    #[test]
+    fn a_binding_whose_node_is_alive_stays() {
+        let moves = plan_adoption(
+            &[binding("other-repo", "docs/prd.md", "confirmed")],
+            &set(&["other-repo", "new-1"]),
+            &paths(&[("docs/prd.md", "new-1")]),
+        );
+        assert!(moves.is_empty());
+    }
+
+    /// The file under its new id was already classified: that binding is
+    /// about the file that exists, and a second one would be a second answer.
+    #[test]
+    fn a_node_that_already_has_a_binding_keeps_it() {
+        let moves = plan_adoption(
+            &[
+                binding("old-1", "docs/prd.md", "confirmed"),
+                binding("new-1", "docs/prd.md", "detected"),
+            ],
+            &set(&["new-1"]),
+            &paths(&[("docs/prd.md", "new-1")]),
+        );
+        assert!(moves.is_empty());
+    }
+
+    /// Two dead bindings of one path (two older attachments): only one moves.
+    #[test]
+    fn one_node_receives_one_binding() {
+        let moves = plan_adoption(
+            &[
+                binding("old-1", "docs/prd.md", "confirmed"),
+                binding("old-2", "docs/prd.md", "manual"),
+            ],
+            &set(&["new-1"]),
+            &paths(&[("docs/prd.md", "new-1")]),
+        );
+        assert_eq!(moves.len(), 1);
+    }
+
+    #[test]
+    fn a_path_nothing_has_any_more_stays_where_it_is() {
+        let moves = plan_adoption(
+            &[binding("old-1", "docs/gone.md", "confirmed")],
+            &set(&["new-1"]),
+            &paths(&[("docs/prd.md", "new-1")]),
+        );
+        assert!(moves.is_empty());
+    }
 }

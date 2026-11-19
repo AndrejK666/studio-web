@@ -2,7 +2,7 @@
   "manifest_version": "1",
   "slug": "project-lifecycle",
   "icon": "lucide:route",
-  "name": "Project lifecycle",
+  "name": "Planning",
   "description": "A project's phases, its phase chip, and what waits on its owner.",
   "publisher": "Constructor Fabric",
   "levels": [
@@ -703,15 +703,57 @@
     {
       "name": "project_phase_set",
       "description": "Move a project to a phase along the declared lifecycle"
+    },
+    {
+      "name": "project_phases",
+      "description": "Every project of an organization with its phase"
     }
   ],
   "permissions": {
     "reads": [
+      "GET /studio-organizations/v1/project-types",
       "GET /studio-kits/v1/project-phase",
-      "GET /studio-kits/v1/project-phases"
+      "GET /studio-kits/v1/project-phases",
+      "GET /studio-domain-model/v1/types",
+      "POST /studio-domain-model/v1/query"
     ],
     "writes": [
-      "PUT /studio-kits/v1/project-phase"
+      "PUT /studio-kits/v1/project-phase",
+      "PUT /studio-organizations/v1/project-types",
+      "DELETE /studio-organizations/v1/project-types",
+      "POST /studio-domain-model/v1/mutate"
     ]
-  }
+  },
+  "gears": [
+    {
+      "gear": "studio-kits",
+      "mcp_tools": [
+        "project_phase",
+        "project_phase_set",
+        "project_phases"
+      ],
+      "routes": [
+        "PUT /studio-kits/v1/project-phase"
+      ]
+    },
+    {
+      "gear": "studio-organizations",
+      "types": [
+        "project-type"
+      ],
+      "routes": [
+        "PUT /studio-organizations/v1/project-types",
+        "DELETE /studio-organizations/v1/project-types"
+      ]
+    },
+    {
+      "gear": "studio-documents",
+      "types": [
+        "lifecycle-stage",
+        "delivery-scope",
+        "delivery-limit",
+        "delivery-scope-version"
+      ]
+    }
+  ]
 }

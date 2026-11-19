@@ -1,9 +1,8 @@
-/** Step 1 — name, goal, owner, starting point. */
+/** The details: name, project type, goal, owner. The type decides what follows (ADR-0073). */
 
 // @cpt-dod:cpt-studiofrontend-dod-project-create-owner:p1
 import { User } from '@constructor-studio/mfe-shared';
 import React, { useId } from 'react';
-import { FileText, Files } from 'lucide-react';
 import {
   Avatar,
   AvatarFallback,
@@ -20,7 +19,7 @@ import { useProjectCreateText } from '../../../i18n';
 import { CREATE_SLICE_KEY, editDraft } from '../../../slices/createSlice';
 import { useCurrentUser } from '../../../shared/useCurrentUser';
 import { displayName } from '../../../model/project';
-import type { ProjectMode } from '@constructor-studio/mfe-shared';
+import type { ProjectTypeKit } from '../../../api/ProjectStatusApiService';
 import styles from '../NewProjectWizard.module.css';
 
 /** Two letters at most, like the mockup's avatar. */
@@ -55,21 +54,6 @@ const UserRowPlaceholder: React.FC = () => (
 
 UserRowPlaceholder.displayName = 'UserRowPlaceholder';
 
-const MODES: readonly { value: ProjectMode; icon: React.ReactNode; titleKey: string; hintKey: string }[] = [
-  {
-    value: 'greenfield',
-    icon: <FileText size={18} strokeWidth={1.5} />,
-    titleKey: 'mode_scratch',
-    hintKey: 'mode_scratch_hint',
-  },
-  {
-    value: 'modernize',
-    icon: <Files size={18} strokeWidth={1.5} />,
-    titleKey: 'mode_import',
-    hintKey: 'mode_import_hint',
-  },
-];
-
 /**
  * The owner, shown and not chosen: whoever creates the project owns it.
  */
@@ -89,11 +73,13 @@ const OwnerField: React.FC = () => {
 
 OwnerField.displayName = 'OwnerField';
 
-export const DetailsStep: React.FC = () => {
+export const DetailsStep: React.FC<{ projectTypes?: readonly ProjectTypeKit[] }> = ({ projectTypes = [] }) => {
   const t = useProjectCreateText();
   const dispatch = useAppDispatch();
   const draft = useAppSelector((state) => state[CREATE_SLICE_KEY].draft);
-  const ids = { name: useId(), goal: useId(), modeLabel: useId() };
+  const ids = { name: useId(), goal: useId(), typeLabel: useId() };
+  const picked = projectTypes.find((kit) => kit.slug === draft.typeKit);
+  const nextLabels = (picked?.next_steps ?? []).map((step) => step.label);
 
   return (
     <>
@@ -109,6 +95,24 @@ export const DetailsStep: React.FC = () => {
         />
       </Field>
 
+      {projectTypes.length > 0 && <Field>
+        <FieldLabel className={styles.fieldLabel} id={ids.typeLabel}>{t('field_project_type')}</FieldLabel>
+        <RadioGroup aria-labelledby={ids.typeLabel} className={styles.modes} value={draft.typeKit ?? ''}
+          onValueChange={(typeKit) => dispatch(editDraft({ typeKit }))}>
+          {projectTypes.map((kit) => <label key={kit.slug} className={styles.modeCard}
+            data-selected={draft.typeKit === kit.slug ? '' : undefined}>
+            <RadioGroupItem className={styles.modeInput} value={kit.slug} />
+            <span className={styles.modeTitle}>{kit.name}</span>
+            <span className={styles.modeHint}>{kit.description}</span>
+          </label>)}
+        </RadioGroup>
+        {nextLabels.length > 0 && (
+          <p className={styles.modeHint} data-type-next>
+            {t('type_next', { steps: nextLabels.join(' → ') })}
+          </p>
+        )}
+      </Field>}
+
       <Field>
         <FieldLabel className={styles.fieldLabel} htmlFor={ids.goal}>
           {t('field_goal')}
@@ -123,33 +127,6 @@ export const DetailsStep: React.FC = () => {
       </Field>
 
       <OwnerField />
-
-      <Field>
-        <FieldLabel className={styles.fieldLabel} id={ids.modeLabel}>
-          {t('field_starting_point')}
-        </FieldLabel>
-        <RadioGroup
-          aria-labelledby={ids.modeLabel}
-          className={styles.modes}
-          value={draft.mode ?? ''}
-          onValueChange={(value: string) => dispatch(editDraft({ mode: value as ProjectMode }))}
-        >
-          {MODES.map((mode) => (
-            <label
-              key={mode.value}
-              className={styles.modeCard}
-              data-selected={draft.mode === mode.value ? '' : undefined}
-            >
-              <RadioGroupItem className={styles.modeInput} value={mode.value} />
-              <span className={styles.modeHead}>
-                {mode.icon}
-                <span className={styles.modeTitle}>{t(mode.titleKey)}</span>
-              </span>
-              <span className={styles.modeHint}>{t(mode.hintKey)}</span>
-            </label>
-          ))}
-        </RadioGroup>
-      </Field>
     </>
   );
 };

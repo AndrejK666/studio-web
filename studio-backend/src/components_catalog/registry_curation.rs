@@ -43,7 +43,7 @@ pub enum RequestStorage {
 const REQUEST_TYPE: &str = "approval-request";
 const REQUEST_KIND: &str = "gear-publication";
 
-fn request_need() -> TypeNeed {
+pub(super) fn request_need() -> TypeNeed {
     let f = |n: &str, t: &str| (n.to_string(), t.to_string(), String::new());
     TypeNeed {
         declared_by: "studio-components-catalog".to_owned(),

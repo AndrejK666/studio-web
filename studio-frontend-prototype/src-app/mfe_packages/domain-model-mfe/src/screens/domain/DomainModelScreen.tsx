@@ -17,7 +17,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button } from '@gears-frontx/ui-kit';
-import { openScreen } from '@constructor-studio/mfe-shared';
+import { openScreen, usePollWhileVisible } from '@constructor-studio/mfe-shared';
 import { dmApi, type Candidate } from '../../api/client';
 import { estimateLabel, etaLabel, readFraction, tokensLabel, type SpecModelBuildEstimate } from '../../model/build-eta';
 import type { Obligation } from '../../model/behaviour';
@@ -234,11 +234,8 @@ export function DomainModelScreen() {
 
   // While a build runs, read again until it stops.
   const running = model?.build.running ?? false;
-  useEffect(() => {
-    if (!running) return;
-    const timer = window.setInterval(() => void load(), POLL_MS);
-    return () => window.clearInterval(timer);
-  }, [running, load]);
+  // Not while the tab is hidden: shown again, it reads at once.
+  usePollWhileVisible(() => void load(), POLL_MS, running);
 
   // What the next build would read and how long it should take, read again
   // whenever a build stops. A backend from before the estimate answers 404.

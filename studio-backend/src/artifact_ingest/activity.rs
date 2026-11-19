@@ -38,7 +38,23 @@ use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 /// A day, in milliseconds.
-const DAY_MS: i64 = 24 * 60 * 60 * 1000;
+pub(super) const DAY_MS: i64 = 24 * 60 * 60 * 1000;
+
+/// Day `day` since the epoch as `YYYY-MM-DD`: a bound an RFC 3339 string
+/// compares against as text (the index narrows commits by it).
+pub(super) fn date_of_day(day: i64) -> String {
+    // Days to a civil date, after Howard Hinnant's `civil_from_days`.
+    let z = day + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!("{y:04}-{m:02}-{d:02}")
+}
 
 /// One repository's movement over the window.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -948,5 +964,15 @@ mod tests {
             project_signals(&undated, &[], &[], &[], NOW, 7).last_event,
             None
         );
+    }
+
+    #[test]
+    fn a_day_number_is_its_civil_date() {
+        assert_eq!(date_of_day(0), "1970-01-01");
+        assert_eq!(date_of_day(-1), "1969-12-31");
+        assert_eq!(date_of_day(59), "1970-03-01");
+        assert_eq!(date_of_day(10_957), "2000-01-01");
+        assert_eq!(date_of_day(11_016), "2000-02-29");
+        assert_eq!(date_of_day(20_774), "2026-11-17");
     }
 }

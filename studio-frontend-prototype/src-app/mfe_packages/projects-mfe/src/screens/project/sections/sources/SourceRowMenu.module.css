@@ -5,3 +5,14 @@
 .item[data-disabled] {
   pointer-events: auto;
 }
+
+.branchLabel {
+  font-size: 0.875rem;
+  color: var(--muted-foreground);
+}
+
+.branchError {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--destructive);
+}

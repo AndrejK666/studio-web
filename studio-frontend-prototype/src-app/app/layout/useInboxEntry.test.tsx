@@ -7,8 +7,9 @@ import type { StudioEvent } from '@constructor-studio/mfe-shared';
  * again on a review event and every two minutes; unknown on a failed read.
  */
 
-const { mockEventBus, screens, channel, fetchCount, store } = vi.hoisted(() => ({
+const { mockEventBus, screens, channel, fetchCount, countQueries, store } = vi.hoisted(() => ({
   mockEventBus: { emit: vi.fn() },
+  countQueries: [] as unknown[],
   screens: [] as Array<{ id: string; presentation: { label: string; route: string } }>,
   channel: { listeners: new Set<(event: unknown) => void>() },
   fetchCount: vi.fn(),
@@ -20,7 +21,14 @@ vi.mock('@gears-frontx/react', async (importOriginal) => ({
   eventBus: mockEventBus,
   useDomainExtensions: () => screens,
   useAppSelector: (select: (state: Record<string, unknown>) => unknown) => select(store.state),
-  apiRegistry: { getService: () => ({ count: { fetch: fetchCount } }) },
+  apiRegistry: {
+    getService: () => ({
+      count: (query: unknown) => {
+        countQueries.push(query);
+        return { fetch: fetchCount };
+      },
+    }),
+  },
 }));
 vi.mock('@/app/live/liveChannel', () => ({
   liveChannel: () => ({
@@ -32,11 +40,26 @@ vi.mock('@/app/live/liveChannel', () => ({
 }));
 
 import { APP_CONTEXT_SLICE_KEY } from '@/app/slices/appContextSlice';
-import { INBOX_FRESH_MS, INBOX_REREAD_MS, INBOX_ROUTE, movesInbox, useInboxEntry } from './useInboxEntry';
+import { reportInboxCountToShell, resetInboxCountReports } from '@/app/mfe/inboxCountActions';
+import {
+  INBOX_FRESH_MS,
+  INBOX_REREAD_MS,
+  INBOX_ROUTE,
+  movesInbox,
+  placeInAddress,
+  screenReadsInbox,
+  useInboxEntry,
+} from './useInboxEntry';
 
-/** The person is on `section`. */
-function onSection(section: string | null) {
-  store.state = { [APP_CONTEXT_SLICE_KEY]: { section } };
+/** The person is on `section`, of a project or not, in organization `org`. */
+function onSection(section: string | null, project: string | null = null, org: string | null = null) {
+  store.state = {
+    [APP_CONTEXT_SLICE_KEY]: {
+      section,
+      project: project ? { id: project, name: project } : null,
+      org: org ? { id: org, name: org } : null,
+    },
+  };
 }
 
 function hear(subject_type: string) {
@@ -51,13 +74,22 @@ describe('useInboxEntry', () => {
     screens.length = 0;
     screens.push({ id: 'ext.inbox', presentation: { label: 'Inbox', route: INBOX_ROUTE } });
     fetchCount.mockReset();
+    countQueries.length = 0;
     fetchCount.mockResolvedValue({ total: 4, unread: [] });
     onSection(null);
+    resetInboxCountReports();
   });
   afterEach(() => {
     cleanup();
     vi.useRealTimers();
     channel.listeners.clear();
+  });
+
+  it('counts in the organization on screen, not the home tenant the token names', async () => {
+    onSection(null, null, 'org-joined');
+    const { result } = renderHook(() => useInboxEntry());
+    await waitFor(() => expect(result.current.count).toBe(4));
+    expect(countQueries).toEqual([{ organizationId: 'org-joined' }]);
   });
 
   it('counts what waits and opens the Inbox screen', async () => {
@@ -94,10 +126,68 @@ describe('useInboxEntry', () => {
   it('reads again on leaving the Inbox, where items are marked', async () => {
     onSection('inbox');
     const { rerender } = renderHook(() => useInboxEntry());
-    await waitFor(() => expect(fetchCount).toHaveBeenCalledTimes(1));
+    expect(fetchCount).not.toHaveBeenCalled();
     onSection('workspaces');
     rerender();
-    await waitFor(() => expect(fetchCount).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(fetchCount).toHaveBeenCalledTimes(1));
+  });
+
+  // #1077: the Inbox and the organization's Overview read the Inbox themselves.
+  it("takes the count a screen that read the Inbox reports, and reads nothing itself", async () => {
+    onSection('overview');
+    const { result } = renderHook(() => useInboxEntry());
+    act(() => reportInboxCountToShell(7));
+    expect(result.current.count).toBe(7);
+    act(() => reportInboxCountToShell(null));
+    expect(result.current.count).toBeNull();
+    expect(fetchCount).not.toHaveBeenCalled();
+  });
+
+  it('reads nothing on leaving such a screen that has just reported, marks included', async () => {
+    vi.useFakeTimers();
+    onSection('inbox');
+    const { rerender, result } = renderHook(() => useInboxEntry());
+    act(() => reportInboxCountToShell(2));
+    onSection('workspaces');
+    rerender();
+    await act(async () => {});
+    expect(fetchCount).not.toHaveBeenCalled();
+    expect(result.current.count).toBe(2);
+  });
+
+  it('reads itself when such a screen says nothing within INBOX_FRESH_MS', async () => {
+    vi.useFakeTimers();
+    onSection('inbox');
+    renderHook(() => useInboxEntry());
+    expect(fetchCount).not.toHaveBeenCalled();
+    await act(async () => {
+      vi.advanceTimersByTime(INBOX_FRESH_MS);
+    });
+    expect(fetchCount).toHaveBeenCalledTimes(1);
+  });
+
+  it('on a cold load, goes by the address until the routing names the section', () => {
+    window.history.replaceState({}, '', '/?screen=organization;org=o1;section=overview');
+    try {
+      renderHook(() => useInboxEntry());
+      expect(fetchCount).not.toHaveBeenCalled();
+    } finally {
+      window.history.replaceState({}, '', '/');
+    }
+    expect(placeInAddress('?screen=projects;org=o1;workspace=w1;project=p1;section=overview')).toEqual({
+      section: 'overview',
+      projectId: 'p1',
+    });
+    expect(placeInAddress('?screen=people;org=o1')).toEqual({ section: null, projectId: null });
+  });
+
+  it("reads at once on a project's Overview, which does not read the Inbox", async () => {
+    onSection('overview', 'p1');
+    renderHook(() => useInboxEntry());
+    await waitFor(() => expect(fetchCount).toHaveBeenCalledTimes(1));
+    expect(screenReadsInbox('overview', 'p1')).toBe(false);
+    expect(screenReadsInbox('overview', null)).toBe(true);
+    expect(screenReadsInbox('people', null)).toBe(false);
   });
 
   it('asks nothing for a click between two other tabs while the count is fresh', async () => {
@@ -135,5 +225,50 @@ describe('useInboxEntry', () => {
       vi.advanceTimersByTime(INBOX_REREAD_MS);
     });
     expect(fetchCount).toHaveBeenCalledTimes(2);
+  });
+
+  describe('in a hidden tab', () => {
+    let visibility: DocumentVisibilityState = 'visible';
+    const show = (next: DocumentVisibilityState) =>
+      act(() => {
+        visibility = next;
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+    beforeEach(() => {
+      visibility = 'visible';
+      vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => visibility);
+    });
+    afterEach(() => vi.restoreAllMocks());
+
+    it('reads nothing while hidden, and at once when shown again', async () => {
+      vi.useFakeTimers();
+      renderHook(() => useInboxEntry());
+      expect(fetchCount).toHaveBeenCalledTimes(1);
+      show('hidden');
+      await act(async () => {
+        vi.advanceTimersByTime(INBOX_REREAD_MS * 3);
+      });
+      expect(fetchCount).toHaveBeenCalledTimes(1);
+      show('visible');
+      await act(async () => {});
+      expect(fetchCount).toHaveBeenCalledTimes(2);
+      await act(async () => {
+        vi.advanceTimersByTime(INBOX_REREAD_MS);
+      });
+      expect(fetchCount).toHaveBeenCalledTimes(3);
+    });
+
+    it('does not read again when shown with a count read a moment ago', async () => {
+      vi.useFakeTimers();
+      renderHook(() => useInboxEntry());
+      expect(fetchCount).toHaveBeenCalledTimes(1);
+      show('hidden');
+      await act(async () => {
+        vi.advanceTimersByTime(INBOX_FRESH_MS - 1);
+      });
+      show('visible');
+      await act(async () => {});
+      expect(fetchCount).toHaveBeenCalledTimes(1);
+    });
   });
 });

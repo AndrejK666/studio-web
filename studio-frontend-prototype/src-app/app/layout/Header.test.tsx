@@ -11,7 +11,7 @@ const peopleScreen = {
   entry: 'entry.people',
   presentation: {
     label: 'People',
-    icon: 'material-symbols:group',
+    icon: 'lucide:users',
     route: '/people',
     order: 30,
     level: 'organization',
@@ -25,7 +25,7 @@ const searchOverlay = {
   entry: 'entry.search',
   presentation: {
     label: 'Search Constructor Studio',
-    icon: 'material-symbols:search',
+    icon: 'lucide:search',
     route: '/search',
   },
 };

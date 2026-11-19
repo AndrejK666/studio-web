@@ -31,6 +31,7 @@ import {
 // eslint-disable-next-line @typescript-eslint/no-restricted-imports -- a test reaching the check itself, not app code
 import { validateContract } from '@gears-frontx/mfes';
 import { helloKitManifest } from '@frontx-test-utils/helloKitManifest';
+import { KIT_ALIASES } from '@constructor-studio/mfe-shared';
 import { SHELL_SCHEMAS } from './schemas';
 import { buildStudioOverlayDomain, buildStudioScreenDomain, buildStudioSidebarDomain } from './bootstrap';
 import { toManifestConfig } from './runtimeKits';
@@ -247,6 +248,44 @@ describe('generated MFE manifest', () => {
     });
   });
 
+  describe("a screen's needs (ADR-0071 §5)", () => {
+    const GTS_TYPE = /^gts\.cf\.studio\.(domain|kit\.[a-z0-9_]+)\.[a-z0-9_]+\.v1~$/;
+    const declared = extensions.flatMap((ext) => {
+      const p = (ext.presentation ?? {}) as { needs?: unknown; sectionNeeds?: unknown };
+      return [p.needs, p.sectionNeeds].flatMap((list) =>
+        Array.isArray(list) ? list.map((need) => ({ id: ext.id, need })) : []
+      );
+    });
+
+    it('names every needed type by its GTS id, never a bare entity id', () => {
+      expect(declared.filter(({ need }) => typeof need !== 'string' || !GTS_TYPE.test(need))).toEqual([]);
+    });
+
+    it("names no kit for Connections, People or Artifacts: the shell's since ADR-0071 step 6", () => {
+      for (const route of ['/connections', '/projects/team', '/projects/artifacts']) {
+        const ext = extensions.find((e) => e.presentation?.route === route);
+        expect(ext, route).toBeDefined();
+        expect(ext?.presentation?.kit, route).toBeUndefined();
+      }
+    });
+
+    it("names no retired kit slug (ADR-0071 §8): every screen's kit is a current one", () => {
+      const retired = Object.keys(KIT_ALIASES);
+      expect(
+        extensions
+          .filter((ext) => retired.includes(ext.presentation?.kit ?? ''))
+          .map((ext) => `${ext.id}: ${ext.presentation?.kit}`)
+      ).toEqual([]);
+    });
+
+    it("declares the Tests tab's open pull requests section on project-git's pull-request", () => {
+      const tests = extensions.find((ext) => ext.presentation?.route === '/tests');
+      expect((tests?.presentation as { sectionNeeds?: string[] } | undefined)?.sectionNeeds).toEqual([
+        'gts.cf.studio.domain.pull_request.v1~',
+      ]);
+    });
+  });
+
   describe('docked kit panels (sidebar)', () => {
     const docked = extensions.filter((ext) => ext.domain === sidebarDomain.id);
     const assistant = docked.find((ext) => ext.presentation?.kit === 'assistant');
@@ -421,9 +460,11 @@ describe('generated MFE manifest', () => {
       const tabs = resolveLevelMenu(screens as StudioScreenExtension[], 'project');
       expect(tabs.map((ext) => ext.presentation.label)).toEqual([
         'Overview',
-        // The Issues kit's screen (issues-mfe, order 15): right after Overview,
-        // where the prototype put it — what to decide comes before the work.
-        'Issues',
+        // The Project model's open questions (issues-mfe, order 15; the
+        // prototype's Issues, renamed with its move to project-domain-model,
+        // ADR-0071 step 4): right after Overview, where the prototype put it —
+        // what to decide comes before the work.
+        'Open questions',
         'Artifacts',
         // The editor (space-mfe, order 25): the project's IDE, right after the
         // artifacts it opens (#1074).
@@ -435,16 +476,22 @@ describe('generated MFE manifest', () => {
         'Project domain model',
         // The Tests kit's own screen (ADR-0069), between the shell's sections.
         'Tests',
-        // The Product kit's two (product-mfe): Product (product-releases) and
-        // the project's Components (components), after Tests as in the prototype.
+        // The Product kit's two (product-mfe): Product and the project's
+        // Components, both project-product's since ADR-0071 step 5, after Tests
+        // as in the prototype.
         'Product',
         'Components',
         'Sources',
         // The Releases kit's screen (order 36, ADR-0056 §4): right after Sources (35).
         'Releases',
+        // The Gears matcher kit's Gear match (product-mfe's second entry,
+        // order 37, ADR-0072): after Releases; shown only where that opt-in
+        // kit is installed.
+        'Gear match',
         'Activity',
         'Timeline',
-        'Team',
+        // The project's People (team-mfe): the shell's since ADR-0071 step 6.
+        'People',
         // What the Studio domain model records about the project (admin-mfe's
         // generic screen, ADR-0066; the prototype drew it on Overview).
         'Attributes',
@@ -470,7 +517,8 @@ describe('generated MFE manifest', () => {
         // Saved views of the model's objects (admin-mfe, order 80), after Objects.
         'Views',
         'All identities',
-        'Project tenants',
+        // Workspaces, not projects: the list is of workspace tenants (walk 2026-11-16).
+        'Workspace tenants',
         // The prototype's System (who is here, a test notification, raw types and JSON).
         'System',
       ]);
@@ -496,14 +544,21 @@ describe('generated MFE manifest', () => {
       // (ADR-0069) is a screen of its own, never the shell's entry; a kit with
       // several tabs on one entry (product-mfe: Product and Components)
       // switches on sections of its own.
-      // Some of the shell entry's sections belong to a kit (Artifacts, Specs,
-      // Activity, Timeline): still sections of that entry, shown only where
-      // their kit is installed.
-      const shellSections = project.filter((ext) => ext.presentation?.section && !ext.presentation?.kit);
+      // Some of the shell entry's sections belong to a kit (Specs): still
+      // sections of that entry, shown only where their kit is installed.
+      // The project's People (team-mfe) is the shell's too since ADR-0071
+      // step 6, on a package of its own.
+      const shellOwnPackage = (ext: PresentedExtension) => /~constructor_studio\.team\./.test(ext.id);
+      const shellSections = project.filter(
+        (ext) => ext.presentation?.section && !ext.presentation?.kit && !shellOwnPackage(ext)
+      );
       expect(new Set(shellSections.map((ext) => ext.entry))).toEqual(new Set([workspaceEntry]));
       expect(shellSections.length).toBeGreaterThan(1);
-      // A section elsewhere is a kit's own (it switches on sections of its own).
-      for (const ext of project.filter((e) => e.presentation?.section && e.entry !== workspaceEntry)) {
+      // A section elsewhere is a kit's own (it switches on sections of its
+      // own), or the shell's People.
+      for (const ext of project.filter(
+        (e) => e.presentation?.section && e.entry !== workspaceEntry && !shellOwnPackage(e)
+      )) {
         expect(ext.presentation?.kit).toBeTruthy();
       }
       // A tab with no section is a screen of its own, never the shell's entry.

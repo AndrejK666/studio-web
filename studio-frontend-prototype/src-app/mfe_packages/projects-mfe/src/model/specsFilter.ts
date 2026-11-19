@@ -4,6 +4,7 @@
 export const SPECS_FILTERS = [
   'all',
   'with_findings',
+  'failing',
   'check_needed',
   'type_not_set',
   'type_to_confirm',

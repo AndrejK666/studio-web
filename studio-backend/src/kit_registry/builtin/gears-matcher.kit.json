@@ -1,0 +1,83 @@
+{
+  "manifest_version": "1",
+  "slug": "gears-matcher",
+  "icon": "lucide:scan-search",
+  "name": "Gears matcher",
+  "description": "Which gears of the catalogue cover a project's specifications, as the gears-matcher service reads them requirement by requirement, and a product assembled from what it proposes.",
+  "publisher": "Constructor Fabric",
+  "levels": [
+    "organization",
+    "project"
+  ],
+  "requires": [
+    "project-product"
+  ],
+  "inbox": [
+    {
+      "id": "gear-match-questions",
+      "label": "Questions your gear matches wait on",
+      "kind": "endpoint",
+      "path": "/studio-product/v1/inbox/gear-match-questions"
+    }
+  ],
+  "mcp_tools": [
+    {
+      "name": "project_gear_match",
+      "description": "Ask the gears-matcher service which gears cover the project's specifications"
+    },
+    {
+      "name": "project_gear_match_report",
+      "description": "A gear match's report, per requirement"
+    },
+    {
+      "name": "gear_match_usage",
+      "description": "How the organization's projects use the gears matcher"
+    }
+  ],
+  "permissions": {
+    "reads": [
+      "GET /studio-product/v1/projects/{project_id}/product",
+      "GET /studio-product/v1/project-assembly-strategy",
+      "GET /studio-product/v1/assembly-strategy",
+      "GET /studio-product/v1/gearbox/catalogue",
+      "POST /studio-product/v1/gearbox/complete",
+      "GET /studio-spec-mapping/v1/plan",
+      "GET /studio-product/v1/gear-matches",
+      "GET /studio-product/v1/gear-matches/{match_id}",
+      "GET /studio-product/v1/gear-matches/{match_id}/diff",
+      "GET /studio-product/v1/inbox/gear-match-questions",
+      "GET /studio-tasks/v1/runs/{id}",
+      "GET /studio-product/v1/gear-match-usage"
+    ],
+    "writes": [
+      "PUT /studio-product/v1/projects/{project_id}/product",
+      "POST /studio-product/v1/gear-matches",
+      "POST /studio-product/v1/gear-matches/{match_id}/cancel",
+      "PUT /studio-product/v1/gear-match-decisions",
+      "PUT /studio-product/v1/gear-match-answers",
+      "PUT /studio-product/v1/assembly-strategy"
+    ]
+  },
+  "gears": [
+    {
+      "gear": "studio-product",
+      "mcp_tools": [
+        "project_gear_match",
+        "project_gear_match_report",
+        "gear_match_usage"
+      ],
+      "routes": [
+        "POST /studio-product/v1/gear-matches",
+        "POST /studio-product/v1/gear-matches/{match_id}/cancel",
+        "PUT /studio-product/v1/gear-match-decisions",
+        "PUT /studio-product/v1/gear-match-answers",
+        "PUT /studio-product/v1/assembly-strategy"
+      ]
+    }
+  ],
+  "assembly_strategy": {
+    "id": "gears_matcher",
+    "name": "Gears matcher",
+    "description": "The gears the project's latest gear match proposes: the gears-matcher service reads the specifications requirement by requirement. Minutes and paid model calls; the answers vary between runs."
+  }
+}

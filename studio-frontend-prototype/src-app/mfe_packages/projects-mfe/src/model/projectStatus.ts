@@ -20,8 +20,8 @@ export interface ProjectSignal {
   action: { label: string; target: string };
   /**
    * The kit the signal is read for and whose tab its action opens
-   * (`project-git`, `project-specs`, `project-issues`, `product-releases`,
-   * `project-activity`); null for the shell's own. The server leaves out a
+   * (`project-git`, `project-specs`, `project-domain-model`, `project-product`,
+   * `delivery`, ADR-0071 §6); null for the shell's own. The server leaves out a
    * signal of a kit not installed for the project (ADR-0070 §7).
    */
   kit?: string | null;

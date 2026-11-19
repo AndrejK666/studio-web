@@ -132,3 +132,9 @@ realm, which is the environment-local `studio-web-keycloak-realm` Secret.
 
 A brokered user gets the sandbox tenant through the broker's `*-tenant-id`
 mapper, exactly as a GitHub user does, and no organization membership.
+
+## Constructor
+
+The `constructor` broker (the IdP behind Constructor Research) is not in
+`realm-studio.json`: a Helm Job writes it from values and the vault key
+`studio_constructor-client-secret`. See [`CONSTRUCTOR_SSO.md`](CONSTRUCTOR_SSO.md).

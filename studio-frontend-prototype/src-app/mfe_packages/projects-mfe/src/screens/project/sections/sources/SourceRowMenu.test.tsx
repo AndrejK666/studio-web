@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../../../i18n', () => {
@@ -26,6 +26,7 @@ const actions = (): SourceRowActions => ({
   openSpecs: vi.fn(),
   openUploads: vi.fn(),
   changeShareMode: vi.fn(),
+  changeBranch: vi.fn(async () => undefined),
   detach: vi.fn(),
   detaching: new Set<string>(),
 });
@@ -39,16 +40,17 @@ async function openMenu(row: SourceRow, given: SourceRowActions) {
 afterEach(() => vi.restoreAllMocks());
 
 describe('the row menu', () => {
-  it('lists Sync now, Open specs, Open in and, after a separator, Disconnect', async () => {
+  it('lists Sync now, Open specs, Open in, Change branch and, after a separator, Disconnect', async () => {
     const menu = await openMenu(ROW, actions());
     const items = within(menu).getAllByRole('menuitem');
     expect(items.map((item) => item.textContent)).toEqual([
       'menu_sync_now',
       'menu_open_specs',
       'menu_open_in {"provider":"GitHub"}',
+      'menu_change_branch',
       'menu_disconnect',
     ]);
-    expect(items[3].getAttribute('aria-disabled')).not.toBe('true');
+    expect(items[4].getAttribute('aria-disabled')).not.toBe('true');
     expect(within(menu).getByRole('separator')).toBeTruthy();
   });
 
@@ -61,6 +63,24 @@ describe('the row menu', () => {
     expect(given.detach).not.toHaveBeenCalled();
     fireEvent.click(within(dialog).getByText('detach_confirm'));
     expect(given.detach).toHaveBeenCalledWith(expect.objectContaining({ fullPath: 'acme/api' }));
+  });
+
+  it('Change branch saves a branch name and refuses one git would not take', async () => {
+    const given = actions();
+    const menu = await openMenu(ROW, given);
+    fireEvent.click(within(menu).getByText('menu_change_branch'));
+    const dialog = await screen.findByRole('dialog');
+    const input = within(dialog).getByRole('textbox');
+    const save = within(dialog).getByText('branch_save').closest('button') as HTMLButtonElement;
+    fireEvent.change(input, { target: { value: 'feature one' } });
+    expect(within(dialog).getByText('branch_invalid')).toBeTruthy();
+    expect(save.disabled).toBe(true);
+    fireEvent.change(input, { target: { value: ' release/2026-11 ' } });
+    expect(save.disabled).toBe(false);
+    fireEvent.click(save);
+    await waitFor(() =>
+      expect(given.changeBranch).toHaveBeenCalledWith(expect.objectContaining({ fullPath: 'acme/api' }), 'release/2026-11')
+    );
   });
 
   it('a running detach reads Detaching… and cannot be asked twice', async () => {

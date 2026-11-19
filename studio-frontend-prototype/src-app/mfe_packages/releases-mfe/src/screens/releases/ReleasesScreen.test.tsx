@@ -1,7 +1,11 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { openScreen } from '@constructor-studio/mfe-shared';
+import { stubResizeObserver } from '@frontx-test-utils/stubResizeObserver';
 import type { DeployEnvironment, Deployment, ProjectPath, ProjectTargets } from '../../api/types';
+
+// The lists are the kit's DataGrid, which measures its header.
+stubResizeObserver();
 
 const { service, calls, scope } = vi.hoisted(() => ({
   service: {} as Record<string, unknown>,
@@ -101,7 +105,19 @@ const readyPath = (patch: Partial<ProjectPath> = {}): ProjectPath => ({
   ...patch,
 });
 
-function setUp({ deployments, path }: { deployments?: Deployment[]; path?: ProjectPath } = {}) {
+const runNode = (id: string, v: Record<string, unknown>) => ({ type_id: 'workflow_run', instance_id: id, value: v });
+
+/**
+ * The services the screen reads. By default the path carries no targets and no
+ * deploys (a backend before `include`), so they are read on their own; `carry`
+ * puts them in the path's answer, as a backend with `include` does.
+ */
+function setUp({
+  deployments,
+  path,
+  runs,
+  carry = false,
+}: { deployments?: Deployment[]; path?: ProjectPath; runs?: ReturnType<typeof runNode>[]; carry?: boolean } = {}) {
   calls.length = 0;
   for (const k of Object.keys(service)) delete service[k];
   const targets: ProjectTargets = {
@@ -134,12 +150,19 @@ function setUp({ deployments, path }: { deployments?: Deployment[]; path?: Proje
       failure_step: 'images',
     }),
   ];
+  const deploys = { items: deployments ?? [deployment({})], total: 1 };
+  const answer = path ?? readyPath();
   Object.assign(service, {
     targets: read('targets', targets),
-    deployments: read('deployments', { items: deployments ?? [deployment({})], total: 1 }),
+    deployments: read('deployments', deploys),
     nodes: (params: { type: string }) => {
       calls.push({ name: 'nodes', args: [params] });
-      const page = params.type === 'build' ? { nodes: builds } : { nodes: [] };
+      const page =
+        params.type === 'build'
+          ? { nodes: builds }
+          : params.type === 'workflow_run'
+            ? { nodes: runs ?? [] }
+            : { nodes: [] };
       return { fetch: () => Promise.resolve(page) };
     },
     connections: read('connections', { items: [] }),
@@ -149,7 +172,7 @@ function setUp({ deployments, path }: { deployments?: Deployment[]; path?: Proje
     createDeployment: write('createDeployment', deployment({ id: 'd9', state: 'awaiting_approval' })),
     productDescription: read('productDescription', { latest: null }),
     saveBindings: write('saveBindings', { items: [], total: 0 }),
-    projectPath: read('projectPath', path ?? readyPath()),
+    projectPath: read('projectPath', carry ? { ...answer, targets, deployments: deploys } : answer),
     specPlan: read('specPlan', { items: [{}, {}], total: 2 }),
     deployment: read('deployment', deployment({})),
     deploymentLogs: read('deploymentLogs', { containers: [] }),
@@ -243,7 +266,106 @@ describe('ReleasesScreen', () => {
       return card;
     });
     expect(failed.querySelector('[data-build-cause="gear"]')?.textContent).toContain('Gear billing fails');
-    expect(document.querySelectorAll('[data-product-build]').length).toBe(2);
+    await waitFor(() => expect(document.querySelectorAll('[data-product-build]').length).toBe(2));
+    expect(document.querySelector('[data-product-build="desktop-3"]')?.hasAttribute('data-product-build-open')).toBe(true);
+    // A click on another row opens it under the list instead; a second click closes it.
+    const row = () => document.querySelector('[data-product-build="studio-2"]')?.closest('tr') as HTMLElement;
+    fireEvent.click(row());
+    await waitFor(() => expect(document.querySelector('[data-build-card="studio-2"]')).toBeTruthy());
+    expect(document.querySelector('[data-build-card="desktop-3"]')).toBeNull();
+    fireEvent.click(row());
+    await waitFor(() => expect(document.querySelector('[data-build-card]')).toBeNull());
+  });
+
+  it("lists the chosen workflow's CI runs in a grid that searches them", async () => {
+    setUp({
+      deployments: [],
+      runs: [
+        runNode('r1', { workflow: 'ci', title: 'Fix the cart', branch: 'main', sha: 'aaaaaaa1', status: 'completed', conclusion: 'success', author: 'ann', created_at: '2026-11-08T09:00:00Z' }),
+        runNode('r2', { workflow: 'ci', title: 'Add billing', branch: 'main', sha: 'bbbbbbb2', status: 'completed', conclusion: 'failure', author: 'bob', created_at: '2026-11-09T09:00:00Z' }),
+      ],
+    });
+    render(<ReleasesScreen bridge={null} />);
+    await screen.findByText('status_deploy_newest');
+    fireEvent.click(document.querySelector('[data-release-tab="build"]') as HTMLElement);
+    expect(await screen.findByText('Fix the cart')).toBeTruthy();
+    expect(screen.getByText('Add billing')).toBeTruthy();
+    const search = screen.getByPlaceholderText('search_runs');
+    fireEvent.change(search, { target: { value: 'billing' } });
+    await waitFor(() => expect(screen.queryByText('Fix the cart')).toBeNull());
+    expect(screen.getByText('Add billing')).toBeTruthy();
+    fireEvent.change(search, { target: { value: 'nothing like it' } });
+    expect(await screen.findByText('no_runs_match')).toBeTruthy();
+    fireEvent.click(document.querySelector('[data-grid-clear-filters]') as HTMLElement);
+    expect(await screen.findByText('Fix the cart')).toBeTruthy();
+  });
+
+  it('lists the deploys on History: search, and a row opens what the deploy said', async () => {
+    setUp({
+      deployments: [
+        deployment({ id: 'd1', product: 'shop', reason: 'first try' }),
+        deployment({ id: 'd2', product: 'billing', environment_name: 'prod', namespace: 'billing-prod' }),
+      ],
+    });
+    render(<ReleasesScreen bridge={null} />);
+    await screen.findByText('0.2.0 runs in dev');
+    fireEvent.click(document.querySelector('[data-release-tab="history"]') as HTMLElement);
+    await waitFor(() => expect(document.querySelectorAll('[data-deploy-history-row]').length).toBe(2));
+    fireEvent.click(document.querySelector('[data-deploy-history-row="d1"]')?.closest('tr') as HTMLElement);
+    const detail = await waitFor(() => {
+      const d = document.querySelector('[data-deploy-history-detail="d1"]');
+      if (!d) throw new Error('not yet');
+      return d;
+    });
+    expect(detail.textContent).toContain('first try');
+    const search = screen.getByPlaceholderText('search_deploys');
+    fireEvent.change(search, { target: { value: 'billing-prod' } });
+    await waitFor(() => expect(document.querySelectorAll('[data-deploy-history-row]').length).toBe(1));
+    expect(document.querySelector('[data-deploy-history-row="d2"]')).toBeTruthy();
+  });
+
+  describe('targets and deploys from the path', () => {
+    const asked = (name: string) => calls.filter((c) => c.name === name).length;
+
+    it('takes them from the path answer and does not read them again', async () => {
+      setUp({ carry: true });
+      render(<ReleasesScreen bridge={null} />);
+      expect(await screen.findByText('0.2.0 runs in dev')).toBeTruthy();
+      expect(calls.find((c) => c.name === 'projectPath')?.args).toEqual([
+        { projectId: 'p1', include: 'targets,deployments' },
+      ]);
+      expect(asked('targets')).toBe(0);
+      expect(asked('deployments')).toBe(0);
+    });
+
+    it('reads them on their own from a backend whose path does not carry them', async () => {
+      render(<ReleasesScreen bridge={null} />);
+      expect(await screen.findByText('0.2.0 runs in dev')).toBeTruthy();
+      expect(asked('targets')).toBe(1);
+      expect(asked('deployments')).toBe(1);
+    });
+
+    it('reads them on their own when the path fails, with their own failures as before', async () => {
+      Object.assign(service, {
+        projectPath: read('projectPath', new Error('path is down')),
+        deployments: read('deployments', new Error('deploys are down')),
+      });
+      render(<ReleasesScreen bridge={null} />);
+      // A failed deploys read is an empty ladder, not an error.
+      await waitFor(() => expect(document.querySelector('[data-ladder-step="dev"]')).toBeTruthy());
+      expect(document.querySelector('[data-ladder-step="dev"]')?.getAttribute('data-ladder-state')).toBe('empty');
+      expect(asked('targets')).toBe(1);
+      expect(asked('deployments')).toBe(1);
+    });
+
+    it('a 404 from the targets is a deployment without environments, not an error', async () => {
+      Object.assign(service, {
+        projectPath: read('projectPath', new Error('path is down')),
+        targets: read('targets', Object.assign(new Error('not found'), { response: { status: 404 } })),
+      });
+      render(<ReleasesScreen bridge={null} />);
+      expect(await screen.findByText('no_environments_here')).toBeTruthy();
+    });
   });
 
   describe('the path to running (#1050)', () => {

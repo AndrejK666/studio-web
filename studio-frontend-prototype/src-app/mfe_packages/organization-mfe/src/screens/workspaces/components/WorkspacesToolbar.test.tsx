@@ -25,8 +25,6 @@ import { WorkspacesToolbar } from './WorkspacesToolbar';
 const renderToolbar = (props: { busy?: boolean; total?: number; projectTotal?: number }) =>
   render(
     <WorkspacesToolbar
-      query=""
-      onQueryChange={() => {}}
       canCreate
       busy={props.busy ?? false}
       total={props.total}

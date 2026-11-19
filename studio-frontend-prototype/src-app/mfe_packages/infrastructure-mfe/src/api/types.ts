@@ -2,8 +2,8 @@
  * The wire shapes Organization › Infrastructure reads, copied from the
  * prototype's client (src/api.ts at 00828880) so the models ported with them
  * keep their types: studio-environments (ADR-0043, ADR-0048, ADR-0054–0064),
- * the studio-connector connections its places are, and account-management's
- * users. The list envelopes this kit's service answers with are at the end.
+ * the studio-connector connections its places are, and studio-user's
+ * organization members. The list envelopes this kit's service answers with are at the end.
  */
 
 export interface User {
@@ -581,8 +581,8 @@ export interface DeploymentList {
   total: number;
 }
 
-/** A page of a tenant's users, with the cursor to the next. */
-export interface UserPage {
-  items: User[];
-  page_info?: { next_cursor: string | null };
+/** A page of an organization's members (`GET /studio-user/v1/organizations/{id}/members`), the fields read here. */
+export interface MemberPage {
+  items: { user_id: string; display_name?: string | null; email?: string | null }[];
+  total: number;
 }

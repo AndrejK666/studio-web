@@ -1,32 +1,40 @@
 /**
- * The connections as a table — the prototype's `ConnectionList` (`App.tsx` at
- * 00828880): kind chips and a provider filter, a search, one row per
- * connection with its health, what uses it and its scope; Test again, Edit,
- * Browse repositories and Remove; the editor and the repository browser open
- * under their row; "Not connected yet" names the kinds nothing is connected
- * for. Health is asked once when the list shows and kept five minutes, across
- * visits; a forced test always asks.
+ * The connections on the kit's DataGrid, the way Specs draws its list (#1076) —
+ * the prototype's `ConnectionList` (`App.tsx` at 00828880): the kind and the
+ * connector as quick filters, a search, header sort by connection and kind, one
+ * row per connection with its health, what uses it and its scope; Test again,
+ * Edit, Browse repositories and Remove in its actions; the editor and the
+ * repository browser open below the list; "Not connected yet" names the kinds
+ * nothing is connected for. Health is asked once when the list shows and kept
+ * five minutes, across visits; a forced test always asks. The search, filters
+ * and order stay in the address under `conn.`.
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Network } from 'lucide-react';
 import { apiRegistry } from '@gears-frontx/react';
 import {
   Badge,
   Button,
   Card,
   CardContent,
-  Input,
-  NativeSelect,
-  NativeSelectOption,
+  DataGridRowActionsPlugin,
   StatusDot,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
+  filterTagGroup,
+  type DataGridLoadContext,
+  type DataGridTableColumn,
 } from '@gears-frontx/ui-kit';
-import { useListState, type OrganizationRef, type ScreenText } from '@constructor-studio/mfe-shared';
+import type { OrganizationRef, ScreenText } from '@constructor-studio/mfe-shared';
+import {
+  GridAddress,
+  GridClearFilters,
+  GridEmpty,
+  ListGrid,
+  createGridCells,
+  tagGroupChoice,
+  useLocalGridLoad,
+  writeGridAddress,
+} from '@constructor-studio/mfe-shared/grid';
 import { AdminApiService } from '../../../api/AdminApiService';
 import type { ConnectorProvider, StoredConnection } from '../../../api/types';
 import {
@@ -46,8 +54,34 @@ import own from './Integrations.module.css';
 
 type Health = { state: 'ok' | 'bad' | 'testing'; text: string; at: number };
 
-/** Each connection's last answer, kept across visits to the page. */
-const healthCache = new Map<string, Health>();
+/**
+ * Each connection's last answer, kept across visits to the page and, through localStorage, across page loads: a test
+ * of a GitHub connection is a live call that spends the token's rate limit, so a visit asks only what has no answer
+ * younger than HEALTH_TTL_MS (walk 2026-11-16: every visit tested all six).
+ */
+const HEALTH_STORE_KEY = 'studio.admin.connection-health.v1';
+const healthCache = new Map<string, Health>(readStoredHealth());
+
+function readStoredHealth(): [string, Health][] {
+  try {
+    const raw = window.localStorage.getItem(HEALTH_STORE_KEY);
+    const stored = raw ? (JSON.parse(raw) as Record<string, Health>) : {};
+    return Object.entries(stored).filter(
+      ([, h]) => !!h && (h.state === 'ok' || h.state === 'bad') && typeof h.at === 'number'
+    );
+  } catch {
+    return [];
+  }
+}
+
+function storeHealth(): void {
+  try {
+    const settled = [...healthCache.entries()].filter(([, h]) => h.state !== 'testing');
+    window.localStorage.setItem(HEALTH_STORE_KEY, JSON.stringify(Object.fromEntries(settled)));
+  } catch {
+    // A private window or blocked storage: the answers last this page load only.
+  }
+}
 
 /** "8 min ago", "yesterday": when a health answer came. */
 export function ago(at: number, now: number, t: ScreenText): string {
@@ -63,13 +97,151 @@ export function ago(at: number, now: number, t: ScreenText): string {
   return t.count('int_months_ago', Math.round(days / 30));
 }
 
-type SortKey = 'connection' | 'kind';
-
 /** Where the connection list keeps its search, filters and sort in the address. */
 export const CONNECTIONS_LIST_PREFIX = 'conn.';
 
+/** The quick filters' keys: one kind, one connector. */
+export const CONNECTION_FILTERS = { kind: 'kind', provider: 'provider' } as const;
+const ADDRESS_FILTERS = [CONNECTION_FILTERS.kind, CONNECTION_FILTERS.provider];
+
+/** What a cell needs beyond its row. */
+interface ConnectionCells {
+  t: ScreenText;
+  orgName: string;
+  health: Record<string, Health>;
+  now: number;
+  editing: string | null;
+  open: string | null;
+  nameOf: (provider: string) => string;
+  categoryTitle: (provider: string) => string;
+  defaultUrl: (provider: string) => string;
+  inheritedOf: (c: StoredConnection) => boolean;
+  browsable: (c: StoredConnection) => boolean;
+  usedBy: (c: StoredConnection) => string;
+  retest: (c: StoredConnection) => void;
+  onEdit: (c: StoredConnection) => void;
+  onBrowse: (c: StoredConnection) => void;
+  onRemove: (c: StoredConnection) => void;
+}
+
+const [ConnectionCellsProvider, useConnectionCells] = createGridCells<ConnectionCells>('Connections');
+
+const ConnectionCell: React.FC<{ item: StoredConnection }> = ({ item }) => {
+  const { health, nameOf, defaultUrl } = useConnectionCells();
+  const h = health[item.id];
+  const address = nonDefaultAddress(item.base_url, defaultUrl(item.provider));
+  return (
+    <span className={own.lead} data-connection={item.id}>
+      <LogoSlot>
+        <ConnectorLogo provider={item.provider} label={nameOf(item.provider)} />
+      </LogoSlot>
+      <span className={own.stack}>
+        <span className={own.name}>
+          <StatusDot
+            tone={h?.state === 'ok' ? 'success' : h?.state === 'bad' ? 'danger' : 'neutral'}
+            live={!h || h.state === 'testing'}
+          />
+          {item.label}
+        </span>
+        <span className={styles.sub}>
+          {nameOf(item.provider)}
+          {address ? ` · ${address}` : ''}
+        </span>
+      </span>
+    </span>
+  );
+};
+
+const KindCell: React.FC<{ item: StoredConnection }> = ({ item }) => (
+  <span className={styles.sub}>{useConnectionCells().categoryTitle(item.provider)}</span>
+);
+
+const AnswerCell: React.FC<{ item: StoredConnection }> = ({ item }) => {
+  const { t, health, now } = useConnectionCells();
+  const h = health[item.id];
+  const answer = h
+    ? h.text.replace(` (${item.base_url})`, '').replace(` (${item.base_url.replace(/\/$/, '')})`, '')
+    : t('int_checking');
+  return (
+    <span>
+      <span
+        className={h?.state === 'bad' ? own.bad : h?.state === 'ok' ? own.ok : styles.sub}
+        title={h?.text}
+        data-connection-answer={h?.state ?? 'testing'}
+      >
+        {answer}
+      </span>
+      {h && h.state !== 'testing' && (
+        <span className={styles.sub}> · {t('int_checked', { when: ago(h.at, Math.max(now, h.at), t) })}</span>
+      )}
+    </span>
+  );
+};
+
+const UsedCell: React.FC<{ item: StoredConnection }> = ({ item }) => (
+  <span className={styles.sub}>{useConnectionCells().usedBy(item)}</span>
+);
+
+const ScopeCell: React.FC<{ item: StoredConnection }> = ({ item }) => {
+  const { t, inheritedOf } = useConnectionCells();
+  const scopeWord = (scope: string) =>
+    ['organization', 'workspace', 'personal'].includes(scope) ? t(`int_scope_${scope}`) : scope;
+  return (
+    <Badge variant={item.scope === 'personal' ? 'outline' : 'secondary'}>
+      {inheritedOf(item) ? t('int_scope_shared', { scope: scopeWord(item.scope) }) : scopeWord(item.scope)}
+    </Badge>
+  );
+};
+
+const RowActions: React.FC<{ item: StoredConnection }> = ({ item }) => {
+  const { t, health, editing, open, inheritedOf, browsable, retest, onEdit, onBrowse, onRemove } =
+    useConnectionCells();
+  const testing = health[item.id]?.state === 'testing';
+  return (
+    <div className={styles.inline}>
+      <Button size="sm" variant="ghost" disabled={testing} onClick={() => retest(item)} data-connection-test>
+        {testing ? t('int_checking') : t('int_test_again')}
+      </Button>
+      <Button
+        size="sm"
+        variant="outline"
+        // Inherited connections are edited where they are defined.
+        disabled={inheritedOf(item)}
+        onClick={() => onEdit(item)}
+        data-connection-edit
+      >
+        {editing === item.id ? t('int_close_editor') : t('int_edit')}
+      </Button>
+      {browsable(item) && (
+        <Button size="sm" variant="outline" onClick={() => onBrowse(item)} data-connection-browse>
+          {open === item.id ? t('int_hide_repos') : t('int_browse_repos')}
+        </Button>
+      )}
+      <Button size="sm" variant="ghost" onClick={() => onRemove(item)} data-connection-remove>
+        {t('remove')}
+      </Button>
+    </div>
+  );
+};
+
+const ConnectionsEmpty: React.FC = () => {
+  const { t, orgName } = useConnectionCells();
+  return (
+    <div data-connections-empty>
+      <GridEmpty
+        icon={<Network />}
+        title={t('int_empty_title', { name: orgName })}
+        note={t('int_empty_body')}
+        noMatches={t('int_no_match')}
+        noMatchesActions={<GridClearFilters label={t('clear_search')} />}
+      />
+    </div>
+  );
+};
+
 export function ConnectionTable({
   org,
+  personal = false,
   providers,
   connections,
   loading,
@@ -82,6 +254,7 @@ export function ConnectionTable({
   onNote,
 }: {
   org: OrganizationRef;
+  personal?: boolean;
   providers: ConnectorProvider[];
   connections: StoredConnection[];
   loading: boolean;
@@ -101,19 +274,6 @@ export function ConnectionTable({
   const [ask, confirmDialog] = useConfirm();
   const [open, setOpen] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
-  // Search, kind, connector and sort in the address under `conn.`, as the prototype's
-  // `DataTable list="connections" urlPrefix="conn."` kept them: shared, and back on Back.
-  const [list, listCtl] = useListState(CONNECTIONS_LIST_PREFIX);
-  const query = list.q;
-  const kind = list.filters.kind ?? null;
-  const provider = list.filters.provider ?? '';
-  const sort: { key: SortKey; desc: boolean } | null =
-    list.sort && (list.sort.key === 'connection' || list.sort.key === 'kind')
-      ? { key: list.sort.key, desc: list.sort.dir === 'desc' }
-      : null;
-  const setQuery = listCtl.setQ;
-  const setKind = (value: string | null) => listCtl.setFilter('kind', value);
-  const setProvider = (value: string) => listCtl.setFilter('provider', value);
   const [health, setHealth] = useState<Record<string, Health>>(() => Object.fromEntries(healthCache.entries()));
   // "checked 3 min ago" moves on without a re-read: the instant is state, ticked every 30 s.
   const [now, setNow] = useState(() => Date.now());
@@ -122,17 +282,21 @@ export function ConnectionTable({
     return () => clearInterval(timer);
   }, []);
 
-  const nameOf = (p: string) => providers.find((x) => x.provider === p)?.display_name ?? p;
-  const categoryOf = (p: string) => providers.find((x) => x.provider === p)?.category;
-  const categoryTitle = (p: string) => {
-    const key = categoryOf(p);
-    return key && (CATEGORY_KEYS as readonly string[]).includes(key) ? t(`int_cat_${key}`) : t('int_cat_other');
-  };
-  const defaultUrl = (p: string) => providers.find((x) => x.provider === p)?.default_base_url ?? '';
+  const providerOf = useCallback((p: string) => providers.find((x) => x.provider === p), [providers]);
+  const nameOf = useCallback((p: string) => providerOf(p)?.display_name ?? p, [providerOf]);
+  const categoryOf = useCallback((p: string) => providerOf(p)?.category, [providerOf]);
+  const categoryTitle = useCallback(
+    (p: string) => {
+      const key = categoryOf(p);
+      return key && (CATEGORY_KEYS as readonly string[]).includes(key) ? t(`int_cat_${key}`) : t('int_cat_other');
+    },
+    [categoryOf, t]
+  );
+  const defaultUrl = useCallback((p: string) => providerOf(p)?.default_base_url ?? '', [providerOf]);
   // A row stored on an ancestor is shared with sibling tenants: removing it affects them too.
   // The gear says so on the list read with ancestors (#1043); else the holder tells.
-  const inheritedOf = (c: StoredConnection) => c.inherited ?? c.owner_tenant_id !== org.id;
-  const browsable = (c: StoredConnection) => categoryOf(c.provider) === 'source_code';
+  const inheritedOf = useCallback((c: StoredConnection) => c.inherited ?? c.owner_tenant_id !== org.id, [org.id]);
+  const browsable = useCallback((c: StoredConnection) => categoryOf(c.provider) === 'source_code', [categoryOf]);
 
   const probe = useCallback(
     (c: StoredConnection) =>
@@ -149,18 +313,22 @@ export function ConnectionTable({
         )
         .then((v) => {
           healthCache.set(c.id, v);
+          storeHealth();
           setHealth((h) => ({ ...h, [c.id]: v }));
         }),
     [api, org.id]
   );
 
-  const retest = (c: StoredConnection) => {
-    setHealth((h) => ({
-      ...h,
-      [c.id]: { state: 'testing', text: h[c.id]?.text ?? t('int_checking'), at: h[c.id]?.at ?? Date.now() },
-    }));
-    void probe(c);
-  };
+  const retest = useCallback(
+    (c: StoredConnection) => {
+      setHealth((h) => ({
+        ...h,
+        [c.id]: { state: 'testing', text: h[c.id]?.text ?? t('int_checking'), at: h[c.id]?.at ?? Date.now() },
+      }));
+      void probe(c);
+    },
+    [probe, t]
+  );
 
   // Ask what has no fresh answer, once per list of connections.
   const ids = connections.map((c) => c.id).join(',');
@@ -174,40 +342,123 @@ export function ConnectionTable({
   }, [ids, probe]);
 
   const missing = loading ? [] : missingCategories(providers, connections);
-  const providersPresent = [...new Set(connections.map((c) => c.provider))];
-  const kindsPresent = CATEGORY_KEYS.filter((key) => connections.some((c) => categoryOf(c.provider) === key));
+  const providersPresent = [...new Set(connections.map((c) => c.provider))].join(',');
+  const kindsPresent = CATEGORY_KEYS.filter((key) => connections.some((c) => categoryOf(c.provider) === key)).join(',');
 
-  const q = query.trim().toLowerCase();
-  const rows = useMemo(() => {
-    const kept = connections.filter(
-      (c) =>
-        (!kind || categoryOf(c.provider) === kind) &&
-        (!provider || c.provider === provider) &&
-        (!q || [c.label, c.account, c.base_url, nameOf(c.provider)].some((f) => (f ?? '').toLowerCase().includes(q)))
-    );
-    if (!sort) return kept;
-    const by =
-      sort.key === 'connection'
-        ? (a: StoredConnection, b: StoredConnection) => a.label.localeCompare(b.label)
-        : (a: StoredConnection, b: StoredConnection) => categoryTitle(a.provider).localeCompare(categoryTitle(b.provider));
-    return [...kept].sort((a, b) => (sort.desc ? by(b, a) : by(a, b)));
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- the helpers read `providers`, listed
-  }, [connections, providers, kind, provider, q, sort?.key, sort?.desc]);
+  const usedBy = useCallback(
+    (c: StoredConnection) => {
+      if (c.provider === 'kubernetes' || c.provider === 'registry') {
+        const names = envUses.get(c.id);
+        return names?.length ? t('int_used_envs', { names: names.join(', ') }) : t('int_used_none');
+      }
+      return c.provider === GEAR_REPOSITORY ? t('int_used_gear_repos') : '—';
+    },
+    [envUses, t]
+  );
 
-  const sortBy = (key: SortKey) => listCtl.toggleSort(key);
-  const sortMark = (key: SortKey) => (sort?.key === key ? (sort.desc ? ' ↓' : ' ↑') : '');
+  const remove = useCallback(
+    (c: StoredConnection) =>
+      ask(
+        {
+          title: inheritedOf(c) ? t('int_remove_shared_title', { label: c.label }) : t('int_remove_title', { label: c.label }),
+          body: inheritedOf(c) ? t('int_remove_shared_body') : t('int_remove_body'),
+          confirmLabel: t('remove'),
+        },
+        async () => {
+          await api.deleteConnection(c.id, org.id).fetch(undefined);
+          onChanged();
+        }
+      ),
+    [ask, inheritedOf, t, api, org.id, onChanged]
+  );
 
-  const usedBy = (c: StoredConnection) => {
-    if (c.provider === 'kubernetes' || c.provider === 'registry') {
-      const names = envUses.get(c.id);
-      return <span className={styles.sub}>{names?.length ? t('int_used_envs', { names: names.join(', ') }) : t('int_used_none')}</span>;
-    }
-    if (c.provider === GEAR_REPOSITORY) return <span className={styles.sub}>{t('int_used_gear_repos')}</span>;
-    return <span className={styles.sub}>—</span>;
-  };
+  const { load: localLoad, reloadBridge } = useLocalGridLoad(connections, {
+    search: (c) => [c.label, c.account, c.base_url, nameOf(c.provider)],
+    filter: (c, filters) => {
+      const kind = tagGroupChoice(filters[CONNECTION_FILTERS.kind]);
+      const provider = tagGroupChoice(filters[CONNECTION_FILTERS.provider]);
+      return (!kind || categoryOf(c.provider) === kind) && (!provider || c.provider === provider);
+    },
+    compare: {
+      connection: (a, b) => a.label.localeCompare(b.label),
+      kind: (a, b) => categoryTitle(a.provider).localeCompare(categoryTitle(b.provider)),
+    },
+  });
+  const load = useCallback(
+    (context: DataGridLoadContext) => {
+      writeGridAddress(context, CONNECTIONS_LIST_PREFIX, ADDRESS_FILTERS);
+      return localLoad(context);
+    },
+    [localLoad]
+  );
 
-  const scopeWord = (scope: string) =>
-    ['organization', 'workspace', 'personal'].includes(scope) ? t(`int_scope_${scope}`) : scope;
+  const columns = useMemo<DataGridTableColumn<StoredConnection>[]>(
+    () => [
+      { id: 'connection', label: t('int_col_connection'), component: ConnectionCell },
+      { id: 'kind', label: t('int_col_kind'), component: KindCell, width: 128 },
+      { id: 'answers', label: t('int_col_answers'), component: AnswerCell },
+      { id: 'used', label: t('int_col_used'), component: UsedCell, width: 160 },
+      { id: 'scope', label: t('int_col_scope'), component: ScopeCell, width: 160 },
+    ],
+    [t]
+  );
+  const filters = useMemo(() => {
+    const kinds = kindsPresent ? kindsPresent.split(',') : [];
+    const present = providersPresent ? providersPresent.split(',') : [];
+    return [
+      ...(kinds.length > 0
+        ? [
+            filterTagGroup({
+              id: CONNECTION_FILTERS.kind,
+              label: t('int_kind'),
+              mode: 'radio',
+              options: kinds.map((key) => ({ value: key, label: t(`int_cat_${key}`) })),
+            }),
+          ]
+        : []),
+      ...(present.length > 1
+        ? [
+            filterTagGroup({
+              id: CONNECTION_FILTERS.provider,
+              label: t('int_provider'),
+              mode: 'radio',
+              options: present.map((p) => ({ value: p, label: nameOf(p) })),
+            }),
+          ]
+        : []),
+    ];
+  }, [t, kindsPresent, providersPresent, nameOf]);
+
+  const cells = useMemo<ConnectionCells>(
+    () => ({
+      t,
+      orgName: org.name,
+      health,
+      now,
+      editing,
+      open,
+      nameOf,
+      categoryTitle,
+      defaultUrl,
+      inheritedOf,
+      browsable,
+      usedBy,
+      retest,
+      onEdit: (c) => {
+        setOpen(null);
+        setEditing((was) => (was === c.id ? null : c.id));
+      },
+      onBrowse: (c) => {
+        setEditing(null);
+        setOpen((was) => (was === c.id ? null : c.id));
+      },
+      onRemove: remove,
+    }),
+    [t, org.name, health, now, editing, open, nameOf, categoryTitle, defaultUrl, inheritedOf, browsable, usedBy, retest, remove]
+  );
+
+  const edited = editing ? connections.find((c) => c.id === editing) : undefined;
+  const browsed = !edited && open ? connections.find((c) => c.id === open && browsable(c)) : undefined;
 
   return (
     <Card data-connections>
@@ -215,226 +466,62 @@ export function ConnectionTable({
         <div className={styles.toolbar}>
           <h3 className={styles.subtitle}>{t('int_connections')}</h3>
           <span className={own.spacer} />
-          <Input
-            className={styles.search}
-            type="search"
-            value={query}
-            placeholder={t('int_search')}
-            aria-label={t('int_search')}
-            onChange={(e) => setQuery(e.target.value)}
-          />
           <Button size="sm" disabled={adding} onClick={() => onAdd()} data-connection-add>
-            {t('int_add')}
+            {personal ? t('int_add_personal') : t('int_add_for_org', { organization: org.name })}
           </Button>
         </div>
-        {kindsPresent.length > 0 && (
-          <div className={styles.inline} role="group" aria-label={t('int_kind')}>
-            <Button size="sm" variant={kind === null ? 'secondary' : 'ghost'} onClick={() => setKind(null)}>
-              {t('int_every_kind')}
-            </Button>
-            {kindsPresent.map((key) => (
-              <Button
-                key={key}
-                size="sm"
-                variant={kind === key ? 'secondary' : 'ghost'}
-                onClick={() => setKind(kind === key ? null : key)}
-                data-kind-chip={key}
-              >
-                {t(`int_cat_${key}`)}
-              </Button>
-            ))}
-            {providersPresent.length > 1 && (
-              <NativeSelect aria-label={t('int_provider')} value={provider} onChange={(e) => setProvider(e.target.value)}>
-                <NativeSelectOption value="">{t('int_every_provider')}</NativeSelectOption>
-                {providersPresent.map((p) => (
-                  <NativeSelectOption key={p} value={p}>
-                    {nameOf(p)}
-                  </NativeSelectOption>
-                ))}
-              </NativeSelect>
-            )}
-          </div>
-        )}
 
         {loading ? (
           <p className={styles.muted}>{t('reading')}</p>
-        ) : connections.length === 0 ? (
-          <div data-connections-empty>
-            <p className={styles.subtitle}>{t('int_empty_title', { name: org.name })}</p>
-            <p className={styles.muted}>{t('int_empty_body')}</p>
-          </div>
-        ) : rows.length === 0 ? (
-          <p className={styles.muted}>{t('int_no_match')}</p>
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>
-                  <button type="button" className={own.sortHead} onClick={() => sortBy('connection')}>
-                    {t('int_col_connection')}
-                    {sortMark('connection')}
-                  </button>
-                </TableHead>
-                <TableHead>
-                  <button type="button" className={own.sortHead} onClick={() => sortBy('kind')}>
-                    {t('int_col_kind')}
-                    {sortMark('kind')}
-                  </button>
-                </TableHead>
-                <TableHead>{t('int_col_answers')}</TableHead>
-                <TableHead>{t('int_col_used')}</TableHead>
-                <TableHead>{t('int_col_scope')}</TableHead>
-                <TableHead />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rows.map((c) => {
-                const h = health[c.id];
-                const address = nonDefaultAddress(c.base_url, defaultUrl(c.provider));
-                const answer = h
-                  ? h.text.replace(` (${c.base_url})`, '').replace(` (${c.base_url.replace(/\/$/, '')})`, '')
-                  : t('int_checking');
-                return (
-                  <React.Fragment key={c.id}>
-                    <TableRow data-connection={c.id}>
-                      <TableCell>
-                        <span className={own.lead}>
-                          <LogoSlot>
-                            <ConnectorLogo provider={c.provider} label={nameOf(c.provider)} />
-                          </LogoSlot>
-                          <span className={own.stack}>
-                            <span className={own.name}>
-                              <StatusDot
-                                tone={h?.state === 'ok' ? 'success' : h?.state === 'bad' ? 'danger' : 'neutral'}
-                                live={!h || h.state === 'testing'}
-                              />
-                              {c.label}
-                            </span>
-                            <span className={styles.sub}>
-                              {nameOf(c.provider)}
-                              {address ? ` · ${address}` : ''}
-                            </span>
-                          </span>
-                        </span>
-                      </TableCell>
-                      <TableCell className={styles.sub}>{categoryTitle(c.provider)}</TableCell>
-                      <TableCell>
-                        <span
-                          className={h?.state === 'bad' ? own.bad : h?.state === 'ok' ? own.ok : styles.sub}
-                          title={h?.text}
-                          data-connection-answer={h?.state ?? 'testing'}
-                        >
-                          {answer}
-                        </span>
-                        {h && h.state !== 'testing' && (
-                          <span className={styles.sub}> · {t('int_checked', { when: ago(h.at, Math.max(now, h.at), t) })}</span>
-                        )}
-                      </TableCell>
-                      <TableCell>{usedBy(c)}</TableCell>
-                      <TableCell>
-                        <Badge variant={c.scope === 'personal' ? 'outline' : 'secondary'}>
-                          {inheritedOf(c) ? t('int_scope_shared', { scope: scopeWord(c.scope) }) : scopeWord(c.scope)}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <div className={styles.inline}>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            disabled={h?.state === 'testing'}
-                            onClick={() => retest(c)}
-                            data-connection-test
-                          >
-                            {h?.state === 'testing' ? t('int_checking') : t('int_test_again')}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            // Inherited connections are edited where they are defined.
-                            disabled={inheritedOf(c)}
-                            onClick={() => {
-                              setOpen(null);
-                              setEditing(editing === c.id ? null : c.id);
-                            }}
-                            data-connection-edit
-                          >
-                            {editing === c.id ? t('int_close_editor') : t('int_edit')}
-                          </Button>
-                          {browsable(c) && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => {
-                                setEditing(null);
-                                setOpen(open === c.id ? null : c.id);
-                              }}
-                              data-connection-browse
-                            >
-                              {open === c.id ? t('int_hide_repos') : t('int_browse_repos')}
-                            </Button>
-                          )}
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() =>
-                              ask(
-                                {
-                                  title: inheritedOf(c)
-                                    ? t('int_remove_shared_title', { label: c.label })
-                                    : t('int_remove_title', { label: c.label }),
-                                  body: inheritedOf(c) ? t('int_remove_shared_body') : t('int_remove_body'),
-                                  confirmLabel: t('remove'),
-                                },
-                                async () => {
-                                  await api.deleteConnection(c.id, org.id).fetch(undefined);
-                                  onChanged();
-                                }
-                              )
-                            }
-                            data-connection-remove
-                          >
-                            {t('remove')}
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                    {editing === c.id ? (
-                      <TableRow>
-                        <TableCell colSpan={6}>
-                          <EditConnection
-                            org={org}
-                            connection={c}
-                            onNote={onNote}
-                            onDone={(changed) => {
-                              setEditing(null);
-                              if (changed) {
-                                // A rotated credential invalidates the cached answer: it was for the old token.
-                                healthCache.delete(c.id);
-                                retest(c);
-                                onChanged();
-                              }
-                            }}
-                          />
-                        </TableCell>
-                      </TableRow>
-                    ) : open === c.id && browsable(c) ? (
-                      <TableRow>
-                        <TableCell colSpan={6}>
-                          <RepoBrowser
-                            org={org}
-                            connection={c}
-                            sourcesTick={sourcesTick}
-                            onSourcesChanged={onSourcesChanged}
-                            onNote={onNote}
-                          />
-                        </TableCell>
-                      </TableRow>
-                    ) : null}
-                  </React.Fragment>
-                );
-              })}
-            </TableBody>
-          </Table>
+          <ConnectionCellsProvider value={cells}>
+            <ListGrid<StoredConnection>
+              name="connections"
+              label={t('int_connections')}
+              columns={columns}
+              load={load}
+              search={t('int_search')}
+              filters={filters}
+              empty={ConnectionsEmpty}
+              unsortable={['answers', 'used', 'scope']}
+              minWidth="56rem"
+            >
+              <DataGridRowActionsPlugin<StoredConnection> component={RowActions} />
+              <GridAddress prefix={CONNECTIONS_LIST_PREFIX} filterKeys={ADDRESS_FILTERS} />
+              {reloadBridge}
+            </ListGrid>
+          </ConnectionCellsProvider>
+        )}
+
+        {/* The editor and the repository browser open below the list, not under their row. */}
+        {edited && (
+          <div data-connection-detail={edited.id}>
+            <EditConnection
+              org={org}
+              connection={edited}
+              onNote={onNote}
+              onDone={(changed) => {
+                setEditing(null);
+                if (changed) {
+                  // A rotated credential invalidates the cached answer: it was for the old token.
+                  healthCache.delete(edited.id);
+                  retest(edited);
+                  onChanged();
+                }
+              }}
+            />
+          </div>
+        )}
+        {browsed && (
+          <div data-connection-detail={browsed.id}>
+            <RepoBrowser
+              org={org}
+              connection={browsed}
+              sourcesTick={sourcesTick}
+              onSourcesChanged={onSourcesChanged}
+              onNote={onNote}
+            />
+          </div>
         )}
 
         {missing.length > 0 && (

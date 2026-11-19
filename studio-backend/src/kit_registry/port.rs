@@ -9,7 +9,8 @@
 //! - [`KitPresence`]: whether a kit applies to an organization or a project --
 //!   what a gear asks before it does what only a kit brings (ADR-0070 §7,
 //!   decision 5: `KIT_NOT_INSTALLED`). studio-environments asks for the
-//!   Constructor Research kit ([`CONSTRUCTOR_RESEARCH_KIT`]).
+//!   Constructor Research kit ([`CONSTRUCTOR_RESEARCH_KIT`]), studio-product
+//!   for the Gears matcher kit ([`GEARS_MATCHER_KIT`]).
 
 use std::sync::Arc;
 
@@ -17,9 +18,48 @@ use async_trait::async_trait;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
-use super::installed::KitInstaller;
-pub use super::service::CONSTRUCTOR_RESEARCH_KIT;
+pub use super::claims::{Claims, builtin_gear_claims};
+pub use super::gate::{
+    KIT_NOT_INSTALLED, KitRefusal, require_kit, sync_wanted, tool_refusal, with_claimed_routes,
+};
+use super::installed::{KitInstaller, Refusal};
+pub(crate) use super::manifest::{
+    KitManifest, PROJECT_CREATION_STEPS, project_type_kit, project_type_kits,
+};
+pub use super::owners::{KitOwners, MarkOn, Rehome};
 use super::service::KitRegistryService;
+pub use super::service::{CONSTRUCTOR_RESEARCH_KIT, GEARS_MATCHER_KIT, SPEC_MAPPING_KIT};
+
+/// A way of assembling a product that a kit provides (ADR-0074): its
+/// manifest's `assembly_strategy`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProvidedStrategy {
+    /// The kit that provides it.
+    pub kit: String,
+    pub id: String,
+    pub name: String,
+    pub description: String,
+}
+
+/// The assembly strategies the kits `slugs` provide, in the order given; a
+/// slug that is not a built-in kit, or a kit that declares none, provides
+/// none. Built-in kits only: an organization's own kit cannot bring a
+/// strategy studio-product does not know how to run.
+pub fn assembly_strategies(slugs: &[String]) -> Vec<ProvidedStrategy> {
+    slugs
+        .iter()
+        .filter_map(|slug| {
+            let m = super::manifest::builtin_manifest(slug)?;
+            let s = m.assembly_strategy?;
+            Some(ProvidedStrategy {
+                kit: m.slug,
+                id: s.id,
+                name: s.name,
+                description: s.description,
+            })
+        })
+        .collect()
+}
 
 #[async_trait]
 pub trait ProjectKitRequests: Send + Sync + 'static {
@@ -40,21 +80,57 @@ pub trait ProjectKitRequests: Send + Sync + 'static {
         kit_slug: &str,
         version: Option<&str>,
     ) -> anyhow::Result<()>;
+
+    /// Activate the chosen built-in type on the project a creation run just made.
+    async fn install_project_type(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+        organization: Uuid,
+        slug: &str,
+    ) -> anyhow::Result<()>;
 }
 
 /// studio-kits' [`ProjectKitRequests`].
 pub struct KitRequests {
     service: Arc<KitRegistryService>,
+    installer: Arc<KitInstaller>,
 }
 
 impl KitRequests {
-    pub(super) fn new(service: Arc<KitRegistryService>) -> Self {
-        Self { service }
+    pub(super) fn new(service: Arc<KitRegistryService>, installer: Arc<KitInstaller>) -> Self {
+        Self { service, installer }
     }
 }
 
 #[async_trait]
 impl ProjectKitRequests for KitRequests {
+    async fn install_project_type(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+        organization: Uuid,
+        slug: &str,
+    ) -> anyhow::Result<()> {
+        self.installer
+            .install_for_created_project(ctx, project, organization, slug)
+            .await
+            .map(|_| ())
+            .map_err(|failure| match failure {
+                // The run's step line, read in the New project dialog.
+                Refusal::Internal(error) => error,
+                Refusal::Invalid(why) => anyhow::anyhow!(why),
+                Refusal::RequiresKits { kit, missing } => anyhow::anyhow!(
+                    "`{kit}` requires {}, which the organization does not have",
+                    missing.join(", ")
+                ),
+                Refusal::Forbidden(reason) => {
+                    anyhow::anyhow!("refused ({reason}): the run may only type its own new project")
+                }
+                other => anyhow::anyhow!("{other:?}"),
+            })
+    }
+
     async fn requested(
         &self,
         ctx: &SecurityContext,
@@ -151,8 +227,9 @@ impl KitPresence for InstalledKits {
             self.installer.installed(ctx, tenant).await
         }
         .map_err(|refusal| anyhow::anyhow!("the installed kits could not be read: {refusal:?}"))?;
-        Ok(installed
-            .effective
+        // A retired slug applies where every kit it resolves to does
+        // (ADR-0071 §8), for a gear that still asks by it.
+        Ok(super::aliases::with_retired(&installed.effective)
             .into_iter()
             .map(|k| k.kit_slug)
             .collect())

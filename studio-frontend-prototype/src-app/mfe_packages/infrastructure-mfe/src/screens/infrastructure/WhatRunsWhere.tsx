@@ -1,32 +1,17 @@
 /**
  * What runs where (ADR-0056 §2): the deploys waiting for an administrator's
- * decision, with Approve and Decline, and a table of projects by
+ * decision, with Approve and Decline, and a grid of projects by
  * environments — per cell what runs and, beside it, the newest deploy when
  * that is not what runs. The prototype's "What runs where" tab of
  * OrgInfrastructure (environments-screen.tsx at 00828880).
  */
 
 import { useState } from 'react';
-import {
-  Badge,
-  Button,
-  Card,
-  CardContent,
-  Empty,
-  EmptyHeader,
-  EmptyTitle,
-  Input,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@gears-frontx/ui-kit';
+import { Button, Card, CardContent, Input } from '@gears-frontx/ui-kit';
 import type { DeployEnvironment, Deployment } from '../../api/types';
-import { STATE_LABELS, stateTone } from '../../model/environments';
-import { versionOf, type ProjectRuns } from '../../model/releases';
-import { DeploymentLine, STATE_BADGE, errText, relTime, useApi, useInfra, type PeopleNames } from './parts';
+import type { ProjectRuns } from '../../model/releases';
+import { DeploymentLine, errText, useApi, useInfra, type PeopleNames } from './parts';
+import { RunsWhereGrid } from './RunsWhereGrid';
 import styles from './InfrastructureScreen.module.css';
 
 export function WhatRunsWhere({
@@ -46,7 +31,7 @@ export function WhatRunsWhere({
   /** A decision was made: what it said, and the page reads its deploys again. */
   onDecided: (notice: string) => void;
 }) {
-  const { t, org, language } = useInfra();
+  const { t, org } = useInfra();
   const api = useApi();
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -144,69 +129,8 @@ export function WhatRunsWhere({
         <CardContent className={styles.cardBody}>
           {rows === null ? (
             <p className={styles.hint}>{t('loading')}</p>
-          ) : rows.length === 0 ? (
-            <Empty>
-              <EmptyHeader>
-                <EmptyTitle>{t('nothing_runs')}</EmptyTitle>
-              </EmptyHeader>
-            </Empty>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>{t('col_project')}</TableHead>
-                  {ladder.map((e) => (
-                    <TableHead key={e.id}>{e.name}</TableHead>
-                  ))}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((r) => (
-                  <TableRow key={r.projectId} data-runs-row={r.projectName}>
-                    <TableCell>
-                      <b>{r.projectName}</b>
-                    </TableCell>
-                    {ladder.map((e) => {
-                      const cell = r.cells.get(e.id);
-                      if (!cell)
-                        return (
-                          <TableCell key={e.id}>
-                            <span className={styles.muted}>—</span>
-                          </TableCell>
-                        );
-                      const runs = cell.runs ? versionOf(cell.runs) : null;
-                      const asked = versionOf(cell.latest);
-                      // What runs, as a chip; the newest deploy beside it when it
-                      // is not what runs: waiting, deploying, failed, taken out.
-                      return (
-                        <TableCell key={e.id}>
-                          <div
-                            className={styles.chipRow}
-                            data-runs-cell={`${r.projectName}/${e.name}`}
-                            title={t('newest_deploy', { when: relTime(cell.latest.requested_at, language) })}
-                          >
-                            {runs ? (
-                              <Badge variant="success">{runs}</Badge>
-                            ) : (
-                              <span className={styles.muted}>{t('nothing_runs_cell')}</span>
-                            )}
-                            {cell.latest.id !== cell.runs?.id && (
-                              <Badge
-                                variant={STATE_BADGE[stateTone(cell.latest.state)]}
-                                data-deployment-state={cell.latest.state}
-                              >
-                                {asked ? `${asked} · ` : ''}
-                                {STATE_LABELS[cell.latest.state] ?? cell.latest.state}
-                              </Badge>
-                            )}
-                          </div>
-                        </TableCell>
-                      );
-                    })}
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <RunsWhereGrid rows={rows} ladder={ladder} />
           )}
         </CardContent>
       </Card>

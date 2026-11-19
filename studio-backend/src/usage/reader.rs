@@ -35,6 +35,10 @@ pub struct PricedUsage {
 }
 
 impl PricedUsage {
+    pub fn has_prices(&self) -> bool {
+        !self.prices.models.is_empty() || self.prices.session.is_some()
+    }
+
     /// The Costs report's own fold of these facts.
     pub fn report(&self, group: GroupBy, include_personal: bool) -> Report {
         super::costs::report(&self.facts, &self.prices, group, include_personal)

@@ -50,6 +50,11 @@ export interface ProjectParams {
   projectId: string;
 }
 
+export interface ProjectPathParams extends ProjectParams {
+  /** What else the answer should carry: `targets`, `deployments`, comma-separated. */
+  include?: string;
+}
+
 export interface NodesParams extends ProjectParams {
   /** `build`, `workflow_run`, `repo`. */
   type: string;
@@ -76,9 +81,14 @@ export class ReleasesApiService extends BaseApiService {
     ({ projectId }) => `${ENV}/targets?${project(projectId)}`
   );
 
-  /** Where the project stands from its product to running, one read (#1050). */
-  readonly projectPath = this.protocol(RestEndpointProtocol).queryWith<ProjectPath, ProjectParams>(
-    ({ projectId }) => `${ENV}/project-path?${project(projectId)}`
+  /**
+   * Where the project stands from its product to running, one read (#1050).
+   * `include` (`targets`, `deployments`, comma-separated) asks the answer to
+   * carry what the server read to make it, so the caller does not read it again.
+   */
+  readonly projectPath = this.protocol(RestEndpointProtocol).queryWith<ProjectPath, ProjectPathParams>(
+    ({ projectId, include }) =>
+      `${ENV}/project-path?${project(projectId)}${include ? `&include=${enc(include)}` : ''}`
   );
 
   /** One deploy, with its cause when it failed. */

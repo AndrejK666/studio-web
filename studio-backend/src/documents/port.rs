@@ -81,6 +81,34 @@ pub trait DocumentClassifier: Send + Sync + 'static {
         node_ids: Vec<String>,
     ) -> anyhow::Result<usize>;
 
+    /// Move the bindings of files whose node is gone onto the node that now
+    /// has their path, and return how many moved.
+    ///
+    /// A file node's id is derived from the attachment (project, connection,
+    /// repository, path), so the same repository attached again through
+    /// another connection writes every file under a new id. Bindings are keyed
+    /// on the node, so without this every decision a person made about those
+    /// files (a confirmed type, "not a document") stayed on a node nothing
+    /// lists any more: the Specs list read "No longer connected" on every row
+    /// and the Sources tab counted 0 specs for the repository.
+    ///
+    /// `alive` is every file node the scope still has, across all its
+    /// repositories, and `by_path` the files of the repository just walked
+    /// whose path no other live repository of the scope also has. A binding
+    /// moves only when its node is not alive and its path is in `by_path`,
+    /// and never onto a node that already has a binding of its own. Scoped
+    /// like [`Self::classify_ingested`]: `(tenant, project, node)`.
+    async fn adopt_ingested(
+        &self,
+        _ctx: &SecurityContext,
+        _workspace_id: Uuid,
+        _project_id: Option<Uuid>,
+        _alive: std::collections::HashSet<String>,
+        _by_path: std::collections::HashMap<String, String>,
+    ) -> anyhow::Result<usize> {
+        Ok(0)
+    }
+
     /// Of `ids`, the documents written in Studio that still exist in
     /// `workspace_id` — the tenant they are stored against, the parent
     /// workspace for a project's document.
@@ -325,4 +353,66 @@ pub trait ProjectDocuments: Send + Sync + 'static {
         answers: &[(String, String)],
         created_by: &str,
     ) -> anyhow::Result<Uuid>;
+}
+
+/// One of a project's specifications as its text is read now, for a gear
+/// that sends it elsewhere (studio-product's gear match). The same documents
+/// the project domain model reads: the typed documents of the project's
+/// repository, its Studio documents (`studio:<id>`) and its uploaded sources
+/// (`upload:<name>`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpecText {
+    pub path: String,
+    pub text: String,
+    /// The document's type key, when it has one.
+    pub doc_type: Option<String>,
+    /// The commit and branch a repository document was read at; `None` for a
+    /// Studio document or an upload.
+    pub commit: Option<String>,
+    pub branch: Option<String>,
+}
+
+/// The documents read, and the ones whose text could not be.
+#[derive(Debug, Clone, Default)]
+pub struct SpecTextsRead {
+    pub documents: Vec<SpecText>,
+    pub unread: Vec<String>,
+}
+
+/// Why no texts were read.
+#[derive(Debug)]
+pub enum SpecTextsRefused {
+    /// The caller does not reach the project.
+    NotFound(String),
+    /// The selection names what the project's model does not have.
+    UnknownSelection(String),
+    /// This deployment cannot read them (no checkout reader).
+    Unavailable(String),
+    Failed(anyhow::Error),
+}
+
+impl std::fmt::Display for SpecTextsRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotFound(m) | Self::UnknownSelection(m) | Self::Unavailable(m) => f.write_str(m),
+            Self::Failed(e) => write!(f, "{e:#}"),
+        }
+    }
+}
+
+/// A project's specifications with their text, read as the caller: reading
+/// the project is what authorizes it, exactly as the project domain model's
+/// own routes do.
+#[async_trait]
+pub trait SpecTexts: Send + Sync + 'static {
+    /// The documents `paths` and `glob` select (`docs/project-domain-model.md`,
+    /// "Selecting what a build reads"); every document of the model when both
+    /// are empty.
+    async fn spec_texts(
+        &self,
+        ctx: &SecurityContext,
+        project_id: Uuid,
+        paths: &[String],
+        glob: Option<&str>,
+    ) -> Result<SpecTextsRead, SpecTextsRefused>;
 }

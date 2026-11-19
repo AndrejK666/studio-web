@@ -45,7 +45,7 @@
   "state_unused": "no screen uses it",
   "no_screens": "no screens declared",
   "more": "+{count} more",
-  "preview_schematic": "schematic",
+  "preview_schematic": "no picture yet · schematic",
   "preview_built": "built {commit}",
   "preview_built_title": "Taken by a build of {commit} (version {version}) at {at}: the screen with an empty project, not real data",
   "screens_count": "{count} screen(s)",
@@ -132,5 +132,14 @@
   "infra_runs": "{name} runs {image}",
   "infra_removed": "{name} removed",
   "infra_added": "{name} added",
-  "read_again": "Read again"
+  "read_again": "Read again",
+  "preview_schematic_title": "No build has taken a picture of this screen yet: drawn from what its manifest declares, not the running screen",
+  "link_legend_calls": "calls a gear",
+  "link_legend_signs_in": "signs in with",
+  "link_legend_runs_on": "runs on",
+  "link_legend_depends": "runs with",
+  "link_legend_stores_in": "keeps its data in",
+  "link_legend_bad": "broken",
+  "link_legend_rest": "One line per screen and subsystem, with how many links it carries. Point at or select a node for its own links.",
+  "link_legend_lit": "The links of what is pointed at or selected, to each node at the far end."
 }

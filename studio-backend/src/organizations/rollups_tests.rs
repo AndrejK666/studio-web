@@ -258,6 +258,8 @@ struct Counted {
     /// Calls that read many projects at once, and how many they named.
     batches: AtomicUsize,
     named: AtomicUsize,
+    /// The tenant each batch of signals was read in.
+    read_in: std::sync::Mutex<Vec<Uuid>>,
 }
 
 fn findings_of(project: &str) -> u32 {
@@ -341,10 +343,11 @@ impl ProjectSignalSource for Counted {
     }
     async fn project_signals_in(
         &self,
-        _: &SecurityContext,
+        ctx: &SecurityContext,
         projects: &[String],
         _: usize,
     ) -> HashMap<String, ProjectSignals> {
+        self.read_in.lock().unwrap().push(ctx.subject_tenant_id());
         self.batches.fetch_add(1, Ordering::SeqCst);
         self.named.fetch_add(projects.len(), Ordering::SeqCst);
         HashMap::new()
@@ -427,4 +430,20 @@ async fn one_project_is_counted_by_the_same_reads() {
     assert_eq!(counted.per_project.load(Ordering::SeqCst), 0);
     assert_eq!(counted.batches.load(Ordering::SeqCst), 3);
     assert_eq!(counted.named.load(Ordering::SeqCst), 3, "only this project");
+}
+
+/// A platform administrator's home is the root, not the organization: a
+/// workspace's counts are still read in its organization, where its findings
+/// are (the projects list said "0 open findings" beside an Overview with 213).
+#[tokio::test]
+async fn a_workspace_is_counted_in_its_organization_whatever_the_callers_home() {
+    let counted = Arc::new(Counted::default());
+    let admin = SecurityContext::builder()
+        .subject_id(Uuid::from_u128(2))
+        .subject_tenant_id(Uuid::from_u128(1))
+        .build()
+        .unwrap();
+    let rows = sources(&counted).one_workspace(&admin, WS_1).await;
+    assert_eq!(projects(&rows).len(), 5);
+    assert_eq!(*counted.read_in.lock().unwrap(), vec![ORG]);
 }

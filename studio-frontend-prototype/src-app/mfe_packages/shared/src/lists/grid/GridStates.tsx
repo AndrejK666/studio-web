@@ -8,6 +8,8 @@ import {
   EmptyMedia,
   EmptyTitle,
   useDataGrid,
+  type DataGridFiltersPluginApi,
+  type DataGridTextSearchPluginApi,
 } from '@gears-frontx/ui-kit';
 import styles from './ListGrid.module.css';
 
@@ -55,6 +57,29 @@ export const GridEmpty: React.FC<GridEmptyProps> = ({ icon, title, note, actions
 };
 
 GridEmpty.displayName = 'GridEmpty';
+
+/**
+ * "Clear search" in a list's "nothing matched": empties the grid's search box
+ * and drops every quick filter. Render it inside the grid (a `GridEmpty`'s
+ * `noMatchesActions`), after the search and filters plugins.
+ */
+export const GridClearFilters: React.FC<{ label: string }> = ({ label }) => {
+  const grid = useDataGrid();
+  const search = grid.getPlugin<DataGridTextSearchPluginApi>('textSearch');
+  const filters = grid.getPlugin<DataGridFiltersPluginApi>('filters');
+  const entities = filters?.useFilterEntities() ?? [];
+  const clear = () => {
+    search?.setSearch('');
+    for (const entity of entities) filters?.removeState(entity.filterKey);
+  };
+  return (
+    <Button variant="link" onClick={clear} data-grid-clear-filters>
+      {label}
+    </Button>
+  );
+};
+
+GridClearFilters.displayName = 'GridClearFilters';
 
 /**
  * A list that did not load, with a retry. The kit's own error view is English

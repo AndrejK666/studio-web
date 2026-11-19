@@ -131,40 +131,35 @@ export function personLabel(
   return t('unknown_user_id', { id: head });
 }
 
-/** The names the tenants' user lists give, merged (the organization's and its
- *  workspaces'); a failed ask (the caller may not list a tenant's users) is no
- *  names, not an error. */
-export function usePeople(tenantIds: readonly string[]): PeopleNames {
+/** The names the organization's member list gives (Organization › People's);
+ *  a failed ask (the caller may not see the members) is no names, not an error. */
+export function usePeople(orgId: string): PeopleNames {
   const api = useApi();
-  const key = [...new Set(tenantIds.filter(Boolean))].sort().join(',');
   const [names, setNames] = useState<PeopleNames>(new Map());
   useEffect(() => {
-    if (!key) return;
+    if (!orgId) return;
     let live = true;
-    const one = async (tenantId: string) => {
+    const read = async () => {
       const out = new Map<string, string>();
-      let cursor: string | undefined;
-      for (let page = 0; page < 50; page++) {
-        const p = await api.tenantUsers({ tenantId, cursor }).fetch({ staleTime: 60_000 });
-        for (const u of p.items ?? []) {
-          const n = u.display_name?.trim() || u.username?.trim() || u.email?.trim();
-          if (n) out.set(u.id.toLowerCase(), n);
+      for (let offset = 0, page = 0; page < 50; page++) {
+        const p = await api.orgMembers({ orgId, offset }).fetch({ staleTime: 60_000 });
+        const items = p.items ?? [];
+        for (const m of items) {
+          const n = m.display_name?.trim() || m.email?.trim();
+          if (n) out.set(m.user_id.toLowerCase(), n);
         }
-        cursor = p.page_info?.next_cursor ?? undefined;
-        if (!cursor) break;
+        offset += items.length;
+        if (items.length === 0 || offset >= (p.total ?? 0)) break;
       }
       return out;
     };
-    void Promise.all(key.split(',').map((t) => one(t).catch(() => new Map<string, string>()))).then((lists) => {
-      if (!live) return;
-      const merged = new Map<string, string>();
-      for (const l of lists) for (const [id, n] of l) merged.set(id, n);
-      setNames(merged);
-    });
+    void read()
+      .catch(() => new Map<string, string>())
+      .then((found) => live && setNames(found));
     return () => {
       live = false;
     };
-  }, [api, key]);
+  }, [api, orgId]);
   return names;
 }
 

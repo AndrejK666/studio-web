@@ -109,6 +109,11 @@ backend:
   # the Constructor identity provider, see `research` below]).
   appSecrets:
     existingSecret: "studio-web-app"
+  # The gears-matcher release's in-cluster address (its Service, port 80), e.g.
+  # "http://gears-matcher"; its shared secret is appSecrets key
+  # gears_matcher_secret [optional]. Empty: gear matches answer 503.
+  gearsMatcher:
+    url: ""
   # WHO ADMINISTERS THIS INSTALLATION, as Keycloak subject ids, comma-separated.
   #
   # A platform administrator is a membership of the platform root and nothing
@@ -660,6 +665,28 @@ keycloak:
   # files-plaintext vault Secret (social client id/secret), mounted read-only at
   # /opt/keycloak/data/vault; keys are studio_<provider>-client-id/secret.
   vaultSecret: "studio-web-keycloak-vault"
+  # Signing in with a Constructor IdP account: the realm's `constructor`
+  # broker (keycloak/CONSTRUCTOR_SSO.md). `enabled` renders a post-install /
+  # post-upgrade Job that runs files/keycloak/constructor-idp.sh in the
+  # Keycloak image: it reads the issuer's discovery and writes the broker, or
+  # switches it off when the issuer, the client id or the vault key
+  # `studio_constructor-client-secret` is missing. The secret stays in the
+  # vault Secret above; the broker stores only ${vault.constructor-client-secret}.
+  # Keycloak must reach the issuer's discovery, token, JWKS and userinfo
+  # endpoints from the cluster, or the Job fails the release.
+  constructorIdp:
+    enabled: false
+    issuer: ""             # e.g. https://<constructor host>/idp
+    clientId: ""           # the client registered at that IdP
+    displayName: "Constructor"
+    # The tenant_id a new Constructor user gets: Studio refuses a token
+    # without one. The sandbox tenant, as the github broker's mapper sets.
+    tenantId: "00000000-0000-0000-0000-000000000002"
+    # How long the Job waits for Keycloak to accept the admin sign-in.
+    waitSeconds: 600
+    resources:
+      requests: { cpu: 50m, memory: 256Mi }
+      limits: { cpu: 500m, memory: 512Mi }
   # IdP host ingress: cert-manager annotations + TLS come from the override.
   ingress:
     annotations: {}

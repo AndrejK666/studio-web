@@ -45,7 +45,7 @@
   "state_unused": "не используется ни одним экраном",
   "no_screens": "экраны не объявлены",
   "more": "ещё {count}",
-  "preview_schematic": "схема",
+  "preview_schematic": "снимка пока нет · схема",
   "preview_built": "сборка {commit}",
   "preview_built_title": "Снято сборкой {commit} (версия {version}) в {at}: экран с пустым проектом, не реальные данные",
   "screens_count": "экранов: {count}",
@@ -132,5 +132,14 @@
   "infra_runs": "{name} работает на {image}",
   "infra_removed": "{name} убран",
   "infra_added": "{name} добавлен",
-  "read_again": "Прочитать снова"
+  "read_again": "Прочитать снова",
+  "preview_schematic_title": "Ни одна сборка ещё не сняла этот экран: нарисовано по тому, что объявляет его манифест, а не сам экран",
+  "link_legend_calls": "вызывает гир",
+  "link_legend_signs_in": "входит через",
+  "link_legend_runs_on": "работает на",
+  "link_legend_depends": "работает вместе с",
+  "link_legend_stores_in": "хранит данные в",
+  "link_legend_bad": "сломано",
+  "link_legend_rest": "Одна линия на экран и подсистему, с числом связей в ней. Наведите на узел или выберите его, чтобы увидеть его собственные связи.",
+  "link_legend_lit": "Связи того, на что наведено или что выбрано, до каждого узла на другом конце."
 }

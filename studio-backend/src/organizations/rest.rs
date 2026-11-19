@@ -318,10 +318,67 @@ fn change_refused(error: super::access_grants::ChangeError) -> CanonicalError {
         super::access_grants::ChangeError::Invalid(why) => OrganizationError::invalid_argument()
             .with_constraint(why)
             .create(),
+        super::access_grants::ChangeError::Stale => {
+            OrganizationError::aborted("The access settings changed. Reload them before saving.")
+                .with_reason("ACCESS_CONFIG_VERSION_MISMATCH")
+                .create()
+        }
+        super::access_grants::ChangeError::NotFound => {
+            OrganizationError::not_found("Organization not found")
+                .with_resource("organization")
+                .create()
+        }
         super::access_grants::ChangeError::Internal(e) => {
             CanonicalError::internal(format!("{e:#}")).create()
         }
     }
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct SaveAccessConfigRequest {
+    pub expected_version: i64,
+    pub document: serde_json::Value,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct AccessConfigDto {
+    pub version: i64,
+    pub document: serde_json::Value,
+}
+
+async fn get_access_config(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Option<Arc<OrganizationService>>>,
+    axum::extract::Query(query): axum::extract::Query<AccessGrantQuery>,
+) -> ApiResult<JsonBody<AccessConfigDto>> {
+    let org = grant_org(query.organization_id.as_deref())?;
+    let (document, version) = configured(service)?
+        .access_document(&ctx, org)
+        .await
+        .map_err(change_refused)?;
+    Ok(Json(AccessConfigDto { document, version }))
+}
+
+async fn save_access_config(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Option<Arc<OrganizationService>>>,
+    axum::extract::Query(query): axum::extract::Query<AccessGrantQuery>,
+    Json(request): Json<SaveAccessConfigRequest>,
+) -> ApiResult<JsonBody<AccessConfigDto>> {
+    let service = configured(service)?;
+    let org = grant_org(query.organization_id.as_deref())?;
+    if !service.may_manage_access(&ctx, org).await {
+        return Err(OrganizationError::permission_denied()
+            .with_reason("ACCESS_ADMIN_REQUIRED")
+            .create());
+    }
+    let (document, version) = service
+        .save_access_document(&ctx, org, request.expected_version, request.document)
+        .await
+        .map_err(change_refused)?;
+    Ok(Json(AccessConfigDto { document, version }))
 }
 
 async fn put_access_grant(
@@ -1072,6 +1129,10 @@ pub struct OrganizationOverviewDto {
     /// Who the stuck pull requests wait on, longest queue first. Null when no
     /// pull request could be read.
     pub waiting_on: Option<Vec<OverviewQueueDto>>,
+    /// The stuck pull requests in the queue without a reviewer.
+    pub pulls_without_reviewers: Option<Vec<OverviewPullDto>>,
+    /// Failures from the same recent runs used to compute the alert.
+    pub recent_failures: Option<Vec<OverviewRunFailureDto>>,
     /// The component registry's open decisions. Null when it could not be read.
     pub decisions: Option<OverviewDecisionsDto>,
     /// The kits installed for the whole organization that the answer was
@@ -1080,6 +1141,26 @@ pub struct OrganizationOverviewDto {
     /// counts, `waiting_on`, each place's `stuck`) are null or zero. Null when
     /// the installed kits could not be read, and nothing was left out.
     pub kits: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone)]
+#[toolkit_macros::api_dto(response)]
+pub struct OverviewPullDto {
+    pub id: String,
+    pub number: i64,
+    pub title: String,
+    pub url: Option<String>,
+    pub project: Option<String>,
+    pub quiet_days: u32,
+}
+
+#[derive(Debug, Clone)]
+#[toolkit_macros::api_dto(response)]
+pub struct OverviewRunFailureDto {
+    pub id: String,
+    pub tenant_id: String,
+    pub task_type: String,
+    pub created_at: String,
 }
 
 /// One thing that waits on the organization's leaders. `kind` says which
@@ -1121,6 +1202,7 @@ pub struct OverviewNeedDto {
 #[toolkit_macros::api_dto(response)]
 pub struct OverviewSpendDto {
     pub currency: String,
+    pub has_prices: bool,
     pub current: f64,
     pub previous: f64,
     /// Where this month ends at its pace so far.
@@ -1310,8 +1392,8 @@ pub struct ProjectSignalDto {
     pub detail: Option<String>,
     pub action: ProjectSignalActionDto,
     /// The kit the signal is read for and whose tab its action opens
-    /// (`project-git`, `project-specs`, `project-issues`, `product-releases`,
-    /// `project-activity`); null for the shell's own (the repository
+    /// (`project-git`, `project-specs`, `project-domain-model`,
+    /// `project-product`, `delivery`); null for the shell's own (the repository
     /// connection, the IDE). A signal of a kit not installed for the project
     /// is not listed (ADR-0070 §7).
     pub kit: Option<String>,
@@ -1418,37 +1500,46 @@ async fn get_project_status(
             .and_then(|w| w.parent_id.map(|p| p.0)),
         None => None,
     };
-    let rollup = sources.one_project(&ctx, id).await.ok_or_else(not_found)?;
     let api = crate::mcp::api_as(headers.get(axum::http::header::AUTHORIZATION).cloned())
         .ok_or_else(|| {
             CanonicalError::service_unavailable()
                 .with_detail("studio-mcp is not running here, so the other gears cannot be read")
                 .create()
         })?;
+    let project = id.to_string();
+    // The project's rollup row beside the other gears' reads, not before
+    // them: the project was just read as the caller, and one after the other
+    // the status waited for the rollup (2-3 s on the local stand) and then
+    // for the slowest read (2026-11-18).
+    let (rollup, mut read) = tokio::join!(
+        sources.one_project(&ctx, id),
+        super::status_read::read(&api, &project, None)
+    );
+    let rollup = rollup.ok_or_else(not_found)?;
+    read.path.repositories = rollup.repos;
+    // This project's line of the overview, computed for it alone: building
+    // the organization's whole overview for one line took 5.5 s on Dev.
     let health = async {
         let overview = overview.as_ref()?;
-        let answer = overview
-            .answer(&ctx, org?, time::OffsetDateTime::now_utc())
+        let line = overview
+            .project_health(&ctx, org?, &rollup, time::OffsetDateTime::now_utc())
             .await
             .ok()?;
-        let line = answer
-            .workspaces
-            .into_iter()
-            .flat_map(|w| w.projects)
-            .find(|p| p.id == id.to_string())?;
         Some(status::Health {
-            refused: line.reasons.iter().any(|r| r.kind == "refused"),
-            quiet_days: line.reasons.iter().find(|r| r.kind == "quiet").map(|r| {
-                r.value
-                    .map_or(line.quiet_days.unwrap_or(0), |v| v.round() as u32)
+            refused: line
+                .reasons
+                .iter()
+                .any(|r| matches!(r, super::overview::Reason::Refused)),
+            quiet_days: line.reasons.iter().find_map(|r| match r {
+                super::overview::Reason::Quiet(d) => Some(*d),
+                _ => None,
             }),
             specs_failing: line.specs_failing,
             stuck: line.stuck,
         })
     };
-    let project = id.to_string();
     // The kits installed for the project: what each signal and step belongs
-    // to (ADR-0070 §7). Read beside the facts; a kit that does not apply
+    // to (ADR-0070 §7). Read beside the health; a kit that does not apply
     // leaves its facts unread-and-unsaid rather than unknown.
     let kits = async {
         match overview.as_ref() {
@@ -1456,11 +1547,7 @@ async fn get_project_status(
             None => status::Kits::All,
         }
     };
-    let (read, health, kits) = tokio::join!(
-        super::status_read::read(&api, &project, rollup.repos),
-        health,
-        kits
-    );
+    let (health, kits) = tokio::join!(health, kits);
     let mut unread = Vec::new();
     for (name, missing, kit) in [
         ("repositories", read.path.repositories.is_none(), None),
@@ -1743,6 +1830,45 @@ pub fn register_routes(
         .error_401(openapi)
         .error_403(openapi)
         .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-organizations/v1/access-config")
+        .operation_id("studio_organizations.get_access_config")
+        .summary("Read an organization's access settings and version")
+        .description("The version identifies the configuration snapshot used by the access editor.")
+        .tag("StudioOrganizations")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param_typed("organization_id", true, "The organization", "string")
+        .handler(get_access_config)
+        .json_response_with_schema::<AccessConfigDto>(
+            openapi,
+            StatusCode::OK,
+            "Access settings and version",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::put("/studio-organizations/v1/access-config")
+        .operation_id("studio_organizations.save_access_config")
+        .summary("Save an organization's access settings at a known version")
+        .description("Saves roles and grants for an access administrator. A concurrent change returns a conflict. Ownership grants follow membership.")
+        .tag("StudioOrganizations")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param_typed("organization_id", true, "The organization", "string")
+        .json_request::<SaveAccessConfigRequest>(openapi, "The edited settings and their starting version")
+        .handler(save_access_config)
+        .json_response_with_schema::<AccessConfigDto>(openapi, StatusCode::OK, "Saved settings and version")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_404(openapi)
+        .error_409(openapi)
         .error_500(openapi)
         .register(router, openapi);
 

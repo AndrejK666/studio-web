@@ -10,6 +10,7 @@
 mod activity;
 mod candidates;
 mod catalogue_levels;
+mod component_detail;
 mod cratesio;
 pub(crate) mod field_schema;
 mod frontx_gdl;
@@ -46,6 +47,15 @@ mod sync_task;
 mod taxonomy;
 mod tiers;
 pub(crate) mod values;
+
+/// Every type this gear declares in the model, for the kits' claims test:
+/// the catalogue's and its publication requests.
+#[cfg(test)]
+pub(crate) fn declared_types() -> Vec<crate::domain_model::port::TypeNeed> {
+    let mut out = crate::catalog_graph::needs_of("studio-components-catalog");
+    out.push(registry_curation::request_need());
+    out
+}
 
 /// The catalogue's node vocabulary lives beside the store it is written to.
 pub(crate) use crate::catalog_graph::gts;
@@ -219,6 +229,13 @@ impl RestApiCapability for StudioComponentsCatalogGear {
         // The engine reads the platform's gear repositories, listed on the way
         // into a route that may run it (ADR-0046).
         let router = crate::product::port::with_gear_roots(router, &ctx.client_hub());
+        // The write routes a kit claims answer KIT_NOT_INSTALLED without it
+        // (ADR-0071 §4): studio-kits' one shared check.
+        let router = crate::kit_registry::port::with_claimed_routes(
+            router,
+            ctx.client_hub(),
+            "studio-components-catalog",
+        );
         // Without it, a request that names an organization is refused rather
         // than served from the caller's home tenant.
         Ok(match org_access {

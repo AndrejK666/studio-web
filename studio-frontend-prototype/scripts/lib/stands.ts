@@ -10,7 +10,9 @@
  * `STUDIO_STAND` names one of the stands below, `dev` when unset. Any single
  * value can then be replaced with the variable the container knows it by:
  * `STUDIO_BACKEND_URL`, `STUDIO_OIDC_ISSUER`, `STUDIO_OIDC_CLIENT_ID` — and
- * `STUDIO_DISCORD_URL` adds the invite a stand's header links. Vite reads
+ * `STUDIO_DISCORD_URL` adds the invite a stand's header links, and
+ * `STUDIO_CONSTRUCTOR_SIGN_IN=true` offers Constructor on the sign-in screen
+ * where the stand's realm brokers it. Vite reads
  * them from the shell and from `.env` / `.env.local` (gitignored) next to
  * `vite.config.ts`; none of them reaches the bundle.
  */
@@ -27,6 +29,8 @@ export interface Stand {
   clientId: string;
   /** The invite the header links, as `DISCORD_URL`; a stand may have none. */
   discordUrl?: string;
+  /** The realm brokers Constructor, as `CONSTRUCTOR_SIGN_IN`; off unless said. */
+  constructorSignIn?: boolean;
 }
 
 type StandEnv = Readonly<Record<string, string | undefined>>;
@@ -94,6 +98,7 @@ export function resolveStand(env: StandEnv): Stand {
     issuer: withoutTrailingSlash(value(env.STUDIO_OIDC_ISSUER) ?? known.issuer),
     clientId: value(env.STUDIO_OIDC_CLIENT_ID) ?? known.clientId,
     discordUrl: value(env.STUDIO_DISCORD_URL),
+    constructorSignIn: value(env.STUDIO_CONSTRUCTOR_SIGN_IN)?.toLowerCase() === 'true',
   };
 }
 
@@ -144,6 +149,11 @@ function isOwnOrigin(origin: string | undefined, host: string | undefined): bool
  * keys `src-app/app/config/env.ts` reads before the bundle runs.
  */
 export function renderRuntimeEnv(stand: Stand): string {
-  const runtimeEnv = { OIDC_ISSUER: stand.issuer, OIDC_CLIENT_ID: stand.clientId, DISCORD_URL: stand.discordUrl };
+  const runtimeEnv = {
+    OIDC_ISSUER: stand.issuer,
+    OIDC_CLIENT_ID: stand.clientId,
+    DISCORD_URL: stand.discordUrl,
+    CONSTRUCTOR_SIGN_IN: stand.constructorSignIn ? 'true' : undefined,
+  };
   return `window.__STUDIO_ENV__ = ${JSON.stringify(runtimeEnv)};\n`;
 }

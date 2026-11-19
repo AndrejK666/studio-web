@@ -1,6 +1,6 @@
 /**
  * Organization › Infrastructure's app: its API service (studio-environments,
- * studio-connector, account-management's users), account-management for the
+ * studio-connector, studio-user's members), account-management for the
  * organization's workspaces and projects, the framework's i18n and the shared
  * query cache. No slices: the screen keeps its working copies in component state.
  */

@@ -1,8 +1,15 @@
 # This micro-frontend's passport (see tests-mfe/frontx.gdl for what each field is).
 #
 # The Product kit: Project › Product and Project › Components, one entry
-# switched on the shell's section. Product is the `product-releases` kit's,
-# Components (the project's inventory) the `components` kit's.
+# switched on the shell's section. Both are the `project-product` kit (Product, ADR-0071 step 5)'s:
+# Components (the project's inventory) moved there from `components`
+# (ADR-0071 §6, step 4); the catalogue stays the `components` kit's.
+#
+# Its second entry is the Gears matcher kit's, `gears-matcher` (ADR-0072): a
+# built-in kit that is not a base kit by default, shown only where an
+# organization (or one project) installed it. Project › Gear match (once a
+# section of Product) and Organization › Gears matcher, where the
+# organization's default way of assembling a product is set.
 gdl_version = "1.5"
 
 mfe(
@@ -22,12 +29,12 @@ mfe(
         "studio-tasks",
     ],
 
-    screens = ["Product", "Components"],
-    mounts = ["/product", "/project-components"],
+    screens = ["Product", "Components", "Gear match", "Gears matcher"],
+    mounts = ["/product", "/project-components", "/gear-match", "/gears-matcher"],
 
     frontx = "0.2.0-alpha.15",
 
     roles = [],
 
-    preview = ["/product", "/project-components"],
+    preview = ["/product", "/project-components", "/gear-match", "/gears-matcher"],
 )

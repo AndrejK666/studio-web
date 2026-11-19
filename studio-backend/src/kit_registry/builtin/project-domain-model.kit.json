@@ -2,11 +2,14 @@
   "manifest_version": "1",
   "slug": "project-domain-model",
   "icon": "lucide:shapes",
-  "name": "Project domain model",
+  "name": "Project model",
   "description": "What a project's documents say the application is, and the issues they leave to decide (not the Studio domain model).",
   "publisher": "Constructor Fabric",
   "levels": [
     "project"
+  ],
+  "requires": [
+    "project-specs"
   ],
   "model": {
     "properties": [
@@ -21,7 +24,268 @@
           "relationLabel": "Domain model",
           "description": "A tab of the project: what it shows."
         }
+      },
+      {
+        "on": "project",
+        "property": {
+          "name": "issues",
+          "type": "finding",
+          "relation": "finding",
+          "extends": "edge",
+          "relationType": "shows",
+          "relationLabel": "Issues",
+          "description": "A tab of the project: what it shows."
+        }
+      },
+      {
+        "on": "kit",
+        "property": {
+          "name": "introduces_type_22",
+          "type": "Finding",
+          "description": "",
+          "relation": "security-finding",
+          "relationType": "references",
+          "relationLabel": "packages",
+          "required": false,
+          "extends": "link"
+        }
+      }
+    ],
+    "types": [
+      {
+        "name": "finding",
+        "id": "finding",
+        "label": "Finding",
+        "description": "Observed issue over the graph: gap, drift, staleness, contradiction, duplicate, ownership hole or review/scan result.",
+        "entity": {
+          "id": "finding",
+          "bucket": "automation",
+          "name": "Finding",
+          "kind": "graph issue or signal",
+          "description": "Observed issue over the graph: gap, drift, staleness, contradiction, duplicate, ownership hole or review/scan result.",
+          "meta": {
+            "relationship": "control-loop",
+            "priority": "P2",
+            "level": 4,
+            "badge": "From MaxV",
+            "note": "Added as the generic observed graph issue and signal object. · model.md §6.1",
+            "badge-style": "green",
+            "profiles": [
+              "Arch",
+              "Dev",
+              "QA",
+              "Sec",
+              "StudioAdmin"
+            ],
+            "links": [
+              {
+                "kind": "see-also",
+                "target": "security-finding",
+                "note": "Kit specialization of the generic Finding; renamed to Security Finding to clear the name collision"
+              }
+            ]
+          },
+          "properties": [
+            {
+              "name": "id",
+              "type": "FindingId",
+              "required": true,
+              "description": "",
+              "relationLabel": "",
+              "override": true
+            },
+            {
+              "name": "title",
+              "type": "string",
+              "required": true,
+              "description": "",
+              "relationLabel": "",
+              "override": true
+            },
+            {
+              "name": "finding_kind",
+              "type": "gap | drift | stale | contradiction | duplicate | ownership_hole | review | scan | cost_optimization | bloat",
+              "required": true,
+              "description": "",
+              "relationLabel": ""
+            },
+            {
+              "name": "provenance_kind",
+              "type": "mirrored | computed | authored",
+              "required": true,
+              "description": "",
+              "relationLabel": ""
+            },
+            {
+              "name": "subject_refs",
+              "type": "EntityRef[]",
+              "description": "",
+              "relationLabel": ""
+            },
+            {
+              "name": "status",
+              "type": "detected | acknowledged | triaged | accepted | dismissed | auto_resolved",
+              "required": true,
+              "description": "",
+              "relationLabel": ""
+            },
+            {
+              "name": "provenance_ref",
+              "type": "ProvenanceId?",
+              "description": "",
+              "relationLabel": "",
+              "override": true
+            },
+            {
+              "name": "may_produce",
+              "type": "ActionRun",
+              "description": "",
+              "relation": "action-run",
+              "relationType": "derives",
+              "relationLabel": "may produce",
+              "required": false,
+              "cardinality": "1:N",
+              "extends": "link"
+            },
+            {
+              "name": "may_produce_opportunity",
+              "type": "ManagedObject",
+              "description": "",
+              "relation": "managed-object",
+              "relationType": "derives",
+              "relationLabel": "may produce opportunity",
+              "required": false,
+              "extends": "edge"
+            },
+            {
+              "name": "accepted_as",
+              "type": "Opportunity",
+              "description": "",
+              "relation": "opportunity",
+              "relationType": "derives",
+              "relationLabel": "accepted as",
+              "required": false,
+              "extends": "edge"
+            }
+          ],
+          "methods": [
+            {
+              "name": "acknowledge",
+              "description": "",
+              "input": "actor",
+              "result": "void"
+            },
+            {
+              "name": "accept",
+              "description": "",
+              "input": "actor",
+              "result": "ActionRun"
+            },
+            {
+              "name": "auto_resolve",
+              "description": "",
+              "input": "",
+              "result": "void"
+            }
+          ],
+          "examples": [
+            "Capability gap",
+            "Stale artifact",
+            "Security finding"
+          ],
+          "layer": "product",
+          "abstract": false,
+          "extends": "managed-object"
+        }
       }
     ]
-  }
+  },
+  "permissions": {
+    "reads": [
+      "GET /studio-documents/v1/project-domain-model",
+      "GET /studio-documents/v1/project-domain-model/build-estimate",
+      "GET /studio-documents/v1/project-domain-model/findings",
+      "GET /studio-documents/v1/project-domain-model/reviews",
+      "GET /studio-documents/v1/project-domain-model/requirements",
+      "GET /studio-documents/v1/project-domain-model/related",
+      "GET /studio-documents/v1/project-domain-model/trace",
+      "GET /studio-documents/v1/project-domain-model/work",
+      "GET /studio-documents/v1/project-domain-model/check-methods",
+      "GET /studio-documents/v1/project-domain-model/glossary",
+      "GET /studio-documents/v1/project-domain-model/glossary/document",
+      "GET /studio-spec-mapping/v1/findings",
+      "GET /studio-spec-mapping/v1/plan",
+      "GET /studio-kits/v1/projects/{project_id}/installations",
+      "GET /studio-user/v1/organizations/{org_id}/members",
+      "GET /studio-user/v1/organizations/{org_id}/members/{user_id}/identities",
+      "GET /studio-documents/v1/project-domain-model/issues",
+      "GET /studio-documents/v1/project-domain-model/readiness",
+      "GET /studio-documents/v1/project-domain-model/doc-quality"
+    ],
+    "writes": [
+      "POST /studio-documents/v1/project-domain-model/builds",
+      "POST /studio-documents/v1/project-domain-model/entities",
+      "POST /studio-documents/v1/project-domain-model/reviews",
+      "POST /studio-documents/v1/project-domain-model/issues",
+      "POST /studio-documents/v1/project-domain-model/findings/{fingerprint}/decision",
+      "POST /studio-documents/v1/project-domain-model/findings/{fingerprint}/proposals",
+      "POST /studio-documents/v1/project-domain-model/files/proposals",
+      "POST /studio-documents/v1/project-domain-model/sentences/proposals",
+      "POST /studio-documents/v1/project-domain-model/glossary/decisions",
+      "POST /studio-documents/v1/project-domain-model/glossary/distinct",
+      "POST /studio-documents/v1/project-domain-model/glossary/proposals",
+      "POST /studio-documents/v1/project-domain-model/glossary/document/proposals",
+      "POST /studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/documents"
+    ]
+  },
+  "gears": [
+    {
+      "gear": "studio-documents",
+      "types": [
+        "spec-extraction",
+        "spec-judgement",
+        "fact-review",
+        "finding-decision",
+        "glossary-decision",
+        "application-part",
+        "capability"
+      ],
+      "mcp_tools": [
+        "project_domain_model_issues",
+        "project_domain_model_readiness",
+        "project_domain_model_doc_quality",
+        "project_domain_model_entity_save",
+        "project_domain_model_sentence_propose",
+        "project_domain_model_facts",
+        "project_domain_model_build",
+        "project_domain_model_build_status",
+        "project_domain_model_coverage",
+        "project_domain_model_uploads",
+        "project_domain_model_upload",
+        "project_domain_model_upload_remove",
+        "project_domain_model_fact_review",
+        "project_domain_model_finding_decide"
+      ],
+      "routes": [
+        "POST /studio-documents/v1/project-domain-model/builds",
+        "POST /studio-documents/v1/project-domain-model/entities",
+        "POST /studio-documents/v1/project-domain-model/reviews",
+        "POST /studio-documents/v1/project-domain-model/issues",
+        "POST /studio-documents/v1/project-domain-model/findings/{fingerprint}/decision",
+        "POST /studio-documents/v1/project-domain-model/findings/{fingerprint}/proposals",
+        "POST /studio-documents/v1/project-domain-model/files/proposals",
+        "POST /studio-documents/v1/project-domain-model/sentences/proposals",
+        "POST /studio-documents/v1/project-domain-model/glossary/decisions",
+        "POST /studio-documents/v1/project-domain-model/glossary/distinct",
+        "POST /studio-documents/v1/project-domain-model/glossary/proposals",
+        "POST /studio-documents/v1/project-domain-model/glossary/document/proposals"
+      ]
+    },
+    {
+      "gear": "studio-artifact-ingest",
+      "types": [
+        "finding"
+      ]
+    }
+  ]
 }

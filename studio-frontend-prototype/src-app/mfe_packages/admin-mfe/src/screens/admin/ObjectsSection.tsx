@@ -5,31 +5,20 @@
  * Components page lists its nodes); untick it and it leaves. The nodes are
  * untouched either way: a mark is an opinion about a type.
  *
- * The counts come after the table, and a count nothing took stays a dash —
- * never a zero.
+ * The counts come after the list, and a count nothing took stays a dash —
+ * never a zero. The list is `ObjectTypesGrid`, on the kit's DataGrid (#1076).
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiRegistry } from '@gears-frontx/react';
-import {
-  Badge,
-  Button,
-  Card,
-  CardContent,
-  Checkbox,
-  Input,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@gears-frontx/ui-kit';
+import { Badge, Card, CardContent } from '@gears-frontx/ui-kit';
 import { useOrganization, type OrganizationRef } from '@constructor-studio/mfe-shared';
+import { GridFailed } from '@constructor-studio/mfe-shared/grid';
 import { AdminApiService } from '../../api/AdminApiService';
 import type { CatalogType, TypeCount } from '../../api/types';
-import { COMPANION_TYPES, LENSES, byComponentThenId, familyOf, inLens, shortName, titleize, type Lens } from '../../model/objects';
+import { LENSES, inLens, shortName, titleize, type Lens } from '../../model/objects';
 import { ErrorLine, Header, errText, useAdmin } from './common';
+import { ObjectTypesGrid } from './ObjectTypesGrid';
 import styles from './Admin.module.css';
 
 export function ObjectsSection() {
@@ -47,8 +36,8 @@ function Objects({ org }: { org: OrganizationRef }) {
   // `gts_id -> title`, from the types-registry: the catalogue of meaning (ADR-0013).
   const [titles, setTitles] = useState<Record<string, string>>({});
   const [objectCounts, setObjectCounts] = useState<Record<string, TypeCount> | null>(null);
-  const [lens, setLens] = useState<Lens>('all');
-  const [query, setQuery] = useState('');
+  /** Why the types could not be read; a failed toggle is `err`, above the list. */
+  const [readError, setReadError] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
@@ -59,10 +48,14 @@ function Objects({ org }: { org: OrganizationRef }) {
       .catalogTypes({ orgId: org.id })
       .fetch({ staleTime: 0 })
       .then(
-        ({ types: list }) => live && setTypes(list ?? []),
+        ({ types: list }) => {
+          if (!live) return;
+          setTypes(list ?? []);
+          setReadError(null);
+        },
         (e: unknown) => {
           if (!live) return;
-          setErr(errText(e));
+          setReadError(errText(e));
           setTypes([]);
         }
       );
@@ -116,27 +109,23 @@ function Objects({ org }: { org: OrganizationRef }) {
     [titles]
   );
 
-  const toggle = async (ct: CatalogType) => {
-    setBusy(ct.leaf_id);
-    setErr(null);
-    try {
-      await api.setTypeComponent(org.id, ct.leaf_id).fetch({ component: !ct.component });
-      // The server prunes a mark that agrees with what the tenant inherits: read it back.
-      setTick((n) => n + 1);
-    } catch (e) {
-      setErr(errText(e));
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const visible = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return (types ?? [])
-      .filter((ct) => inLens(ct, lens))
-      .filter((ct) => !q || ct.leaf_id.toLowerCase().includes(q) || nameOf(ct).toLowerCase().includes(q))
-      .sort(byComponentThenId);
-  }, [types, lens, query, nameOf]);
+  const toggle = useCallback(
+    async (ct: CatalogType) => {
+      setBusy(ct.leaf_id);
+      setErr(null);
+      try {
+        await api.setTypeComponent(org.id, ct.leaf_id).fetch({ component: !ct.component });
+        // The server prunes a mark that agrees with what the tenant inherits: read it back.
+        setTick((n) => n + 1);
+      } catch (e) {
+        setErr(errText(e));
+      } finally {
+        setBusy(null);
+      }
+    },
+    [api, org.id]
+  );
+  const onToggle = useCallback((ct: CatalogType) => void toggle(ct), [toggle]);
 
   const counts = useMemo(() => {
     const all = types ?? [];
@@ -165,108 +154,25 @@ function Objects({ org }: { org: OrganizationRef }) {
         }
       />
 
-      <div className={styles.toolbar}>
-        <div className={styles.lenses}>
-          {LENSES.map((l) => (
-            <Button
-              key={l}
-              size="sm"
-              variant={lens === l ? 'secondary' : 'ghost'}
-              aria-pressed={lens === l}
-              onClick={() => setLens(l)}
-              data-objects-lens={l}
-            >
-              {t(`objects_lens_${l}`)} <span className={styles.sub}>{counts[l]}</span>
-            </Button>
-          ))}
-        </div>
-        <Input
-          className={styles.search}
-          value={query}
-          placeholder={t('objects_search')}
-          aria-label={t('objects_search')}
-          onChange={(e) => setQuery(e.target.value)}
-        />
-      </div>
-
       {err && <ErrorLine>{err}</ErrorLine>}
 
       <Card data-objects>
         <CardContent className={styles.cardBody}>
           {types === null ? (
             <p className={styles.muted}>{t('objects_reading')}</p>
-          ) : visible.length === 0 ? (
-            counts.all === 0 ? (
-              <div>
-                <p className={styles.name}>{t('objects_empty')}</p>
-                <p className={styles.muted}>{t('objects_empty_hint')}</p>
-              </div>
-            ) : (
-              <p className={styles.muted}>{t('objects_no_match')}</p>
-            )
+          ) : readError ? (
+            <GridFailed message={readError} retry={t('retry')} onRetry={() => setTick((n) => n + 1)} />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>{t('objects_col_component')}</TableHead>
-                  <TableHead>{t('objects_col_type')}</TableHead>
-                  <TableHead className={styles.num}>{t('objects_col_objects')}</TableHead>
-                  <TableHead>{t('objects_col_namespace')}</TableHead>
-                  <TableHead>{t('objects_col_page')}</TableHead>
-                  <TableHead>{t('objects_col_id')}</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {visible.map((ct) => {
-                  const companion = COMPANION_TYPES.has(ct.leaf_id);
-                  const count = objectCounts?.[ct.leaf_id];
-                  return (
-                    <TableRow key={ct.leaf_id} data-object-type={ct.leaf_id}>
-                      <TableCell>
-                        <Checkbox
-                          checked={ct.component}
-                          // An abstract type is a family: never instantiated, so a page of it would stay empty.
-                          disabled={ct.is_abstract || companion || busy === ct.leaf_id}
-                          title={companion ? t('objects_companion') : undefined}
-                          onCheckedChange={() => void toggle(ct)}
-                          aria-label={t('objects_treat_as_component', { name: nameOf(ct) })}
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <span className={styles.name}>{nameOf(ct)}</span>{' '}
-                        {ct.is_abstract && <Badge variant="secondary">{t('objects_family')}</Badge>}{' '}
-                        {!ct.type_id && (
-                          <Badge variant="warning" title={t('objects_no_nodes_hint')}>
-                            {t('objects_no_nodes')}
-                          </Badge>
-                        )}
-                      </TableCell>
-                      <TableCell className={styles.num}>
-                        {!objectCounts || !count ? (
-                          <span className={styles.sub}>—</span>
-                        ) : count.count === 0 ? (
-                          <span className={styles.sub}>0</span>
-                        ) : (
-                          <span title={count.capped ? t('objects_capped', { count: count.count }) : undefined}>
-                            {count.count.toLocaleString(language)}
-                            {count.capped && '+'}
-                          </span>
-                        )}
-                      </TableCell>
-                      <TableCell className={styles.sub}>{familyOf(ct.leaf_id)}</TableCell>
-                      <TableCell>
-                        <Badge variant={ct.schema === 'tenant' ? 'info' : 'secondary'}>
-                          {t(`objects_schema_${ct.schema}`)}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <code className={`${styles.mono} ${styles.sub}`}>{ct.leaf_id}</code>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
+            <ObjectTypesGrid
+              types={types}
+              counts={counts}
+              t={t}
+              language={language}
+              busy={busy}
+              objectCounts={objectCounts}
+              nameOf={nameOf}
+              onToggle={onToggle}
+            />
           )}
         </CardContent>
       </Card>

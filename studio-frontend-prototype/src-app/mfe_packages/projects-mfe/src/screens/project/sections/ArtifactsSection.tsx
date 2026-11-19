@@ -2,6 +2,7 @@ import type { ProjectSource } from '@constructor-studio/mfe-shared';
 import React from 'react';
 import {
   Button,
+  DataGridRowActionsPlugin,
   Empty,
   EmptyActions,
   EmptyContent,
@@ -9,34 +10,44 @@ import {
   EmptyHeader,
   EmptyMedia,
   EmptyTitle,
-  Input,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
   Skeleton,
+  filterTagGroup,
+  useDataGrid,
+  type DataGridLoadContext,
+  type DataGridLoadResult,
 } from '@gears-frontx/ui-kit';
 import { useFormatters, useMfeBridge } from '@gears-frontx/react';
 import { useOrganization, useWorkspace } from '@constructor-studio/mfe-shared';
-import { useThemedRoot } from '@constructor-studio/mfe-shared/grid';
-import { Files, Search } from 'lucide-react';
+import {
+  GridClearFilters,
+  GridEmpty,
+  GridFailed,
+  ListGrid,
+  searchQuery,
+  tagGroupChoice,
+  useLocalGridReload,
+  useThemedRoot,
+} from '@constructor-studio/mfe-shared/grid';
+import { Files } from 'lucide-react';
 import { useProjectText } from '../../../i18n';
-import { ARTIFACTS_PAGE_SIZE, useArtifacts } from '../../../shared/useArtifacts';
+import { readArtifactsPage, useArtifacts } from '../../../shared/useArtifacts';
 import { useArtifactImport, useProjectImport } from '../../../shared/useArtifactImport';
 import { ReadFailed, SectionSkeleton } from '../../../components/SectionStates';
 import { requestOpenArtifact, requestOpenDocument } from '../../../actions/artifactActions';
-import { clampOffset, type ArtifactRow } from '../../../model/artifact';
+import type { ArtifactRow } from '../../../model/artifact';
 import type { ArtifactKind } from '../../../api/artifactTypes';
+import type { DocumentDto } from '../../../api/documentTypes';
 import { UploadPanel } from '../upload/UploadPanel';
-import { artifactColumns } from './artifactColumns';
-import { ArtifactsTable } from './ArtifactsTable';
+import {
+  ARTIFACT_COLUMN_IDS,
+  ArtifactCellsProvider,
+  ArtifactRowMenu,
+  artifactColumns,
+  type ArtifactCells,
+} from './artifactColumns';
 import { notComeThrough, repoImportLine } from './repoImportText';
 import styles from './ArtifactsSection.module.css';
 import frame from '../ProjectScreen.module.css';
-
-const ALL_REPOSITORIES = '__all__';
-const ALL_KINDS = '__all__';
 
 // In the filter's order. A `Record`, so a new kind does not compile without a label.
 const KIND_LABEL_KEY: Record<ArtifactKind, string> = {
@@ -49,8 +60,10 @@ const KIND_LABEL_KEY: Record<ArtifactKind, string> = {
   user: 'artifacts_kind_user',
 };
 const KINDS = Object.keys(KIND_LABEL_KEY) as ArtifactKind[];
+const isKind = (value: string | null): value is ArtifactKind => value !== null && value in KIND_LABEL_KEY;
 
-const SEARCH_SETTLE_MS = 300;
+/** The filter keys the grid hands `load`. */
+export const ARTIFACT_FILTERS = { repository: 'repository', kind: 'kind' } as const;
 
 const SyncNow: React.FC<{
   projectId: string;
@@ -79,11 +92,59 @@ const SyncNow: React.FC<{
 
 SyncNow.displayName = 'SyncNow';
 
+const ArtifactsEmpty: React.FC = () => {
+  const t = useProjectText();
+  return (
+    <GridEmpty
+      icon={<Files />}
+      title={t('artifacts_empty_title')}
+      noMatches={t('artifacts_no_matches')}
+      noMatchesActions={<GridClearFilters label={t('artifacts_clear_filters')} />}
+    />
+  );
+};
+
+/** The grid's page, as far as the clamp needs it: the kit does not export its pagination API's type. */
+interface PaginationLike {
+  usePaginationStore: <T>(select: (state: { page: number; limit: number; total: number }) => T) => T;
+  setPage: (page: number) => void;
+}
+
+/**
+ * The page on screen stays a page that exists: when a re-read (an import, a
+ * removed document) shrinks the list under it, it moves back to the last one.
+ */
+const ClampPage: React.FC = () => {
+  const pagination = useDataGrid().getPlugin<PaginationLike>('pagination');
+  if (!pagination) throw new Error('ClampPage must come after DataGridPaginationPlugin');
+  const page = pagination.usePaginationStore((state) => state.page);
+  const limit = pagination.usePaginationStore((state) => state.limit);
+  const total = pagination.usePaginationStore((state) => state.total);
+  React.useEffect(() => {
+    const last = Math.max(1, Math.ceil(total / limit));
+    if (total > 0 && page > last) pagination.setPage(last);
+  }, [pagination, page, limit, total]);
+  return null;
+};
+
+/** Hands the grid's `triggerLoad` to the section, for a re-read from outside the grid (an import). */
+const TriggerBridge: React.FC<{ triggerRef: React.RefObject<(() => void) | null> }> = ({ triggerRef }) => {
+  const grid = useDataGrid();
+  React.useEffect(() => {
+    triggerRef.current = () => void grid.triggerLoad();
+    return () => {
+      triggerRef.current = null;
+    };
+  }, [grid, triggerRef]);
+  return null;
+};
+
 interface ArtifactsSectionProps {
   projectId: string;
   projectName: string;
 }
 
+// @cpt-dod:cpt-studiofrontend-dod-project-artifacts-page:p1
 export const ArtifactsSection: React.FC<ArtifactsSectionProps> = ({ projectId, projectName }) => {
   const t = useProjectText();
   const { formatRelative } = useFormatters();
@@ -91,43 +152,62 @@ export const ArtifactsSection: React.FC<ArtifactsSectionProps> = ({ projectId, p
   const { org } = useOrganization();
   const { workspace } = useWorkspace();
   const bridge = useMfeBridge();
-
-  const [repository, setRepository] = React.useState<string | null>(null);
-  const [kind, setKind] = React.useState<ArtifactKind | null>(null);
-  const [typed, setTyped] = React.useState('');
-  const [search, setSearch] = React.useState('');
-  const [offset, setOffset] = React.useState(0);
   const [container, findThemedRoot] = useThemedRoot();
 
-  React.useEffect(() => {
-    if (typed === search) return;
-    const timer = setTimeout(() => {
-      setSearch(typed);
-      setOffset(0);
-    }, SEARCH_SETTLE_MS);
-    return () => clearTimeout(timer);
-  }, [typed, search]);
+  /** The repository the grid's filter holds, for the header's count. */
+  const [repository, setRepository] = React.useState<string | null>(null);
+  /** The list's last page did not load; Retry starts the grid over. */
+  const [listFailed, setListFailed] = React.useState(false);
+  const [attempt, setAttempt] = React.useState(0);
 
-  const {
-    rows,
-    total,
-    projectTotal,
-    repositoryTotal,
-    repositoryTotalFailed,
-    repositories,
-    sources,
-    loading,
-    refreshing,
-    failed,
-    refetch,
-  } = useArtifacts(projectId, workspace?.id ?? null, { repo: repository, kind, search, offset });
+  const triggerRef = React.useRef<(() => void) | null>(null);
+  const reloadList = React.useCallback(() => triggerRef.current?.(), []);
 
-  const clamped = clampOffset(offset, total, ARTIFACTS_PAGE_SIZE);
-  if (clamped !== offset) setOffset(clamped);
+  const { projectTotal, repositoryTotal, repositoryTotalFailed, repositories, repoNames, own, sources, loading, failed, refetch } =
+    useArtifacts(projectId, workspace?.id ?? null, repository, reloadList);
 
-  const chosen = React.useMemo(
-    () => repositories.find((entry) => entry.id === repository) ?? null,
-    [repositories, repository]
+  // `load` stays one function for the grid's life: it reads the documents and the names from here.
+  const current = React.useRef<{ own: readonly DocumentDto[]; repoNames: ReadonlyMap<string, string> }>({
+    own,
+    repoNames,
+  });
+  React.useLayoutEffect(() => {
+    current.current = { own, repoNames };
+  });
+  const sourceRows = React.useMemo(() => ({ own, repoNames }), [own, repoNames]);
+  const reloadOnSource = useLocalGridReload(sourceRows);
+
+  const load = React.useCallback(
+    async (context: DataGridLoadContext): Promise<DataGridLoadResult<ArtifactRow>> => {
+      const kind = tagGroupChoice(context.filters?.[ARTIFACT_FILTERS.kind]);
+      const query = {
+        repo: tagGroupChoice(context.filters?.[ARTIFACT_FILTERS.repository]),
+        kind: isKind(kind) ? kind : null,
+        search: searchQuery(context.filters),
+      };
+      setRepository(query.repo);
+      const { page, limit } = context.pagination ?? { page: 1, limit: 25 };
+      try {
+        const answer = await readArtifactsPage(
+          projectId,
+          current.current.own,
+          current.current.repoNames,
+          query,
+          (page - 1) * limit,
+          limit,
+          context.signal
+        );
+        context.signal?.throwIfAborted();
+        setListFailed(false);
+        return { results: answer.rows, total: answer.total };
+      } catch (error) {
+        if (context.signal?.aborted) throw error;
+        // The kit's error view is English and has no retry: the section draws GridFailed instead.
+        setListFailed(true);
+        return { results: [], total: 0 };
+      }
+    },
+    [projectId]
   );
 
   // The shell opens it, not this screen — see `requestOpenArtifact`.
@@ -139,33 +219,62 @@ export const ArtifactsSection: React.FC<ArtifactsSectionProps> = ({ projectId, p
     [bridge, projectId]
   );
 
-  const columns = React.useMemo(
-    () =>
-      artifactColumns({
-        formatRelative,
-        container,
-        onOpen,
-        labels: {
-          actions: (name: string) => t('artifacts_row_actions', { name }),
-          open: t('artifacts_row_open'),
-          openInEditor: t('artifacts_row_open_in_editor'),
-          copyLink: t('artifacts_row_copy_link'),
-          name: t('artifacts_col_name'),
-          repository: t('artifacts_col_repository'),
-          path: t('artifacts_col_path'),
-          sync: t('artifacts_col_sync'),
-          updated: t('artifacts_col_updated'),
-          ingested: t('artifacts_sync_ingested'),
-          provenance: {
-            checkout: t('artifacts_from_checkout'),
-            tree: t('artifacts_from_tree'),
-            upload: t('artifacts_from_upload'),
-            repository: t('artifacts_from_repository'),
-          },
-        },
-      }),
-    [t, formatRelative, container, onOpen]
+  const labels = React.useMemo(
+    () => ({
+      actions: (name: string) => t('artifacts_row_actions', { name }),
+      open: t('artifacts_row_open'),
+      openInEditor: t('artifacts_row_open_in_editor'),
+      copyLink: t('artifacts_row_copy_link'),
+      name: t('artifacts_col_name'),
+      repository: t('artifacts_col_repository'),
+      path: t('artifacts_col_path'),
+      sync: t('artifacts_col_sync'),
+      updated: t('artifacts_col_updated'),
+      ingested: t('artifacts_sync_ingested'),
+      none: t('none'),
+      provenance: {
+        checkout: t('artifacts_from_checkout'),
+        tree: t('artifacts_from_tree'),
+        upload: t('artifacts_from_upload'),
+        repository: t('artifacts_from_repository'),
+      },
+    }),
+    [t]
   );
+  const columns = React.useMemo(() => artifactColumns(labels), [labels]);
+  const cells = React.useMemo<ArtifactCells>(
+    () => ({ labels, formatRelative, container, onOpen }),
+    [labels, formatRelative, container, onOpen]
+  );
+
+  // The options a filter offers: one entity list per set of repositories.
+  const repositoryChoices = repositories.map((entry) => `${entry.id}\u0000${entry.name}`).join('\n');
+  const filters = React.useMemo(() => {
+    const choices = repositoryChoices
+      ? repositoryChoices.split('\n').map((entry) => {
+          const [value, label] = entry.split('\u0000');
+          return { value, label };
+        })
+      : [];
+    return [
+      ...(choices.length > 0
+        ? [
+            filterTagGroup({
+              id: ARTIFACT_FILTERS.repository,
+              label: t('artifacts_col_repository'),
+              mode: 'radio',
+              options: choices,
+            }),
+          ]
+        : []),
+      filterTagGroup({
+        id: ARTIFACT_FILTERS.kind,
+        label: t('artifacts_kind'),
+        mode: 'radio',
+        options: KINDS.map((value) => ({ value, label: t(KIND_LABEL_KEY[value]) })),
+      }),
+    ];
+  }, [t, repositoryChoices]);
 
   if (loading) return <SectionSkeleton />;
 
@@ -225,6 +334,7 @@ export const ArtifactsSection: React.FC<ArtifactsSectionProps> = ({ projectId, p
     );
   }
 
+  const chosen = repositories.find((entry) => entry.id === repository) ?? null;
   return (
     <div ref={findThemedRoot} className={styles.section}>
       <UploadPanel projectId={projectId} projectName={projectName} className={styles.upload} />
@@ -246,116 +356,39 @@ export const ArtifactsSection: React.FC<ArtifactsSectionProps> = ({ projectId, p
             </>
           )}
         </p>
-        <div className={styles.controls}>
-          <Select
-            value={repository ?? ALL_REPOSITORIES}
-            onValueChange={(next: string | null) => {
-              setRepository(!next || next === ALL_REPOSITORIES ? null : next);
-              setOffset(0);
-            }}
-          >
-            <SelectTrigger className={styles.repoFilter} aria-label={t('artifacts_col_repository')}>
-              <SelectValue>
-                {(selected: unknown) => (
-                  <span className={styles.truncate}>
-                    {!selected || selected === ALL_REPOSITORIES
-                      ? t('artifacts_all_repositories', { count: repositories.length })
-                      : (repositories.find((entry) => entry.id === selected)?.name ??
-                        String(selected))}
-                  </span>
-                )}
-              </SelectValue>
-            </SelectTrigger>
-            <SelectContent className={styles.repoOptions} container={container ?? undefined}>
-              <SelectItem value={ALL_REPOSITORIES}>
-                <span className={styles.truncate}>
-                  {t('artifacts_all_repositories', { count: repositories.length })}
-                </span>
-              </SelectItem>
-              {repositories.map((entry) => (
-                <SelectItem key={entry.id} value={entry.id}>
-                  <span className={styles.truncate} title={entry.name}>
-                    {entry.name}
-                  </span>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select
-            value={kind ?? ALL_KINDS}
-            onValueChange={(next: string | null) => {
-              setKind(!next || next === ALL_KINDS ? null : (next as ArtifactKind));
-              setOffset(0);
-            }}
-          >
-            <SelectTrigger className={styles.repoFilter} aria-label={t('artifacts_kind')}>
-              <SelectValue>
-                {(selected: unknown) =>
-                  !selected || selected === ALL_KINDS
-                    ? t('artifacts_all_kinds')
-                    : t(KIND_LABEL_KEY[selected as ArtifactKind])
-                }
-              </SelectValue>
-            </SelectTrigger>
-            <SelectContent container={container ?? undefined}>
-              <SelectItem value={ALL_KINDS}>{t('artifacts_all_kinds')}</SelectItem>
-              {KINDS.map((entry) => (
-                <SelectItem key={entry} value={entry}>
-                  {t(KIND_LABEL_KEY[entry])}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Input
-            className={styles.search}
-            type="search"
-            value={typed}
-            icon={<Search size={16} strokeWidth={1.3} />}
-            placeholder={t('artifacts_search')}
-            onChange={(event) => setTyped(event.target.value)}
-            aria-label={t('artifacts_search')}
-          />
-        </div>
+        <span className={styles.importing}>{t('artifacts_sorted_newest')}</span>
       </header>
-      <ArtifactsTable
-        rows={rows}
-        columns={columns}
-        empty={
-          <Empty className={styles.empty}>
-            <EmptyHeader>
-              <EmptyDescription>{t('artifacts_no_matches')}</EmptyDescription>
-            </EmptyHeader>
-            <EmptyActions>
-              <Button
-                variant="link"
-                onClick={() => {
-                  setTyped('');
-                  setSearch('');
-                  setRepository(null);
-                  setKind(null);
-                  setOffset(0);
-                }}
-              >
-                {t('artifacts_clear_filters')}
-              </Button>
-            </EmptyActions>
-          </Empty>
-        }
-        offset={offset}
-        total={total}
-        pageSize={ARTIFACTS_PAGE_SIZE}
-        onOffsetChange={setOffset}
-        loading={refreshing}
-        labels={{
-          table: t('section_artifacts'),
-          previous: t('artifacts_prev_page'),
-          next: t('artifacts_next_page'),
-          sortedNewest: t('artifacts_sorted_newest'),
-          range: (from: number, to: number, count: number) =>
-            t.count('artifacts_range', count, { from, to, total: count }),
-          page: (index: number) => t('artifacts_page', { index }),
-        }}
-      />
+      {listFailed ? (
+        <GridFailed
+          message={t('artifacts_read_failed')}
+          retry={t('artifacts_retry')}
+          onRetry={() => {
+            setListFailed(false);
+            setAttempt((n) => n + 1);
+            refetch();
+          }}
+        />
+      ) : (
+        <ArtifactCellsProvider value={cells}>
+          <ListGrid<ArtifactRow>
+            key={attempt}
+            name="artifacts"
+            label={t('section_artifacts')}
+            columns={columns}
+            load={load}
+            search={t('artifacts_search')}
+            filters={filters}
+            empty={ArtifactsEmpty}
+            unsortable={ARTIFACT_COLUMN_IDS}
+            minWidth="52rem"
+          >
+            <DataGridRowActionsPlugin<ArtifactRow> component={ArtifactRowMenu} />
+            <ClampPage />
+            <TriggerBridge triggerRef={triggerRef} />
+            {reloadOnSource}
+          </ListGrid>
+        </ArtifactCellsProvider>
+      )}
     </div>
   );
 };

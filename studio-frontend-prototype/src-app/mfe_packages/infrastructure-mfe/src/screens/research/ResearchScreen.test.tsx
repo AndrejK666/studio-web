@@ -112,7 +112,7 @@ function setUp({
     environments: read('environments', list),
     connections: read('connections', { items: connections }),
     deployments: read('deployments', { items: deployments, total: deployments.length }),
-    tenantUsers: read('tenantUsers', { items: [] }),
+    orgMembers: read('orgMembers', { items: [], total: 0 }),
     getWorkspaces: read('getWorkspaces', { items: [] }),
     getProjects: read('getProjects', { items: [{ id: 'p1', name: 'Shop' }] }),
     researchProjects: read('researchProjects', { items: [{ id: 'rp-1', name: 'Atlas' }] }),

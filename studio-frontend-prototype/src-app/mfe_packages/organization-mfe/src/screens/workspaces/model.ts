@@ -1,6 +1,6 @@
 /**
- * The workspaces list's rules, apart from the markup: which rows a search and
- * the managed filter keep, and what each row says under its name. The
+ * The workspaces list's rules, apart from the markup: which rows the managed
+ * filter keeps, and what each row says under its name. The
  * prototype's `ProjectsPortfolio` (`projects.tsx`): the health numbers are the
  * organization overview's (`GET /studio-organizations/v1/overview`), joined to
  * the account system's workspaces by id.
@@ -13,21 +13,22 @@ import type { OrgOverview, OrgWorkspace } from '../../overview/types';
 /** The prototype's chips: every workspace, the self-managed ones, the organization's. */
 export type ManagedFilter = 'all' | 'self' | 'org';
 
-export const MANAGED_FILTERS: readonly ManagedFilter[] = ['all', 'self', 'org'];
-
 export function matchesManaged(row: Pick<Tenant, 'self_managed'>, filter: ManagedFilter): boolean {
   if (filter === 'self') return !!row.self_managed;
   if (filter === 'org') return !row.self_managed;
   return true;
 }
 
-/** The rows a search and the managed filter keep, by name as the prototype sorted them. */
-export function visibleWorkspaces(all: readonly Tenant[], query: string, managed: ManagedFilter): Tenant[] {
-  const needle = query.trim().toLowerCase();
-  return all
-    .filter((row) => !needle || row.name.toLowerCase().includes(needle))
-    .filter((row) => matchesManaged(row, managed))
-    .sort((a, b) => a.name.localeCompare(b.name));
+/**
+ * How many projects a workspace has: the organization overview's list of them when it names the workspace, else the
+ * account system's child count. The child count takes every child tenant, whatever its type or state, so it can say
+ * 10 where the workspace's Projects list shows 3 (walk 2026-11-16); the overview counts projects only.
+ */
+export function projectCountOf(
+  row: Pick<Tenant, 'child_count'>,
+  health: Pick<OrgWorkspace, 'projects'> | undefined
+): number | undefined {
+  return health ? health.projects.length : row.child_count;
 }
 
 /** A workspace's health in the overview, or undefined when the overview has none for it. */

@@ -66,6 +66,9 @@ pub enum Refusal {
     Conflict(&'static str, String),
     /// 503: a gear this needs is missing.
     Unavailable(String),
+    /// 400 `KIT_NOT_INSTALLED` (or 503): what only a kit brings, where it
+    /// does not apply; answered as studio-kits answers it.
+    Kit(crate::kit_registry::port::KitRefusal),
     /// 500.
     Internal(String),
 }
@@ -381,12 +384,17 @@ impl EnvironmentService {
         project: Uuid,
     ) -> Result<String> {
         let name = self.project_name(ctx, project).await?;
+        self.slug_named(org, project, &name).await
+    }
+
+    /// [`Self::slug`] for a project whose name is already read.
+    async fn slug_named(&self, org: Uuid, project: Uuid, name: &str) -> Result<String> {
         match self.records() {
             Some(r) => r
-                .slug(org, project, &name)
+                .slug(org, project, name)
                 .await
                 .map_err(|e| Refusal::Internal(format!("{e:#}"))),
-            None => Ok(model::slug(&name)),
+            None => Ok(model::slug(name)),
         }
     }
 
@@ -400,6 +408,17 @@ impl EnvironmentService {
         env: &Environment,
     ) -> Result<placement::Place> {
         let slug = self.slug(ctx, org, project).await?;
+        self.place_with_slug(org, project, env, &slug).await
+    }
+
+    /// [`Self::place`] for a project whose slug is already read.
+    async fn place_with_slug(
+        &self,
+        org: Uuid,
+        project: Uuid,
+        env: &Environment,
+        slug: &str,
+    ) -> Result<placement::Place> {
         let assignment = match self.records() {
             Some(r) => r
                 .assignment(org, project, env.id)
@@ -407,7 +426,7 @@ impl EnvironmentService {
                 .map_err(|e| Refusal::Internal(format!("{e:#}")))?,
             None => None,
         };
-        placement::place_of(env, &slug, assignment.as_ref())
+        placement::place_of(env, slug, assignment.as_ref())
             .map_err(|(code, why)| Refusal::Precondition(code, why))
     }
 
@@ -901,14 +920,18 @@ impl EnvironmentService {
         org: Uuid,
         project: Uuid,
     ) -> Result<(Vec<Environment>, Vec<Environment>)> {
-        let admitted = self
-            .environments(ctx, org)
-            .await?
+        // Two independent reads, side by side; the organization's refusal
+        // first, as when they were read in turn.
+        let (org_envs, own) = tokio::join!(
+            self.environments(ctx, org),
+            self.own_environments(ctx, project)
+        );
+        let admitted = org_envs?
             .items
             .into_iter()
             .filter(|e| e.admits(project))
             .collect();
-        Ok((admitted, self.own_environments(ctx, project).await?))
+        Ok((admitted, own?))
     }
 
     /// One environment `project` may deploy to: the organization's that
@@ -1201,6 +1224,7 @@ impl EnvironmentService {
     pub async fn test_environment(
         &self,
         ctx: &SecurityContext,
+        caller: &SecurityContext,
         org: Uuid,
         id: Uuid,
         project: Option<Uuid>,
@@ -1224,7 +1248,7 @@ impl EnvironmentService {
                 .map(|r| r.project.clone())
                 .unwrap_or_default();
             let projects = self
-                .own_research_api(ctx, org, project_tenant)
+                .own_research_api(caller, org, project_tenant)
                 .await?
                 .projects()
                 .await
@@ -1290,24 +1314,43 @@ impl EnvironmentService {
     }
 
     pub async fn targets(&self, ctx: &SecurityContext, project: Uuid) -> Result<Targets> {
-        let org = self.organization_of_project(ctx, project).await?;
-        let project_name = self.project_name(ctx, project).await?;
-        let (admitted, own) = self.visible(ctx, org, project).await?;
-        let mut environments = Vec::new();
-        for e in admitted.into_iter().chain(own) {
-            // A namespace not assigned yet reads as none.
-            let ns = self
-                .place(ctx, org, project, &e)
-                .await
-                .map(|p| p.namespace)
-                .unwrap_or_default();
-            environments.push((e, ns));
-        }
-        let list = self
-            .store
-            .read::<BindingList>(ctx, project, BINDINGS_METADATA_TYPE)
-            .await?
-            .0;
+        // The organization (which is also whether the caller sees the
+        // project) beside the name; the organization's refusal is the one
+        // said when both fail. Then the environments beside the bindings,
+        // and every environment's namespace at once: one after the other
+        // these were about 3 s of a `project-path` on Dev.
+        let (org, project_name) = tokio::join!(
+            self.organization_of_project(ctx, project),
+            self.project_name(ctx, project)
+        );
+        let org = org?;
+        let project_name = project_name?;
+        let (visible, list) = tokio::join!(
+            self.visible(ctx, org, project),
+            self.store
+                .read::<BindingList>(ctx, project, BINDINGS_METADATA_TYPE)
+        );
+        let (admitted, own) = visible?;
+        let list = list?.0;
+        // The slug is the project's, the same in every environment: read once.
+        let slug = self.slug_named(org, project, &project_name).await;
+        let environments: Vec<(Environment, String)> =
+            futures_util::future::join_all(admitted.into_iter().chain(own).map(|e| {
+                let slug = slug.as_ref();
+                async move {
+                    // A namespace not assigned yet reads as none.
+                    let ns = match slug {
+                        Ok(slug) => self
+                            .place_with_slug(org, project, &e, slug)
+                            .await
+                            .map(|p| p.namespace)
+                            .unwrap_or_default(),
+                        Err(_) => String::new(),
+                    };
+                    (e, ns)
+                }
+            }))
+            .await;
         Ok(Targets {
             organization_id: org,
             project_name,
@@ -2703,6 +2746,15 @@ impl EnvironmentService {
                 Refusal::Unavailable(why) => ("UNAVAILABLE".to_owned(), why),
                 Refusal::Conflict(code, why) => (code.to_owned(), why),
                 Refusal::Internal(why) => ("INTERNAL".to_owned(), why),
+                Refusal::Kit(r) => match &r {
+                    crate::kit_registry::port::KitRefusal::NotInstalled { .. } => (
+                        crate::kit_registry::port::KIT_NOT_INSTALLED.to_owned(),
+                        r.detail(),
+                    ),
+                    crate::kit_registry::port::KitRefusal::Unavailable(why) => {
+                        ("UNAVAILABLE".to_owned(), why.clone())
+                    }
+                },
             });
             return Ok(BuildAsked::Planned(Box::new(BuildPlan {
                 environment_id: env.id,
@@ -2844,9 +2896,13 @@ impl EnvironmentService {
     /// project the request is about (its effective kits), or the organization
     /// for the organization's own environments. What is already there stays
     /// readable and removable without it -- status, logs, an uninstall,
-    /// removing the environment.
+    /// removing the environment. The refusal is studio-kits' one shared
+    /// `KIT_NOT_INSTALLED` (ADR-0071 §4).
     async fn require_research_kit(&self, ctx: &SecurityContext, tenant: Uuid) -> Result<()> {
-        research_kit_gate(self.research_kit_applies(ctx, tenant).await?)
+        use crate::kit_registry::port::{CONSTRUCTOR_RESEARCH_KIT, require_kit};
+        require_kit(&self.hub, ctx, tenant, CONSTRUCTOR_RESEARCH_KIT)
+            .await
+            .map_err(Refusal::Kit)
     }
 
     /// The kit's Inbox source `deploy-failed` (`docs/design/studio-kits.md`
@@ -3006,12 +3062,19 @@ impl EnvironmentService {
     pub async fn research_projects(
         &self,
         ctx: &SecurityContext,
+        caller: &SecurityContext,
         org: Uuid,
         connection_id: Uuid,
     ) -> Result<Vec<crate::connectors::sdk::research::Project>> {
         self.require_manage(ctx, org).await?;
         self.require_research_kit(ctx, org).await?;
-        self.research_api(ctx, org, connection_id)
+        // The token is read as the member, not as the organization the
+        // request acts in: a personal sign-in's secret is kept under the
+        // person's own tenant (studio-connector writes it with the caller's
+        // own context), which a context acting in another organization -- a
+        // platform administrator's, a member of several organizations' --
+        // cannot read.
+        self.research_api(caller, org, connection_id)
             .await?
             .projects()
             .await
@@ -3024,13 +3087,14 @@ impl EnvironmentService {
     pub async fn research_hardware(
         &self,
         ctx: &SecurityContext,
+        caller: &SecurityContext,
         org: Uuid,
         connection_id: Uuid,
         project: &str,
     ) -> Result<Vec<crate::connectors::sdk::research::Hardware>> {
         self.require_manage(ctx, org).await?;
         self.require_research_kit(ctx, org).await?;
-        self.research_api(ctx, org, connection_id)
+        self.research_api(caller, org, connection_id)
             .await?
             .hardware(project)
             .await
@@ -3235,6 +3299,21 @@ impl EnvironmentService {
             commit = b.commit;
             lock_hash = b.lock_hash;
         }
+        // The revision Studio keeps, as the build took it (ADR-0053 §2): the
+        // chart is rendered from it. An uninstall renders nothing.
+        let description = match (
+            req.action,
+            self.hub.get::<dyn crate::product::port::ProjectProducts>(),
+        ) {
+            (DeploymentAction::Install, Ok(products)) => products
+                .latest_description(ctx, project)
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::warn!(%project, error = %format!("{e:#}"), "studio-environments: the description revision could not be read; the deploy renders the checkout's");
+                    None
+                }),
+            _ => None,
+        };
         let product = Self::release_name(&product)?;
         let project_name = self.project_name(ctx, project).await?;
         let namespace = model::namespace_for(&env.namespace_pattern, &project_name, &env.name)?;
@@ -3278,6 +3357,8 @@ impl EnvironmentService {
                 commit: commit.unwrap_or_default(),
                 requested_by: Some(research::Requester::of(ctx)),
                 sign_in: Some(self.own_research(ctx, org, Some(project)).await?),
+                description_revision: description.as_ref().map(|d| d.revision),
+                description_text: description.map(|d| d.text),
             }),
         };
         if d.action == DeploymentAction::Install {
@@ -3559,6 +3640,7 @@ impl EnvironmentService {
     pub async fn status(
         &self,
         ctx: &SecurityContext,
+        caller: &SecurityContext,
         org: Uuid,
         id: Uuid,
     ) -> Result<(Deployment, Rollout)> {
@@ -3567,7 +3649,9 @@ impl EnvironmentService {
             .project_environment(ctx, org, d.project_id, d.environment_id)
             .await?;
         if let (EnvironmentKind::Research, Some(target)) = (env.kind, &env.research) {
-            let api = self.own_research_api(ctx, org, Some(d.project_id)).await?;
+            let api = self
+                .own_research_api(caller, org, Some(d.project_id))
+                .await?;
             let rollout = research::rollout(&api, &target.project, &d.namespace)
                 .await
                 .map_err(|e| {
@@ -3600,6 +3684,7 @@ impl EnvironmentService {
     pub async fn logs(
         &self,
         ctx: &SecurityContext,
+        caller: &SecurityContext,
         org: Uuid,
         id: Uuid,
         lines: i64,
@@ -3609,7 +3694,9 @@ impl EnvironmentService {
             .project_environment(ctx, org, d.project_id, d.environment_id)
             .await?;
         if let (EnvironmentKind::Research, Some(target)) = (env.kind, &env.research) {
-            let api = self.own_research_api(ctx, org, Some(d.project_id)).await?;
+            let api = self
+                .own_research_api(caller, org, Some(d.project_id))
+                .await?;
             let lines = usize::try_from(lines.clamp(1, deploy::LOG_LINES_MAX)).unwrap_or(200);
             return research::logs(&api, &target.project, &d.namespace, lines)
                 .await
@@ -3658,6 +3745,13 @@ impl EnvironmentService {
         // says why, and is the whole log.
         if let Some(log) = start_failure_log(&record) {
             return Ok(log);
+        }
+        // A Research build runs on this server and in Research, never in an
+        // environment's cluster: its log is what its record keeps, and the
+        // environments are not asked (a Research environment's connection is
+        // a member's sign-in, not a cluster).
+        if record.r#where.as_deref() == Some("research") {
+            return Ok(research_build_log(&record));
         }
         let org = self.organization_of_project(ctx, project).await?;
         let mut unreachable = None;
@@ -3733,6 +3827,45 @@ fn start_failure_log(record: &crate::artifact_ingest::port::BuildRecord) -> Opti
     })
 }
 
+/// The log of a build that ran in Constructor Research, from its record: the
+/// step it failed in with the reason, or what it built. Its live progress is
+/// its Background work run's.
+fn research_build_log(record: &crate::artifact_ingest::port::BuildRecord) -> BuildLog {
+    let (step, log) = match (record.status.as_str(), &record.failure) {
+        ("failed", failure) => (
+            record
+                .failure_step
+                .clone()
+                .unwrap_or_else(|| "build".into()),
+            failure
+                .clone()
+                .unwrap_or_else(|| "the build failed in Constructor Research".into()),
+        ),
+        ("passed", _) => (
+            "images".into(),
+            record
+                .images
+                .iter()
+                .map(|(key, reference)| format!("{key}: {reference}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        ),
+        (status, _) => (
+            "images".into(),
+            format!("{status} in Constructor Research; its progress is in Background work"),
+        ),
+    };
+    BuildLog {
+        environment: record.place.environment.clone().unwrap_or_default(),
+        namespace: record.place.namespace.clone().unwrap_or_default(),
+        steps: vec![build::StepLog {
+            step,
+            state: record.status.clone(),
+            log,
+        }],
+    }
+}
+
 /// A build's steps, read from its pod.
 #[derive(Debug, Clone)]
 pub struct BuildLog {
@@ -3742,33 +3875,11 @@ pub struct BuildLog {
     pub steps: Vec<build::StepLog>,
 }
 
-/// The refusal code for something only a kit that is not installed brings
-/// (ADR-0070 §7, decision 5).
-pub const KIT_NOT_INSTALLED: &str = "KIT_NOT_INSTALLED";
-
 /// Whether a deploy request to a Research environment needs the Constructor
 /// Research kit: everything but an uninstall, which takes away what an
 /// organization ran there before it removed the kit.
 fn research_needs_kit(action: DeploymentAction) -> bool {
     action != DeploymentAction::Uninstall
-}
-
-/// The answer when the organization has, or has not, the Constructor Research
-/// kit: a refusal that names the kit and how to get it.
-fn research_kit_gate(applies: bool) -> Result<()> {
-    if applies {
-        return Ok(());
-    }
-    Err(Refusal::Precondition(
-        KIT_NOT_INSTALLED,
-        format!(
-            "building and running a product in Constructor Research comes with the Constructor \
-             Research kit (`{}`), which is not installed here: an administrator installs it \
-             for the organization under Organization › Kits, or for this project under \
-             Project › Kits",
-            crate::kit_registry::port::CONSTRUCTOR_RESEARCH_KIT
-        ),
-    ))
 }
 
 /// How many days before a Research sign-in runs out the Inbox says so.
@@ -3922,15 +4033,6 @@ mod tests {
 
     #[test]
     fn research_needs_its_kit_except_to_take_away_what_runs() {
-        assert!(research_kit_gate(true).is_ok());
-        let Err(Refusal::Precondition(code, why)) = research_kit_gate(false) else {
-            panic!("refused as a precondition");
-        };
-        assert_eq!(code, KIT_NOT_INSTALLED);
-        assert!(
-            why.contains("constructor-research") && why.contains("Kits"),
-            "{why}"
-        );
         assert!(research_needs_kit(DeploymentAction::Install));
         assert!(!research_needs_kit(DeploymentAction::Uninstall));
     }
@@ -3996,6 +4098,48 @@ mod tests {
             };
             assert!(start_failure_log(&other).is_none(), "{status}");
         }
+    }
+
+    #[test]
+    fn a_research_build_logs_its_record_not_a_cluster_pod() {
+        use crate::artifact_ingest::port::{BuildPlace, BuildRecord};
+        let failed = BuildRecord {
+            build_id: "research-8219ed83a9ca".into(),
+            r#where: Some("research".into()),
+            status: "failed".into(),
+            failure: Some("the product's repository could not be cloned".into()),
+            failure_step: Some("prepare".into()),
+            place: BuildPlace {
+                environment: Some("research-example-project-71c6fd".into()),
+                namespace: Some("studioweb-research-example-project-71c6fd".into()),
+                ..BuildPlace::default()
+            },
+            ..BuildRecord::default()
+        };
+        let log = research_build_log(&failed);
+        assert_eq!(log.environment, "research-example-project-71c6fd");
+        assert_eq!(log.steps.len(), 1);
+        assert_eq!(log.steps[0].step, "prepare");
+        assert_eq!(log.steps[0].state, "failed");
+        assert!(log.steps[0].log.contains("could not be cloned"));
+
+        let passed = BuildRecord {
+            status: "passed".into(),
+            failure: None,
+            failure_step: None,
+            images: vec![("api".into(), "registry/api@sha256:1".into())],
+            ..failed.clone()
+        };
+        let log = research_build_log(&passed);
+        assert_eq!(log.steps[0].state, "passed");
+        assert_eq!(log.steps[0].log, "api: registry/api@sha256:1");
+
+        let running = BuildRecord {
+            status: "running".into(),
+            ..passed
+        };
+        let log = research_build_log(&running);
+        assert!(log.steps[0].log.contains("Background work"));
     }
 
     #[test]

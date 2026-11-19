@@ -47,7 +47,15 @@ impl InstalledStore for Memory {
         Ok(answer)
     }
 
-    async fn organization_of(&self, _: &SecurityContext, tenant: Uuid) -> Uuid {
+    async fn organization_of(&self, ctx: &SecurityContext, tenant: Uuid) -> Uuid {
+        // As account-management answers it: the project creation run's
+        // context is scoped to the new project and reads nothing above it.
+        if tenant == PROJECT
+            && ctx.subject_id() == crate::organizations::SERVICE_SUBJECT_ID
+            && ctx.subject_tenant_id() == PROJECT
+        {
+            return PROJECT;
+        }
         if tenant == PROJECT { ORG } else { tenant }
     }
 
@@ -109,6 +117,7 @@ fn kit(slug: &str, version: &str, kind: &'static str, at: Option<&str>) -> Insta
         installed_by: at.map(|_| "someone".to_owned()),
         installed_at: at.map(str::to_owned),
         by_default: at.is_none(),
+        retired: false,
     }
 }
 
@@ -123,20 +132,16 @@ async fn every_builtin_kit_is_a_base_kit_until_the_platform_removes_it() {
         [
             "assistant",
             "components",
-            "org-connections",
+            "delivery",
             "org-costs",
-            "org-infrastructure",
             "org-reports",
-            "product-releases",
-            "project-activity",
-            "project-artifacts",
             "project-domain-model",
             "project-git",
-            "project-issues",
             "project-lifecycle",
+            "project-product",
             "project-specs",
-            "project-team",
             "project-tests",
+            "spec-mapping",
             "studio-api-docs"
         ]
     );
@@ -199,7 +204,7 @@ async fn only_a_platform_administrator_changes_the_base_kits() {
             Err(Refusal::Forbidden(PLATFORM_ADMIN_REQUIRED))
         ));
         assert!(matches!(
-            installer.uninstall_base(&who, "project-issues").await,
+            installer.uninstall_base(&who, "project-tests").await,
             Err(Refusal::Forbidden(PLATFORM_ADMIN_REQUIRED))
         ));
     }
@@ -261,22 +266,22 @@ async fn an_organization_cannot_uninstall_a_base_kit() {
     let admin = caller(ORG_ADMIN, ORG);
     assert!(matches!(
         installer
-            .uninstall_for_organization(&admin, ORG, "project-issues")
+            .uninstall_for_organization(&admin, ORG, "project-tests")
             .await,
-        Err(Refusal::BaseKit(slug)) if slug == "project-issues"
+        Err(Refusal::BaseKit(slug)) if slug == "project-tests"
     ));
     // Its own installation of a base kit is its own to remove; the base
     // kit stays.
     installer
-        .install_for_organization(&admin, ORG, "project-issues", None)
+        .install_for_organization(&admin, ORG, "project-tests", None)
         .await
         .unwrap();
     installer
-        .uninstall_for_organization(&admin, ORG, "project-issues")
+        .uninstall_for_organization(&admin, ORG, "project-tests")
         .await
         .unwrap();
     let installed = installer.installed(&admin, ORG).await.unwrap();
-    assert!(slugs(&installed.effective).contains(&"project-issues"));
+    assert!(slugs(&installed.effective).contains(&"project-tests"));
     // A kit it never had is not there.
     assert!(matches!(
         installer
@@ -284,6 +289,48 @@ async fn an_organization_cannot_uninstall_a_base_kit() {
             .await,
         Err(Refusal::NotFound(..))
     ));
+}
+
+#[tokio::test]
+async fn an_organization_uninstalls_spec_mapping_for_itself_and_takes_it_back() {
+    let (installer, store) = installer();
+    let admin = caller(ORG_ADMIN, ORG);
+    let other = Uuid::from_u128(0x07e5);
+    // A base kit by default (ADR-0074): every organization has it.
+    let installed = installer.installed(&admin, ORG).await.unwrap();
+    assert!(slugs(&installed.base).contains(&"spec-mapping"));
+    // Gone for this organization alone, and for its projects.
+    installer
+        .uninstall_for_organization(&admin, ORG, "spec-mapping")
+        .await
+        .unwrap();
+    let installed = installer.installed(&admin, ORG).await.unwrap();
+    assert!(!slugs(&installed.effective).contains(&"spec-mapping"));
+    assert!(slugs(&installed.effective).contains(&"project-tests"));
+    let in_project = installer
+        .installed_in_project(&admin, PROJECT)
+        .await
+        .unwrap();
+    assert!(!slugs(&in_project.effective).contains(&"spec-mapping"));
+    assert_eq!(
+        store.docs.lock().unwrap()[&ORG].removed_base,
+        vec!["spec-mapping".to_owned()]
+    );
+    let elsewhere = installer
+        .installed(&caller(PLATFORM_ADMIN, other), other)
+        .await
+        .unwrap();
+    assert!(slugs(&elsewhere.base).contains(&"spec-mapping"));
+    // Installed again, it is the base kit once more, with no record of its own.
+    let back = installer
+        .install_for_organization(&admin, ORG, "spec-mapping", None)
+        .await
+        .unwrap();
+    assert_eq!(back.kind, KIND_BASE);
+    let installed = installer.installed(&admin, ORG).await.unwrap();
+    assert!(slugs(&installed.base).contains(&"spec-mapping"));
+    assert!(installed.organization.is_empty());
+    assert!(store.docs.lock().unwrap()[&ORG].removed_base.is_empty());
 }
 
 #[tokio::test]
@@ -325,12 +372,12 @@ async fn an_unknown_or_malformed_kit_is_refused() {
     // A built-in kit comes at Studio's version and no other.
     assert!(matches!(
         installer
-            .install_base(&admin, "project-issues", Some("9.9.9"))
+            .install_base(&admin, "project-tests", Some("9.9.9"))
             .await,
         Err(Refusal::Invalid(_))
     ));
     installer
-        .install_base(&admin, "project-issues", Some(BUILTIN_VERSION))
+        .install_base(&admin, "project-tests", Some(BUILTIN_VERSION))
         .await
         .unwrap();
 }
@@ -392,7 +439,7 @@ fn a_stored_builtin_kit_takes_the_version_this_image_ships() {
     let doc = InstalledDocument {
         kits: vec![
             InstalledRecord {
-                kit_slug: "project-issues".into(),
+                kit_slug: "project-tests".into(),
                 version: "0.0.1".into(),
                 shelf: "builtin".into(),
                 installed_by: "x".into(),
@@ -408,14 +455,13 @@ fn a_stored_builtin_kit_takes_the_version_this_image_ships() {
             },
         ],
         removed_builtin: vec![],
+        removed_base: vec![],
         shelf: vec![],
         shelf_versions: vec![],
+        renamed: None,
     };
     let base = base_kits(&doc, &catalogue());
-    let issues = base
-        .iter()
-        .find(|k| k.kit_slug == "project-issues")
-        .unwrap();
+    let issues = base.iter().find(|k| k.kit_slug == "project-tests").unwrap();
     assert_eq!(issues.version, BUILTIN_VERSION);
     assert!(!issues.by_default);
     assert!(!slugs(&base).contains(&"project-gone"));
@@ -535,9 +581,9 @@ async fn a_project_cannot_remove_what_its_organization_or_the_platform_installed
     let admin = caller(ORG_ADMIN, ORG);
     assert!(matches!(
         installer
-            .uninstall_for_project(&admin, PROJECT, "project-issues")
+            .uninstall_for_project(&admin, PROJECT, "project-tests")
             .await,
-        Err(Refusal::BaseKit(slug)) if slug == "project-issues"
+        Err(Refusal::BaseKit(slug)) if slug == "project-tests"
     ));
     installer
         .install_for_organization(&admin, ORG, "compete", None)
@@ -675,7 +721,9 @@ async fn a_gear_asks_whether_a_kit_applies_to_an_organization_or_its_project() {
     let installer = Arc::new(installer);
     let presence = InstalledKits::new(Arc::clone(&installer));
     let member = caller(MEMBER, ORG);
-    // A base kit applies by default; the opt-in kit does not, yet.
+    // A base kit applies by default; the opt-in kit does not, yet. A
+    // retired slug applies where everything it resolves to does (ADR-0071
+    // §8): org-infrastructure is delivery now.
     assert!(
         presence
             .applies(&member, ORG, "org-infrastructure")
@@ -749,4 +797,57 @@ async fn a_project_installs_constructor_research_on_its_own() {
             .await
             .unwrap()
     );
+}
+
+#[tokio::test]
+async fn a_creation_run_installs_the_project_type_kit_in_its_new_project() {
+    let (installer, _) = installer();
+    // The run's own context: the organization gear, scoped to the project.
+    let run = SecurityContext::builder()
+        .subject_id(crate::organizations::SERVICE_SUBJECT_ID)
+        .subject_type("service")
+        .subject_tenant_id(PROJECT)
+        .token_scopes(vec!["*".into()])
+        .build()
+        .unwrap();
+    let own = installer
+        .install_for_created_project(&run, PROJECT, ORG, "gears-project")
+        .await
+        .unwrap();
+    assert_eq!(own.kind, KIND_PROJECT);
+    let installed = installer
+        .installed_in_project(&caller(MEMBER, ORG), PROJECT)
+        .await
+        .unwrap();
+    assert_eq!(slugs(&installed.project), ["gears-project"]);
+    // A retried run finds it there and installs nothing more.
+    installer
+        .install_for_created_project(&run, PROJECT, ORG, "gears-project")
+        .await
+        .unwrap();
+    let again = installer
+        .installed_in_project(&caller(MEMBER, ORG), PROJECT)
+        .await
+        .unwrap();
+    assert_eq!(slugs(&again.project), ["gears-project"]);
+    // Another organization than the project's, a kit that is no type, and
+    // anybody but the run are refused.
+    assert!(matches!(
+        installer
+            .install_for_created_project(&run, PROJECT, Uuid::from_u128(0xbad), "gears-project")
+            .await,
+        Err(Refusal::Forbidden(_))
+    ));
+    assert!(matches!(
+        installer
+            .install_for_created_project(&run, PROJECT, ORG, "delivery")
+            .await,
+        Err(Refusal::Invalid(_))
+    ));
+    assert!(matches!(
+        installer
+            .install_for_created_project(&caller(ORG_ADMIN, PROJECT), PROJECT, ORG, "gears-project")
+            .await,
+        Err(Refusal::Forbidden(_))
+    ));
 }

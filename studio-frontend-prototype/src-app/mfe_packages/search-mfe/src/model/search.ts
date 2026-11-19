@@ -98,11 +98,24 @@ export interface ArtifactHit {
   opens: 'editor' | 'project' | 'link' | 'none';
 }
 
+/**
+ * A title as a person reads it: HTML comments out (a bot's pull request or comment body opens with
+ * `<!-- coderabbit-ai-generated:v1 -->`, and the indexer keeps that as the title; walk 2026-11-16), whitespace folded.
+ * A comment left open is cut where it starts.
+ */
+export function plainTitle(text: string): string {
+  return text
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<!--[\s\S]*$/, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 export function artifactHit(node: ArtifactNode, scope: { workspaceId: string | null }): ArtifactHit {
   const kind = KINDS[node.type_id] ?? 'other';
   const v = node.value;
   const path = kind === 'file' && v.path ? v.path : null;
-  const title =
+  const title = plainTitle(
     kind === 'file'
       ? (v.path?.split('/').pop() ?? v.path ?? '')
       : kind === 'repo'
@@ -113,7 +126,8 @@ export function artifactHit(node: ArtifactNode, scope: { workspaceId: string | n
             ? `${v.short_sha ?? ''} ${v.title ?? ''}`.trim()
             : v.number != null
               ? `#${v.number} ${v.title ?? ''}`.trim()
-              : (v.title ?? '');
+              : (v.title ?? '')
+  );
   const detail = kind === 'file' ? (v.path ?? '') : kind === 'repo' ? '' : (v.full_path ?? '');
   const projectId = v.project_id || null;
   const workspaceId = v.workspace_id || null;

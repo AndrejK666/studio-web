@@ -10,7 +10,7 @@
  * same screen with `personal` (the prototype's `ConnectorsView owner="personal"`).
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiRegistry } from '@gears-frontx/react';
 import { Card, CardContent } from '@gears-frontx/ui-kit';
 import { responseStatus, useOrganization, type OrganizationRef } from '@constructor-studio/mfe-shared';
@@ -26,6 +26,8 @@ import { ErrorLine, Header, errText, useAdmin } from '../common';
 import { AddConnection } from './AddConnection';
 import { ConnectionTable } from './ConnectionTable';
 import styles from '../Admin.module.css';
+
+const NONE: StoredConnection[] = [];
 
 export function IntegrationsSection() {
   const { t } = useAdmin();
@@ -106,8 +108,15 @@ export function Integrations({ org, personal = false }: { org: OrganizationRef; 
     void reload();
   }, [reload]);
 
-  const listed =
-    connections === null ? null : personal ? personalConnections(connections) : sharedConnections(connections);
+  // The grid reloads on a new array: kept the same while nothing was read again.
+  const listed = useMemo(
+    () => (connections === null ? null : personal ? personalConnections(connections) : sharedConnections(connections)),
+    [connections, personal]
+  );
+  const offered = useMemo(
+    () => (personal ? personalProviders(providers ?? []) : (providers ?? [])),
+    [providers, personal]
+  );
 
   return (
     <>
@@ -117,7 +126,7 @@ export function Integrations({ org, personal = false }: { org: OrganizationRef; 
         </h3>
       ) : (
         <Header
-          title={t('int_title')}
+          title={personal ? t('int_personal_title') : t('int_organization_title')}
           info={
             <>
               <p>{t('int_about', { name: org.name })}</p>
@@ -164,8 +173,9 @@ export function Integrations({ org, personal = false }: { org: OrganizationRef; 
       {!disabled && (
         <ConnectionTable
           org={org}
-          providers={personal ? personalProviders(providers ?? []) : (providers ?? [])}
-          connections={listed ?? []}
+          personal={personal}
+          providers={offered}
+          connections={listed ?? NONE}
           // A failed read stays "reading" under its error, never "nothing connected".
           loading={listed === null}
           sourcesTick={sourcesTick}

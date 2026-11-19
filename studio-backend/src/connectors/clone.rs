@@ -314,6 +314,18 @@ pub enum CheckoutUpdate {
     /// Left where it is -- local edits, or history the remote does not have --
     /// and read as it stands. The reason is for the sync's report.
     Kept { reason: String },
+    /// The tracked branch no longer exists on `origin`; the checkout is read
+    /// as it stands.
+    BranchGone { branch: String },
+}
+
+/// Whether git's answer says the ref asked for is not on the remote: what a
+/// fetch of a deleted branch prints (`couldn't find remote ref …`), or a
+/// clone of one (`Remote branch … not found`).
+pub fn is_missing_ref(stderr: &str) -> bool {
+    let s = stderr.to_ascii_lowercase();
+    s.contains("couldn't find remote ref")
+        || (s.contains("remote branch") && s.contains("not found"))
 }
 
 /// A read-only git question about the checkout, answered or `None`.
@@ -376,7 +388,14 @@ pub fn update_shared_checkout(
         .arg(checkout)
         .args(["fetch", "--quiet", "origin"])
         .arg(format!("+refs/heads/{branch}:refs/remotes/origin/{branch}"));
-    run(fetch, "fetch")?;
+    if let Err(e) = run(fetch, "fetch") {
+        // The branch was deleted on the host (merged, say): no fetch will
+        // ever find it, and the caller can say so instead of "fetch failed".
+        if is_missing_ref(&format!("{e:#}")) {
+            return Ok(CheckoutUpdate::BranchGone { branch });
+        }
+        return Err(e);
+    }
 
     let head = local(checkout, &["rev-parse", "HEAD"]);
     let remote = local(checkout, &["rev-parse", &format!("origin/{branch}")]);
@@ -618,6 +637,22 @@ pub fn read_text_file(dir: &Path, rel: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A source pinned to a deleted branch is told apart from a fetch that
+    /// failed for any other reason: the portal says "branch gone" for it.
+    #[test]
+    fn a_deleted_branch_is_told_apart_from_other_fetch_failures() {
+        assert!(is_missing_ref(
+            "git fetch failed (exit status: 128): fatal: couldn't find remote ref AndrejK666/gone"
+        ));
+        assert!(is_missing_ref(
+            "warning: Could not find remote branch x to clone.\nfatal: Remote branch x not found in upstream origin"
+        ));
+        assert!(!is_missing_ref(
+            "fatal: Authentication failed for 'https://github.com/acme/app/'"
+        ));
+        assert!(!is_missing_ref("fatal: repository not found"));
+    }
 
     /// The sync counts a document's comment threads by reading the logs the IDE
     /// writes beside it, and it can only read what the walk read.

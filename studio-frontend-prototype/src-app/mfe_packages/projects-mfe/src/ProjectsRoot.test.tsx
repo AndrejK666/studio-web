@@ -1,5 +1,5 @@
 import { withOwnQueryCache } from '@frontx-test-utils/withOwnQueryCache';
-import { act, render, screen } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { FrontXProvider } from '@gears-frontx/react';
 import {
@@ -59,8 +59,8 @@ describe('ProjectsRoot', () => {
       </FrontXProvider>
     );
 
-    // The list screen owns the search box; the project frame has no such thing.
-    expect(await screen.findByRole('searchbox')).toBeTruthy();
+    // The list screen (its grid owns the search box), not the project frame.
+    await waitFor(() => expect(document.querySelector('[data-project-list]')).not.toBeNull());
 
     await act(async () => {
       mfeApp.store.dispatch(openProject('11111111-1111-4111-8111-111111111111'));
@@ -69,19 +69,20 @@ describe('ProjectsRoot', () => {
     // The frame's own chrome is its <header> (`banner`); the section navigation
     // that used to stand in for it here is the shell's now, so it is not asserted.
     expect(await screen.findByRole('banner')).toBeTruthy();
-    expect(screen.queryByRole('searchbox')).toBeNull();
+    expect(document.querySelector('[data-project-list]')).toBeNull();
 
     await act(async () => {
       mfeApp.store.dispatch(closeProject());
     });
 
-    expect(await screen.findByRole('searchbox')).toBeTruthy();
+    await waitFor(() => expect(document.querySelector('[data-project-list]')).not.toBeNull());
     // Two full renders of the kit's chrome in jsdom, measured at 14-15s against
     // vitest's 15s default -- a coin flip, and a CI flake waiting to happen. The
     // budget is raised rather than the work reduced because none of what takes
     // the time is what this test asserts: it pins which screen shows, and the
-    // chrome around it renders regardless.
-  }, 45_000);
+    // chrome around it renders regardless. Since #1076 the list is the kit's DataGrid,
+    // heavier again: 40s alone, over 45s beside the other suites.
+  }, 120_000);
 
   // #881: the tabs showed Specs, the body Overview.
   it('opens a project on the section the shell published before it', async () => {
@@ -110,5 +111,5 @@ describe('ProjectsRoot', () => {
     });
 
     expect(container.querySelector('[data-section]')?.getAttribute('data-section')).toBe('specs');
-  }, 45_000);
+  }, 120_000);
 });

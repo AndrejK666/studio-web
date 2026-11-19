@@ -181,6 +181,24 @@ fn person(subject: Uuid) -> SecurityContext {
         .unwrap()
 }
 
+/// Take `kit` out of the base kits, and first the base kits that require it
+/// (ADR-0071 §5: the Project model requires Specs).
+async fn uninstall_base_with_dependents(installer: &KitInstaller, kit: &str) {
+    match installer.uninstall_base(&platform(), kit).await {
+        Ok(()) => {}
+        Err(Refusal::RequiredBy { by, .. }) => {
+            for dependent in by {
+                installer
+                    .uninstall_base(&platform(), &dependent)
+                    .await
+                    .unwrap();
+            }
+            installer.uninstall_base(&platform(), kit).await.unwrap();
+        }
+        Err(other) => panic!("{other:?}"),
+    }
+}
+
 fn platform() -> SecurityContext {
     SecurityContext::builder()
         .subject_id(PLATFORM_ADMIN)
@@ -489,10 +507,7 @@ async fn a_new_organization_has_a_moved_type_only_while_its_kit_is_installed() {
     // Without the kit: absent for everybody, and the query says which kit.
     for kit in owners().into_iter().filter(|k| is_base(k)) {
         let org = Org::with_base_kits().await;
-        org.installer
-            .uninstall_base(&platform(), &kit)
-            .await
-            .unwrap();
+        uninstall_base_with_dependents(&org.installer, &kit).await;
         org.reconcile_tolerant().await;
         let member = org.types(MEMBER, false).await;
         let admin = org.types(ADMIN, true).await;
@@ -611,10 +626,7 @@ async fn an_uninstalled_kit_leaves_its_inhabited_types_dormant_and_a_reinstall_a
         }
 
         // The platform removes the base kit.
-        org.installer
-            .uninstall_base(&platform(), &kit)
-            .await
-            .unwrap();
+        uninstall_base_with_dependents(&org.installer, &kit).await;
         org.reconcile_tolerant().await;
         for (t, ids) in &objects {
             assert_eq!(org.dormant(t).await.as_deref(), Some(kit.as_str()), "{t}");
@@ -634,10 +646,7 @@ async fn an_uninstalled_kit_leaves_its_inhabited_types_dormant_and_a_reinstall_a
         }
 
         // The same through the organization's own installation.
-        org.installer
-            .uninstall_base(&platform(), &kit)
-            .await
-            .unwrap();
+        uninstall_base_with_dependents(&org.installer, &kit).await;
         org.reconcile_tolerant().await;
         org.installer
             .install_for_organization(&person(ADMIN), ORG, &kit, None)
@@ -702,10 +711,7 @@ async fn a_project_installs_a_model_kit_only_as_screens_over_the_organization_s_
 
         // It does not: refused, the model is the organization's.
         let org = Org::with_base_kits().await;
-        org.installer
-            .uninstall_base(&platform(), &kit)
-            .await
-            .unwrap();
+        uninstall_base_with_dependents(&org.installer, &kit).await;
         org.reconcile_tolerant().await;
         let refused = org
             .installer
@@ -750,12 +756,15 @@ async fn an_opt_in_kit_installs_itself_nowhere_and_its_endpoint_sources_list_onc
             installed.effective.iter().all(|k| k.kit_slug != slug),
             "{slug}"
         );
-        assert!(
-            !org.service
+        // A project type's model (its subtype of Project) is every
+        // organization's (ADR-0073); any other opt-in kit's is nobody's.
+        assert_eq!(
+            org.service
                 .kit_models(&member)
                 .await
                 .unwrap()
                 .contains_key(slug),
+            crate::kit_registry::port::project_type_kit(slug).is_some(),
             "{slug}"
         );
 
@@ -1013,6 +1022,57 @@ async fn every_node_the_model_writes_fits_graph_storage() {
             .iter()
             .any(|n| n.type_id == crate::domain_model::gts::META_MODEL)
     );
+    for n in &nodes {
+        let size = n.value.to_string().len();
+        assert!(
+            size <= PAYLOAD_MAX_BYTES,
+            "{} {} is {size} bytes, over graph-storage's {PAYLOAD_MAX_BYTES}",
+            n.type_id,
+            n.instance_id
+        );
+    }
+}
+
+/// Taking a kit out of an organization's model records a model version whose
+/// patch and inverse name everything the kit brought: hundreds of KB for the
+/// larger kits. graph-storage refused that version node, nothing was stored,
+/// and the kit stayed in every organization's model (the local stand,
+/// 2026-11-18: every base kit uninstalled, `project-team` never left). The
+/// version is recorded without its patches when they do not fit, and cannot
+/// be reverted past.
+#[tokio::test]
+async fn removing_every_base_kit_writes_only_nodes_that_fit_graph_storage() {
+    use crate::domain_model::store::DomainStore;
+    const PAYLOAD_MAX_BYTES: usize = 65_536;
+    let org = Org::with_base_kits().await;
+    for kit in owners().into_iter().filter(|k| is_base(k)) {
+        if org
+            .installer
+            .installed(&platform(), ORG)
+            .await
+            .unwrap()
+            .base
+            .iter()
+            .any(|k| k.kit_slug == kit)
+        {
+            uninstall_base_with_dependents(&org.installer, &kit).await;
+        }
+    }
+    org.reconcile().await;
+    let nodes = org
+        .store
+        .list_objects(
+            &person(ADMIN),
+            &[
+                crate::domain_model::gts::META_MODEL.to_string(),
+                crate::domain_model::gts::META_OBJECT_TYPE.to_string(),
+                crate::domain_model::gts::META_MODEL_VERSION.to_string(),
+            ],
+            None,
+            None,
+        )
+        .await
+        .unwrap();
     for n in &nodes {
         let size = n.value.to_string().len();
         assert!(

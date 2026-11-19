@@ -10,7 +10,12 @@ pub struct Migrator;
 #[async_trait::async_trait]
 impl MigratorTrait for Migrator {
     fn migrations() -> Vec<Box<dyn MigrationTrait>> {
-        vec![Box::new(m0001::Migration), Box::new(m0002::Migration)]
+        vec![
+            Box::new(m0001::Migration),
+            Box::new(m0002::Migration),
+            Box::new(m0003::Migration),
+            Box::new(m0004::Migration),
+        ]
     }
 }
 
@@ -115,6 +120,144 @@ mod m0002 {
                 .execute_unprepared(
                     "ALTER TABLE studio_product_descriptions DROP COLUMN IF EXISTS sources_lock;",
                 )
+                .await?;
+            Ok(())
+        }
+    }
+}
+
+/// A project's gear matches and its notes on them (`gear_match/store.rs`).
+mod m0003 {
+    use toolkit_db::sea_orm_migration::prelude::*;
+    use toolkit_db::sea_orm_migration::sea_orm;
+    use toolkit_db::sea_orm_migration::sea_orm::ConnectionTrait;
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m0003_studio_product_gear_matches"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if manager.get_database_backend() != sea_orm::DatabaseBackend::Postgres {
+                return Err(DbErr::Custom(
+                    "studio-product migrations: only PostgreSQL is supported".to_owned(),
+                ));
+            }
+            manager
+                .get_connection()
+                .execute_unprepared(
+                    r"
+-- One row per gear match of a project: what was sent to the gears-matcher
+-- service, its run there, the catalogue it read and the report it wrote.
+CREATE TABLE IF NOT EXISTS studio_product_gear_matches (
+    tenant_id        UUID    NOT NULL,
+    project_id       UUID    NOT NULL,
+    id               UUID    NOT NULL,
+    run_id           UUID    NULL,
+    state            TEXT    NOT NULL,
+    requested_by     TEXT    NOT NULL,
+    created_at_ms    BIGINT  NOT NULL,
+    updated_at_ms    BIGINT  NOT NULL,
+    finished_at_ms   BIGINT  NULL,
+    idempotency_key  TEXT    NOT NULL,
+    product          TEXT    NOT NULL,
+    documents        TEXT    NOT NULL,
+    request          TEXT    NOT NULL,
+    matcher_run_id   TEXT    NULL,
+    info             TEXT    NULL,
+    progress         TEXT    NULL,
+    report           TEXT    NULL,
+    totals           TEXT    NULL,
+    usage            TEXT    NULL,
+    error            TEXT    NULL,
+    cancel_requested BOOLEAN NOT NULL DEFAULT FALSE,
+    PRIMARY KEY (tenant_id, project_id, id)
+);
+CREATE INDEX IF NOT EXISTS studio_product_gear_matches_newest
+    ON studio_product_gear_matches (tenant_id, project_id, created_at_ms DESC);
+-- A member's decision on a proposed gear, an answer to a question: the
+-- project's, kept across matches.
+CREATE TABLE IF NOT EXISTS studio_product_gear_match_notes (
+    tenant_id     UUID   NOT NULL,
+    project_id    UUID   NOT NULL,
+    kind          TEXT   NOT NULL,
+    subject       TEXT   NOT NULL,
+    gear_id       TEXT   NOT NULL DEFAULT '',
+    value         TEXT   NOT NULL,
+    author        TEXT   NOT NULL,
+    updated_at_ms BIGINT NOT NULL,
+    match_id      UUID   NULL,
+    PRIMARY KEY (tenant_id, project_id, kind, subject, gear_id)
+);
+                    ",
+                )
+                .await?;
+            Ok(())
+        }
+
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            manager
+                .get_connection()
+                .execute_unprepared(
+                    "DROP TABLE IF EXISTS studio_product_gear_match_notes; \
+                     DROP TABLE IF EXISTS studio_product_gear_matches;",
+                )
+                .await?;
+            Ok(())
+        }
+    }
+}
+
+mod m0004 {
+    use toolkit_db::sea_orm_migration::prelude::*;
+    use toolkit_db::sea_orm_migration::sea_orm;
+    use toolkit_db::sea_orm_migration::sea_orm::ConnectionTrait;
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m0004_studio_product_assembly_strategies"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if manager.get_database_backend() != sea_orm::DatabaseBackend::Postgres {
+                return Err(DbErr::Custom(
+                    "studio-product migrations: only PostgreSQL is supported".to_owned(),
+                ));
+            }
+            manager
+                .get_connection()
+                .execute_unprepared(
+                    r"
+-- How a product is assembled (ADR-0072): the organization's default
+-- (scope_id = the organization) and each project's own choice over it.
+CREATE TABLE IF NOT EXISTS studio_product_assembly_strategies (
+    tenant_id     UUID   NOT NULL,
+    scope_id      UUID   NOT NULL,
+    strategy      TEXT   NOT NULL,
+    set_by        TEXT   NOT NULL,
+    updated_at_ms BIGINT NOT NULL,
+    PRIMARY KEY (tenant_id, scope_id)
+);
+                    ",
+                )
+                .await?;
+            Ok(())
+        }
+
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            manager
+                .get_connection()
+                .execute_unprepared("DROP TABLE IF EXISTS studio_product_assembly_strategies;")
                 .await?;
             Ok(())
         }

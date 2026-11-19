@@ -665,5 +665,52 @@
       "label": "Reviews waiting on your verdict",
       "kind": "studio"
     }
+  ],
+  "permissions": {
+    "reads": [
+      "GET /studio-documents/v1/workspaces/{workspace_id}/types",
+      "GET /studio-documents/v1/spec-rows",
+      "GET /studio-spec-quality/v1/status"
+    ],
+    "writes": [
+      "POST /studio-documents/v1/workspaces/{workspace_id}/types",
+      "DELETE /studio-documents/v1/workspaces/{workspace_id}/types/{key}",
+      "POST /studio-documents/v1/review-requests",
+      "POST /studio-documents/v1/review-requests/{request_id}/approvals",
+      "POST /studio-documents/v1/review-requests/{request_id}/cancel"
+    ]
+  },
+  "gears": [
+    {
+      "gear": "studio-documents",
+      "types": [
+        "studio-document",
+        "document-binding",
+        "document-type",
+        "document-analysis",
+        "spec-upload",
+        "decision",
+        "review-request",
+        "approval"
+      ],
+      "mcp_tools": [
+        "review_requests",
+        "review_verdict"
+      ],
+      "routes": [
+        "POST /studio-documents/v1/workspaces/{workspace_id}/types",
+        "DELETE /studio-documents/v1/workspaces/{workspace_id}/types/{key}",
+        "POST /studio-documents/v1/review-requests",
+        "POST /studio-documents/v1/review-requests/{request_id}/approvals",
+        "POST /studio-documents/v1/review-requests/{request_id}/cancel"
+      ]
+    },
+    {
+      "gear": "studio-spec-quality",
+      "mcp_tools": [
+        "spec_check",
+        "spec_check_result"
+      ]
+    }
   ]
 }

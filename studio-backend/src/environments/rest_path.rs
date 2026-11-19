@@ -166,6 +166,21 @@ pub struct ProjectPathDto {
     pub research_kit: bool,
     /// The caller's Research sign-in; absent without the kit.
     pub research: Option<ResearchSignInDto>,
+    /// With `include=targets`: what `GET /targets` answers for the project,
+    /// the targets the path was decided from.
+    pub targets: Option<super::ProjectTargetsDto>,
+    /// With `include=deployments`: what `GET /deployments?project_id=`
+    /// answers, the deploys the path was decided from.
+    pub deployments: Option<super::DeploymentListDto>,
+}
+
+/// `?project_id=&include=`.
+#[derive(Debug, Deserialize)]
+pub struct ProjectPathQuery {
+    project_id: Uuid,
+    /// Comma-separated: `targets`, `deployments`.
+    #[serde(default)]
+    include: Option<String>,
 }
 
 fn path_action_dto(a: PathAction) -> PathActionDto {
@@ -258,8 +273,24 @@ pub struct MyResearchHardwareListDto {
 async fn get_project_path(
     Extension(ctx): Extension<SecurityContext>,
     Extension(envs): Extension<Environments>,
-    Query(q): Query<ProjectQuery>,
+    Query(q): Query<ProjectPathQuery>,
 ) -> ApiResult<JsonBody<ProjectPathDto>> {
+    let mut with_targets = false;
+    let mut with_deployments = false;
+    for part in q.include.as_deref().unwrap_or_default().split(',') {
+        match part.trim() {
+            "" => {}
+            "targets" => with_targets = true,
+            "deployments" => with_deployments = true,
+            other => {
+                return Err(super::StudioEnvironmentsError::invalid_argument()
+                    .with_constraint(format!(
+                        "include is a list of targets and deployments, not '{other}'"
+                    ))
+                    .create());
+            }
+        }
+    }
     let v = envs
         .0
         .project_path(&ctx, q.project_id)
@@ -282,6 +313,15 @@ async fn get_project_path(
             .collect(),
         research_kit: v.research_kit,
         research: v.research.map(|r| sign_in_dto(r.state, r.connection_id)),
+        targets: with_targets.then(|| super::targets_dto(v.targets)),
+        deployments: with_deployments.then(|| super::DeploymentListDto {
+            total: super::total(v.deployments.len()),
+            items: v
+                .deployments
+                .into_iter()
+                .map(super::deployment_dto)
+                .collect(),
+        }),
     }))
 }
 
@@ -352,14 +392,20 @@ pub fn register(mut router: Router, openapi: &dyn OpenApiRegistry) -> Router {
              there, the caller's Research sign-in), the one `action` that moves it on, and for a \
              failed build or deploy its `cause` with the actions that fix it. Read from the \
              records Studio keeps; the cluster is not asked (`…/environments/{id}/readiness` \
-             does). `research_kit` says whether Constructor Research is offered at all.",
+             does). `research_kit` says whether Constructor Research is offered at all.              `include=targets,deployments` adds what `GET /targets` and `GET              /deployments?project_id=` would answer, read once for the path: the Releases tab              needs all three.",
         )
         .tag(TAG)
         .authenticated()
         .require_license_features::<License>([])
         .query_param_typed("project_id", true, "The project", "string")
+        .query_param(
+            "include",
+            false,
+            "Comma-separated: `targets`, `deployments` -- the answers of those routes, too",
+        )
         .handler(get_project_path)
         .json_response_with_schema::<ProjectPathDto>(openapi, StatusCode::OK, "The path")
+        .error_400(openapi)
         .error_401(openapi)
         .error_404(openapi)
         .error_500(openapi)

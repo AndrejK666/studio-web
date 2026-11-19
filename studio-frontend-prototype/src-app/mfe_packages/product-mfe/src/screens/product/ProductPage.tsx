@@ -14,6 +14,11 @@
  *   Frontend         the frontend constructor, or "Add a frontend"
  *   Parts            the project's inventory (the Components tab's screen)
  *
+ * Beside the header's action, how the product is assembled (ADR-0072): the
+ * strategy it uses and where that comes from, and "Propose gears". Gear match
+ * is not a part of this page any more: it is the Gears matcher kit's own tab
+ * (Project › Gear match), shown only where that kit is installed.
+ *
  * Backend here is the configurator itself. The prototype mounted its IDE kits
  * journey (`ProjectKits` from kits.tsx: the code report, suggested components,
  * Open on desktop, Build in the IDE) in that slot; that journey is not ported
@@ -48,6 +53,7 @@ import { ProductFrontend } from './frontend/ProductFrontend';
 import { ProductInfrastructure } from './infra/ProductInfrastructure';
 import { ProductMap } from './map/ProductMap';
 import { SourceRoles } from './SourceRoles';
+import { AssemblyPanel } from './assembly/AssemblyPanel';
 import styles from '../product.module.css';
 
 /** The section this member last looked at for the project; storage may be
@@ -60,13 +66,16 @@ function storedSection(projectId: string): string | null {
     return null;
   }
 }
-function storeSection(projectId: string, id: ProductSectionId) {
+function storeSection(projectId: string, id: PageSection) {
   try {
     window.localStorage.setItem(sectionKey(projectId), id);
   } catch {
     // Not remembered; the page still works.
   }
 }
+
+/** The page's parts. */
+type PageSection = ProductSectionId;
 
 /** A part's state as its tab's dot. */
 const DOT: Record<FlowState, Tone> = {
@@ -91,10 +100,12 @@ const ACTION_KEY: Record<ProductAction, string> = {
 export function ProductPage() {
   const { projectId, bridge } = useScope();
   const { t } = useProductTranslations();
-  const [section, setSection] = useState<ProductSectionId>(() => {
+  const [section, setSection] = useState<PageSection>(() => {
     // The map is Configure's overview: where the page opens unless this
     // member's last look says otherwise. (The prototype also honoured an old
     // address's `/…/frontend`; the portal's routes have no such suffix.)
+    // A section this page no longer has (Gear match, now its kit's own tab)
+    // opens as any section it does not know.
     const stored = storedSection(projectId);
     return stored === null || stored === 'map' ? 'map' : openingSection(null, stored);
   });
@@ -107,6 +118,18 @@ export function ProductPage() {
   const [openStep, setOpenStep] = useState<string | null>(null);
   /** What Backend says comes next (ProductBackend announces it). */
   const [next, setNext] = useState<string | null>(() => announcedNext(projectId));
+  /** Sources whose last clone failed: the cause behind "doesn't resolve: N errors" (walk 2026-11-16). */
+  const [cloneFailures, setCloneFailures] = useState<Awaited<ReturnType<typeof productApi.cloneFailures>>>([]);
+  useEffect(() => {
+    let alive = true;
+    productApi.cloneFailures(projectId).then(
+      (items) => alive && setCloneFailures(items),
+      () => alive && setCloneFailures([])
+    );
+    return () => {
+      alive = false;
+    };
+  }, [projectId, round]);
 
   useEffect(() => {
     let alive = true;
@@ -149,7 +172,7 @@ export function ProductPage() {
     return () => window.removeEventListener(PRODUCT_NEXT_EVENT, said);
   }, [projectId]);
 
-  const pick = (id: ProductSectionId) => {
+  const pick = (id: PageSection) => {
     setSection(id);
     storeSection(projectId, id);
     // The header follows what the sections changed: a save, a frontend added.
@@ -174,7 +197,7 @@ export function ProductPage() {
   const partsOf = steps?.find((s) => s.id === 'configure')?.parts ?? [];
   const partOf = (id: string) => partsOf.find((p) => p.id === id);
   const gears = summary?.gears ?? 0;
-  const tabs: { id: ProductSectionId; label: string }[] = [
+  const tabs: { id: PageSection; label: string }[] = [
     { id: 'map', label: t('tab_map') },
     { id: 'infrastructure', label: t('tab_infrastructure') },
     { id: 'backend', label: gears > 0 ? t('tab_backend_gears', { count: String(gears) }) : t('tab_backend') },
@@ -224,6 +247,14 @@ export function ProductPage() {
                     {t('pull_request')}
                   </a>
                 )}
+                {header.verdict?.tone === 'danger' &&
+                  cloneFailures.map((c) => (
+                    <span key={c.full_path} className={styles.error} data-product-clone-failure={c.full_path}>
+                      {c.cause === 'branch_not_found' && c.detail
+                        ? t('source_branch_gone', { repository: c.full_path, branch: c.detail })
+                        : t('source_clone_failed', { repository: c.full_path, cause: c.cause_text ?? '' })}
+                    </span>
+                  ))}
               </span>
             )
           }
@@ -237,6 +268,7 @@ export function ProductPage() {
           }
         />
       </div>
+      <AssemblyPanel round={round} onChanged={() => setRound((r) => r + 1)} />
       {/* What the product is comes first: Studio proposes it from the specs
           and a member confirms it (product-kind.ts). */}
       <ProductKindStep />

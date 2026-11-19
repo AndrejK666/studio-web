@@ -82,6 +82,10 @@ later ADR that retires or amends an earlier one says so under its title.
 | [0068](0068-studio-is-a-shell-and-everything-inside-it-comes-from-kits.md) | Studio is a shell, and everything inside it comes from kits | proposed | 2026-11-06 |
 | [0069](0069-the-portal-shell-is-the-frontx-app-grown-to-the-prototypes-features-as-kits.md) | The portal's shell is the FrontX app, grown to the prototype's features as kits | proposed | 2026-11-06 |
 | [0070](0070-studio-keeps-a-core-model-and-each-kit-brings-the-types-its-screens-show.md) | Studio keeps a core model, and each kit brings the types its screens show | proposed | 2026-11-10 |
+| [0071](0071-a-kit-claims-its-gear-types-and-the-built-in-kits-are-cut-by-function.md) | A kit claims the gear types, tools and routes it stands for, and the built-in kits are cut by what they do | proposed | 2026-11-12 |
+| [0072](0072-gears-matcher-is-a-kit-and-a-product-is-assembled-by-a-strategy.md) | The gears matcher is a kit of its own, and a product is assembled by a strategy | proposed | 2026-11-18 |
+| [0073](0073-a-project-type-is-a-kits-subtype-of-project.md) | A project type is a kit's subtype of Project | proposed | 2026-11-19 |
+| [0074](0074-spec-mapping-is-a-kit-and-strategies-come-from-kits.md) | Spec mapping is a kit too, and the assembly strategies come from the installed kits | proposed | 2026-11-19 |
 
 ADR-0017 is not on `main`. It is "We own the settings gear for now", written on
 the unmerged branch `AndrejK666/settings-follow-the-person`, and ADR-0018 cites

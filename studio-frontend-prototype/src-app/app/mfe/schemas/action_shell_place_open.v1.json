@@ -23,6 +23,14 @@
         "projectId": {
           "type": "string",
           "minLength": 1
+        },
+        "route": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "view": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*$"
         }
       },
       "required": ["organizationId"]

@@ -36,7 +36,7 @@
       "entry": "gts.frontx.mfes.mfe.entry.v1~frontx.mfes.mfe.entry_mf.v1~constructor_studio.connections.mfe.connect_source.v1",
       "presentation": {
         "label": "Connect source",
-        "icon": "material-symbols:add",
+        "icon": "lucide:plus",
         "route": "/connections/new"
       }
     }

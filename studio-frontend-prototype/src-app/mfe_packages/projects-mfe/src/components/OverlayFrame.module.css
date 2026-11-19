@@ -30,6 +30,18 @@
   height: auto;
 }
 
+/* The wizard's details: as tall as its fields (the project type adds a row of
+   cards), up to the frame, past which the fields scroll above a footer that
+   stays in view instead of running under it. */
+.card[data-step='details'] {
+  height: auto;
+  max-height: calc(100vh - 8rem - 2px);
+}
+
+.card[data-step='details'] .body {
+  overflow-y: auto;
+}
+
 .card[data-step='repositories'] {
   height: min(calc(40rem + var(--space-5)), calc(100vh - 4rem - 2px));
 }

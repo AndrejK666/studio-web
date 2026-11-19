@@ -61,6 +61,8 @@ export interface SpecRow {
   typeEditable: boolean;
   /** What Check may send (#691): typed, and a binding or a Studio document. */
   checkable: boolean;
+  /** Its last validation verdict says it does not conform: what the Overview and the projects table count as failing. */
+  failing: boolean;
 }
 
 function folderOf(path: string): string {
@@ -126,6 +128,7 @@ export function buildSpecRows(
         type !== null &&
         row.state !== 'not_a_document' &&
         (row.origin === 'authored' || typeEditable),
+      failing: row.conforms === false,
     };
   });
 }
@@ -143,6 +146,10 @@ function keptBy(filter: SpecsFilter, row: SpecRow): boolean {
       return true;
     case 'with_findings':
       return row.review.kind === 'findings';
+    // The server's count (`spec_rows::summary`): a settled type and a verdict
+    // that does not conform, so the Overview's "N failing specs" opens N rows.
+    case 'failing':
+      return keptBy('type_confirmed', row) && row.failing;
     case 'check_needed':
       return row.review.kind === 'check_needed';
     case 'type_not_set':

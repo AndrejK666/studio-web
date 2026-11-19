@@ -30,15 +30,33 @@ export type EditorSessionFailure =
   /** The portal itself threw while launching; the console has the error. */
   | { kind: 'unexpected' };
 
+/**
+ * A project source whose last clone or fetch failed (`studio-artifact-ingest`'s clone status, #1071): the IDE opens
+ * without it, or not at all, so the status over the editor says which and why while it waits.
+ */
+export interface EditorCloneProblem {
+  /** `owner/repo`. */
+  repository: string;
+  /** `branch_not_found`, `provider_refused`, …; the backend's sentence when the portal has no words for it. */
+  cause: string | null;
+  causeText: string | null;
+  action: string | null;
+  actionText: string | null;
+  /** The branch, for `branch_not_found`; the host's answer otherwise. */
+  detail: string | null;
+}
+
 export interface EditorSessionState {
   phase: EditorSessionPhase;
   failure: EditorSessionFailure | null;
   shown: boolean;
+  /** The project's sources that could not be cloned, as last read. */
+  clones: EditorCloneProblem[];
 }
 
 const SLICE_KEY = 'app/editor-session' as const;
 
-const initialState: EditorSessionState = { phase: 'idle', failure: null, shown: false };
+const initialState: EditorSessionState = { phase: 'idle', failure: null, shown: false, clones: [] };
 
 const {
   slice,
@@ -47,6 +65,7 @@ const {
   editorSessionReady,
   editorSessionFailed,
   editorSessionShown,
+  editorSessionClones,
 } = createSlice({
   name: SLICE_KEY,
   initialState,
@@ -54,6 +73,10 @@ const {
     editorSessionReset: (state: EditorSessionState) => {
       state.phase = 'idle';
       state.failure = null;
+      state.clones = [];
+    },
+    editorSessionClones: (state: EditorSessionState, action: ReducerPayload<EditorCloneProblem[]>) => {
+      state.clones = action.payload;
     },
     editorSessionLaunching: (state: EditorSessionState) => {
       state.phase = 'launching';
@@ -87,6 +110,7 @@ export {
   editorSessionReady,
   editorSessionFailed,
   editorSessionShown,
+  editorSessionClones,
 };
 export const EDITOR_SESSION_SLICE_KEY = SLICE_KEY;
 

@@ -13,7 +13,6 @@ const { forgetLoadedRemote } = vi.hoisted(() => ({ forgetLoadedRemote: vi.fn(() 
 
 vi.mock('./remoteCache', () => ({ forgetLoadedRemote }));
 vi.mock('./bootstrap', () => ({
-  mfeStylesheetHrefs: () => [],
   registerMfePackage: async (registry: FakeRegistry, config: { extensions?: Ext[] }) => {
     for (const ext of config.extensions ?? []) {
       if (ext.id.includes('broken')) throw new Error('validation failed');
@@ -21,11 +20,6 @@ vi.mock('./bootstrap', () => ({
     }
   },
 }));
-vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  prewarmShadowStyles: () => undefined,
-}));
-
 import { RuntimeKits, runtimeScopeKey } from './runtimeKits';
 
 const SCREEN = 'gts.frontx.mfes.ext.domain.v1~frontx.screensets.layout.screen.v1';

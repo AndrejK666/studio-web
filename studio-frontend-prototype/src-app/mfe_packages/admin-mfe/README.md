@@ -7,9 +7,10 @@ per section on level `admin`, switched by the `section` property
 
 One extension is on the organization level: Organization › Connections
 (`/connections`, section `connections`) renders the Integrations section, as
-the prototype rendered `ConnectorsView` with the organization for both. That
-organization extension belongs to `org-connections`; the admin sections stay
-available independently of kit installation.
+the prototype rendered `ConnectorsView` with the organization for both. Since
+ADR-0071 step 6 that organization extension is the shell's, like the admin
+sections: no kit (`org-connections` is an alias of the shell for one
+release).
 
 | Section | From the prototype (00828880) | Gears |
 |---|---|---|
@@ -22,9 +23,9 @@ available independently of kit installation.
 | Objects | `ObjectTypes` (`object-types.tsx`) | studio-components-catalog, types-registry |
 | Views | `ViewsScreen`, `ViewTable`, `ViewGraph`, `ViewEditor` (`views.tsx`), `views-model.ts` | studio-domain-model (`/types`, `/query`, `/mutate`) |
 | All identities | `IdentityDirectory` (`identity-directory.tsx`) | studio-identity, account-management |
-| Project tenants | `WorkspacesView` (`App.tsx`) | account-management |
+| Workspace tenants | `WorkspacesView` (`App.tsx`) | account-management |
 
-All identities and Project tenants are a platform administrator's: the menu
+All identities and Workspace tenants are a platform administrator's: the menu
 offers them to everyone and the section shows the backend's refusal to anybody
 else.
 

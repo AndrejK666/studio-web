@@ -54,7 +54,10 @@ fn project_lifecycle_is_a_built_in_kit_that_brings_a_model() {
         contents_of(&m).types[0].gts,
         "gts.cf.studio.kit.project_lifecycle.phase.v1~"
     );
-    assert!(builtin_manifest("studio-api-docs").is_none());
+    // Every built-in kit has its kit.json now, Docs & API too (ADR-0071 §6).
+    let docs = builtin_manifest("studio-api-docs").expect("compiled in");
+    assert!(docs.model.is_none() && docs.gears.is_empty());
+    assert_eq!(docs.permissions.reads, ["GET /openapi.json"]);
     // And one Inbox source: a project waiting in its phase on its owner.
     let source = &m.inbox[0];
     assert_eq!(source.id, "phase-waiting");
@@ -191,13 +194,15 @@ fn a_cf_studio_kit_toml_brings_material_for_one_kit() {
 }
 
 #[test]
-fn constructor_research_brings_two_endpoint_sources_and_no_model() {
+fn constructor_research_brings_two_endpoint_sources_and_only_its_project_type() {
     let m = builtin_manifest("constructor-research").expect("compiled in");
     assert_eq!(m.levels, ["organization", "project"]);
-    assert!(
-        m.model.is_none(),
-        "no model: it may be installed for one project"
-    );
+    // Its model is its subtype of Project and nothing else (ADR-0073): every
+    // organization carries it, so it is still installed for one project.
+    let overlay = overlay_of(&m).unwrap().expect("a project type");
+    assert_eq!(overlay.types.len(), 1);
+    assert!(overlay.project_subtype().is_some());
+    assert!(overlay.fields.is_empty() && overlay.relations.is_empty() && overlay.tabs.is_empty());
     let sources: Vec<(&str, &str, Option<&str>)> = m
         .inbox
         .iter()
@@ -228,12 +233,30 @@ fn constructor_research_brings_two_endpoint_sources_and_no_model() {
 }
 
 #[test]
+fn a_kit_json_names_the_kits_it_requires() {
+    let body = r#"{"slug": "ops-runbooks", "name": "Ops", "levels": ["project"],
+                   "requires": ["project-specs"]}"#;
+    let m = read_kit_json(body).unwrap();
+    assert_eq!(m.requires, ["project-specs"]);
+    assert_eq!(contents_of(&m).requires, ["project-specs"]);
+    for (bad, why) in [
+        (r#"["ops-runbooks"]"#, "itself"),
+        (r#"["project-specs", "project-specs"]"#, "twice"),
+        (r#"["Project-Specs"]"#, "lowercase"),
+    ] {
+        let body = body.replace(r#"["project-specs"]"#, bad);
+        let err = read_kit_json(&body).unwrap_err();
+        assert!(err.contains(why), "{bad}: {err}");
+    }
+}
+
+#[test]
 fn a_kit_json_names_its_bundles_screen_needs_and_inbox_destinations() {
     let body = r#"{
       "slug": "ops-runbooks", "name": "Ops", "levels": ["project"],
       "mfe": ["mfe/runbooks"],
       "screens": [{"kind": "tab", "level": "project", "label": "Runbooks",
-                   "route": "/projects/runbooks", "needs": ["milestone"]}],
+                   "route": "/projects/runbooks", "needs": ["gts.cf.studio.domain.milestone.v1~"]}],
       "mcp_tools": [{"name": "runbook_run"}],
       "inbox": [{"id": "due", "label": "Due",
                  "query": {"type": "runbook"},
@@ -242,7 +265,10 @@ fn a_kit_json_names_its_bundles_screen_needs_and_inbox_destinations() {
     let m = read_kit_json(body).unwrap();
     let c = contents_of(&m);
     assert_eq!(c.mfe, ["mfe/runbooks"]);
-    assert_eq!(c.screens[0].needs, ["milestone"]);
+    assert_eq!(c.screens[0].needs, ["gts.cf.studio.domain.milestone.v1~"]);
+    // A bare entity id is not a need (ADR-0071 §5).
+    let bare = body.replace("gts.cf.studio.domain.milestone.v1~", "milestone");
+    assert!(read_kit_json(&bare).unwrap_err().contains("GTS id"));
     let d = c.inbox[0].destination.as_ref().unwrap();
     assert_eq!(d.route.as_deref(), Some("/projects/runbooks"));
     assert_eq!(d.mcp_tool.as_deref(), Some("runbook_run"));
@@ -382,4 +408,274 @@ fn builtin_kits_name_their_icon_once() {
             );
         }
     }
+}
+
+#[test]
+fn a_model_says_its_types_fields_relations_and_tabs_by_model_id() {
+    // project-lifecycle: its own `phase` with declared fields, types moved
+    // out of the core (adopted by id, fields and relations as the core had
+    // them), fields on `project`, and tabs both declared and written.
+    let c = contents_of(&builtin_manifest("project-lifecycle").expect("compiled in"));
+    let phase = c.types.iter().find(|t| t.id == "project-lifecycle-phase");
+    let phase = phase.expect("a kit's own type is `<slug>-<name>`");
+    assert!(!phase.adopts);
+    assert!(!phase.fields.is_empty());
+    assert!(
+        phase
+            .fields
+            .iter()
+            .all(|f| f.origin == ORIGIN_KIT && f.on.is_none())
+    );
+
+    let milestone = c.types.iter().find(|t| t.id == "milestone");
+    let milestone = milestone.expect("declared by id");
+    assert!(milestone.adopts, "a type the core has is adopted");
+    assert!(milestone.fields.iter().all(|f| f.origin == ORIGIN_CORE));
+    assert!(
+        c.model.relations.iter().any(|r| r.on == "milestone"
+            && r.target == "project"
+            && r.label.as_deref() == Some("tracks")),
+        "a moved type's relations are edges, labelled"
+    );
+    assert!(
+        c.model
+            .fields
+            .iter()
+            .any(|f| f.on.as_deref() == Some("project")
+                && f.name == "phase"
+                && f.origin == ORIGIN_KIT)
+    );
+    // A declared tab names the kit's type by its model id; a `shows`
+    // relation the kit moved out of the core is a tab, not an edge.
+    assert!(
+        c.model
+            .tabs
+            .iter()
+            .any(|t| t.level == "project" && t.target == "project-lifecycle-phase")
+    );
+    assert!(
+        c.model
+            .tabs
+            .iter()
+            .any(|t| t.level == "workspace" && t.label == "Templates & phases")
+    );
+    assert!(
+        !c.model
+            .relations
+            .iter()
+            .any(|r| r.verb.as_deref() == Some("shows"))
+    );
+}
+
+#[test]
+fn a_kit_without_a_model_brings_no_model() {
+    let m = read_kit_json(r#"{"slug": "plain", "name": "Plain"}"#).unwrap();
+    let c = contents_of(&m);
+    assert!(c.types.is_empty());
+    assert_eq!(c.model, KitModel::default());
+}
+
+/// A manifest with `gears` (and `writes`) as given.
+fn with_gears(gears: serde_json::Value, writes: &[&str]) -> Result<KitManifest, String> {
+    read_kit_json(
+        &serde_json::json!({
+            "slug": "claims", "name": "Claims",
+            "permissions": {"writes": writes},
+            "gears": gears,
+        })
+        .to_string(),
+    )
+}
+
+#[test]
+fn a_kit_claims_a_gears_types_tools_and_write_routes() {
+    let m = with_gears(
+        serde_json::json!([{
+            "gear": "studio-usage",
+            "types": ["budget"],
+            "mcp_tools": ["budget_set"],
+            "routes": ["PUT /studio-usage/v1/budgets"],
+            "sync_only_with_kit": true
+        }]),
+        &["PUT /studio-usage/v1/budgets"],
+    )
+    .unwrap();
+    assert_eq!(m.gears[0].types, ["budget"]);
+    assert!(m.gears[0].sync_only_with_kit);
+    let c = contents_of(&m);
+    assert_eq!(c.gears, m.gears);
+    assert!(
+        c.mcp_tools.iter().any(|t| t.name == "budget_set"),
+        "a claimed tool is one of the kit's tools"
+    );
+    // Off by default, and written back as it was read.
+    let plain = with_gears(serde_json::json!([{"gear": "studio-usage"}]), &[]).unwrap();
+    assert!(!plain.gears[0].sync_only_with_kit);
+    let back = serde_json::to_value(&plain).unwrap();
+    assert_eq!(back["gears"], serde_json::json!([{"gear": "studio-usage"}]));
+    assert!(
+        serde_json::to_value(read_kit_json(OPS).unwrap())
+            .unwrap()
+            .get("gears")
+            .is_none()
+    );
+}
+
+#[test]
+fn a_claim_is_refused_when_it_names_no_write_route_of_its_gear() {
+    let refused =
+        |gears: serde_json::Value, writes: &[&str]| with_gears(gears, writes).expect_err("refused");
+    // A read is never claimed.
+    assert!(
+        refused(
+            serde_json::json!([{"gear": "studio-usage", "routes": ["GET /studio-usage/v1/budgets"]}]),
+            &[],
+        )
+        .contains("reads are not claimed")
+    );
+    // Another gear's route.
+    assert!(
+        refused(
+            serde_json::json!([{"gear": "studio-usage", "routes": ["PUT /studio-reports/v1/x"]}]),
+            &["PUT /studio-reports/v1/x"],
+        )
+        .contains("not a route of `studio-usage`")
+    );
+    // A claimed route is one the kit writes.
+    assert!(
+        refused(
+            serde_json::json!([{"gear": "studio-usage", "routes": ["PUT /studio-usage/v1/budgets"]}]),
+            &[],
+        )
+        .contains("permissions.writes")
+    );
+    // Twice, or under a name that is not a gear's.
+    assert!(
+        refused(
+            serde_json::json!([{"gear": "studio-usage", "types": ["budget", "budget"]}]),
+            &[],
+        )
+        .contains("claimed twice")
+    );
+    assert!(
+        refused(
+            serde_json::json!([{"gear": "studio-usage"}, {"gear": "studio-usage"}]),
+            &[]
+        )
+        .contains("named twice")
+    );
+    assert!(refused(serde_json::json!([{"gear": "usage"}]), &[]).contains("gear's name"));
+    assert!(
+        refused(
+            serde_json::json!([{"gear": "studio-usage", "unknown": []}]),
+            &[]
+        )
+        .contains("does not read")
+    );
+}
+
+const TYPED: &str = r#"{
+  "slug": "deals",
+  "name": "Deals",
+  "description": "Mergers and acquisitions",
+  "levels": ["project"],
+  "model": {"types": [{"name": "project", "extends": "project", "label": "Deal",
+                       "description": "A deal worked as a project"}]},
+  "project_creation": {
+    "mode": "modernize",
+    "steps": ["sources"],
+    "next_steps": [{"id": "connect-data-room", "label": "Connect the data room",
+                    "route": "/projects/sources", "done_when": "repos"}]
+  }
+}"#;
+
+#[test]
+fn a_kit_is_a_project_type_by_the_subtype_of_project_its_model_derives() {
+    let m = read_kit_json(TYPED).unwrap();
+    let t = m.project_subtype().expect("a project type");
+    assert_eq!(t.entity, "deals-project");
+    assert_eq!(
+        t.gts,
+        "gts.cf.studio.domain.project.v1~cf.studio.kit.deals.project.v1~"
+    );
+    assert_eq!(
+        (t.name.as_str(), t.description.as_str()),
+        ("Deal", "A deal worked as a project")
+    );
+    assert_eq!(m.creation_mode(), "modernize");
+    assert!(m.creation_takes("sources"));
+    assert!(!m.creation_takes("prd"));
+    // Without the section every optional step is the request's to ask for.
+    let bare = read_kit_json(&TYPED.replace(
+        r#""project_creation": {
+    "mode": "modernize",
+    "steps": ["sources"],
+    "next_steps": [{"id": "connect-data-room", "label": "Connect the data room",
+                    "route": "/projects/sources", "done_when": "repos"}]
+  }"#,
+        r#""project_type": true"#,
+    ))
+    .unwrap();
+    assert!(bare.creation_takes("prd") && bare.creation_takes("repository"));
+    assert_eq!(bare.creation_mode(), "greenfield");
+    // The built-in types are such kits, and nothing else built in is.
+    for slug in ["gears-project", "constructor-research"] {
+        let kit = project_type_kit(slug).expect(slug);
+        assert!(kit.project_subtype().is_some());
+        assert!(
+            kit.project_creation
+                .is_some_and(|c| !c.next_steps.is_empty())
+        );
+    }
+    let types: Vec<String> = project_type_kits().map(|k| k.slug).collect();
+    assert_eq!(types, ["gears-project", "constructor-research"]);
+}
+
+#[test]
+fn a_project_types_creation_is_checked() {
+    let refused = |from: &str, to: &str| {
+        let body = TYPED.replace(from, to);
+        assert_ne!(body, TYPED, "{from}");
+        read_kit_json(&body).expect_err(to)
+    };
+    // The flag is a cache of the model: it is refused without a subtype.
+    assert!(
+        read_kit_json(r#"{"slug": "x", "name": "X", "levels": ["project"], "project_type": true}"#)
+            .unwrap_err()
+            .contains("derives no type")
+    );
+    assert!(
+        refused(r#""levels": ["project"]"#, r#""levels": ["organization"]"#)
+            .contains("project level")
+    );
+    assert!(refused(r#""mode": "modernize""#, r#""mode": "import""#).contains("mode"));
+    assert!(
+        refused(
+            r#""steps": ["sources"]"#,
+            r#""steps": ["sources", "sources"]"#
+        )
+        .contains("twice")
+    );
+    assert!(refused(r#""steps": ["sources"]"#, r#""steps": ["deploy"]"#).contains("none of"));
+    assert!(refused(r#""steps": ["sources"]"#, r#""steps": ["scaffold"]"#).contains("repository"));
+    assert!(refused(r#""done_when": "repos""#, r#""done_when": "deployed""#).contains("done_when"));
+    assert!(refused(r#""route": "/projects/sources""#, r#""route": "projects""#).contains("route"));
+    assert!(refused(r#""id": "connect-data-room""#, r#""id": "Connect""#).contains("id"));
+    assert!(
+        refused(
+            r#""description": "A deal worked as a project"}]"#,
+            r#""description": "A deal worked as a project"},
+                       {"name": "other", "extends": "project"}]"#
+        )
+        .contains("at most one")
+    );
+    // A kit that is no project type says nothing of a project's creation.
+    assert!(
+        read_kit_json(
+            r#"{"slug": "x", "name": "X", "levels": ["project"],
+                "project_creation": {"steps": ["prd"]}}"#
+        )
+        .unwrap_err()
+        .contains("only a project type")
+    );
 }

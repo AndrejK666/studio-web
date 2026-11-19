@@ -4,16 +4,21 @@ import { PROJECT_SECTIONS, type ProjectSection } from '../../slices/navSlice';
 
 /** The header's actions belong to the open section (DoD `...-sources-connect-overlay`). */
 
-const { nav, project, openSourcesConnect } = vi.hoisted(() => ({
+const { nav, project, openSourcesConnect, rename, refresh } = vi.hoisted(() => ({
   nav: { section: 'overview' as string },
   project: { current: { data: { id: 'p-1', name: 'Billing' } as unknown, isLoading: false, isError: false } },
   openSourcesConnect: vi.fn(),
+  rename: vi.fn(),
+  refresh: vi.fn(),
 }));
 
 vi.mock('@gears-frontx/react', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@gears-frontx/react')>()),
-  apiRegistry: { getService: () => ({ getTenant: () => ({}) }) },
-  useApiQuery: () => project.current,
+  apiRegistry: { getService: () => ({
+    getTenant: () => ({}),
+    renameTenant: (id: string) => ({ fetch: (body: unknown) => rename(id, body) }),
+  }) },
+  useApiQuery: () => ({ ...project.current, refetch: refresh }),
   useAppSelector: () => nav.section,
   useAppDispatch: () => vi.fn(),
   useMfeBridge: () => null,
@@ -64,10 +69,24 @@ const connectSource = () => screen.queryByRole('button', { name: 'connect_source
 
 beforeEach(() => {
   openSourcesConnect.mockClear();
+  rename.mockReset();
+  refresh.mockClear();
   project.current = { data: { id: 'p-1', name: 'Billing' }, isLoading: false, isError: false };
 });
 
 describe('the project header', () => {
+  it('renames the project through account management from Settings', async () => {
+    nav.section = 'settings';
+    render(<ProjectScreen projectId="p-1" />);
+
+    fireEvent.change(screen.getByLabelText('field_name'), { target: { value: ' Billing Operations ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'settings_save' }));
+
+    await screen.findByText('settings_saved');
+    expect(rename).toHaveBeenCalledWith('p-1', { name: 'Billing Operations' });
+    expect(refresh).toHaveBeenCalledOnce();
+  });
+
   it('offers Connect source in Sources, which opens the dialog', () => {
     nav.section = 'sources';
     render(<ProjectScreen projectId="p-1" />);

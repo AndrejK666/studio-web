@@ -50,6 +50,7 @@ export type Intent =
 /** The screens a step leads to, by their routes. */
 export const ROUTES = {
   specs: "/projects/specs",
+  sources: "/projects/sources",
   product: "/product",
   connections: "/connections",
   infrastructure: "/infrastructure",
@@ -59,6 +60,8 @@ export function intentOf(a: Pick<PathAction, "kind"> & Partial<PathAction>, depl
   switch (a.kind) {
     case "open_specs":
       return { kind: "screen", route: ROUTES.specs };
+    case "open_sources":
+      return { kind: "screen", route: ROUTES.sources };
     case "open_product":
     case "open_gear":
       return { kind: "screen", route: ROUTES.product };
@@ -117,6 +120,22 @@ export function researchEnvironmentFor(
   );
 }
 
+/** An environment's name for a Research project: the server takes only a DNS
+ *  label (lowercase letters, digits and '-', at most 63), so "Example project"
+ *  becomes `research-example-project`; a hardware choice adds its id's start,
+ *  so the same project on two hardware choices is two environments. */
+export function researchEnvironmentName(researchProject: { id: string; name: string }, hardware: string | null): string {
+  const slug = (s: string) =>
+    s
+      .toLowerCase()
+      .normalize("NFKD")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+  const base = `research-${slug(researchProject.name) || slug(researchProject.id) || "project"}`;
+  const hw = hardware ? `-${slug(hardware).slice(0, 6)}` : "";
+  return `${base.slice(0, 63 - hw.length).replace(/-+$/, "")}${hw}`;
+}
+
 /** A project's own Research environment, on the caller's own sign-in. */
 export function researchEnvironmentInput(
   connectionId: string,
@@ -124,7 +143,7 @@ export function researchEnvironmentInput(
   hardware: string | null,
 ): DeployEnvironmentInput {
   return {
-    name: `Research ${researchProject.name || researchProject.id}`.slice(0, 60),
+    name: researchEnvironmentName(researchProject, hardware),
     description: "",
     kind: "research",
     connection_id: connectionId,

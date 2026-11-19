@@ -11,17 +11,6 @@
   max-width: 60rem;
 }
 
-.toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-3);
-}
-
-.search {
-  max-width: 22rem;
-}
-
 .row {
   display: flex;
   flex-wrap: wrap;
@@ -41,6 +30,13 @@
   font-size: 0.8125rem;
 }
 
+/* The row's type glyph, as Organization › Components draws it. */
+.typeIcon {
+  margin-inline-end: var(--space-1);
+  vertical-align: -0.125rem;
+  color: var(--primary);
+}
+
 .error {
   color: var(--destructive);
 }
@@ -48,19 +44,6 @@
 .skeleton {
   height: 12rem;
   width: 100%;
-}
-
-.clickable {
-  cursor: pointer;
-}
-
-.sort {
-  padding: 0;
-  border: 0;
-  background: none;
-  font: inherit;
-  color: inherit;
-  cursor: pointer;
 }
 
 .detail {

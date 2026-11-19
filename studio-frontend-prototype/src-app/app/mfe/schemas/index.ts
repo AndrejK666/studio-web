@@ -18,6 +18,7 @@ import actionShellNotificationShowSchemaJson from './action_shell_notification_s
 import actionShellScreenOpenSchemaJson from './action_shell_screen_open.v1.json';
 import actionShellPlaceOpenSchemaJson from './action_shell_place_open.v1.json';
 import actionShellPreferenceSetSchemaJson from './action_shell_preference_set.v1.json';
+import actionShellInboxCountSchemaJson from './action_shell_inbox_count.v1.json';
 import actionChainOutcomeDoneSchemaJson from './action_chain_outcome_done.v1.json';
 import actionChainOutcomeFailedSchemaJson from './action_chain_outcome_failed.v1.json';
 import sharedPropertyContextArtifactSchemaJson from './shared_property_context_artifact.v1.json';
@@ -74,6 +75,8 @@ export const SHELL_SCHEMAS: readonly JSONSchema[] = [
   actionShellPlaceOpenSchemaJson as JSONSchema,
   // Remember one of the person's UI choices for an MFE (Kits' table or tiles).
   actionShellPreferenceSetSchemaJson as JSONSchema,
+  // A screen that read the Inbox tells the top bar its count, so the bar does not read it again (#1077).
+  actionShellInboxCountSchemaJson as JSONSchema,
   // The replies that say how a request ended: see chainOutcome in mfe-shared.
   actionChainOutcomeDoneSchemaJson as JSONSchema,
   actionChainOutcomeFailedSchemaJson as JSONSchema,

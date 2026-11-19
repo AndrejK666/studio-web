@@ -148,6 +148,18 @@ pub struct Plan {
     pub kits: Vec<KitPick>,
 }
 
+impl Plan {
+    fn project_type_kit(&self) -> Option<&str> {
+        self.config.get("project_type_kit").and_then(Value::as_str)
+    }
+
+    /// The type the project is (ADR-0073): its type kit's subtype of
+    /// Project, as `project.config` `project_type_id` records it.
+    fn project_type_id(&self) -> Option<&str> {
+        self.config.get("project_type_id").and_then(Value::as_str)
+    }
+}
+
 /// The steps a plan takes, in order.
 pub fn steps_of(plan: &Plan) -> Vec<&'static str> {
     let mut out = vec!["tenant", "config"];
@@ -163,8 +175,13 @@ pub fn steps_of(plan: &Plan) -> Vec<&'static str> {
     if plan.prd.is_some() {
         out.push("prd");
     }
-    if !plan.kits.is_empty() {
+    if !plan.kits.is_empty() || plan.project_type_kit().is_some() {
         out.push("kits");
+    }
+    // After the kits: installing the type kit brings its subtype of Project
+    // into the organization's model.
+    if plan.project_type_id().is_some() {
+        out.push("model");
     }
     out
 }
@@ -282,6 +299,9 @@ pub trait Steps: Send + Sync {
     async fn scaffold(&self, plan: &Plan, repo: Option<&MadeRepo>) -> Result<String, StepError>;
     async fn prd(&self, plan: &Plan) -> Result<String, StepError>;
     async fn kits(&self, plan: &Plan) -> Result<String, StepError>;
+    /// The project's object in the organization's model says which type it
+    /// is (ADR-0073).
+    async fn model(&self, plan: &Plan) -> Result<String, StepError>;
 }
 
 /// Carry out what the record has not done yet, in order, recording each
@@ -313,6 +333,7 @@ pub async fn run(
             "scaffold" => steps.scaffold(plan, record.repository.as_ref()).await,
             "prd" => steps.prd(plan).await,
             "kits" => steps.kits(plan).await,
+            "model" => steps.model(plan).await,
             other => Err(StepError::Fail(format!("no step `{other}`"))),
         };
         match ended {
@@ -322,6 +343,9 @@ pub async fn run(
             }
             Err(e) => {
                 record.set(&key, "failed", e.text().to_string());
+                // The poll reads the run's last report: the step that stopped
+                // it shows as stopped, not as still waiting.
+                report(&key, &record);
                 return (record, Err(e));
             }
         }
@@ -339,6 +363,7 @@ fn phase(key: &str) -> &'static str {
         "scaffold" => "Writing the starter gear",
         "prd" => "Writing the PRD from the brief",
         "kits" => "Asking for the kits",
+        "model" => "Recording the project's type in the domain model",
         _ => "Working",
     }
 }
@@ -706,6 +731,14 @@ impl Steps for InProcess {
             .get::<dyn ProjectKitRequests>()
             .map_err(|_| StepError::Fail("studio-kits is not in this deployment".to_string()))?;
         let ctx = service_ctx(plan.project_id)?;
+        if let Some(slug) = plan.project_type_kit() {
+            kits.install_project_type(&ctx, plan.project_id, plan.organization_id, slug)
+                .await
+                .map_err(|error| retry("the project type kit could not be installed", error))?;
+        }
+        if plan.kits.is_empty() {
+            return Ok("Project type kit installed".to_owned());
+        }
         let have = kits
             .requested(&ctx, plan.project_id)
             .await
@@ -723,6 +756,83 @@ impl Steps for InProcess {
             format!("asked for {}", asked.join(", "))
         })
     }
+
+    async fn model(&self, plan: &Plan) -> Result<String, StepError> {
+        use crate::domain_model::port::DomainObjects;
+        let Some(type_id) = plan.project_type_id() else {
+            return Err(StepError::Fail(
+                "the plan names no project type".to_string(),
+            ));
+        };
+        let Some(subtype) = plan
+            .project_type_kit()
+            .and_then(crate::kit_registry::port::project_type_kit)
+            .and_then(|kit| kit.project_subtype())
+            .filter(|t| t.gts == type_id)
+        else {
+            return Err(StepError::Fail(format!(
+                "`{type_id}` is no project type this Studio knows"
+            )));
+        };
+        // A deployment without the domain model has only the configuration
+        // to say the type; that is not a failed creation.
+        let Ok(objects) = self.hub.get::<dyn DomainObjects>() else {
+            return Ok("studio-domain-model is not in this deployment".to_string());
+        };
+        // As the model's own sweep writes a tenant's object
+        // (`domain_model/tenant_objects.rs`): as the gear, in the organization.
+        let objects = crate::domain_model::port::KeptByGear::wrap(objects);
+        let ctx = service_ctx(plan.organization_id)?;
+        let scope = plan.project_id.to_string();
+        let stored = objects
+            .list_in(&ctx, "project", &scope)
+            .await
+            .map_err(|e| retry("the project's object cannot be read", e))?
+            .into_iter()
+            .find(|o| o.payload.get("tenant_id").and_then(Value::as_str) == Some(scope.as_str()));
+        let Some(value) = typed_project_object(
+            stored.as_ref().map(|o| &o.payload),
+            plan,
+            type_id,
+            &subtype.entity,
+        ) else {
+            return Ok(format!("{} already", subtype.name));
+        };
+        objects
+            .upsert_in(&ctx, "project", "self", &scope, value)
+            .await
+            .map_err(|e| retry("the project's object could not be written", e))?;
+        Ok(format!("a {} ({type_id})", subtype.name))
+    }
+}
+
+/// The project's object in the model (`project`, keyed `self` in the
+/// project's scope, as `domain_model/tenant_objects.rs` writes it) with its
+/// type: `project_type_id`, the subtype's GTS id, and `project_type`, its
+/// entity. What was there is kept; `None` when it says so already.
+pub fn typed_project_object(
+    stored: Option<&Value>,
+    plan: &Plan,
+    type_id: &str,
+    entity: &str,
+) -> Option<Value> {
+    let mut value = match stored {
+        Some(v) if v.is_object() => v.clone(),
+        _ => json!({
+            "tenant_id": plan.project_id.to_string(),
+            "name": plan.name,
+            "title": plan.name,
+            "parent_tenant_id": plan.workspace_id.to_string(),
+        }),
+    };
+    if value.get("project_type_id").and_then(Value::as_str) == Some(type_id)
+        && value.get("project_type").and_then(Value::as_str) == Some(entity)
+    {
+        return None;
+    }
+    value["project_type_id"] = json!(type_id);
+    value["project_type"] = json!(entity);
+    Some(value)
 }
 
 /// The handler studio-tasks runs.

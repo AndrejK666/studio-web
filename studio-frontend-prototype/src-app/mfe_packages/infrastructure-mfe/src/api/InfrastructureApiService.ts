@@ -36,7 +36,7 @@ import type {
   RegistryTag,
   ResearchHardware,
   ResearchProject,
-  UserPage,
+  MemberPage,
 } from './types';
 
 const ENV = '/studio-environments/v1';
@@ -259,13 +259,12 @@ export class InfrastructureApiService extends BaseApiService {
     );
   }
 
-  /* ── account-management: who a user id is ── */
+  /* ── studio-user: who a user id is ── */
 
-  readonly tenantUsers = this.protocol(RestEndpointProtocol).queryWith<UserPage, { tenantId: string; cursor?: string }>(
-    ({ tenantId, cursor }) => {
-      const qs = new URLSearchParams({ limit: '200' });
-      if (cursor) qs.set('cursor', cursor);
-      return `/account-management/v1/tenants/${enc(tenantId)}/users?${qs}`;
-    }
+  /** The organization's members with their names, as Organization › People reads them. account-management's
+   *  user list answers 503 where no IdP plugin lists users (the local stand), and was asked once per workspace. */
+  readonly orgMembers = this.protocol(RestEndpointProtocol).queryWith<MemberPage, { orgId: string; offset: number }>(
+    ({ orgId, offset }) =>
+      `/studio-user/v1/organizations/${enc(orgId)}/members?${new URLSearchParams({ offset: String(offset), limit: '200' })}`
   );
 }

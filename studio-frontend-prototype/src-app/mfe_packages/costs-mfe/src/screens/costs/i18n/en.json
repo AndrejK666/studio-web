@@ -15,7 +15,7 @@
   "tabs_label": "Costs",
   "tab_report": "Report",
   "tab_prices": "Price list",
-  "no_prices_title": "No prices set: usage is counted, cost shows $0",
+  "no_prices_title": "Cost is unavailable until prices are set",
   "set_prices": "Set prices",
   "period": "Period",
   "period_this-month": "This month",
@@ -82,5 +82,9 @@
   "warn_at_label": "Warn at percent",
   "save_budgets": "Save budgets",
   "budgets_manage_only": "Only the organization's administrators, or people granted cost.manage, change budgets.",
-  "close": "Close"
+  "close": "Close",
+  "search": "Search by name",
+  "no_matches": "Nothing matches this search.",
+  "clear_search": "Clear search",
+  "retry": "Retry"
 }

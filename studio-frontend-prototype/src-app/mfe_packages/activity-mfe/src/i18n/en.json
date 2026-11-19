@@ -16,7 +16,6 @@
   "col_document": "Document",
   "col_by": "By",
   "col_recorded": "Recorded",
-  "sort_by": "Sort by {column}",
   "run_documents_one": "{count} document",
   "run_documents_many": "{count} documents",
   "run_open": "Show each event",
@@ -56,5 +55,6 @@
   "close": "Close",
   "save": "Save",
   "saving": "Saving…",
-  "save_failed": "Couldn't save the milestone: {error}"
+  "save_failed": "Couldn't save the milestone: {error}",
+  "clear_search": "Clear search"
 }

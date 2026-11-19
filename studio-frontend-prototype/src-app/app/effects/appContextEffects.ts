@@ -76,6 +76,7 @@ export function registerAppContextEffects(app: FrontXApp, editorSession: EditorS
       if (project) route.project = project;
     }
     if (overrides.section) route.section = overrides.section;
+    if (overrides.view) route.view = overrides.view;
     if (overrides.artifact) {
       route.artifact = overrides.artifact;
       route.repository = overrides.repository;
@@ -126,7 +127,7 @@ export function registerAppContextEffects(app: FrontXApp, editorSession: EditorS
   });
 
   // @cpt-begin:cpt-studiofrontend-algo-shell-levels-click:p1:inst-1
-  eventBus.on('app/context/screen/requested', ({ extensionId, section: asked }) => {
+  eventBus.on('app/context/screen/requested', ({ extensionId, section: asked, view }) => {
     if (!routing) return;
     const target = screens().find((candidate) => candidate.id === extensionId);
     const token = target ? tokenOf(target) : undefined;
@@ -134,7 +135,7 @@ export function registerAppContextEffects(app: FrontXApp, editorSession: EditorS
     // A section asked for by name only where the screen answers it: a tab the
     // Studio domain model adds is a section under a generic screen's prefix.
     const section = asked && answersSection(target, asked) ? asked : sectionOf(target);
-    routing.navigation.navigate(routeFor(token, levelOf(target), section ? { section } : {}), 'push');
+    routing.navigation.navigate(routeFor(token, levelOf(target), { section, view }), 'push');
   });
   // @cpt-end:cpt-studiofrontend-algo-shell-levels-click:p1:inst-1
 
@@ -268,14 +269,20 @@ export function registerAppContextEffects(app: FrontXApp, editorSession: EditorS
 
   // A place found elsewhere (Search): the whole address is known, so it is
   // one navigation, and `materialize` resolves the names and the level.
-  eventBus.on('app/context/place/requested', ({ organizationId, workspaceId, projectId }) => {
+  eventBus.on('app/context/place/requested', ({ organizationId, workspaceId, projectId, route: asked, view }) => {
     if (!routing) return;
     const level: ScreenLevel = projectId ? 'project' : workspaceId ? 'workspace' : 'organization';
-    const token = entryTokenOf(screens(), level);
+    const target = asked ? screens().find((screen) => screen.presentation?.route === asked && levelOf(screen) === level) : undefined;
+    const token = (target && tokenOf(target)) || entryTokenOf(screens(), level);
     if (!token) return;
     const route: ShellRoute = { token, org: organizationId };
     if (workspaceId) route.workspace = workspaceId;
     if (projectId) route.project = projectId;
+    if (target) {
+      const section = sectionOf(target);
+      if (section) route.section = section;
+      if (view) route.view = view;
+    }
     routing.navigation.navigate(route, 'push');
   });
 

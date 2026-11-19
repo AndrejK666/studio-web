@@ -63,28 +63,6 @@
   color: var(--destructive);
 }
 
-.toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-3);
-}
-
-.search {
-  max-width: 20rem;
-}
-
-.kinds {
-  display: flex;
-  gap: var(--space-1);
-}
-
-.sortButton {
-  all: unset;
-  cursor: pointer;
-  font-weight: inherit;
-}
-
 .sub {
   color: var(--muted-foreground);
   font-size: 0.875em;

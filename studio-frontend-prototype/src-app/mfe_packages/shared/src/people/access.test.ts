@@ -60,6 +60,8 @@ describe('access config', () => {
       'editor'
     );
     expect(defaultTeamRole({ model: 'roles', roles: [role('viewer')], grants: [] })?.key).toBe('viewer');
+    expect(defaultTeamRole({ model: 'roles', roles: [role('owner'), role('viewer')], grants: [] })?.key).toBe('viewer');
+    expect(defaultTeamRole({ model: 'roles', roles: [role('owner')], grants: [] })).toBeUndefined();
   });
 
   it('adds, re-roles and removes a project grant', () => {

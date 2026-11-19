@@ -1,0 +1,320 @@
+/*
+ * A component drawn the way the Kits screens draw a kit (#1081, #1099): the
+ * type glyph, tiles, and a page of blocks. Over ui-kit's semantic tokens only,
+ * so it follows the portal theme in light and dark.
+ */
+
+.muted {
+  color: var(--muted-foreground);
+}
+
+/* ── the type ── */
+
+.type {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 0.25rem);
+  font-size: var(--text-meta-size, 0.8125rem);
+  line-height: 1.5rem;
+  white-space: nowrap;
+  color: var(--foreground);
+}
+
+.typeLarge {
+  font-size: 0.875rem;
+  line-height: 1.75rem;
+}
+
+.typeIcon,
+.tileIcon,
+.nameIcon,
+.pageIcon {
+  color: var(--primary);
+}
+
+/* The list's name column: the glyph, then the name and its purpose. */
+.nameCell {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.nameIcon {
+  margin-top: 0.125rem;
+}
+
+.nameStack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+/* ── tiles ── */
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
+  gap: var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 0.5rem);
+  background: var(--card);
+}
+
+.tileTitle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: var(--text-heading-3-size, 1.125rem);
+  font-weight: 600;
+  min-width: 0;
+}
+
+.tileLink,
+.inside {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.tileLink:hover {
+  text-decoration: underline;
+}
+
+.inside {
+  align-self: flex-start;
+  margin-top: auto;
+  color: var(--primary);
+  font-size: 0.875rem;
+}
+
+.tileMeta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.tilePurpose,
+.tileProjects {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--muted-foreground);
+}
+
+.tilePurpose {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ── the page ── */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.pageHeader {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.pageTitle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: var(--text-heading-1-size, 1.5rem);
+  font-weight: var(--text-heading-1-weight, 600);
+  overflow-wrap: anywhere;
+}
+
+.pageIcon svg {
+  inline-size: 1.5rem;
+  block-size: 1.5rem;
+}
+
+.description {
+  margin: 0;
+  color: var(--muted-foreground);
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.25rem var(--space-3);
+  margin: 0;
+  font-size: 0.875rem;
+}
+
+.facts dt {
+  color: var(--muted-foreground);
+}
+
+.facts dd {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.blocks {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 26rem), 1fr));
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 0.5rem);
+  background: var(--card);
+  color: var(--card-foreground, var(--foreground));
+}
+
+.blockWide {
+  grid-column: 1 / -1;
+}
+
+.blockHead {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.blockTitle {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.blockCount {
+  font-size: var(--text-meta-size, 0.8125rem);
+  color: var(--muted-foreground);
+}
+
+.blockHint,
+.empty {
+  margin: 0;
+  font-size: var(--text-meta-size, 0.8125rem);
+  color: var(--muted-foreground);
+}
+
+.items {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+  font-size: 0.875rem;
+}
+
+.items dt {
+  color: var(--muted-foreground);
+}
+
+.items dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.mono {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.8125rem;
+}
+
+.note {
+  display: block;
+  font-size: var(--text-meta-size, 0.8125rem);
+  color: var(--muted-foreground);
+}
+
+.screens {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 16rem), 1fr));
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.screen {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+}
+
+.screen img {
+  display: block;
+  max-inline-size: 100%;
+  max-block-size: 14rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 0.375rem);
+  object-fit: contain;
+  object-position: top left;
+}
+
+.placeholder {
+  display: grid;
+  place-items: center;
+  min-block-size: 6rem;
+  padding: var(--space-3);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md, 0.375rem);
+  font-size: var(--text-meta-size, 0.8125rem);
+  color: var(--muted-foreground);
+  text-align: center;
+}
+
+.caption {
+  font-size: var(--text-meta-size, 0.8125rem);
+  color: var(--muted-foreground);
+  overflow-wrap: anywhere;
+}
+
+.link {
+  color: var(--primary);
+  text-decoration: none;
+}
+
+.link:hover {
+  text-decoration: underline;
+}
+
+@media (max-width: 40rem) {
+  .facts,
+  .items {
+    grid-template-columns: 1fr;
+  }
+}

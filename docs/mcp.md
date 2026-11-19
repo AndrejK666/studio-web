@@ -212,6 +212,10 @@ without the portal; each step is the REST route the portal calls for it.
 | | `product_infra` | the infra services as the description says them, merged with the catalogue's passports and the environment's side |
 | | `product_kind` | what the product is: Studio's proposal from the specs with its reasons, and the confirmed kind |
 | | `product_kind_confirm` | *changes:* keeps the kind in the project's configuration |
+| | `product_assembly_strategy` | how the product is assembled: one of the strategies the installed kits provide (`spec_mapping`, `gears_matcher`) or `manual`, whether that is the project's choice, the organization's default or the kits', and why it falls back ([ADR-0072](adr/0072-gears-matcher-is-a-kit-and-a-product-is-assembled-by-a-strategy.md), [ADR-0074](adr/0074-spec-mapping-is-a-kit-and-strategies-come-from-kits.md)) |
+| | `project_gear_match` | *changes:* (Gears matcher kit) sends the project's specifications to the gears-matcher service as one background run (paid model calls); answers `match_id` and `run_id` |
+| | `project_gear_match_report` | (Gears matcher kit) a gear match (`latest` or by id): per requirement the verdict, candidate gears with evidence, the passage, and what Studio offers ([design](design/product-gear-match.md)) |
+| | `gear_match_usage` | (Gears matcher kit) how the organization's projects use the matcher over `period_days`: per project the strategy and why, the last run's coverage, runs by state, model calls and tokens, decisions, open questions; summed; and whether the service answers now |
 | Environments | `deploy_targets` | where the product can deploy, the bindings, the secret keys |
 | | `project_environments` | the project's own environments |
 | | `deploy_bindings_set` | *changes:* which profile each environment runs |
@@ -249,17 +253,39 @@ without the portal; each step is the REST route the portal calls for it.
 **Kits.** What Studio has for an organization comes from kits (ADR-0068,
 ADR-0069 §4); an agent installs one the way a person does.
 
+**A tool that comes with a kit.** Most tools above belong to a kit, which
+claims them (ADR-0071 §4; `kits_describe` lists them under `gears`): the
+`project_domain_model_*` tools are the Project model's
+(`project-domain-model`); `project_capabilities`, `project_findings`,
+`project_plan` and `project_requirements` Spec mapping's (`spec-mapping`, a base
+kit an organization may uninstall, ADR-0074); `project_gear_match*` and
+`gear_match_usage` the Gears matcher's (`gears-matcher`); `review_requests`, `review_verdict`, `spec_check`
+and `spec_check_result` Specs'; `project_phase*` Planning's
+(`project-lifecycle`); the `product_*` tools and `gdl_file` Product's
+(`project-product`); `build_list` and every environments tool but
+`research_*` Builds, releases & environments' (`delivery`, which
+`constructor-research` requires); `research_*` Constructor Research's
+(ADR-0071 §6; until step 5 the last three were `product-releases` and
+`org-infrastructure`, now aliases of these for one release). The kit library, the Studio domain
+model, a project's creation, status and sources, connections, the Inbox and
+runs are the shell's and always answer. Where the claiming kit does not apply
+to the project (`project_id`) or organization the call acts in, the tool
+answers `KIT_NOT_INSTALLED` with the kit's slug, before it calls anything; an
+administrator installs the kit under Organization › Kits or Project › Kits.
+The tool list itself does not change with the kits.
+
 | Tool | What it answers or does |
 | --- | --- |
-| `kits_catalog` | the kit library, each kit with its shelf (`builtin`, `official`, `organization`) |
-| `kits_describe` | one kit and what is inside it before install: screens, types, rules, functions, services, inbox, MCP tools, permissions, material, kinds, docs, and the manifest it was read from |
+| `kits_catalog` | the kit library, each kit with its shelf (`builtin`, `official`, `organization`) and its type, `kind` (`runtime`, `gears`, `model`, `material`) with every tier it `brings` |
+| `kits_describe` | one kit and what is inside it before install: screens, types, rules, functions, services, inbox, MCP tools (with descriptions), gear claims, permissions, material, kinds, docs, its `kind`, and the manifest it was read from |
+| `kit_gdl` | one kit's manifest as `kit.gdl` text (GDL 1.7, ADR-0068 §3): authored, or rendered by Studio from the manifest it read, which its first line says |
 | `kits_installed` | an organization's kits, or a project's with `project_id`: `base`, the organization's, the project's, and `effective` |
-| `kit_base_install` | *changes:* installs a kit for every organization (platform administrators) |
-| `kit_base_uninstall` | *changes:* stops a kit being a base kit (platform administrators) |
-| `kit_organization_install` | *changes:* installs a kit for one organization (its administrators) |
-| `kit_organization_uninstall` | *changes:* uninstalls the organization's own kit; a base kit is refused |
-| `kit_project_install` | *changes:* installs a kit for one project (the organization's kit administrators); only a kit whose levels include `project` |
-| `kit_project_uninstall` | *changes:* uninstalls the project's own kit; a base or organization kit is refused |
+| `kit_base_install` | *changes:* installs a kit for every organization (platform administrators); a kit whose required kits (`requires`, ADR-0071 §5) are not base kits is refused (`KIT_REQUIRES_KIT`) |
+| `kit_base_uninstall` | *changes:* stops a kit being a base kit (platform administrators); refused while another base kit requires it (`KIT_REQUIRED_BY`) |
+| `kit_organization_install` | *changes:* installs a kit for one organization (its administrators); refused where a kit it requires does not apply (`KIT_REQUIRES_KIT`, naming it) |
+| `kit_organization_uninstall` | *changes:* uninstalls the organization's own kit; a base kit is refused, and so is a kit another applying kit requires (`KIT_REQUIRED_BY`) |
+| `kit_project_install` | *changes:* installs a kit for one project (the organization's kit administrators); only a kit whose levels include `project`, and only where what it requires applies (`KIT_REQUIRES_KIT`) |
+| `kit_project_uninstall` | *changes:* uninstalls the project's own kit; a base or organization kit is refused, and so is one another of the project's kits requires (`KIT_REQUIRED_BY`) |
 | `kits_shelf` | the kits an organization added from its own repositories, each with its `origin` (connection, repository, directory, ref, pinned commit) |
 | `kit_shelf_preview` | reads a kit from a repository through the organization's connection without adding it (kit administrators) |
 | `kit_shelf_add` | *changes:* adds a kit from a repository to the organization's shelf, pinned to a commit (kit administrators); a slug Studio's library has is refused (`KIT_SLUG_TAKEN`) |
@@ -349,6 +375,7 @@ Things to ask:
 | `401` when connecting | the token expired or is not sent; check the variable the config reads |
 | a tool answers `Studio answered 403: …` | you may not do that in the portal either |
 | `Studio answered 503: … is not part of this deployment` | the gear the tool needs is not running here |
+| a tool answers `KIT_NOT_INSTALLED (kit …)` | the tool comes with that kit, which does not apply to the project or organization the call names; install the kit, or ask an administrator to |
 | `spec_check` fails with `upstream not configured` | the spec-quality service has no key on this deployment |
 | `you have reached the limit of 60 spec_check calls an hour` | the per-person limit; wait the minutes it names |
 | the agent's sign-in page says the client is unknown | the agent was not given `--client-id studio-mcp`, or the realm has no such client; see *Sign in* |

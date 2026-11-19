@@ -461,3 +461,125 @@ export interface Page<T> {
   items: T[];
   total?: number;
 }
+
+/* ── one component's page (`GET /components/{name}`) ─────────────────────── */
+
+/** A file in a repository: what it is, where, and a link when the repository is known. */
+export interface ComponentFile {
+  label: string;
+  path: string;
+  url?: string | null;
+}
+
+/** One screen an MFE's `mfe.json` puts in the shell. */
+export interface ComponentScreen {
+  id: string;
+  label?: string | null;
+  route?: string | null;
+  level?: string | null;
+  domain?: string | null;
+}
+
+export interface ComponentTool {
+  name: string;
+  description: string;
+  /** `read`, `write` or `destructive`. */
+  effect: string;
+}
+
+/** What one built-in kit claims of the component (ADR-0071). */
+export interface ComponentKitClaim {
+  kit: string;
+  kit_name: string;
+  gear: string;
+  types: string[];
+  mcp_tools: string[];
+  routes: string[];
+}
+
+export interface ComponentExtensionPoint {
+  spec: string;
+  interface?: string | null;
+  sdk_crate?: string | null;
+}
+
+export interface ComponentEngineGear {
+  id: string;
+  display_name?: string | null;
+  role: string;
+  category?: string | null;
+  gdl_path?: string | null;
+  runtime_caps: string[];
+  colocated_deps: string[];
+  extension_points: ComponentExtensionPoint[];
+  fills?: string | null;
+  hosts: string[];
+  plugins: string[];
+}
+
+/** Stage, due date and demand, from the roadmap board and the repository. */
+export interface ComponentReadiness {
+  stage?: string | null;
+  stage_at?: number | null;
+  stage_of?: number | null;
+  lifecycle?: string | null;
+  milestone?: string | null;
+  due?: string | null;
+  committed?: boolean | null;
+  plan?: string | null;
+  plan_lamp?: string | null;
+  plan_reasons?: string[];
+  progress?: { label: string; value: string; pct?: number | null }[];
+  last_release?: string | null;
+  released_on?: string | null;
+  used_by?: number | null;
+  grade?: string | null;
+  grade_fixes?: string[];
+}
+
+/** One component as its page reads it: the catalogue's answer, nothing guessed. */
+export interface ComponentDetail {
+  name: string;
+  title?: string | null;
+  /** `gear`, `plugin`, `mfe`, `service`, `infra`, `library`, `kit` or `other`. */
+  component_type: string;
+  type_reason: string;
+  kind?: string | null;
+  description?: string | null;
+  category?: string | null;
+  tier?: string | null;
+  version?: string | null;
+  repository?: string | null;
+  path?: string | null;
+  passport?: ComponentFile | null;
+  docs: ComponentFile[];
+  provides: {
+    capabilities: string[];
+    implements?: string | null;
+    hosts: string[];
+    extension_points: ComponentExtensionPoint[];
+    plugins: string[];
+    openapi?: boolean | null;
+    events?: boolean | null;
+    mcp_tools: ComponentTool[];
+    types: string[];
+    screens: ComponentScreen[];
+    ports: string[];
+    health?: string | null;
+    variables: string[];
+  };
+  needs: {
+    components: string[];
+    services: string[];
+    databases: string[];
+    runtime: string[];
+    connections: string[];
+  };
+  used_by: {
+    components: string[];
+    kits: ComponentKitClaim[];
+  };
+  maturity?: string | null;
+  readiness?: ComponentReadiness | null;
+  engine: ComponentEngineGear[];
+}

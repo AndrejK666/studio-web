@@ -14,6 +14,19 @@ const flow = import.meta.glob('./screens/product/flow/i18n/*.json') as Translati
 const frontend = import.meta.glob('./screens/product/frontend/i18n/*.json') as TranslationModules;
 const infra = import.meta.glob('./screens/product/infra/i18n/*.json') as TranslationModules;
 const components = import.meta.glob('./screens/components/i18n/*.json') as TranslationModules;
+const match = import.meta.glob('./screens/product/match/i18n/*.json') as TranslationModules;
+const assembly = import.meta.glob('./screens/product/assembly/i18n/*.json') as TranslationModules;
+
+/** Gear match: what the gears-matcher read in the specs. */
+export const useMatchTranslations = createScreenTranslations('product', 'match', match, './screens/product/match/i18n');
+
+/** How a product is assembled (ADR-0072), and the Gears matcher kit's organization page. */
+export const useAssemblyTranslations = createScreenTranslations(
+  'product',
+  'assembly',
+  assembly,
+  './screens/product/assembly/i18n'
+);
 
 /** The Product page: its header, section tabs, Infrastructure and Frontend sections. */
 export const useProductTranslations = createScreenTranslations('product', 'main', page, './screens/product/i18n');

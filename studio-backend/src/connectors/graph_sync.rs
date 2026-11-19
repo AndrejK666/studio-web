@@ -39,8 +39,18 @@ use crate::user_profile::AliasResolver;
 use crate::user_profile::normalize_key;
 use graph_storage_sdk::GraphStorageClientV1;
 use graph_storage_sdk::models::{
-    EdgeSpec, IngestOptions, IngestRequest, NodeSpec, TypeRegistration,
+    EdgeSpec, IngestOptions, IngestRequest, NodeSpec, OnExisting, TypeRegistration,
+    TypeRegistrationOptions,
 };
+
+/// How this producer registers its types: a stored type is updated in place
+/// rather than refused when its schema here changes.
+fn graph_registration_options() -> TypeRegistrationOptions {
+    TypeRegistrationOptions {
+        on_existing: OnExisting::Update,
+        ..Default::default()
+    }
+}
 
 /// The graph type id of one of this producer's node types.
 fn node_type(leaf: &str) -> String {
@@ -170,7 +180,12 @@ pub async fn sync_repository(
         })
         .collect();
     progress("registering the graph types".to_owned());
-    graph.register_types(ctx, types).await?;
+    // Updated in place when a schema here changes, as every other Studio
+    // store registers: under the default (`Reject`) one changed type would
+    // refuse the whole batch, and every sync after it.
+    graph
+        .register_types_with(ctx, types, graph_registration_options())
+        .await?;
 
     let repo = request.repo_full_path;
     let repo_key = format!("repo:{repo}");
@@ -434,6 +449,44 @@ mod tests {
     fn a_top_level_entry_hangs_off_the_repository() {
         assert_eq!(parent_key("o/r", "repo:o/r", "README.md"), "repo:o/r");
         assert_eq!(parent_key("o/r", "repo:o/r", "src/main.rs"), "dir:o/r:src");
+    }
+
+    /// A type stored under another schema (an earlier release's) is updated
+    /// by the next sync rather than refusing it, and every sync after it.
+    #[tokio::test]
+    async fn a_changed_type_is_updated_by_the_next_sync() {
+        let client = crate::test_graph::client();
+        let ctx = crate::test_graph::ctx(Uuid::now_v7());
+        let batch = |describe: Option<&str>| -> Vec<TypeRegistration> {
+            graph_type_schemas()
+                .into_iter()
+                .map(|mut schema| {
+                    if let Some(d) = describe {
+                        schema["description"] = serde_json::json!(d);
+                    }
+                    TypeRegistration {
+                        type_id: schema["$id"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .trim_start_matches("gts://")
+                            .to_owned(),
+                        schema,
+                    }
+                })
+                .collect()
+        };
+        client
+            .register_types(&ctx, batch(Some("as an earlier release had it")))
+            .await
+            .expect("the earlier schemas register");
+        assert!(
+            client.register_types(&ctx, batch(None)).await.is_err(),
+            "the default refuses the change"
+        );
+        client
+            .register_types_with(&ctx, batch(None), graph_registration_options())
+            .await
+            .expect("the sync's registration updates them");
     }
 
     #[test]

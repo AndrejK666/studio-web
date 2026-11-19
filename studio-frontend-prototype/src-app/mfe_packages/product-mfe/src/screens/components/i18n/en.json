@@ -8,8 +8,9 @@
   "partial_own": "the project's own gears could not be read",
   "search": "Find a component or a capability",
   "whose": "Whose",
-  "everything": "Everything",
   "retry": "Retry",
+  "no_matches": "Nothing matches.",
+  "clear_search": "Clear search",
   "empty_title": "Nothing found in this project yet.",
   "empty_body": "Connect its repositories on Sources and type its documents on Specs.",
   "col_component": "Component",
@@ -39,7 +40,6 @@
   "hide": "Hide",
   "make_gear": "Make it a gear…",
   "put_into_product": "Put it into the product…",
-  "page": "Page {page} of {pages}",
   "lead_kept": "From the project domain model it keeps {entities}. Change what it is for before the push if the model read it wrong.",
   "lead_kept_answers": "From the project domain model it keeps {entities} and answers {count} of its requirements. Change what it is for before the push if the model read it wrong.",
   "lead_no_entity": "The project domain model names no entity of this capability: the gear starts from the specs' words alone.",
@@ -71,5 +71,6 @@
   "push": "Push to gear repo →",
   "scaffold_with_pr": "open a pull request",
   "scaffold_needs_repo": "needs a gear repository: the project's or the organization's (Components)",
-  "copy": "Copy"
+  "copy": "Copy",
+  "partial_plan_kit": "the spec plan, which comes with the Spec mapping kit (Organization › Kits)"
 }

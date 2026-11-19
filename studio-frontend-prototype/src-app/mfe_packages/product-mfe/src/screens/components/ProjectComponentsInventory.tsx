@@ -13,20 +13,10 @@
  * candidate: one route that answers "what is this project made of?".
  */
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import {
-  Badge,
-  Button,
-  Input,
-  Skeleton,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@gears-frontx/ui-kit';
-import { openScreen } from '@constructor-studio/mfe-shared';
+import { useEffect, useMemo, useState } from 'react';
+import { Skeleton } from '@gears-frontx/ui-kit';
+import { openScreen, violationOfType } from '@constructor-studio/mfe-shared';
+import { GridFailed } from '@constructor-studio/mfe-shared/grid';
 import { productApi } from '../../api/client';
 import type { Conformance, PlanRow } from '../../api/types';
 import { capabilityEntities, keptSentences, suggestedCategory } from '../../model/capability-entities';
@@ -34,22 +24,21 @@ import { layerOf } from '../../model/domain-layers';
 import { entityGears, gearRefs } from '../../model/entity-gears';
 import { gearDeployState, runningNow, type ProductAt, type Running } from '../../model/gear-deploys-model';
 import type { ProjectComponent } from '../../model/project-checks';
-import { inventory, ownGearsOf, ROLE_LABEL, type InventoryRole, type InventoryRow, type OwnGear } from '../../model/project-inventory';
+import { inventory, ownGearsOf, type InventoryRow, type OwnGear } from '../../model/project-inventory';
 import { gearProblem, rowCoverage } from '../../model/spec-coverage';
 import { entitiesOf, type Entity, type GlossaryEntry } from '../../model/spec-model';
 import { useComponentsTranslations } from '../../i18n';
 import { useGearCatalogue } from '../product/catalogue';
-import { EmptyState, errText, openTab, useScope } from '../common';
+import { errText, openTab, useScope } from '../common';
+import { InventoryGrid, type InventoryCells } from './InventoryGrid';
 import { ProjectCandidate } from './ProjectCandidate';
 import { ScaffoldDialog } from './ScaffoldDialog';
 import styles from './ProjectComponentsInventory.module.css';
 
+export { inventoryType } from './InventoryGrid';
+
 /** The organization's Components tab (components-mfe): where a catalogue component is. */
 const ORGANIZATION_COMPONENTS_ROUTE = '/components';
-
-const PAGE = 25;
-
-const ROLES: InventoryRole[] = ['ours', 'could', 'create', 'organization', 'platform', 'service'];
 
 interface Read {
   plan: PlanRow[];
@@ -91,7 +80,13 @@ function useRunning(projectId: string): Running[] | null {
 async function readInventory(projectId: string, workspaceId: string | null): Promise<Read> {
   const partial: string[] = [];
   const [plan, product, services, code, registry] = await Promise.all([
-    productApi.projectPlan(projectId),
+    // The plan is the Spec mapping kit's (ADR-0074): without it the plan's
+    // part of the list is left out and said so, and the rest still shows.
+    productApi.projectPlan(projectId).catch((e: unknown) => {
+      if (!violationOfType(e, 'KIT_NOT_INSTALLED')) throw e;
+      partial.push('partial_plan_kit');
+      return { items: [] as PlanRow[] };
+    }),
     productApi.projectProduct(projectId).catch(() => {
       partial.push('partial_product');
       return null;
@@ -141,10 +136,6 @@ export function ProjectComponentsInventory({ onOpenProduct }: { onOpenProduct?: 
   const [scaffold, setScaffold] = useState<PlanRow | null>(null);
   const [opened, setOpened] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [query, setQuery] = useState('');
-  const [role, setRole] = useState<InventoryRole | null>(null);
-  const [desc, setDesc] = useState(false);
-  const [page, setPage] = useState(0);
   /** The project domain model's entities, read when a gear is first asked for: what
    *  the new gear keeps. Null while unread; empty when it cannot be read. */
   const [entities, setEntities] = useState<Entity[] | null>(null);
@@ -215,21 +206,6 @@ export function ProjectComponentsInventory({ onOpenProduct }: { onOpenProduct?: 
       );
     return inventory(read.plan, read.code, read.picks, read.services, needsGear, read.own);
   }, [read]);
-  const count = (r: InventoryRole) => rows?.filter((x) => x.role === r).length ?? 0;
-
-  const shown = useMemo(() => {
-    if (!rows) return [];
-    const q = query.trim().toLowerCase();
-    const out = rows.filter(
-      (r) =>
-        (!role || r.role === role) &&
-        (!q || [r.name, r.kind, r.path ?? '', ...r.answers].some((s) => s.toLowerCase().includes(q)))
-    );
-    return desc ? [...out].sort((a, b) => b.name.localeCompare(a.name)) : out;
-  }, [rows, query, role, desc]);
-  const pages = Math.max(1, Math.ceil(shown.length / PAGE));
-  const at = Math.min(page, pages - 1);
-  const pageRows = shown.slice(at * PAGE, at * PAGE + PAGE);
 
   const stateOf = (r: InventoryRow): string =>
     r.service
@@ -275,6 +251,23 @@ export function ProjectComponentsInventory({ onOpenProduct }: { onOpenProduct?: 
       <div>{r.inProduct ? t('taken_by_product') : t('taken_by_code')}</div>
     );
 
+  const cells: InventoryCells = {
+    t,
+    expanded,
+    opened,
+    stateOf,
+    runsOf,
+    scaffold,
+    drafted: !!kept,
+    onCreate: setScaffold,
+    onOpenCatalogue: () => openScreen(bridge, ORGANIZATION_COMPONENTS_ROUTE),
+    onToggleCandidate: (key) => setOpened((was) => (was === key ? null : key)),
+    onOpenProduct: openProduct,
+  };
+  const toggle = (row: InventoryRow) => setExpanded((was) => (was === row.key ? null : row.key));
+  const explained = expanded ? rows?.find((r) => r.key === expanded) : undefined;
+  const candidate = opened ? rows?.find((r) => r.key === opened && r.role === 'could') : undefined;
+
   return (
     <section className={styles.inventory} data-project-components>
       <p className={styles.lead}>
@@ -285,154 +278,24 @@ export function ProjectComponentsInventory({ onOpenProduct }: { onOpenProduct?: 
           {t('partial', { what: read.partial.map((k) => t(k)).join('; ') })}
         </p>
       )}
-      <div className={styles.toolbar}>
-        <Input
-          className={styles.search}
-          value={query}
-          onChange={(e) => {
-            setQuery(e.target.value);
-            setPage(0);
-          }}
-          placeholder={t('search')}
-          aria-label={t('search')}
-        />
-        <div className={styles.row} role="group" aria-label={t('whose')}>
-          <Button
-            type="button"
-            size="sm"
-            variant={role === null ? 'secondary' : 'ghost'}
-            onClick={() => {
-              setRole(null);
-              setPage(0);
-            }}
-          >
-            {t('everything')}
-          </Button>
-          {ROLES.filter((r) => count(r) > 0).map((r) => (
-            <Button
-              key={r}
-              type="button"
-              size="sm"
-              variant={role === r ? 'secondary' : 'ghost'}
-              data-role-chip={r}
-              onClick={() => {
-                setRole(r);
-                setPage(0);
-              }}
-            >
-              {ROLE_LABEL[r]} · {count(r)}
-            </Button>
-          ))}
-        </div>
-      </div>
       {error ? (
-        <div className={styles.row}>
-          <span className={styles.error}>{error}</span>
-          <Button type="button" size="sm" variant="outline" onClick={reload}>
-            {t('retry')}
-          </Button>
-        </div>
+        <GridFailed message={error} retry={t('retry')} onRetry={reload} />
       ) : !rows ? (
         <Skeleton className={styles.skeleton} />
-      ) : shown.length === 0 ? (
-        <EmptyState title={t('empty_title')} body={rows.length === 0 ? t('empty_body') : undefined} />
       ) : (
-        <>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>
-                  <button type="button" className={styles.sort} onClick={() => setDesc((d) => !d)}>
-                    {t('col_component')} {desc ? '↓' : '↑'}
-                  </button>
-                </TableHead>
-                <TableHead>{t('col_whose')}</TableHead>
-                <TableHead>{t('col_answers')}</TableHead>
-                <TableHead>{t('col_product')}</TableHead>
-                <TableHead>{t('col_runs')}</TableHead>
-                <TableHead>{t('col_code')}</TableHead>
-                <TableHead>{t('col_state')}</TableHead>
-                <TableHead />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {pageRows.map((r) => (
-                <InventoryLine
-                  key={r.key}
-                  row={r}
-                  open={expanded === r.key}
-                  onToggle={() => setExpanded(expanded === r.key ? null : r.key)}
-                  state={stateOf(r)}
-                  runs={runsOf(r)}
-                  explain={explain(r)}
-                  detail={
-                    opened === r.key && r.role === 'could' ? (
-                      <ProjectCandidate name={r.name} projectId={projectId} />
-                    ) : null
-                  }
-                  actions={
-                    <>
-                      {r.role === 'create' && r.need && (
-                        <Button
-                          type="button"
-                          size="sm"
-                          disabled={scaffold === r.need && !kept}
-                          onClick={() => setScaffold(r.need!)}
-                          data-create-gear
-                        >
-                          {scaffold === r.need && !kept ? t('reading_model') : t('create_gear')}
-                        </Button>
-                      )}
-                      {(r.role === 'platform' || r.role === 'organization') && (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="ghost"
-                          title={t('open_catalogue_hint')}
-                          onClick={() => openScreen(bridge, ORGANIZATION_COMPONENTS_ROUTE)}
-                        >
-                          {t('open_catalogue')}
-                        </Button>
-                      )}
-                      {r.role === 'could' && (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => setOpened(opened === r.key ? null : r.key)}
-                        >
-                          {opened === r.key ? t('hide') : t('make_gear')}
-                        </Button>
-                      )}
-                      {r.role !== 'service' && r.role !== 'create' && !r.inProduct && (
-                        <Button type="button" size="sm" variant="ghost" onClick={openProduct}>
-                          {t('put_into_product')}
-                        </Button>
-                      )}
-                    </>
-                  }
-                />
-              ))}
-            </TableBody>
-          </Table>
-          {pages > 1 && (
-            <div className={styles.row}>
-              <Button type="button" size="sm" variant="outline" disabled={at === 0} onClick={() => setPage(at - 1)}>
-                ←
-              </Button>
-              <span className={styles.muted}>{t('page', { page: String(at + 1), pages: String(pages) })}</span>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={at >= pages - 1}
-                onClick={() => setPage(at + 1)}
-              >
-                →
-              </Button>
-            </div>
-          )}
-        </>
+        <InventoryGrid rows={rows} cells={cells} onToggle={toggle} />
+      )}
+      {/* Why a row is there, and a code candidate made a gear, open under the list: the kit's grid has no detail row. */}
+      {explained && (
+        <div className={`${styles.detail} ${styles.muted}`} data-inventory-detail={explained.key}>
+          <b>{explained.name}</b>
+          {explain(explained)}
+        </div>
+      )}
+      {candidate && (
+        <div className={styles.detail} data-inventory-candidate={candidate.key}>
+          <ProjectCandidate name={candidate.name} projectId={projectId} />
+        </div>
       )}
       {/* Opened once the project domain model is read, so the draft it starts with is the whole one. */}
       {scaffold && draft && kept && (
@@ -464,61 +327,5 @@ export function ProjectComponentsInventory({ onOpenProduct }: { onOpenProduct?: 
         />
       )}
     </section>
-  );
-}
-
-function InventoryLine({
-  row: r,
-  open,
-  onToggle,
-  state,
-  runs,
-  explain,
-  detail,
-  actions,
-}: {
-  row: InventoryRow;
-  open: boolean;
-  onToggle: () => void;
-  state: string;
-  runs: ReactNode;
-  explain: ReactNode;
-  detail: ReactNode;
-  actions: ReactNode;
-}) {
-  return (
-    <>
-      <TableRow data-inventory-row={r.key} data-role={r.role} aria-expanded={open} className={styles.clickable}>
-        <TableCell onClick={onToggle}>
-          <b>{r.name}</b> <span className={styles.muted}>{r.kind}</span>
-          {r.path && <div className={styles.muted}>{r.path}</div>}
-        </TableCell>
-        <TableCell onClick={onToggle}>
-          <Badge variant={r.role === 'create' ? 'warning' : r.role === 'could' ? 'info' : 'secondary'}>
-            {ROLE_LABEL[r.role]}
-          </Badge>
-        </TableCell>
-        <TableCell onClick={onToggle}>
-          {r.answers.length ? <code className={styles.muted}>{r.answers.join(', ')}</code> : <span className={styles.muted}>—</span>}
-        </TableCell>
-        <TableCell onClick={onToggle}>{r.inProduct ? '✓' : <span className={styles.muted}>—</span>}</TableCell>
-        <TableCell onClick={onToggle}>{runs}</TableCell>
-        <TableCell onClick={onToggle}>{r.inCode ? '✓' : <span className={styles.muted}>—</span>}</TableCell>
-        <TableCell onClick={onToggle}>
-          <span className={styles.muted}>{state}</span>
-        </TableCell>
-        <TableCell>
-          <div className={styles.actions}>{actions}</div>
-        </TableCell>
-      </TableRow>
-      {(open || detail) && (
-        <TableRow>
-          <TableCell colSpan={8} className={styles.muted}>
-            {open && explain}
-            {detail}
-          </TableCell>
-        </TableRow>
-      )}
-    </>
   );
 }

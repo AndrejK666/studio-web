@@ -54,7 +54,9 @@ import type {
   StudioProfile,
   TypeCount,
 } from './types';
-import type { RoleDef } from '../model/access';
+import type { AccessConfig, RoleDef } from '../model/access';
+
+type AccessConfigSnapshot = { version: number; document: Partial<AccessConfig> };
 import type { LooseQuery, LooseResult } from '../model/views-model';
 
 const q = (params: Record<string, string>) => new URLSearchParams(params).toString();
@@ -286,6 +288,16 @@ export class AdminApiService extends BaseApiService {
     default_roles: RoleDef[];
   }>('/studio-organizations/v1/access-catalogue');
 
+  readonly accessConfig = this.protocol(RestEndpointProtocol).queryWith<AccessConfigSnapshot, { orgId: string }>(
+    ({ orgId }) => `/studio-organizations/v1/access-config?${q({ organization_id: orgId })}`
+  );
+
+  saveAccessConfig(orgId: string) {
+    return this.rest.mutation<AccessConfigSnapshot, { expected_version: number; document: AccessConfig }>(
+      'PUT', `/studio-organizations/v1/access-config?${q({ organization_id: orgId })}`
+    );
+  }
+
   /** An organization's logo; 404 when it has none. */
   readonly logo = this.protocol(RestEndpointProtocol).queryWith<OrganizationLogo, { orgId: string }>(
     ({ orgId }) => `/studio-organizations/v1/logo?${q({ organization_id: orgId })}`
@@ -435,8 +447,11 @@ export class AdminApiService extends BaseApiService {
 
   /* ── System: the platform's raw state (the prototype's `SystemView`) ── */
 
-  /** The running gears (`gear-orchestrator`), raw. */
-  readonly gears = this.protocol(RestEndpointProtocol).query<unknown>('/gear-orchestrator/v1/gears');
+  /**
+   * The gears this backend assembles, raw (`studio-assembly`). The prototype read `gear-orchestrator/v1/gears`, a
+   * platform gear this backend does not run: that read answered 404 here.
+   */
+  readonly gears = this.protocol(RestEndpointProtocol).query<unknown>('/studio-assembly/v1/manifest');
 
   /** The outbound API gateway's upstreams (`oagw`), raw. */
   readonly oagwUpstreams = this.protocol(RestEndpointProtocol).query<unknown>('/oagw/v1/upstreams');

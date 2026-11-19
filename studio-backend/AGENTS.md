@@ -91,14 +91,64 @@ exports. Never `crate::<gear>::<private module>`:
 `assembly::manifest::tests::no_gear_reaches_into_another_gears_private_modules`
 fails. Need more? Add it to the owner's `sdk` or `port`.
 
+## Running the gates
+
+One command, from the repository root:
+
+```
+scripts/backend-gate.sh                    # fmt, clippy -D warnings, all tests
+scripts/backend-gate.sh kit_registry       # tests filtered by name
+scripts/backend-gate.sh --only fmt,clippy  # fewer steps
+scripts/backend-gate.sh --raw 'cargo run --locked --quiet -- api-contract --accept'
+```
+
+It prints one line per step, the test counts and whether
+`cf-studio-backend` was really compiled, and writes the full output to a log
+file it names. The exit code is non-zero when any step failed, so trust it.
+Do not start Rust builds with a hand-written `docker run`. The script already
+does what such a run would need to do by hand:
+
+- **Waits its turn.** Only one Rust build runs at a time. The slot is the
+  container name `cf-studio-gate-slot-1`, and a waiting gate blocks in
+  `docker wait`, so there is no need to poll `docker ps`.
+- **Keeps a target volume per worktree** (`cf-studio-target-<dir>-<hash>`,
+  or `--target`) and **shares dependencies** through sccache on the
+  `cf-studio-sccache` volume. A new worktree's first gate takes ~10 min instead
+  of ~25.
+- **Touches the changed sources** inside the container, so stale mtimes
+  through the bind mount cannot make it pass on an old binary.
+- **Builds CI's feature set** (`theia-bridge,github-mirror`).
+
+Times on this machine (24 cores, 20 GB WSL), measured 2026-11-16:
+
+| | before | after |
+|---|---|---|
+| cold clippy + test build, first worktree | 366 + 1121 s | 353 + 536 s |
+| the same, a second worktree | 366 + 1121 s | 241 + 356 s |
+| after an edit: clippy, then test build | 135 + 138 s | 110–119 s, run side by side |
+| link of the test binary | 14.8 s | 5.0 s (mold) |
+| target volume | 24.6 GB | 11.4 GB |
+| peak memory of one build | 13.1 GB | 13.3 GB |
+
+The peak memory is rustc compiling our one 346k-line crate, and none of the
+above changes it. That is why `GATE_SLOTS` stays at 1: two cold builds of the
+crate (~11 + ~13 GB) do not fit in 20 GB. Two warm ones (~5 + ~7 GB) do, so
+`GATE_SLOTS=2` is safe only when both worktrees are already built.
+`CARGO_BUILD_JOBS` does not help, because it limits how many rustc processes
+run, not how much memory the one big process uses.
+
+Old `cf-studio-backend-target*` volumes from before this script can be
+removed with `docker volume rm`.
+
 ## Gates that pass when they should not
 
-- A build through the Windows bind mount can reuse a stale binary. Run
-  `touch` on the changed sources inside the container, and confirm the log
-  says `Compiling cf-studio-backend` (clippy says `Checking`).
+- A build through the Windows bind mount can reuse a stale binary.
+  `backend-gate.sh` touches the changed sources and reports `compiled
+  cf-studio-backend: yes|NO`. In a hand-made run, `touch` them inside the
+  container and confirm the log says `Compiling cf-studio-backend` (clippy
+  says `Checking`).
 - Never pipe a gate through `tail` or `head`, because the exit code you see is
-  theirs, not the gate's. Redirect to a file and grep it.
-- `scripts/backend-check.sh` exits 0 even on failure. Judge it by its output.
+  theirs, not the gate's. `backend-gate.sh` already writes the log for you.
 - After adding or renaming a route, `cargo test api_contract` is the gate.
   `studio-backend api-contract --violations` exits 0 either way.
 - A change to a DTO, a route or `docs/events-catalog.md` also moves

@@ -28,6 +28,9 @@ use super::project_create::{
 };
 use super::rest::OrganizationError;
 use super::sdk::{ORGANIZATION_TENANT_TYPE, WORKSPACE_TENANT_TYPE};
+use crate::kit_registry::port::{
+    KitPresence, PROJECT_CREATION_STEPS, project_type_kit, project_type_kits,
+};
 
 /// What the routes need: account-management, and the hub for the task
 /// queue and the connectors, resolved per request.
@@ -100,13 +103,19 @@ pub struct CreateProjectRequest {
     /// The workspace it goes under.
     pub workspace_id: Uuid,
     pub name: String,
-    /// `greenfield` (default) or `modernize`.
+    /// `greenfield` or `modernize`; the project type's (`mode` of
+    /// `project-creation-types`), else `greenfield`, when absent.
     pub mode: Option<String>,
     /// What is being built, in the person's words: `project.config` `brief`,
     /// and the PRD's first answer.
     pub brief: Option<String>,
     /// The project type (`project.config` `type`).
     pub r#type: Option<String>,
+    /// The built-in kit that defines the project's type (`slug` of
+    /// `project-creation-types`). The type decides the optional steps: a
+    /// request for one it does not take (`sources`, `repository`,
+    /// `starter_gear`, `prd: true`) is refused.
+    pub project_type_kit: Option<String>,
     /// The owner's subject id; the caller when absent.
     pub owner_id: Option<String>,
     /// Repositories to take as the project's sources.
@@ -123,11 +132,103 @@ pub struct CreateProjectRequest {
     pub idempotency_key: Option<String>,
 }
 
+/// What the person is shown to do next once a project of a type exists.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ProjectNextStepDto {
+    /// Unique within the type; a dismissed step is kept by it in
+    /// `project.config` `next_steps_dismissed`.
+    pub id: String,
+    pub label: String,
+    pub description: String,
+    /// The portal route of the screen where it is done (`/projects/sources`).
+    pub route: String,
+    /// The step of the project's path (`GET project-status` `path[].step`)
+    /// whose being done makes this one done; absent: done when dismissed.
+    pub done_when: Option<String>,
+}
+
+/// A project type: a kit's subtype of the core Project type (ADR-0073).
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ProjectTypeKitDto {
+    /// The kit, sent back as `project_type_kit`.
+    pub slug: String,
+    /// The type's GTS id, derived from Project's
+    /// (`gts.cf.studio.domain.project.v1~cf.studio.kit.<kit>.project.v1~`);
+    /// what `project.config` `project_type_id` records.
+    pub type_id: String,
+    /// The type's name and description.
+    pub name: String,
+    pub description: String,
+    /// The kit's own name.
+    pub kit_name: String,
+    /// The `mode` a project of this type starts with.
+    pub mode: String,
+    /// The optional creation steps it takes, of `repository`, `sources`,
+    /// `scaffold` and `prd`.
+    pub steps: Vec<String>,
+    /// What the person does next, in order.
+    pub next_steps: Vec<ProjectNextStepDto>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ProjectTypeKitsDto {
+    pub items: Vec<ProjectTypeKitDto>,
+    /// Every project type kit; the list is never paged.
+    pub total: u32,
+}
+
+/// What a project type is, as the wizard and the Overview read it.
+fn type_dto(kit: crate::kit_registry::port::KitManifest) -> Option<ProjectTypeKitDto> {
+    let subtype = kit.project_subtype()?;
+    let steps = PROJECT_CREATION_STEPS
+        .iter()
+        .filter(|s| kit.creation_takes(s))
+        .map(|s| (*s).to_owned())
+        .collect();
+    let next_steps = kit
+        .project_creation
+        .as_ref()
+        .map(|c| {
+            c.next_steps
+                .iter()
+                .map(|n| ProjectNextStepDto {
+                    id: n.id.clone(),
+                    label: n.label.clone(),
+                    description: n.description.clone(),
+                    route: n.route.clone(),
+                    done_when: n.done_when.clone(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(ProjectTypeKitDto {
+        mode: kit.creation_mode().to_owned(),
+        slug: kit.slug,
+        type_id: subtype.gts,
+        name: subtype.name,
+        description: subtype.description,
+        kit_name: kit.name,
+        steps,
+        next_steps,
+    })
+}
+
+async fn list_project_type_kits() -> ApiResult<JsonBody<ProjectTypeKitsDto>> {
+    // The library's order, not the names': Gears, the usual type, first.
+    let items: Vec<_> = project_type_kits().filter_map(type_dto).collect();
+    let total = u32::try_from(items.len()).unwrap_or(u32::MAX);
+    Ok(Json(ProjectTypeKitsDto { items, total }))
+}
+
 /// One step of a creation.
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
 pub struct ProjectCreationStepDto {
-    /// `tenant`, `config`, `repository`, `sources`, `scaffold`, `prd` or `kits`.
+    /// `tenant`, `config`, `repository`, `sources`, `scaffold`, `prd`, `kits`
+    /// or `model` (the project's object in the domain model gets its type).
     pub key: String,
     /// `pending`, `done` or `failed`.
     pub state: String,
@@ -290,12 +391,69 @@ async fn approve(
         ));
     }
     let organization_id = workspace_and_org(c.am.as_ref(), ctx, body.workspace_id).await?;
+    let type_kit = body
+        .project_type_kit
+        .as_deref()
+        .map(|slug| {
+            project_type_kit(slug).ok_or_else(|| {
+                invalid(
+                    "project_type_kit",
+                    "Choose a kit that defines a project type",
+                )
+            })
+        })
+        .transpose()?;
+    if let Some(kit) = &type_kit {
+        let presence = c
+            .hub
+            .get::<dyn KitPresence>()
+            .map_err(|_| unavailable("studio-kits is unavailable"))?;
+        let effective = presence
+            .effective(ctx, body.workspace_id)
+            .await
+            .map_err(|_| unavailable("The organization's kits could not be read"))?;
+        if let Some(required) = kit
+            .requires
+            .iter()
+            .find(|required| !effective.contains(required))
+        {
+            return Err(invalid(
+                "project_type_kit",
+                format!("{} requires the `{required}` kit", kit.name),
+            ));
+        }
+    }
+    // What the request leaves out, the project type decides.
     let mode = body
         .mode
         .as_deref()
         .map(str::trim)
         .filter(|m| !m.is_empty())
-        .unwrap_or("greenfield");
+        .or(type_kit.as_ref().map(|kit| kit.creation_mode()))
+        .unwrap_or("greenfield")
+        .to_owned();
+    let mode = mode.as_str();
+    if let Some(kit) = &type_kit {
+        let asked = [
+            (
+                "sources",
+                "sources",
+                body.sources.as_ref().is_some_and(|s| !s.is_empty()),
+            ),
+            ("repository", "repository", body.repository.is_some()),
+            ("scaffold", "starter_gear", body.starter_gear.is_some()),
+            ("prd", "prd", body.prd == Some(true)),
+        ];
+        if let Some((_, field, _)) = asked
+            .iter()
+            .find(|(step, _, wanted)| *wanted && !kit.creation_takes(step))
+        {
+            return Err(invalid(
+                field,
+                format!("a {} project is not created with `{field}`", kit.name),
+            ));
+        }
+    }
     if !matches!(mode, "greenfield" | "modernize") {
         return Err(invalid("mode", "must be greenfield or modernize"));
     }
@@ -415,8 +573,13 @@ async fn approve(
         }
     };
 
-    // A PRD from the brief, unless a starter gear writes its own.
-    let prd = match (brief, body.prd.unwrap_or(scaffold.is_none())) {
+    // A PRD from the brief, unless a starter gear writes its own or the
+    // project type takes none.
+    let prd_by_default = scaffold.is_none()
+        && type_kit
+            .as_ref()
+            .is_none_or(|kit| kit.creation_takes("prd"));
+    let prd = match (brief, body.prd.unwrap_or(prd_by_default)) {
         (Some(answer), true) => Some(PrdPlan {
             title: name.clone(),
             answer: answer.to_string(),
@@ -426,6 +589,15 @@ async fn approve(
 
     let mut kits = Vec::new();
     for (i, k) in body.kits.unwrap_or_default().into_iter().enumerate() {
+        if type_kit.is_some() && project_type_kit(&k.slug).is_some() {
+            if type_kit.as_ref().is_some_and(|kind| kind.slug == k.slug) {
+                continue;
+            }
+            return Err(invalid(
+                &format!("kits[{i}].slug"),
+                "Choose the project type through project_type_kit",
+            ));
+        }
         if !slug_ok(&k.slug) {
             return Err(invalid(
                 &format!("kits[{i}].slug"),
@@ -443,6 +615,14 @@ async fn approve(
     let mut config = Map::new();
     config.insert("mode".into(), json!(mode));
     config.insert("status".into(), json!("draft"));
+    if let Some(kit) = type_kit {
+        // The type is the kit's subtype of Project (ADR-0073); the kit stays
+        // named for the readers that know only it.
+        if let Some(subtype) = kit.project_subtype() {
+            config.insert("project_type_id".into(), json!(subtype.gts));
+        }
+        config.insert("project_type_kit".into(), json!(kit.slug));
+    }
     config.insert(
         "stages".into(),
         Value::Array(required_stages(headers, body.workspace_id).await),
@@ -640,6 +820,30 @@ pub fn register(
     openapi: &dyn OpenApiRegistry,
     creations: Option<Creations>,
 ) -> Router {
+    let router = OperationBuilder::get("/studio-organizations/v1/project-creation-types")
+        .operation_id("studio_organizations.list_project_creation_types")
+        .summary("Kits that define a project type")
+        .description(
+            "The project types: each built-in kit whose model derives a type of its own from \
+             the core Project type (ADR-0073; Gears, then Constructor Research), in the \
+             library's order, with that type's id, name and description, the `mode` and the \
+             optional creation steps it takes, and the next steps a project of it shows on its \
+             Overview. The New project wizard offers one of them as the project's type, and \
+             `POST project-creations` records the type and installs its kit in the new project. \
+             The list is compiled in, the same for every organization, and never paged.",
+        )
+        .tag("StudioOrganizations")
+        .authenticated()
+        .require_license_features::<super::rest::License>([])
+        .handler(list_project_type_kits)
+        .json_response_with_schema::<ProjectTypeKitsDto>(
+            openapi,
+            StatusCode::OK,
+            "Project type kits",
+        )
+        .error_401(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
     let router = OperationBuilder::post("/studio-organizations/v1/project-creations")
         .operation_id("studio_organizations.create_project")
         .summary("Create a project, as one background run")
@@ -651,8 +855,11 @@ pub fn register(
              tenant (its id chosen now and answered), writes its `project.config` (mode, brief, \
              owner, status, the workspace's required stages, the sources), makes or attaches \
              the repository its gears go to, writes a starter gear, a PRD from the brief and \
-             asks for the kits. The run acts as Studio, scoped to the organization and the new \
-             project; `asked_by` is recorded. Each step is recorded as it ends and a retry \
+             asks for the kits. With `project_type_kit` the type decides the `mode` and which \
+             of those optional steps it takes, `project.config` records its `project_type_id`, \
+             and a last step gives the project's object in the domain model that type. The run \
+             acts as Studio, scoped to the organization and the new project; `asked_by` is \
+             recorded. Each step is recorded as it ends and a retry \
              (`POST /studio-tasks/v1/runs/{id}/retry`) continues where it stopped. Progress is \
              `GET project-creations/{run_id}`, the organization's Background work, and \
              `task.*` studio-events. The same `idempotency_key` makes the same project once.",
@@ -711,6 +918,34 @@ mod tests {
         assert!(!slug_ok(""));
         assert!(!slug_ok("a/b"));
         assert!(!slug_ok(&"x".repeat(65)));
+    }
+
+    #[test]
+    fn a_project_type_answers_its_subtype_its_steps_and_what_comes_next() {
+        let items: Vec<ProjectTypeKitDto> = project_type_kits().filter_map(type_dto).collect();
+        let slugs: Vec<&str> = items.iter().map(|t| t.slug.as_str()).collect();
+        assert_eq!(slugs, ["gears-project", "constructor-research"]);
+        let gears = &items[0];
+        assert_eq!(
+            gears.type_id,
+            "gts.cf.studio.domain.project.v1~cf.studio.kit.gears_project.project.v1~"
+        );
+        assert_eq!(gears.mode, "greenfield");
+        assert_eq!(gears.steps, ["repository", "sources", "scaffold", "prd"]);
+        let next: Vec<(&str, &str)> = gears
+            .next_steps
+            .iter()
+            .map(|n| (n.route.as_str(), n.done_when.as_deref().unwrap_or("")))
+            .collect();
+        assert_eq!(
+            next,
+            [("/projects/sources", "repos"), ("/product", "product")]
+        );
+        let research = &items[1];
+        assert_eq!(research.steps, ["sources", "prd"]);
+        assert_eq!(research.next_steps[0].route, "/constructor-research");
+        assert_eq!(research.next_steps[0].done_when, None);
+        assert_eq!(research.next_steps[1].route, "/releases");
     }
 
     #[test]

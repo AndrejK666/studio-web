@@ -3,7 +3,7 @@ import { Skeleton } from '@gears-frontx/ui-kit';
 import { useConnectionHealth } from '../../../shared/useConnectionHealth';
 import { useConnectionListText } from '../../../i18n';
 import { LoadFailed } from './LoadFailed';
-import { NoData } from './NoData';
+import { NoData } from '@constructor-studio/mfe-shared/grid';
 import styles from '../ConnectionListScreen.module.css';
 
 export const HealthInline: React.FC<{ connectionId: string; tenantId: string }> = ({

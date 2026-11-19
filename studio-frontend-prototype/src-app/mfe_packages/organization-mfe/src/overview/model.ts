@@ -164,7 +164,8 @@ export interface AttentionRow {
 const ACTION: Record<OrgNeed["kind"], string> = {
   connection: "Fix the connection",
   spend: "Open Costs",
-  pulls: "Open projects",
+  // It opens the Workspaces tab, where each workspace folds out its projects: named for where it goes.
+  pulls: "Open workspaces",
   components: "Decide",
   runs: "Open runs",
 };
@@ -195,7 +196,7 @@ export function othersAttention(o: OrgOverview, money: (v: number) => string): A
       sentence: `${plural(q.count, "pull request waits", "pull requests wait")} on ${queueLabel(q) === "Nobody asked to review" ? "nobody (no reviewer asked)" : queueLabel(q)}`,
       detail: `the oldest ${q.oldest_days} days without a move`,
       tone: "warn",
-      action: { label: "Open projects", target: "projects" },
+      action: { label: "Open workspaces", target: "projects" },
     });
   if (o.decisions && o.decisions.undecided > 0 && !o.needs.some((n) => n.kind === "components"))
     rows.push({

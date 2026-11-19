@@ -25,12 +25,6 @@ import {
   DialogTitle,
   Input,
   Skeleton,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
 } from '@gears-frontx/ui-kit';
 import {
   ACCESS_CONFIG_TYPE,
@@ -65,8 +59,9 @@ import { usePeopleTranslations } from '../../i18n';
 import { useOrgActivity } from './useOrgActivity';
 import { PeopleMatrix } from './PeopleMatrix';
 import { PersonPanel } from './PersonPanel';
-import { PersonPhoto, ProjectLegend, ProjectStackCell } from './ProjectMarks';
-import { fullTime, membershipLabel, relTime } from './words';
+import { PeopleGrid, type PeopleCells, type PersonGridRow } from './PeopleGrid';
+import { ProjectLegend } from './ProjectMarks';
+import { membershipLabel } from './words';
 import styles from './PeopleScreen.module.css';
 
 /** How many project marks a row shows before "+N". */
@@ -154,8 +149,6 @@ function OrgPeople({ org, t, language, bridge, container }: ScreenProps & { org:
   const [notice, setNotice] = useState<string | null>(null);
   const [contact, setContact] = useState<PersonRow | null>(null);
   const [layout, setLayoutState] = useState<Layout>(storedLayout);
-  const [query, setQuery] = useState('');
-  const [sortBySeen, setSortBySeen] = useState(false);
   const [inviting, setInviting] = useState(false);
   const [now] = useState(() => Date.now());
 
@@ -201,16 +194,30 @@ function OrgPeople({ org, t, language, bridge, container }: ScreenProps & { org:
   const projectRowsOf = (p: PersonRow) =>
     personProjects(orgProjects, accessOf(p.id, p.role, cfg, orgProjects), activity.index.get(p.id));
   const online = onlineNow(activity.dir, activity.presence);
-  const lastSeen = (p: PersonRow) =>
-    lastSeenOf(p.id, p.lastSeenMs, activity.dir, activity.presence, activity.desktops);
-  /** Last seen is a column only when some source has it for somebody. */
-  const anySeen = rows.some((p) => lastSeen(p) !== undefined);
+  const { dir, presence, desktops } = activity;
+  const lastSeen = (p: PersonRow) => lastSeenOf(p.id, p.lastSeenMs, dir, presence, desktops);
   const describe = (p: PersonRow) =>
     directoryLine(
       p.directory,
       (id) => all.find((m) => m.id === id)?.name,
       (name) => t('reports_to', { name })
     );
+  // A new array only when a person, their last seen or their directory line changed: each one reloads the grid.
+  const gridRows = useMemo<PersonGridRow[]>(
+    () =>
+      rows.map((p) => ({
+        ...p,
+        seen: lastSeenOf(p.id, p.lastSeenMs, dir, presence, desktops),
+        line: directoryLine(
+          p.directory,
+          (id) => all.find((m) => m.id === id)?.name,
+          (name) => t('reports_to', { name })
+        ),
+      })),
+    [rows, all, dir, presence, desktops, t]
+  );
+  /** Last seen is a column only when some source has it for somebody. */
+  const anySeen = gridRows.some((p) => p.seen !== undefined);
 
   const openProject = (project: OrgProject) => {
     setContact(null);
@@ -222,10 +229,20 @@ function OrgPeople({ org, t, language, bridge, container }: ScreenProps & { org:
     });
   };
 
-  const q = query.trim().toLowerCase();
-  const shown = rows
-    .filter((p) => !q || [p.name, p.email ?? '', describe(p)].join(' ').toLowerCase().includes(q))
-    .sort((a, b) => (sortBySeen ? (lastSeen(b) ?? 0) - (lastSeen(a) ?? 0) : a.name.localeCompare(b.name)));
+  const cells: PeopleCells = {
+    t,
+    language,
+    now,
+    model,
+    projectCount: orgProjects.length,
+    loading: activity.loading,
+    online,
+    stackOf: (p) => projectStack(projectRowsOf(p), model, STACK_MAX),
+    hasHandle: (p) => gitHandles(activity.identities.get(p.id)?.aliases ?? []).length > 0,
+    openPerson: setContact,
+    openProject,
+    invite: () => setInviting(true),
+  };
 
   const missing = activity.missing.map((m) => t.count(m.key, m.count)).join(', ');
 
@@ -320,99 +337,8 @@ function OrgPeople({ org, t, language, bridge, container }: ScreenProps & { org:
             {t('retry')}
           </Button>
         </div>
-      ) : rows.length === 0 ? (
-        <div className={styles.empty} data-people-empty>
-          <strong>{t('empty_title')}</strong>
-          <Button onClick={() => setInviting(true)}>{t('invite')}</Button>
-        </div>
       ) : (
-        <>
-          <Input
-            className={styles.search}
-            type="search"
-            placeholder={t('search')}
-            aria-label={t('search')}
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-          {shown.length === 0 ? (
-            <p className={styles.muted}>{t('no_matches')}</p>
-          ) : (
-            <Table data-people-list>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>
-                    <button type="button" className={styles.sortBtn} onClick={() => setSortBySeen(false)}>
-                      {t('col_person')}
-                      {!sortBySeen ? ' ▴' : ''}
-                    </button>
-                  </TableHead>
-                  <TableHead>{t('col_membership')}</TableHead>
-                  <TableHead>{model === 'roles' ? t('col_projects_roles') : t('col_projects_tenant')}</TableHead>
-                  {anySeen && (
-                    <TableHead>
-                      <button type="button" className={styles.sortBtn} onClick={() => setSortBySeen(true)}>
-                        {t('col_seen')}
-                        {sortBySeen ? ' ▾' : ''}
-                      </button>
-                    </TableHead>
-                  )}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {shown.map((p) => {
-                  const seen = lastSeen(p);
-                  return (
-                    <TableRow key={p.id} className={styles.row} onClick={() => setContact(p)} data-person={p.id}>
-                      <TableCell>
-                        <div className={styles.pcell}>
-                          <PersonPhoto name={p.name} url={p.avatarUrl} />
-                          <div>
-                            <button
-                              type="button"
-                              className={styles.pname}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setContact(p);
-                              }}
-                            >
-                              {p.name}
-                            </button>
-                            <div className={styles.muted}>{[p.email, describe(p)].filter(Boolean).join(' · ')}</div>
-                          </div>
-                        </div>
-                      </TableCell>
-                      <TableCell className={styles.muted}>{membershipLabel(p.role, t)}</TableCell>
-                      <TableCell>
-                        <ProjectStackCell
-                          stack={projectStack(projectRowsOf(p), model, STACK_MAX)}
-                          model={model}
-                          projectCount={orgProjects.length}
-                          hasHandle={gitHandles(activity.identities.get(p.id)?.aliases ?? []).length > 0}
-                          loading={activity.loading}
-                          t={t}
-                          onOpen={(r) => openProject(r.project)}
-                          onMore={() => setContact(p)}
-                        />
-                      </TableCell>
-                      {anySeen && (
-                        <TableCell>
-                          {online.has(p.id) ? (
-                            <Badge variant="success">{t('online')}</Badge>
-                          ) : (
-                            <span className={styles.muted} title={fullTime(seen, language)}>
-                              {relTime(seen, language, now)}
-                            </span>
-                          )}
-                        </TableCell>
-                      )}
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          )}
-        </>
+        <PeopleGrid rows={gridRows} anySeen={anySeen} cells={cells} />
       )}
 
       {contact && (

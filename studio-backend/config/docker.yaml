@@ -216,9 +216,16 @@ gears:
     config:
       vendor: "constructorfabric"
 
+  # Linked, and kept out of the selection: the Studio PDP
+  # (studio-authz-plugin) is the only "constructorfabric" authz plugin. The
+  # resolver keeps the first plugin it picks for the life of the process, and
+  # it picks among the plugins bound so far; with this one in the running, a
+  # PDP call made before studio-authz-plugin's `init` chose the static tenant
+  # clamp for good, and no organization joined by membership was reachable.
+  # A call that early now fails and is asked again, rather than choosing.
   static-authz-plugin:
     config:
-      vendor: "constructorfabric"
+      vendor: "constructorfabric-static"
       priority: 100
 
   tenant-resolver:
@@ -708,6 +715,14 @@ gears:
 
   # ── studio-product (a product's description by revision, ADR-0053) ──
   studio-product:
+    # Gear matches (docs/design/product-gear-match.md): the gears-matcher
+    # service on the stand's network. Its shared secret is
+    # STUDIO_GEARS_MATCHER_SECRET (docker-compose.yml, no default); without it
+    # the match routes answer 503 and the rest of the product is unchanged.
+    config:
+      gears_matcher:
+        base_url: "http://gears-matcher:8080"
+        secret_env: "STUDIO_GEARS_MATCHER_SECRET"
     database:
       server: "pg_main"
       dbname: "studio_product"

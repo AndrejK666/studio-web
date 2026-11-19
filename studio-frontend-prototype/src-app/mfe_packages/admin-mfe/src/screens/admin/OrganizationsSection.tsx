@@ -8,24 +8,12 @@
  * waiting on the caller's consent; and a new organization.
  *
  * The organization is picked in the path bar, as the prototype's admin header
- * picked it, so the table's rows do not switch it.
+ * picked it, so the list's rows do not switch it. The list is `OrganizationsGrid`.
  */
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { apiRegistry } from '@gears-frontx/react';
-import {
-  Badge,
-  Button,
-  Card,
-  CardContent,
-  Input,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@gears-frontx/ui-kit';
+import { Badge, Button, Card, CardContent, Input } from '@gears-frontx/ui-kit';
 import {
   AccountsApiService,
   TENANT_TYPES,
@@ -34,9 +22,10 @@ import {
   type Tenant,
 } from '@constructor-studio/mfe-shared';
 import { AdminApiService } from '../../api/AdminApiService';
-import type { Conversion, OrgMember } from '../../api/types';
-import { PLATFORM_ROOT_TENANT_ID, duplicateNames, memberName } from '../../model/members';
-import { ErrorLine, Header, errText, shortId, useAdmin, useConfirm } from './common';
+import type { Conversion } from '../../api/types';
+import { PLATFORM_ROOT_TENANT_ID } from '../../model/members';
+import { ErrorLine, Header, errText, useAdmin, useConfirm } from './common';
+import { OrganizationsGrid } from './OrganizationsGrid';
 import styles from './Admin.module.css';
 
 /** A logo is a small mark: what the backend keeps at most. */
@@ -155,7 +144,7 @@ export function OrganizationsSection() {
       ) : (
         <>
           {(platform || scope.orgs.length > 1) && (
-            <OrganizationsTable orgs={scope.orgs} workspaces={scope.workspaces} selectedId={selected?.id ?? null} />
+            <OrganizationsGrid orgs={scope.orgs} workspaces={scope.workspaces} selectedId={selected?.id ?? null} />
           )}
           {selected && (
             <OrganizationCard
@@ -171,120 +160,6 @@ export function OrganizationsSection() {
         </>
       )}
     </>
-  );
-}
-
-function OrganizationsTable({
-  orgs,
-  workspaces,
-  selectedId,
-}: {
-  orgs: Tenant[];
-  workspaces: Record<string, Tenant[]>;
-  selectedId: string | null;
-}) {
-  const { t } = useAdmin();
-  const [members, setMembers] = useState<Record<string, OrgMember[] | 'denied'>>({});
-  const [query, setQuery] = useState('');
-
-  useEffect(() => {
-    let live = true;
-    const api = apiRegistry.getService(AdminApiService);
-    void Promise.all(
-      orgs.map(async (org) => {
-        try {
-          return [org.id, await api.orgMembers(org.id)] as const;
-        } catch {
-          // Not an owner of this one: its room is not ours to see.
-          return [org.id, 'denied' as const] as const;
-        }
-      })
-    ).then((pairs) => live && setMembers(Object.fromEntries(pairs)));
-    return () => {
-      live = false;
-    };
-  }, [orgs]);
-
-  // Same-named organizations are the reason this table exists; flag them.
-  const duplicates = useMemo(() => duplicateNames(orgs), [orgs]);
-  const q = query.trim().toLowerCase();
-  const shown = orgs
-    .filter(
-      (o) =>
-        !q ||
-        [o.name, o.id, ...(workspaces[o.id] ?? []).map((w) => w.name)].some((s) => s.toLowerCase().includes(q))
-    )
-    .sort((a, b) => a.name.localeCompare(b.name));
-
-  return (
-    <Card data-org-table>
-      <CardContent className={styles.cardBody}>
-        <div className={styles.toolbar}>
-          <h3 className={styles.subtitle}>{t('org_all')}</h3>
-          <Input
-            className={styles.search}
-            value={query}
-            placeholder={t('org_search')}
-            aria-label={t('org_search')}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-        </div>
-        {orgs.length === 0 ? (
-          <p className={styles.muted}>{t('org_none')}</p>
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>{t('org_col_name')}</TableHead>
-                <TableHead>{t('org_col_workspaces')}</TableHead>
-                <TableHead>{t('org_col_owners')}</TableHead>
-                <TableHead className={styles.num}>{t('org_col_members')}</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {shown.map((org) => {
-                const room = members[org.id];
-                const list = room && room !== 'denied' ? room : null;
-                const owners = list?.filter((m) => m.role === 'owner' && m.status === 'active') ?? [];
-                const ws = workspaces[org.id] ?? [];
-                return (
-                  <TableRow key={org.id} data-org-row={org.id}>
-                    <TableCell>
-                      <div className={selectedId === org.id ? styles.selected : undefined}>
-                        <div className={styles.name}>
-                          {org.name}{' '}
-                          {duplicates.has(org.name.trim().toLowerCase()) && (
-                            <Badge variant="warning" title={t('org_same_name_hint')}>
-                              {t('org_same_name')}
-                            </Badge>
-                          )}
-                        </div>
-                        <div className={`${styles.sub} ${styles.mono}`} title={org.id}>
-                          {shortId(org.id)}
-                        </div>
-                      </div>
-                    </TableCell>
-                    <TableCell className={styles.sub}>{ws.length ? ws.map((w) => w.name).join(', ') : '—'}</TableCell>
-                    <TableCell className={styles.sub}>
-                      {room === undefined ? (
-                        '…'
-                      ) : room === 'denied' ? (
-                        t('org_not_yours')
-                      ) : owners.length ? (
-                        owners.map(memberName).join(', ')
-                      ) : (
-                        <Badge variant="warning">{t('no_owner')}</Badge>
-                      )}
-                    </TableCell>
-                    <TableCell className={styles.num}>{list ? list.length : room === 'denied' ? '—' : '…'}</TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-        )}
-      </CardContent>
-    </Card>
   );
 }
 

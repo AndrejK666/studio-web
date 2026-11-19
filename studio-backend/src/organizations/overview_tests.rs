@@ -23,6 +23,8 @@ fn run(
     project: &str,
 ) -> RunSummary {
     RunSummary {
+        id: Uuid::nil(),
+        tenant_id: ORG,
         task_type: "artifact.ingest".into(),
         state: state.into(),
         payload: json!({
@@ -38,6 +40,10 @@ fn run(
 
 fn pull(waiting: &str, on: &[&str], since: u32) -> OpenPull {
     OpenPull {
+        id: "pull-1".into(),
+        number: 1,
+        title: "Update checkout".into(),
+        url: None,
         project_id: Some("p1".into()),
         author: Some("dev".into()),
         waiting: waiting.into(),
@@ -538,6 +544,28 @@ fn with_kits(kits: &[&str]) -> Read {
 }
 
 #[test]
+fn overview_no_reviewer_queue_excludes_a_team_review() {
+    let now = datetime!(2026-10-19 12:00 UTC);
+    let mut facts = read(None);
+    facts.pulls = Some(vec![
+        pull("nobody", &[], 8),
+        OpenPull {
+            id: "team-review".into(),
+            ..pull("review", &[], 12)
+        },
+        OpenPull {
+            id: "recent".into(),
+            ..pull("nobody", &[], 2)
+        },
+    ]);
+    let dto = compose(ORG, &facts, now);
+    let rows = dto.pulls_without_reviewers.unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].id, "pull-1");
+    assert_eq!(dto.waiting_on.unwrap()[0].count, 1);
+}
+
+#[test]
 fn without_project_git_the_pull_requests_leave_and_the_rest_stands() {
     let now = datetime!(2026-10-19 12:00 UTC);
     let all = compose(ORG, &with_kits(&[GIT_KIT, COMPONENTS_KIT, COSTS_KIT]), now);
@@ -579,7 +607,7 @@ fn without_project_git_the_pull_requests_leave_and_the_rest_stands() {
     // The other blocks stay.
     assert_eq!(no_git.specs.failing, Some(1));
     assert!(no_git.workspaces[0].projects[0].broken);
-    assert_eq!(no_git.decisions.as_ref().unwrap().undecided, 2);
+    assert_eq!(no_git.decisions.as_ref().unwrap().undecided, 1);
     assert_eq!(
         no_git.kits.as_deref(),
         Some(&[COMPONENTS_KIT.to_owned()][..])
@@ -621,7 +649,7 @@ fn without_cost_view_every_money_field_is_null_and_the_rest_stands() {
         (queue.person_id.as_deref(), queue.who.as_deref()),
         (Some("person-ada"), Some("Ada"))
     );
-    assert_eq!(dto.decisions.as_ref().unwrap().undecided, 2);
+    assert_eq!(dto.decisions.as_ref().unwrap().undecided, 1);
     assert!(dto.workspaces[0].projects[0].broken);
     assert!(dto.workspaces[0].spend.is_none());
 

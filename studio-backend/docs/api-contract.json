@@ -1,6 +1,6 @@
 {
   "note": "The API surface studio-backend declares. Generated from source by `cargo run --quiet -- api-contract`; the rules it must follow are docs/api-conventions.md.",
-  "open_violations": 252,
+  "open_violations": 255,
   "operations": [
     {
       "method": "DELETE",
@@ -774,6 +774,23 @@
       ],
       "errors": [
         "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-components-catalog/v1/components/{name}",
+      "operation_id": "studio_components_catalog.get_component",
+      "tag": "StudioComponentsCatalog",
+      "summary": "One component's page: its type, what it provides and needs, and who stands for it",
+      "authenticated": true,
+      "responses": [
+        "ComponentDetailDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
         "500"
       ]
     },
@@ -2774,6 +2791,7 @@
         "ProjectPathDto"
       ],
       "errors": [
+        "400",
         "401",
         "404",
         "500"
@@ -3094,6 +3112,45 @@
       "responses": [
         "KitDetailDto"
       ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-kits/v1/catalog/{kit_slug}/archive",
+      "operation_id": "studio_kits.get_kit_archive",
+      "tag": "StudioKits",
+      "summary": "An archive of a kit's contents",
+      "authenticated": true,
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-kits/v1/catalog/{kit_slug}/kit.gdl",
+      "operation_id": "studio_kits.get_kit_gdl",
+      "tag": "StudioKits",
+      "summary": "A kit's manifest as kit.gdl",
+      "authenticated": true,
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-kits/v1/catalog/{kit_slug}/manifest",
+      "operation_id": "studio_kits.get_kit_manifest",
+      "tag": "StudioKits",
+      "summary": "A kit's source manifest, as written",
+      "authenticated": true,
       "errors": [
         "401",
         "404",
@@ -3440,6 +3497,21 @@
     },
     {
       "method": "GET",
+      "path": "/studio-organizations/v1/project-creation-types",
+      "operation_id": "studio_organizations.list_project_creation_types",
+      "tag": "StudioOrganizations",
+      "summary": "Kits that define a project type",
+      "authenticated": true,
+      "responses": [
+        "ProjectTypeKitsDto"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-organizations/v1/project-creations/{run_id}",
       "operation_id": "studio_organizations.get_project_creation",
       "tag": "StudioOrganizations",
@@ -3523,6 +3595,22 @@
     },
     {
       "method": "GET",
+      "path": "/studio-product/v1/assembly-strategy",
+      "operation_id": "studio_product.get_assembly_strategy",
+      "tag": "StudioProduct",
+      "summary": "How the organization's products are assembled by default",
+      "authenticated": true,
+      "responses": [
+        "AssemblyStrategyDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-product/v1/gdl-file",
       "operation_id": "studio_product.get_gdl_file",
       "tag": "StudioProduct",
@@ -3547,6 +3635,71 @@
       "authenticated": true,
       "responses": [
         "GearExplanationListDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-product/v1/gear-match-usage",
+      "operation_id": "studio_product.list_gear_match_usage",
+      "tag": "StudioProduct",
+      "summary": "How the organization's projects use the gears matcher",
+      "authenticated": true,
+      "responses": [
+        "GearMatchUsageDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-product/v1/gear-matches",
+      "operation_id": "studio_product.list_gear_matches",
+      "tag": "StudioProduct",
+      "summary": "The project's gear matches, newest first",
+      "authenticated": true,
+      "responses": [
+        "GearMatchListDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-product/v1/gear-matches/{match_id}",
+      "operation_id": "studio_product.get_gear_match",
+      "tag": "StudioProduct",
+      "summary": "One gear match, its report read per requirement",
+      "authenticated": true,
+      "responses": [
+        "GearMatchDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-product/v1/gear-matches/{match_id}/diff",
+      "operation_id": "studio_product.get_gear_match_diff",
+      "tag": "StudioProduct",
+      "summary": "What changed between two gear matches",
+      "authenticated": true,
+      "responses": [
+        "GearMatchDiffDto"
       ],
       "errors": [
         "401",
@@ -3621,6 +3774,21 @@
       "authenticated": true,
       "responses": [
         "ExtensionPointListDto"
+      ],
+      "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-product/v1/inbox/gear-match-questions",
+      "operation_id": "studio_product.list_inbox_gear_match_questions",
+      "tag": "StudioProduct",
+      "summary": "Questions the caller's gear matches wait on",
+      "authenticated": true,
+      "responses": [
+        "GearMatchInboxListDto"
       ],
       "errors": [
         "401",
@@ -3735,6 +3903,22 @@
       ],
       "errors": [
         "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-product/v1/project-assembly-strategy",
+      "operation_id": "studio_product.get_project_assembly_strategy",
+      "tag": "StudioProduct",
+      "summary": "How the project's product is assembled",
+      "authenticated": true,
+      "responses": [
+        "AssemblyStrategyDto"
+      ],
+      "errors": [
+        "401",
+        "404",
         "500"
       ]
     },
@@ -4047,6 +4231,7 @@
         "MappingPlanDto"
       ],
       "errors": [
+        "400",
         "401",
         "404",
         "500"
@@ -4139,6 +4324,7 @@
       "errors": [
         "400",
         "401",
+        "404",
         "500"
       ]
     },
@@ -4394,6 +4580,22 @@
         "InboxMarkListDto"
       ],
       "errors": [
+        "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-user/v1/me/inbox/count",
+      "operation_id": "studio_user.get_my_inbox_count",
+      "tag": "StudioUser",
+      "summary": "How many items wait on the caller, without the items",
+      "authenticated": true,
+      "responses": [
+        "InboxCountDto"
+      ],
+      "errors": [
+        "400",
         "401",
         "500"
       ]
@@ -6910,6 +7112,40 @@
     },
     {
       "method": "POST",
+      "path": "/studio-product/v1/gear-matches",
+      "operation_id": "studio_product.start_gear_match",
+      "tag": "StudioProduct",
+      "summary": "Match gears to the project's specifications with the gears-matcher",
+      "authenticated": true,
+      "request": "StartGearMatchRequest",
+      "responses": [
+        "GearMatchStartedDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-product/v1/gear-matches/{match_id}/cancel",
+      "operation_id": "studio_product.cancel_gear_match",
+      "tag": "StudioProduct",
+      "summary": "Stop a gear match and the matcher's run",
+      "authenticated": true,
+      "responses": [
+        "GearMatchItemDto"
+      ],
+      "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-product/v1/gearbox/brings",
       "operation_id": "studio_product.query_gear_brings",
       "tag": "StudioProduct",
@@ -8230,6 +8466,24 @@
     },
     {
       "method": "PUT",
+      "path": "/studio-product/v1/assembly-strategy",
+      "operation_id": "studio_product.upsert_assembly_strategy",
+      "tag": "StudioProduct",
+      "summary": "Set how the organization's products are assembled by default",
+      "authenticated": true,
+      "request": "SetAssemblyStrategyRequest",
+      "responses": [
+        "AssemblyStrategyDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
       "path": "/studio-product/v1/gear-explanations/{gear_id}",
       "operation_id": "studio_product.update_gear_explanation",
       "tag": "StudioProduct",
@@ -8243,6 +8497,42 @@
         "400",
         "401",
         "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-product/v1/gear-match-answers",
+      "operation_id": "studio_product.upsert_gear_match_answer",
+      "tag": "StudioProduct",
+      "summary": "Answer a question a gear match asks",
+      "authenticated": true,
+      "request": "GearMatchAnswerRequest",
+      "responses": [
+        "GearMatchNoteDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-product/v1/gear-match-decisions",
+      "operation_id": "studio_product.upsert_gear_match_decision",
+      "tag": "StudioProduct",
+      "summary": "Accept or reject a gear a match proposes",
+      "authenticated": true,
+      "request": "GearMatchDecisionRequest",
+      "responses": [
+        "GearMatchNoteDto"
+      ],
+      "errors": [
+        "400",
+        "401",
         "404",
         "500"
       ]
@@ -8278,6 +8568,24 @@
       "errors": [
         "400",
         "401",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-product/v1/project-assembly-strategy",
+      "operation_id": "studio_product.upsert_project_assembly_strategy",
+      "tag": "StudioProduct",
+      "summary": "Choose how the project's product is assembled",
+      "authenticated": true,
+      "request": "SetAssemblyStrategyRequest",
+      "responses": [
+        "AssemblyStrategyDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
         "500"
       ]
     },

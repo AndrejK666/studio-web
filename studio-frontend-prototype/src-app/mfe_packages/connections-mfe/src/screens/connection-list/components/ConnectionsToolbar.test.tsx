@@ -31,17 +31,17 @@ async function mount(busy: boolean) {
 
   render(
     <FrontXProvider app={mfeApp} mfeBridge={mfeContextValue(bridge)}>
-      <ConnectionsToolbar query="" onQueryChange={vi.fn()} busy={busy} />
+      <ConnectionsToolbar busy={busy} />
     </FrontXProvider>
   );
 }
 
 describe('ConnectionsToolbar', () => {
-  it('renders the title, the search box and Connect source', async () => {
+  it("renders the title and Connect source; the search box is the grid's", async () => {
     await mount(false);
 
     expect(screen.getByRole('heading', { name: en.title })).toBeTruthy();
-    expect(screen.getByRole('searchbox', { name: en.search_placeholder })).toBeTruthy();
+    expect(screen.queryByRole('searchbox')).toBeNull();
     expect(screen.getByRole('button', { name: en.connect_source })).toBeTruthy();
   });
 

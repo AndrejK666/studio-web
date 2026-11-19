@@ -45,10 +45,12 @@ use toolkit::Gear;
 use toolkit::client_hub::{ClientHub, ClientScope};
 use toolkit::context::GearCtx;
 use toolkit::gts::PluginV1;
+use toolkit::gts_publication::GtsPublicationInputs;
+use toolkit::plugins::bind_plugin_instances;
 use toolkit_security::SecurityContext;
 use toolkit_security::pep_properties;
 use tracing::{info, warn};
-use types_registry_sdk::{RegisterResult, TypesRegistryClient};
+use types_registry_sdk::GtsId;
 use uuid::Uuid;
 
 pub(crate) const INSTANCE_ID: &str = "cf.studio.authz_resolver.plugin.v1";
@@ -75,9 +77,20 @@ impl Default for StudioAuthZPluginConfig {
 
 /* ── Gear ── */
 
+/// The plugin instance is published from configuration (`entities`), the way
+/// the platform's own plugins are, and `init` runs only once it is admitted.
+///
+/// It used to be written with `TypesRegistryClient::register` from `init`.
+/// Since types-registry 0.6 that legacy path is not what the authz resolver
+/// lists: it selects from the persisted registry, which held only the static
+/// plugin, so every decision went to the static tenant clamp. A person could
+/// then reach only the tenant their token names, never an organization they
+/// joined by invitation, and none of the decisions below (roles, the access
+/// config's owner rule, the mirror) were made at all.
 #[toolkit::gear(
     name = "studio-authz-plugin",
-    deps = [types_registry, account_management]
+    deps = [types_registry, account_management],
+    gts_publication(entities = Self::plugin_instance),
 )]
 pub struct StudioAuthZPlugin {
     service: OnceLock<Arc<Service>>,
@@ -90,21 +103,26 @@ impl Default for StudioAuthZPlugin {
     }
 }
 
+impl StudioAuthZPlugin {
+    /// The publication's config-only documents: the plugin instance.
+    fn plugin_instance(
+        inputs: &GtsPublicationInputs<'_>,
+    ) -> anyhow::Result<Vec<(GtsId, serde_json::Value)>> {
+        let cfg: StudioAuthZPluginConfig = inputs.config_or_default()?;
+        let (id, document) = PluginV1::<AuthZResolverPluginSpecV1>::build_registration(
+            INSTANCE_ID,
+            cfg.vendor,
+            cfg.priority,
+        )?;
+        Ok(vec![(GtsId::try_new(id.as_ref())?, document)])
+    }
+}
+
 #[async_trait]
 impl Gear for StudioAuthZPlugin {
     async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
         let cfg: StudioAuthZPluginConfig = ctx.config_or_default()?;
         info!(vendor = %cfg.vendor, priority = cfg.priority, "Loaded Studio AuthZ plugin config");
-
-        let (instance_id, instance_json) =
-            PluginV1::<AuthZResolverPluginSpecV1>::build_registration(
-                INSTANCE_ID,
-                cfg.vendor.clone(),
-                cfg.priority,
-            )?;
-        let registry = ctx.client_hub().get::<dyn TypesRegistryClient>()?;
-        let results = registry.register(vec![instance_json]).await?;
-        RegisterResult::ensure_all_ok(&results)?;
 
         let am = ctx.client_hub().get::<dyn AccountManagementClient>()?;
         let service = Arc::new(Service::new(am, ctx.client_hub()));
@@ -112,13 +130,15 @@ impl Gear for StudioAuthZPlugin {
             .set(service.clone())
             .map_err(|_| anyhow::anyhow!("{} gear already initialized", Self::MODULE_NAME))?;
 
+        // The instance was admitted before `init`: bind the scoped client to
+        // it, as the admitted manifest lists it.
         let api: Arc<dyn AuthZResolverPluginClient> = service;
-        ctx.client_hub()
-            .register_scoped::<dyn AuthZResolverPluginClient>(
-                ClientScope::gts_id(&instance_id),
-                api,
-            );
-        info!(instance_id = %instance_id, "Studio AuthZ plugin registered");
+        bind_plugin_instances::<AuthZResolverPluginSpecV1, _>(
+            &ctx.client_hub(),
+            ctx.gts_publication_manifest()?.documents(),
+            &api,
+        )?;
+        info!("Studio AuthZ plugin registered");
         Ok(())
     }
 }
@@ -154,9 +174,11 @@ impl AccessConfig {
 
     /// Does anybody own this organization?
     fn has_an_owner(&self) -> bool {
-        self.grants
-            .iter()
-            .any(|g| g.role_key == crate::access_config::ROLE_OWNER && g.scope_type == "org")
+        self.grants.iter().any(|g| {
+            g.subject_type == "member"
+                && g.role_key == crate::access_config::ROLE_OWNER
+                && g.scope_type == "org"
+        })
     }
 
     /// Does `subject` hold `privilege` across the whole organization?
@@ -190,8 +212,8 @@ struct GrantDef {
     role_key: String,
     #[serde(rename = "scopeType")]
     scope_type: String,
-    #[serde(rename = "scopeId")]
-    scope_id: String,
+    #[serde(rename = "scopeId", default)]
+    scope_id: Option<String>,
 }
 
 /* ── Service ── */
@@ -458,11 +480,21 @@ impl Service {
         let allowed = match self.read_access_config(&sec, organization).await {
             ConfigRead::Absent => true,
             ConfigRead::Unreadable => false,
+            ConfigRead::Found(cfg) if !cfg.has_an_owner() => true,
             ConfigRead::Found(cfg) => {
-                cfg.owns(&subjects)
-                    || !cfg.has_an_owner()
+                let eligible = cfg.owns(&subjects)
                     || (cfg.model == "roles"
-                        && cfg.grants_org_privilege(&subjects, "access.manage"))
+                        && cfg.grants_org_privilege(&subjects, "access.manage"));
+                if !eligible {
+                    false
+                } else if let Some(reader) = self.organization_reader() {
+                    reader
+                        .organizations_of(&subject)
+                        .await
+                        .is_ok_and(|orgs| orgs.contains(&organization))
+                } else {
+                    false
+                }
             }
         };
 
@@ -568,9 +600,10 @@ enum ConfigRead {
 /// What the role path decides, before the answer is shaped into constraints.
 #[derive(Debug, PartialEq, Eq)]
 enum RoleDecision {
-    /// Answer with the tenant clamp: this organization is not on the roles
-    /// model, or the caller holds the privilege across the whole organization.
+    /// Keep the legacy membership-based reach outside the roles model.
     Clamp,
+    /// An organization-wide grant covers only the subtree under evaluation.
+    Tenant,
     /// Refuse.
     Deny,
     /// Narrow the clamp to these project scopes.
@@ -621,20 +654,25 @@ fn decide(
         // before the ladder was seeded — strips its owner of every privilege,
         // `access.manage` included, leaving nobody able to repair it. The
         // ladder is for editing; it never decides whether an owner is an owner.
-        let role_has = g.role_key == crate::access_config::ROLE_OWNER
-            || cfg
-                .roles
+        let role_has = if g.role_key == crate::access_config::ROLE_OWNER {
+            g.subject_type == "member" && g.scope_type == "org"
+        } else {
+            cfg.roles
                 .iter()
                 .find(|r| r.key == g.role_key)
-                .is_some_and(|r| crate::access_config::carries(&r.privileges, privilege));
+                .is_some_and(|r| crate::access_config::carries(&r.privileges, privilege))
+        };
         if !role_has {
             continue;
         }
         match g.scope_type.as_str() {
-            // Carries the privilege across the whole tenant: exactly the clamp.
-            "org" => return RoleDecision::Clamp,
+            "org" => return RoleDecision::Tenant,
             "project" => {
-                if let Ok(pid) = Uuid::parse_str(&g.scope_id) {
+                if let Some(pid) = g
+                    .scope_id
+                    .as_deref()
+                    .and_then(|id| Uuid::parse_str(id.trim()).ok())
+                {
                     project_scopes.push(pid);
                 }
             }
@@ -873,9 +911,14 @@ impl Plan {
             return Self::Mirror(tid);
         }
 
-        // First-party / unrestricted token (`token_scopes` contains "*"): a
-        // platform / service caller is never role-gated — anti-lockout backstop.
-        if request.context.token_scopes.iter().any(|s| s == "*") {
+        let unrestricted = request.context.token_scopes.iter().any(|s| s == "*");
+        let service_subject = matches!(
+            request.subject.subject_type.as_deref(),
+            Some("service" | SERVICE_SUBJECT_TYPE)
+        );
+        // The portal can also have "*" scopes. Protected metadata needs an
+        // explicitly typed service principal to take the service path.
+        if unrestricted && service_subject {
             return Self::Clamp(tid);
         }
 
@@ -979,6 +1022,7 @@ impl AuthZResolverPluginClient for Service {
                 let tids = self.reachable_tenants(&request, tid).await;
                 return Ok(tenant_clamp(&request, &tids));
             }
+            RoleDecision::Tenant => return Ok(tenant_clamp(&request, &[tid])),
             RoleDecision::Deny => return Ok(deny()),
             RoleDecision::Narrow(scopes) => scopes,
         };
@@ -1110,23 +1154,11 @@ fn deny() -> EvaluationResponse {
     }
 }
 
-/// Map a platform request `(resource_type, action)` to a Studio privilege id
-/// (the portal's `access.ts` catalogue). TODO(step 4): complete the table and
-/// key off the real Studio GTS resource-type ids.
 /// The privilege a resource type and action need, when this deployment
 /// role-gates them.
 ///
-/// **Maps only the domain object resource (ADR-0035).** Everything else is
-/// answered by the tenant clamp, for the reason that held before it: `studio-project` (the portal's "Work") has been retired —
-/// projects are AM tenants now, and their access is governed by tenant
-/// membership rather than by a Studio privilege grant. Nothing is role-mapped,
-/// so every request is answered by the tenant clamp and the grant evaluation in
-/// [`AuthZResolverPluginClient::evaluate`] is unreachable.
-///
-/// That is a stage, not a leftover: the roles, grants and scopes it walks are
-/// the model the access config already carries. Mapping the first resource type
-/// here is what turns it on — and, through [`Plan`], what makes the config
-/// worth reading.
+/// Only domain object reads and writes are mapped here (ADR-0035).
+/// Administrative privileges are checked by the gears that own each operation.
 fn privilege_for(resource_type: &str, action: &str) -> Option<&'static str> {
     match (resource_type, action) {
         // Domain objects (ADR-0035): which rows a person may read or write is
@@ -1384,12 +1416,27 @@ mod tests {
         assert_eq!(Plan::for_request(&req), Plan::Deny);
     }
 
-    /// The anti-lockout backstop: a first-party caller is never role-gated, so
-    /// a broken access config can never lock the platform out of itself.
     #[test]
-    fn an_unrestricted_token_is_clamped_without_a_config_read() {
-        let mut req = request(STUDIO_RESOURCES[0]);
+    fn a_wildcard_scope_preserves_service_access_and_still_checks_user_roles() {
+        let mut req = request(crate::domain_model::DOMAIN_OBJECT_RESOURCE);
+        req.action.name = "read".to_owned();
         req.context.token_scopes = vec!["*".to_string()];
+        assert_eq!(
+            Plan::for_request(&req),
+            Plan::Roles {
+                tid: TENANT,
+                privilege: "domain.view"
+            }
+        );
+        req.subject.subject_type = None;
+        assert_eq!(
+            Plan::for_request(&req),
+            Plan::Roles {
+                tid: TENANT,
+                privilege: "domain.view"
+            }
+        );
+        req.subject.subject_type = Some(SERVICE_SUBJECT_TYPE.to_owned());
         assert_eq!(Plan::for_request(&req), Plan::Clamp(TENANT));
     }
 
@@ -1447,14 +1494,18 @@ mod tests {
     #[test]
     fn a_write_to_the_access_config_is_not_answered_by_the_clamp() {
         for action in ["write", "delete"] {
-            assert_eq!(
-                Plan::for_request(&metadata_request(action, ACCESS_METADATA_TYPE, Some(ORG))),
-                Plan::AccessConfigWrite {
-                    tid: TENANT,
-                    organization: ORG
-                },
-                "{action} on the access config fell through to the clamp"
-            );
+            let mut request = metadata_request(action, ACCESS_METADATA_TYPE, Some(ORG));
+            for scopes in [vec![], vec!["*".to_owned()]] {
+                request.context.token_scopes = scopes;
+                assert_eq!(
+                    Plan::for_request(&request),
+                    Plan::AccessConfigWrite {
+                        tid: TENANT,
+                        organization: ORG
+                    },
+                    "{action} on the access config fell through to the clamp"
+                );
+            }
         }
     }
 
@@ -1490,6 +1541,8 @@ mod tests {
             );
             let mut service = metadata_request("write", type_id, Some(ORG));
             service.context.token_scopes = vec!["*".to_owned()];
+            assert_eq!(Plan::for_request(&service), Plan::Deny);
+            service.subject.subject_type = Some(SERVICE_SUBJECT_TYPE.to_owned());
             assert_eq!(Plan::for_request(&service), Plan::Clamp(TENANT));
         }
         // Bindings are a project's own setting, which its members change.
@@ -1649,10 +1702,43 @@ mod tests {
         for privilege in crate::access_config::PRIVILEGES {
             assert_eq!(
                 decide(&one("ada"), &cfg, &[], privilege),
-                RoleDecision::Clamp,
+                RoleDecision::Tenant,
                 "an owner was denied {privilege} because the document does not define the role"
             );
         }
+    }
+
+    #[test]
+    fn a_legacy_org_grant_can_omit_the_scope_id() {
+        let cfg = found(
+            "roles",
+            serde_json::json!([]),
+            serde_json::json!([{
+                "subjectType": "member", "subjectId": "ada", "roleKey": "owner", "scopeType": "org"
+            }]),
+        );
+        assert_eq!(
+            decide(&one("ada"), &cfg, &[], "access.manage"),
+            RoleDecision::Tenant
+        );
+    }
+
+    #[test]
+    fn ownership_requires_an_organization_wide_member_grant() {
+        let cfg = found(
+            "roles",
+            serde_json::json!([{"key": "owner", "privileges": ["*"]}]),
+            serde_json::json!([
+                {"subjectType": "team", "subjectId": "team", "roleKey": "owner", "scopeType": "org"},
+                {"subjectType": "member", "subjectId": "ada", "roleKey": "owner", "scopeType": "project",
+                 "scopeId": "11111111-1111-1111-1111-111111111111"}
+            ]),
+        );
+        assert_eq!(
+            decide(&one("ada"), &cfg, &one("team"), "people.manage"),
+            RoleDecision::Deny
+        );
+        assert!(matches!(&cfg, ConfigRead::Found(config) if !config.has_an_owner()));
     }
 
     /// A role that IS defined is still resolved through the document, so the
@@ -1666,7 +1752,7 @@ mod tests {
         );
         assert_eq!(
             decide(&one("ada"), &cfg, &[], "people.manage"),
-            RoleDecision::Clamp
+            RoleDecision::Tenant
         );
         assert_eq!(
             decide(&one("ada"), &cfg, &[], "access.manage"),
@@ -1888,5 +1974,77 @@ mod tests {
             Plan::for_request(&request("gts.cf.studio.github_mirror.v1~")),
             Plan::Clamp(TENANT)
         );
+    }
+}
+
+#[cfg(test)]
+mod selection_tests {
+    //! Whether the authz resolver can pick this PDP at all.
+    //!
+    //! It picks among the instances the persisted registry lists and that are
+    //! bound by then, lowest priority first, and keeps its pick for the life
+    //! of the process. This PDP was invisible to that listing and lost to the
+    //! static tenant clamp on every boot, and nothing failed: a person simply
+    //! could not reach an organization they had joined by invitation.
+
+    use super::*;
+
+    struct NoConfig;
+    impl toolkit::config::ConfigProvider for NoConfig {
+        fn get_gear_config(&self, _gear: &str) -> Option<&serde_json::Value> {
+            None
+        }
+    }
+
+    /// The shipped deployment profiles, embedded so the test needs no cwd.
+    const PROFILES: [(&str, &str); 6] = [
+        ("dev.yaml", include_str!("../../config/dev.yaml")),
+        ("docker.yaml", include_str!("../../config/docker.yaml")),
+        ("oidc.yaml", include_str!("../../config/oidc.yaml")),
+        ("postgres.yaml", include_str!("../../config/postgres.yaml")),
+        ("k8s.yaml", include_str!("../../config/k8s.yaml")),
+        (
+            "stand-product.yaml",
+            include_str!("../../config/stand-product.yaml"),
+        ),
+    ];
+
+    #[test]
+    fn the_instance_is_published_from_configuration() {
+        let inputs = GtsPublicationInputs::new("studio-authz-plugin", &NoConfig);
+        let documents = StudioAuthZPlugin::plugin_instance(&inputs).expect("the instance builds");
+        assert_eq!(documents.len(), 1);
+        let (id, document) = &documents[0];
+        let id: &str = id.as_ref();
+        assert!(id.ends_with(&format!("~{INSTANCE_ID}")), "{id}");
+        assert_eq!(document["id"], id);
+        assert_eq!(document["vendor"], "constructorfabric");
+        assert_eq!(document["priority"], 40);
+    }
+
+    /// The resolver's vendor has exactly one authz plugin in every profile:
+    /// this one. A second (the static clamp) wins whenever a PDP call comes
+    /// before this gear's `init` binds it, and keeps winning until restart.
+    #[test]
+    fn every_profile_leaves_the_studio_pdp_alone_in_its_vendor() {
+        for (name, text) in PROFILES {
+            let yaml: serde_yaml::Value = serde_yaml::from_str(text).expect(name);
+            let gears = &yaml["gears"];
+            let vendor_of =
+                |gear: &str| gears[gear]["config"]["vendor"].as_str().map(str::to_owned);
+            let resolver = vendor_of("authz-resolver")
+                .unwrap_or_else(|| panic!("{name}: no authz-resolver vendor"));
+            let studio = vendor_of("studio-authz-plugin")
+                .unwrap_or_else(|| StudioAuthZPluginConfig::default().vendor);
+            assert_eq!(
+                studio, resolver,
+                "{name}: the Studio PDP is not the resolver's vendor"
+            );
+            assert_ne!(
+                vendor_of("static-authz-plugin").as_deref(),
+                Some(resolver.as_str()),
+                "{name}: the static clamp competes with the Studio PDP"
+            );
+        }
     }
 }

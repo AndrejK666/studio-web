@@ -379,21 +379,57 @@ read a kit's types or point at its tabs today:
 
 ## 8. Gear-held types outside the 63
 
-A gear adds these through `ensure_type`, and they are not in the seed. They are listed so
-that the phases cover them. Their declarations stay in the gear's layer, and their tabs
-and screens belong to the kit named here:
+**Current as of 2026-11-12** (`main` at 68f7cfd1), read from the code, not kept by hand.
+ADR-0071 replaces this list with a build test: every type a gear declares is claimed by
+exactly one built-in kit or is listed as a core gear type.
 
-| Gear | Types | Kit |
-|---|---|---|
-| `studio-documents` | `studio-document`, `document-binding`, `document-analysis`, `spec-extraction`, `spec-judgement`, `fact-review`, `finding-decision`, `glossary-decision`, `application-part`, `delivery-scope`, `delivery-limit`, `delivery-scope-version`, `document-type`, `decision`, `capability` | project-specs; `spec-extraction`, `fact-review`, `finding-decision`, `glossary-decision` with project-domain-model |
-| `studio-artifact-ingest` | `source-account`, `mapping-decision`, `ci-run`, `ci-job`, `product-build`, `build-artifact`, `release` | `source-account` core (sources); `ci-*` project-tests; builds and releases product-releases; `mapping-decision` product-releases |
-| `studio-components-catalog`, `studio-product` | `gear`, `gear-version`, `gear-profile`, `catalog-kit`, `frontx-package`, `component-field-schema`, `component-snapshot`, `roadmap-item`, `project-gear-repository`, `project-product`, `gear-explanation` | components; `project-product`, `gear-explanation` product-releases |
-| `studio-environments` | `deployment-environment`, `environment-binding`, `environment-config-secret`, `deployment` | org-infrastructure; `deployment` product-releases |
-| `studio-usage` | `model-price`, `budget` | org-costs |
-| `studio-reports` | `report-source` | org-reports |
-| `studio-organizations` | `project-type` | project-lifecycle |
-| `studio-kits`, `studio-connector` | `kit-installation`, `connector-connection` | core |
-| storage infrastructure | `tenant-document`, `text-chunk` | core |
+A gear adds these through `ensure_type` (its `TypeNeed`), and they are not in the seed:
+**53 types**. Gears also declare 12 of the seed's types, which §3 lists: `repository`,
+`commit`, `repository-file`, `text-content`, `pull-request`, `work-item`, `comment` and
+`finding` (the artifact sync), `review-request`, `approval` and `lifecycle-stage`
+(`studio-documents`), and `approval-request` (the catalogue). Their declarations stay in
+the gear's layer. **None of the 53 has a kit in code today**: `declare_gear_type`
+(`domain_model/gear_declarations.rs` 62–76) sets `meta.kit` only from the seed's
+annotation or `moved_to_kits`, and none of them is in either. The "Screens today" column
+is the kit whose screen shows the data; the last column is ADR-0071's proposed claim.
+
+"Held" types have `held_by` set to the gear; "open" types are left to the generic writes
+too.
+
+| Gear | Types (held unless marked open) | Declared in | Screens today | Claimed by (ADR-0071) |
+|---|---|---|---|---|
+| `studio-documents` | `document-type`, `document-analysis`, `spec-upload`, `studio-document`, `document-binding` | `documents/data.rs` `row!` at 56, 73, 161, 196, 218 | project-specs | project-specs |
+| `studio-documents` | `decision` (open) | `documents/review_store.rs` 41, 93–114 | project-specs | project-specs |
+| `studio-documents` | `spec-extraction`, `spec-judgement`, `fact-review`, `finding-decision`, `glossary-decision`, `application-part` | `documents/data.rs` `row!` at 90, 111, 127, 143, 180, 246 | project-domain-model, project-issues (Issues reads the project domain model) | project-domain-model |
+| `studio-documents` | `capability` (open) | `documents/process_store.rs` 87–119 | project-domain-model | project-domain-model |
+| `studio-documents` | `delivery-scope`, `delivery-limit`, `delivery-scope-version` | `documents/data.rs` `row!` at 266, 289, 309 | project-lifecycle | project-lifecycle |
+| `studio-documents` | `record-chunk` | `documents/model_table.rs` 47, 96 (chunks of any table row over graph-storage's payload limit) | none | core |
+| `studio-artifact-ingest` | `source-account` | `artifact_ingest/model_store.rs` 59–75 | Sources (shell) | core |
+| `studio-artifact-ingest` | `ci-run`, `ci-job` | `artifact_ingest/model_store.rs` 59–75 | project-tests | project-tests |
+| `studio-artifact-ingest` | `product-build`, `build-artifact`, `release` | `artifact_ingest/model_store.rs` 59–75 | product-releases, project-artifacts | delivery |
+| `studio-artifact-ingest` | `mapping-decision` | `artifact_ingest/model_store.rs` 59–75 | product-releases (Product) | project-product |
+| `studio-components-catalog` | `gear`, `gear-version`, `gear-profile`, `catalog-kit`, `frontx-package`, `catalog-service`, `component-field-schema`, `component-snapshot`, `roadmap-item`, `catalog-source` | `catalog_graph/model_sink.rs` 37–140 (`TYPES`), held where `owns` (242–244) | components | components |
+| `studio-components-catalog` | `registry-entry`, `registry-occurrence`, `registry-read`, `registry-settings`, `registry-decision` | `catalog_graph/model_sink.rs` 37–140 | components (organization registry) | components |
+| `studio-product` | `project-gear-repository`, `project-product` | `catalog_graph/model_sink.rs` (shared `TYPES`); `catalog_graph/gts.rs` 351 `PRODUCT_NODE_TYPES` | product-releases (Product) | project-product |
+| `studio-product` | `gear-explanation` | `product/explanations.rs` 42–49 | product-releases (Product) | project-product |
+| `studio-environments` | `deployment-environment`, `environment-binding`, `environment-config-secret` | `environments/mod.rs` 86–118 | org-infrastructure | delivery |
+| `studio-environments` | `deployment` | `environments/mod.rs` 120–125 | product-releases (Releases) | delivery |
+| `studio-usage` | `model-price`, `budget` | `usage/mod.rs` 54–73 | org-costs | org-costs |
+| `studio-reports` | `report-source` | `reports/store.rs` 92, 167–186 | org-reports | org-reports |
+| `studio-organizations` | `project-type` | `organizations/project_types.rs` 28–35 | project-lifecycle (Project templates) | project-lifecycle |
+| `studio-kits` | `kit-installation` | `kit_registry/service.rs` 17–24 | Kits (shell) | core |
+| `studio-connector` | `connector-connection` | `connectors/gts.rs` 83–90 | org-connections | core |
+| `studio-backend` | `tenant-document` | `model_metadata.rs` 90, 228 | none (every gear's settings document) | core |
+
+Counts: `studio-documents` 17, `studio-artifact-ingest` 7, `studio-components-catalog` 15,
+`studio-product` 3, `studio-environments` 4, `studio-usage` 2, and one each for
+`studio-reports`, `studio-organizations`, `studio-kits`, `studio-connector` and
+`studio-backend`: 53.
+
+What changed against the list this section held before: it lacked `spec-upload`,
+`record-chunk`, `catalog-service`, `catalog-source` and the five `registry-*` types, and it
+named a `text-chunk` type that no code declares (the chunk type is `record-chunk`,
+declared by `studio-documents`).
 
 ## 9. Sources
 

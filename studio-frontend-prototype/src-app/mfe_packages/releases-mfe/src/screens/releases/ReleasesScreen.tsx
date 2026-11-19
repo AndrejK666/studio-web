@@ -1,7 +1,7 @@
 /**
  * Project › Releases (ADR-0056 §4), the prototype's ProjectReleases
  * (releases-tab.tsx at 00828880) carried over as the built-in kit
- * `product-releases` (ADR-0069 §5): how the project's product goes out.
+ * `delivery` (Builds, releases & environments, ADR-0071 step 5) (ADR-0069 §5): how the project's product goes out.
  *
  *   - The header says where the product stands, read from the ladder
  *     (releaseStatus), with Deploy to…: one dialog listing every target,
@@ -33,9 +33,9 @@ import React, { useCallback, useEffect, useState } from 'react';
 import type { ChildMfeBridge } from '@gears-frontx/react';
 import { useSharedProperty } from '@gears-frontx/react';
 import { Badge, Button, Skeleton, Tabs, TabsList, TabsTrigger } from '@gears-frontx/ui-kit';
-import { STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT, isNotFound, openScreen, useHostChrome } from '@constructor-studio/mfe-shared';
+import { STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT, isNotFound, openScreen, screenView, useHostChrome, useScreenAvailability } from '@constructor-studio/mfe-shared';
 import type { Deployment, PathAction, ProjectPath, ProjectTargets } from '../../api/types';
-import { deploymentFromSearch, pathSteps, type Intent, type SpecsSeen } from '../../model/path';
+import { ROUTES, deploymentFromSearch, pathSteps, type Intent, type SpecsSeen } from '../../model/path';
 import { DeployDialog } from './DeployDialog';
 import { DeploymentDetail } from './DeploymentDetail';
 import { ProjectPathView } from './ProjectPath';
@@ -135,6 +135,8 @@ function addressedDeployment(): string | null {
 
 function Releases({ projectId, onOrganization }: { projectId: string; onOrganization: (id: string) => void }) {
   const { t, bridge } = useReleases();
+  // Organization › Infrastructure is named only where its kit put the screen.
+  const noEnvironmentKey = useScreenAvailability().route(ROUTES.infrastructure) ? 'no_environment' : 'no_environment_admin';
   const api = useApi();
   const [path, setPath] = useState<ProjectPath | null>(null);
   const [specs, setSpecs] = useState<SpecsSeen>('unavailable');
@@ -152,10 +154,13 @@ function Releases({ projectId, onOrganization }: { projectId: string; onOrganiza
   const [unavailable, setUnavailable] = useState(false);
   // Bumped to read again: after a change, and while a build runs.
   const [round, setRound] = useState(0);
-  // The environment whose Deploy… is open; none until the reader opens one.
-  const [open, setOpen] = useState<string | null>(null);
+  // Also open the environment a failed run leads to from the organization overview.
+  const [addressedEnvironment] = useState(() => /^environment-([0-9a-f-]{36})$/.exec(
+    screenView(window.location.search) ?? ''
+  )?.[1] ?? null);
+  const [open, setOpen] = useState<string | null>(addressedEnvironment);
   // The tab the member picked; none until they pick one, and the step that is next shows.
-  const [picked, setPicked] = useState<ReleaseTab | null>(() => storedTab(projectId));
+  const [picked, setPicked] = useState<ReleaseTab | null>(() => addressedEnvironment ? 'deploy' : storedTab(projectId));
   const pick = (tab: ReleaseTab) => {
     setPicked(tab);
     storeTab(projectId, tab);
@@ -168,22 +173,29 @@ function Releases({ projectId, onOrganization }: { projectId: string; onOrganiza
 
   useEffect(() => {
     let live = true;
+    // The path to running; an older backend has none and the screen goes on without it.
+    // It carries the targets and the deploys the server read to make it; where it does
+    // not (it failed, or the backend is older), they are read on their own.
+    const pathRead = api
+      .projectPath({ projectId, include: 'targets,deployments' })
+      .fetch({ staleTime: 0 })
+      .catch(() => null);
     Promise.all([
-      api.targets({ projectId }).fetch({ staleTime: 0 }),
-      api
-        .deployments({ projectId })
-        .fetch({ staleTime: 0 })
-        .catch(() => ({ items: [] as Deployment[], total: 0 })),
+      pathRead.then((pt) => pt?.targets ?? api.targets({ projectId }).fetch({ staleTime: 0 })),
+      pathRead.then(
+        (pt) =>
+          pt?.deployments ??
+          api
+            .deployments({ projectId })
+            .fetch({ staleTime: 0 })
+            .catch(() => ({ items: [] as Deployment[], total: 0 }))
+      ),
       api
         .nodes({ projectId, type: 'build', limit: 200, sort: 'updated' })
         .fetch({ staleTime: 0 })
         .then((p) => ideBuildsOf(p.nodes ?? []))
         .catch(() => [] as IdeBuild[]),
-      // The path to running; an older backend has none and the screen goes on without it.
-      api
-        .projectPath({ projectId })
-        .fetch({ staleTime: 0 })
-        .catch(() => null),
+      pathRead,
       api
         .specPlan({ projectId })
         .fetch({ staleTime: 0 })
@@ -215,6 +227,7 @@ function Releases({ projectId, onOrganization }: { projectId: string; onOrganiza
   const steps = targets ? ladderSteps(targets.environments, deployments, builds) : [];
   const noEnvironment = !!targets && targets.environments.length === 0;
   const published = deployableBuilds(builds).length;
+  const runningIn = steps.find((s) => !!s.runs)?.environment.name ?? null;
   const status = targets ? releaseStatus(steps, published) : null;
 
   const tabs: ReleaseTab[] = unavailable ? ['build', 'deploy'] : TABS;
@@ -246,7 +259,12 @@ function Releases({ projectId, onOrganization }: { projectId: string; onOrganiza
   };
 
   const tabStatus = (x: ReleaseTab): string => {
-    if (x === 'build') return published > 0 ? t.count('status_build_published', published) : t('status_build_none');
+    if (x === 'build')
+      return published > 0
+        ? t.count('status_build_published', published)
+        : runningIn
+          ? t('status_build_outside', { environment: runningIn })
+          : t('status_build_none');
     if (x === 'deploy')
       return noEnvironment
         ? t('status_deploy_no_environment')
@@ -338,11 +356,13 @@ function Releases({ projectId, onOrganization }: { projectId: string; onOrganiza
             <ProjectBuilds
               ideBuilds={builds}
               environments={targets?.environments.map((x) => x.environment) ?? []}
+              environmentsReady={targets !== null}
               deployments={deployments}
               round={round}
               now={now}
               onChanged={changed}
               onFollow={follow}
+              runningIn={runningIn}
             />
           )}
           {tab === 'deploy' &&
@@ -352,7 +372,9 @@ function Releases({ projectId, onOrganization }: { projectId: string; onOrganiza
               !error && <p className={styles.muted}>{t('loading')}</p>
             ) : noEnvironment ? (
               <section className={styles.card}>
-                <p className={styles.muted}>{t('no_environment')}</p>
+                <p className={styles.muted}>{t(noEnvironmentKey)}</p>
+                {noEnvironmentKey === 'no_environment' && <Button size="sm" variant="outline"
+                  onClick={() => openScreen(bridge, ROUTES.infrastructure)}>{t('open_build_infrastructure')}</Button>}
               </section>
             ) : (
               <ReleaseLadder

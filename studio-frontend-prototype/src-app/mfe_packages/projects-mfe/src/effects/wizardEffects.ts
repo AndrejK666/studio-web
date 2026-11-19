@@ -5,7 +5,7 @@ import { AccountsApiService } from '@constructor-studio/mfe-shared';
 // @cpt-dod:cpt-studiofrontend-dod-project-create-announce:p1
 // @cpt-algo:cpt-studiofrontend-algo-project-create-write:p2
 // @cpt-flow:cpt-studiofrontend-flow-project-create-greenfield:p1
-// @cpt-flow:cpt-studiofrontend-flow-project-create-modernize:p1
+// @cpt-dod:cpt-studiofrontend-dod-project-create-type-next:p1
 import {
   apiRegistry,
   eventBus,
@@ -19,7 +19,7 @@ import {
   type CreateProjectBody,
   type ProjectCreation,
 } from '../api/ProjectStatusApiService';
-import { MAX_SOURCES, type ProjectDraft } from '../model/projectDraft';
+import type { ProjectDraft } from '../model/projectDraft';
 import { submitFailed, submitProgress, submitStarted } from '../slices/createSlice';
 import type { ProjectRef } from '../events/wizardEvents';
 import '../events/wizardEvents';
@@ -27,8 +27,10 @@ import '../events/wizardEvents';
 /**
  * A project is created by the server as one background run
  * (`POST /studio-organizations/v1/project-creations`): the tenant, its
- * configuration (mode, brief, owner, the workspace's required stages, the
- * picked repositories as sources) and, with a brief, its PRD. The wizard used
+ * configuration (brief, owner, the workspace's required stages, the type) and
+ * whatever the project type takes -- a PRD from the brief, its kit, the
+ * project's object in the model given the type. The type decides the `mode`
+ * too, so the wizard sends none (ADR-0073). The wizard used
  * to make each of those a request of its own -- the tenant, then the stage
  * catalogue, then the metadata -- and a failure between them left half a
  * project. Now it starts the run, shows its steps as they end, and announces
@@ -48,19 +50,11 @@ export function creationBody(workspaceId: string, draft: ProjectDraft, key: stri
   const body: CreateProjectBody = {
     workspace_id: workspaceId,
     name: draft.name.trim(),
-    mode: draft.mode ?? 'greenfield',
     idempotency_key: key,
   };
   if (draft.goal.trim()) body.brief = draft.goal.trim();
   if (draft.ownerId) body.owner_id = draft.ownerId;
-  const sources = draft.sources.slice(0, MAX_SOURCES);
-  if (sources.length > 0)
-    body.sources = sources.map((s) => ({
-      connection_id: s.connectionId,
-      full_path: s.fullPath,
-      clone_url: s.cloneUrl,
-      ...(s.defaultBranch ? { default_branch: s.defaultBranch } : {}),
-    }));
+  if (draft.typeKit) body.project_type_kit = draft.typeKit;
   return body;
 }
 

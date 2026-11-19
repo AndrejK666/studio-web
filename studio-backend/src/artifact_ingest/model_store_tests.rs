@@ -35,6 +35,8 @@ struct Model {
     queries: std::sync::atomic::AtomicUsize,
     /// Declaring a type is refused, as it is to a person.
     refuse_types: std::sync::atomic::AtomicBool,
+    /// Writing objects is refused, as it is to a subject with no grant.
+    refuse_puts: std::sync::atomic::AtomicBool,
 }
 
 impl Model {
@@ -122,6 +124,19 @@ impl DomainObjects for Model {
     ) -> anyhow::Result<usize> {
         let mut map = self.objects.lock().unwrap();
         Ok(ids.iter().filter(|id| map.remove(*id).is_some()).count())
+    }
+    async fn check_put(
+        &self,
+        _: &SecurityContext,
+        entity: &str,
+        _: &[String],
+    ) -> anyhow::Result<()> {
+        if self.refuse_puts.load(std::sync::atomic::Ordering::SeqCst) {
+            anyhow::bail!(
+                "subject x may not write `{entity}` objects: not permitted on domain objects"
+            );
+        }
+        Ok(())
     }
     async fn link_objects(
         &self,
@@ -781,5 +796,86 @@ async fn projects_are_counted_without_reading_a_row() {
         (counted[P1], counted[P2], counted[P3]),
         (2, 1, 0),
         "every project asked for is answered"
+    );
+}
+
+/// The old store, counting how often it is listed: the walk a move does.
+struct CountingLegacy {
+    inner: Arc<InMemoryGraphStore>,
+    lists: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait]
+impl GraphStore for CountingLegacy {
+    async fn upsert_nodes(&self, ctx: &SecurityContext, nodes: &[GtsNode]) -> anyhow::Result<()> {
+        self.inner.upsert_nodes(ctx, nodes).await
+    }
+    async fn upsert_edges(&self, ctx: &SecurityContext, edges: &[GtsEdge]) -> anyhow::Result<()> {
+        self.inner.upsert_edges(ctx, edges).await
+    }
+    async fn delete_nodes(
+        &self,
+        ctx: &SecurityContext,
+        nodes: &[GtsNode],
+    ) -> anyhow::Result<usize> {
+        self.inner.delete_nodes(ctx, nodes).await
+    }
+    async fn list(
+        &self,
+        ctx: &SecurityContext,
+        type_filter: Option<&str>,
+    ) -> anyhow::Result<Arc<Vec<GtsNode>>> {
+        self.lists.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.inner.list(ctx, type_filter).await
+    }
+    async fn list_relations(
+        &self,
+        ctx: &SecurityContext,
+    ) -> anyhow::Result<Vec<crate::artifact_ingest::graph::GtsEdgeView>> {
+        self.inner.list_relations(ctx).await
+    }
+}
+
+/// A move the model would refuse fails before it reads the old store, and
+/// says who was refused what: on Dev a refused move walked 10 000+ nodes
+/// first, at every retry, and logged only "not permitted".
+#[tokio::test]
+async fn a_refused_move_fails_before_reading_the_old_store() {
+    use std::sync::atomic::Ordering;
+
+    let legacy = Arc::new(CountingLegacy {
+        inner: Arc::new(InMemoryGraphStore::default()),
+        lists: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let model = Arc::new(Model::default());
+    let hub = Arc::new(toolkit::client_hub::ClientHub::new());
+    hub.register::<dyn DomainObjects>(model.clone() as Arc<dyn DomainObjects>);
+    let store = ModelGraph(Arc::new(ModelGraphStore::new(legacy.clone(), hub)));
+    let ctx = ctx();
+    legacy
+        .upsert_nodes(
+            &ctx,
+            &[node(
+                gts::REPO_TYPE,
+                "r1",
+                json!({"full_path": "acme/web", "workspace_id": WS}),
+            )],
+        )
+        .await
+        .unwrap();
+
+    model.refuse_puts.store(true, Ordering::SeqCst);
+    let e = store
+        .0
+        .make_ready(&ctx)
+        .await
+        .expect_err("the move is refused");
+    let text = format!("{e:#}");
+    assert!(text.contains("was not read"), "{text}");
+    assert!(text.contains("not permitted"), "the cause is kept: {text}");
+    assert_eq!(legacy.lists.load(Ordering::SeqCst), 0, "nothing was walked");
+    assert!(
+        model.objects.lock().unwrap().is_empty(),
+        "nothing was written"
     );
 }

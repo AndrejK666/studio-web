@@ -813,7 +813,37 @@ async fn list_gears(
                                 .map_or(Value::Null, Value::String),
                         );
                         obj.insert("component_name".into(), Value::String(entry.name.clone()));
+                        // For a plugin: the gears whose point it fills, so a
+                        // row can say whose plugin it is.
+                        let mut hosts: Vec<Value> = Vec::new();
+                        for h in entry.engine.iter().flat_map(|g| g.hosts.iter()) {
+                            let h = Value::String(h.clone());
+                            if !hosts.contains(&h) {
+                                hosts.push(h);
+                            }
+                        }
+                        obj.insert("component_hosts".into(), Value::Array(hosts));
                     }
+                }
+                // The one word a person reads first (`component_detail`):
+                // gear, plugin, mfe, service, infra, library, kit or other.
+                let kind = value
+                    .get("component_kind")
+                    .or_else(|| value.get("kind"))
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                let (component_type, reason) = super::component_detail::component_type(
+                    Some(n.type_id.as_str()),
+                    Some(&value),
+                    kind.as_deref(),
+                    None,
+                );
+                if let Some(obj) = value.as_object_mut() {
+                    obj.insert(
+                        "component_type".into(),
+                        Value::String(component_type.to_owned()),
+                    );
+                    obj.insert("component_type_reason".into(), Value::String(reason));
                 }
                 Some(CatalogNodeDto {
                     type_id: n.type_id,
@@ -3446,6 +3476,9 @@ mod readiness_routes;
 #[path = "registry_extract_rest.rs"]
 mod extract;
 
+#[path = "component_detail_rest.rs"]
+mod component_detail_routes;
+
 #[path = "screen_previews_rest.rs"]
 mod screen_previews;
 
@@ -3742,6 +3775,7 @@ pub fn register_routes(
 ) -> Router {
     let router = register_registry_routes(router, openapi);
     let router = screen_previews::register(router, openapi);
+    let router = component_detail_routes::register(router, openapi);
     let router = OperationBuilder::post("/studio-components-catalog/v1/sync")
         .operation_id("studio_components_catalog.sync")
         .summary("Enqueue a background sync of the crates.io keyword into the graph")

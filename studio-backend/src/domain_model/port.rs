@@ -20,10 +20,13 @@ use async_trait::async_trait;
 use serde_json::Value;
 use toolkit_security::SecurityContext;
 
+/// The GTS id a domain type is stored and named by (`pull-request` →
+/// `gts.cf.studio.domain.pull_request.v1~`): what a screen's `needs` names.
+pub use super::gts::node_type_id;
 /// A kit's model overlay and what applying it changed (ADR-0067 §6): the
 /// format another gear (studio-kits) reads from a kit's manifest.
 pub use super::kit_overlay::{
-    KitModelChange, KitModelError, KitOverlay, OverlayType, kit_type_gts,
+    KitModelChange, KitModelError, KitOverlay, OverlayType, PROJECT_ENTITY, kit_type_gts,
     validate as validate_kit_overlay,
 };
 use super::service::{DomainModelService, WriteOptions};
@@ -141,6 +144,20 @@ pub trait DomainObjects: Send + Sync {
         anyhow::bail!("batch writes are not offered here")
     }
 
+    /// Would [`Self::put_objects`] of `entity` in these scopes (empty is
+    /// organization-wide) be admitted for the caller? Writes nothing. A gear
+    /// about to read a large set in order to write it asks first, so a
+    /// refusal costs no read. The default admits: a port that cannot tell
+    /// leaves the answer to the write.
+    async fn check_put(
+        &self,
+        _ctx: &SecurityContext,
+        _entity: &str,
+        _scopes: &[String],
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
+
     /// Create one object only if its id is free: `false` when it is taken.
     /// A gear serializes concurrent writers with it.
     async fn claim(
@@ -223,6 +240,13 @@ pub trait DomainObjects: Send + Sync {
         _overlay: Option<&KitOverlay>,
     ) -> anyhow::Result<KitModelChange> {
         anyhow::bail!("kit models are not offered here")
+    }
+
+    /// The `kit-rename` sweep (ADR-0071 §8): move the caller's
+    /// organization's kit marks of Studio's own kits to the kits that bring
+    /// the pieces now, as one version with no inverse. Answers what moved.
+    async fn rename_kit_marks(&self, _ctx: &SecurityContext) -> anyhow::Result<Vec<String>> {
+        Ok(Vec::new())
     }
 
     /// The kits the caller's organization's model carries, with the version
@@ -378,6 +402,15 @@ impl DomainObjects for Objects {
             .await
     }
 
+    async fn check_put(
+        &self,
+        ctx: &SecurityContext,
+        entity: &str,
+        scopes: &[String],
+    ) -> anyhow::Result<()> {
+        self.0.check_put_trusted(ctx, entity, scopes).await
+    }
+
     async fn remove_objects(
         &self,
         ctx: &SecurityContext,
@@ -461,6 +494,10 @@ impl DomainObjects for Objects {
         overlay: Option<&KitOverlay>,
     ) -> anyhow::Result<KitModelChange> {
         self.0.sync_kit_model(ctx, slug, version, overlay).await
+    }
+
+    async fn rename_kit_marks(&self, ctx: &SecurityContext) -> anyhow::Result<Vec<String>> {
+        self.0.rename_kit_marks(ctx).await
     }
 
     async fn kit_models(
@@ -599,6 +636,15 @@ impl DomainObjects for KeptByGear {
         self.0.put_objects(&as_gear(ctx)?, entity, objects).await
     }
 
+    async fn check_put(
+        &self,
+        ctx: &SecurityContext,
+        entity: &str,
+        scopes: &[String],
+    ) -> anyhow::Result<()> {
+        self.0.check_put(&as_gear(ctx)?, entity, scopes).await
+    }
+
     async fn claim(
         &self,
         ctx: &SecurityContext,
@@ -664,6 +710,10 @@ impl DomainObjects for KeptByGear {
         self.0
             .sync_kit_model(&as_gear(ctx)?, slug, version, overlay)
             .await
+    }
+
+    async fn rename_kit_marks(&self, ctx: &SecurityContext) -> anyhow::Result<Vec<String>> {
+        self.0.rename_kit_marks(&as_gear(ctx)?).await
     }
 
     async fn kit_models(

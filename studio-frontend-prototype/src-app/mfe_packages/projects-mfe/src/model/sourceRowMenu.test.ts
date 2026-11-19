@@ -10,21 +10,22 @@ const IN_FLIGHT = { kind: 'in_flight', cancelling: false, canCancel: true } as c
 const FAILED = { kind: 'stopped', status: 'failed', reason: null, canRetry: true } as const;
 
 describe('the row menu', () => {
-  it('offers Sync now, Open specs, Open in and Disconnect, in that order', () => {
+  it('offers Sync now, Open specs, Open in, Change branch and Disconnect, in that order', () => {
     expect(sourceRowMenu(sourceRow(), true)).toEqual([
       { kind: 'sync_now', retry: false, disabled: null },
       { kind: 'open_specs' },
       { kind: 'open_in', url: 'https://github.com/acme/api', provider: 'github' },
+      { kind: 'change_branch' },
       { kind: 'disconnect', disabled: false },
     ]);
   });
 
-  it('keeps Open specs and Disconnect on a row that offers nothing else', () => {
+  it('keeps Open specs, Change branch and Disconnect on a row that offers nothing else', () => {
     const items = sourceRowMenu(
       sourceRow({ provider: null, cloneUrl: 'git@github.com:acme/api.git', lastSync: { kind: 'not_connected' } }),
       false
     );
-    expect(items.map((item) => item.kind)).toEqual(['sync_now', 'open_specs', 'disconnect']);
+    expect(items.map((item) => item.kind)).toEqual(['sync_now', 'open_specs', 'change_branch', 'disconnect']);
   });
 });
 

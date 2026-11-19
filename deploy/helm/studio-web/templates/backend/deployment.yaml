@@ -355,6 +355,13 @@ spec:
             # credential comes from the Secret.
             - name: STUDIO_INSIGHT_API_KEY
               valueFrom: { secretKeyRef: { name: {{ .Values.backend.appSecrets.existingSecret }}, key: insight_api_key, optional: true } }
+            # The gears-matcher service (gear matches, studio-product): its
+            # in-cluster address and the shared secret it takes. Both optional:
+            # without either, gear matches answer 503 and nothing else changes.
+            - name: STUDIO_GEARS_MATCHER_URL
+              value: {{ .Values.backend.gearsMatcher.url | default "" | quote }}
+            - name: STUDIO_GEARS_MATCHER_SECRET
+              valueFrom: { secretKeyRef: { name: {{ .Values.backend.appSecrets.existingSecret }}, key: gears_matcher_secret, optional: true } }
             - name: GITHUB_TOKEN
               valueFrom: { secretKeyRef: { name: {{ .Values.backend.appSecrets.existingSecret }}, key: github_token, optional: true } }
             - name: STUDIO_LLM_HOST

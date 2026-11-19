@@ -297,6 +297,103 @@ pub fn tools() -> Vec<Tool> {
             experimental: false,
             run: Run::Get("/studio-product/v1/gdl-file"),
         },
+        Tool {
+            name: "product_assembly_strategy",
+            description: "How the project's product is assembled (ADR-0072): `strategy` is the \
+                one used, `spec_mapping` (the gears the spec plan offers for the capabilities \
+                the specifications name: instant, free, deterministic) or `gears_matcher` (the \
+                gears the latest gear match proposes: paid, varies between runs; see \
+                `project_gear_match`). `chosen` and `source` say what the settings ask for and \
+                whether that is the project's choice, the organization's default or Studio's; \
+                `fallback` says why the chosen one is not used (the Gears matcher kit is not \
+                installed, or the service is not configured). Either only proposes gears: \
+                your person confirms them into the product.",
+            input_schema: project_only,
+            effect: Effect::Read,
+            experimental: true,
+            run: Run::Get("/studio-product/v1/project-assembly-strategy"),
+        },
+        Tool {
+            name: "project_gear_match",
+            description: "Ask the gears-matcher service which gears of the catalogue cover the \
+                project's specifications: its PRDs by default, or the documents of its domain \
+                model `paths` and `glob` select (at most 20). One background run of a few \
+                minutes, paid model calls; answers `match_id` and `run_id` at once. Read the \
+                result with `project_gear_match_report` (`match_id`, or `latest`) once its \
+                state is `succeeded` or `partial`. Nothing is added to the product: a proposed \
+                gear goes in when your person adds it. Pass an `idempotency_key` so a resend \
+                does not start a second run. Say that you start one first.",
+            input_schema: || {
+                object(
+                    json!({
+                        "project_id": project_id(),
+                        "paths": { "type": "array", "maxItems": 20, "items": { "type": "string" },
+                            "description": "Documents of the project's model: `docs/...`, `studio:<id>`, `upload:<name>`." },
+                        "glob": { "type": "string" },
+                        "extract_max_calls": { "type": "integer", "minimum": 1,
+                            "description": "Also read documents not in the spec format, with at most this many model calls." },
+                        "idempotency_key": { "type": "string" }
+                    }),
+                    &["project_id"],
+                )
+            },
+            effect: Effect::Write,
+            experimental: true,
+            run: Run::Post {
+                path: "/studio-product/v1/gear-matches",
+                query: &["project_id"],
+            },
+        },
+        Tool {
+            name: "project_gear_match_report",
+            description: "A gear match of the project (`match_id`, or `latest`): its state and \
+                progress, the documents sent with their hashes and commits, the matcher's \
+                catalogue commit, and per requirement the verdict (`covered`, `partial`, \
+                `gap`, `clarification_needed`, `not_assessed`), the candidate gears with the \
+                matcher's evidence and the members' decisions, the passage of the \
+                specification, and what Studio offers (`propose`, `create_gear`, `answer`, \
+                `rerun`); then the questions with the project's answers. Results vary \
+                between runs: `GET .../diff` compares two.",
+            input_schema: || {
+                object(
+                    json!({
+                        "project_id": project_id(),
+                        "match_id": { "type": "string",
+                            "description": "A match's id from `project_gear_match`, or `latest`." }
+                    }),
+                    &["project_id", "match_id"],
+                )
+            },
+            effect: Effect::Read,
+            experimental: false,
+            run: Run::Get("/studio-product/v1/gear-matches/{match_id}"),
+        },
+        Tool {
+            name: "gear_match_usage",
+            description: "How the organization's projects use the gears matcher, over the last \
+                `period_days` (default 30): per project the strategy its product is assembled \
+                by and why, its last gear match with that run's coverage, its runs by state, \
+                the model calls and tokens they spent, the gears members accepted and rejected \
+                and the questions still open; summed in `summary`; and whether the \
+                gears-matcher service answers now (`service`: versions, catalogue commit, \
+                limits). Call it before suggesting a gear match is worth its cost, or to see \
+                which projects wait on answers. Reads only.",
+            input_schema: || {
+                object(
+                    json!({
+                        "organization_id": { "type": "string",
+                            "description": "The organization; your home organization when absent." },
+                        "period_days": { "type": "integer", "minimum": 1, "maximum": 365 },
+                        "offset": { "type": "integer", "minimum": 0 },
+                        "limit": { "type": "integer", "minimum": 1, "maximum": 200 }
+                    }),
+                    &[],
+                )
+            },
+            effect: Effect::Read,
+            experimental: false,
+            run: Run::Get("/studio-product/v1/gear-match-usage"),
+        },
     ]
 }
 
@@ -448,6 +545,28 @@ mod tests {
             json!({"project_id": "p", "gear": "api-gateway"}),
         );
         assert_eq!(r.path, "/studio-product/v1/gdl-file");
+        let s = request_of(
+            &all,
+            "product_assembly_strategy",
+            json!({"project_id": "p"}),
+        );
+        assert_eq!(s.method, Method::Get);
+        assert_eq!(s.path, "/studio-product/v1/project-assembly-strategy");
+        assert_eq!(s.query, vec![("project_id".to_owned(), "p".to_owned())]);
+        let u = request_of(
+            &all,
+            "gear_match_usage",
+            json!({"organization_id": "o", "period_days": 7}),
+        );
+        assert_eq!(u.method, Method::Get);
+        assert_eq!(u.path, "/studio-product/v1/gear-match-usage");
+        assert_eq!(
+            u.query,
+            vec![
+                ("organization_id".to_owned(), "o".to_owned()),
+                ("period_days".to_owned(), "7".to_owned()),
+            ]
+        );
         assert_eq!(
             r.query,
             vec![

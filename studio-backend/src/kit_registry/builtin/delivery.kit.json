@@ -1,0 +1,196 @@
+{
+  "manifest_version": "1",
+  "slug": "delivery",
+  "icon": "lucide:rocket",
+  "name": "Builds, releases & environments",
+  "description": "From a build to a running environment: the places an organization holds and the environments on them, a project's builds, images, its own environments and deploys up the ladder.",
+  "publisher": "Constructor Fabric",
+  "levels": [
+    "organization",
+    "project"
+  ],
+  "model": {
+    "properties": [
+      {
+        "on": "organization",
+        "property": {
+          "name": "environments",
+          "type": "deployment-environment",
+          "relation": "deployment-environment",
+          "extends": "edge",
+          "relationType": "shows",
+          "relationLabel": "Infrastructure",
+          "description": "A tab of the organization: what it shows."
+        }
+      },
+      {
+        "on": "project",
+        "property": {
+          "name": "releases",
+          "type": "deployment",
+          "relation": "deployment",
+          "extends": "edge",
+          "relationType": "shows",
+          "relationLabel": "Releases",
+          "description": "A tab of the project: what it shows."
+        }
+      }
+    ]
+  },
+  "inbox": [
+    {
+      "id": "deploys-awaiting-approval",
+      "label": "Deploys waiting for your decision",
+      "kind": "endpoint",
+      "path": "/studio-environments/v1/inbox/deploys-awaiting-approval"
+    }
+  ],
+  "permissions": {
+    "reads": [
+      "GET /studio-environments/v1/environments",
+      "GET /studio-environments/v1/environments/{environment_id}/readiness",
+      "POST /studio-environments/v1/environments/{environment_id}/test",
+      "GET /studio-environments/v1/deployments",
+      "GET /studio-environments/v1/deployments/{deployment_id}/status",
+      "GET /studio-environments/v1/deployments/{deployment_id}/logs",
+      "GET /studio-environments/v1/research/projects",
+      "GET /studio-environments/v1/research/projects/{project}/hardware",
+      "GET /studio-environments/v1/namespace-assignments",
+      "GET /studio-environments/v1/image-retention",
+      "GET /studio-environments/v1/registries",
+      "GET /studio-environments/v1/registries/{connection_id}/repositories",
+      "GET /studio-environments/v1/registries/{connection_id}/repositories/{repository}/tags",
+      "GET /studio-environments/v1/registries/{connection_id}/orphans",
+      "GET /studio-connector/v1/connections",
+      "POST /studio-connector/v1/connections/{id}/test",
+      "GET /studio-kits/v1/installed-kits",
+      "GET /studio-environments/v1/targets",
+      "GET /studio-environments/v1/project-path",
+      "GET /studio-environments/v1/config-secrets",
+      "GET /studio-environments/v1/deployments/{deployment_id}",
+      "GET /studio-environments/v1/research/my-projects",
+      "GET /studio-environments/v1/research/my-projects/{research_project}/hardware",
+      "GET /studio-environments/v1/environments/{environment_id}/infra-plan",
+      "GET /studio-environments/v1/project-environments",
+      "GET /studio-environments/v1/infra-services",
+      "GET /studio-environments/v1/project-build",
+      "POST /studio-environments/v1/builds/plan",
+      "GET /studio-environments/v1/builds/{build_id}/log",
+      "GET /studio-environments/v1/images",
+      "GET /studio-environments/v1/images/{image_id}",
+      "GET /studio-artifact-ingest/v1/nodes",
+      "GET /studio-tasks/v1/runs/{id}",
+      "GET /studio-environments/v1/inbox/deploys-awaiting-approval"
+    ],
+    "writes": [
+      "POST /studio-environments/v1/environments",
+      "PUT /studio-environments/v1/environments/{environment_id}",
+      "DELETE /studio-environments/v1/environments/{environment_id}",
+      "PUT /studio-environments/v1/open-clusters",
+      "POST /studio-environments/v1/deployments/{deployment_id}/decisions",
+      "PUT /studio-environments/v1/namespace-assignments",
+      "PUT /studio-environments/v1/image-retention",
+      "DELETE /studio-environments/v1/registries/{connection_id}/repositories/{repository}/versions/{digest}",
+      "PUT /studio-environments/v1/bindings",
+      "PUT /studio-environments/v1/infra-services",
+      "PUT /studio-environments/v1/project-build",
+      "POST /studio-environments/v1/project-environments",
+      "PUT /studio-environments/v1/project-environments/{environment_id}",
+      "DELETE /studio-environments/v1/project-environments/{environment_id}",
+      "POST /studio-environments/v1/builds",
+      "POST /studio-environments/v1/build-workflows",
+      "POST /studio-artifact-ingest/v1/builds/dispatch",
+      "POST /studio-environments/v1/deployments",
+      "DELETE /studio-environments/v1/previews/{deployment_id}",
+      "PUT /studio-environments/v1/config-secrets/{key}",
+      "DELETE /studio-environments/v1/config-secrets/{key}",
+      "POST /studio-environments/v1/images/imports",
+      "POST /studio-environments/v1/images/{image_id}/promotions",
+      "PUT /studio-environments/v1/images/{image_id}/pin",
+      "DELETE /studio-environments/v1/images/{image_id}/pin",
+      "DELETE /studio-environments/v1/images/{image_id}"
+    ]
+  },
+  "gears": [
+    {
+      "gear": "studio-environments",
+      "types": [
+        "deployment-environment",
+        "environment-binding",
+        "environment-config-secret",
+        "deployment"
+      ],
+      "routes": [
+        "POST /studio-environments/v1/environments",
+        "PUT /studio-environments/v1/environments/{environment_id}",
+        "DELETE /studio-environments/v1/environments/{environment_id}",
+        "PUT /studio-environments/v1/open-clusters",
+        "PUT /studio-environments/v1/namespace-assignments",
+        "PUT /studio-environments/v1/image-retention",
+        "DELETE /studio-environments/v1/registries/{connection_id}/repositories/{repository}/versions/{digest}",
+        "PUT /studio-environments/v1/bindings",
+        "PUT /studio-environments/v1/infra-services",
+        "PUT /studio-environments/v1/project-build",
+        "POST /studio-environments/v1/project-environments",
+        "PUT /studio-environments/v1/project-environments/{environment_id}",
+        "DELETE /studio-environments/v1/project-environments/{environment_id}",
+        "POST /studio-environments/v1/builds",
+        "POST /studio-environments/v1/build-workflows",
+        "POST /studio-environments/v1/deployments",
+        "POST /studio-environments/v1/deployments/{deployment_id}/decisions",
+        "DELETE /studio-environments/v1/previews/{deployment_id}",
+        "PUT /studio-environments/v1/config-secrets/{key}",
+        "DELETE /studio-environments/v1/config-secrets/{key}",
+        "POST /studio-environments/v1/images/imports",
+        "POST /studio-environments/v1/images/{image_id}/promotions",
+        "PUT /studio-environments/v1/images/{image_id}/pin",
+        "DELETE /studio-environments/v1/images/{image_id}/pin",
+        "DELETE /studio-environments/v1/images/{image_id}"
+      ],
+      "mcp_tools": [
+        "deploy_targets",
+        "project_environments",
+        "deploy_bindings_set",
+        "config_secrets",
+        "config_secret_keys",
+        "config_secret_set",
+        "config_secret_delete",
+        "infra_services",
+        "infra_services_set",
+        "infra_plan",
+        "infra_keycloak_realm",
+        "infra_service_public_url_set",
+        "image_import",
+        "image_get",
+        "project_images",
+        "build_plan",
+        "build_start",
+        "build_get",
+        "build_wait",
+        "build_log",
+        "deploy_request",
+        "deployments",
+        "deployment_get",
+        "deployment_wait",
+        "deployment_decide",
+        "deployment_status",
+        "deployment_logs",
+        "project_path"
+      ]
+    },
+    {
+      "gear": "studio-artifact-ingest",
+      "types": [
+        "product-build",
+        "build-artifact",
+        "release"
+      ],
+      "mcp_tools": [
+        "build_list"
+      ],
+      "routes": [
+        "POST /studio-artifact-ingest/v1/builds/dispatch"
+      ]
+    }
+  ]
+}

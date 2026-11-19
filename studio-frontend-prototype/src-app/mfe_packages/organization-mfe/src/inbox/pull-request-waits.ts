@@ -222,5 +222,6 @@ export function myEmptyMessage(state: { membersKnown: boolean; workspaces: numbe
   if (!state.membersKnown) {
     return "Who is who could not be read from the organization's member list, so Studio cannot tell which pull requests are yours.";
   }
-  return "Nothing is waiting on you. If you expected something, confirm your GitHub account on your Profile — a pull request reaches you only through an account you confirmed.";
+  // The heading over it already says nothing waits ("Nothing waits on you."): this only says why.
+  return "If you expected something, confirm your GitHub account on your Profile — a pull request reaches you only through an account you confirmed.";
 }

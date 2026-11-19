@@ -143,6 +143,23 @@
   background: var(--accent);
 }
 
+.attentionDetails {
+  clear: both;
+  padding-top: var(--space-2);
+}
+
+.attentionDetails ul {
+  display: grid;
+  gap: var(--space-2);
+  max-height: 24rem;
+  overflow-y: auto;
+  padding: var(--space-2) var(--space-4);
+}
+
+.attentionDetails summary {
+  cursor: pointer;
+}
+
 /* For you: the person's Inbox (InboxGroup.tsx), above For others. */
 .youGroup {
   margin-bottom: var(--space-4);

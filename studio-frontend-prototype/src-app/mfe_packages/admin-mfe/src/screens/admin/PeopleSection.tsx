@@ -2,7 +2,8 @@
  * Admin › People — the prototype's `OrgMembersView` (`org-admin.tsx`) carried
  * over (ADR-0069): one organization's members as studio-user holds them (the
  * authority for who belongs, ADR-0011 §2) — role, standing, how they joined,
- * when last seen — and, under a row, every way they sign in, every account
+ * when last seen, on the kit's DataGrid (`MembersGrid`, #1076) — and, below the
+ * list for the person opened, every way they sign in, every account
  * attributed to them and how the organization describes them. An owner or a
  * platform administrator changes a role, suspends, resumes or removes; anyone
  * with an identity can be added when the identity directory answers (it
@@ -11,7 +12,7 @@
  * Who may is the backend's to say: a refused write shows its refusal.
  */
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiRegistry } from '@gears-frontx/react';
 import {
   Badge,
@@ -38,12 +39,13 @@ import type {
   PersonEmail,
   PlatformIdentity,
 } from '../../api/types';
-import { directoryLine, initials, memberName, otherEmails, primaryEmail } from '../../model/members';
+import { GridFailed } from '@constructor-studio/mfe-shared/grid';
+import { memberName } from '../../model/members';
 import { ErrorLine, Header, day, errText, shortId, useAdmin, useConfirm, when } from './common';
+import { MembersGrid, ROLES } from './MembersGrid';
 import styles from './Admin.module.css';
 
-const ROLES: MembershipRole[] = ['owner', 'admin', 'member'];
-
+const NO_MEMBERS: OrgMember[] = [];
 export function PeopleSection() {
   const { t } = useAdmin();
   const { org, loading } = useOrganization();
@@ -73,8 +75,6 @@ function Members({ org }: { org: OrganizationRef }) {
   const [error, setError] = useState<string | null>(null);
   const [readError, setReadError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [query, setQuery] = useState('');
-  const [standing, setStanding] = useState<'' | 'active' | 'suspended'>('');
   const [open, setOpen] = useState<string | null>(null);
   const [pick, setPick] = useState('');
   const [pickRole, setPickRole] = useState<MembershipRole>('member');
@@ -131,21 +131,27 @@ function Members({ org }: { org: OrganizationRef }) {
   }, [api]);
 
   /** One write, then the room as the server now has it. */
-  const act = async (key: string, write: () => Promise<unknown>) => {
-    setBusy(key);
-    setError(null);
-    try {
-      await write();
-      load();
-    } catch (e) {
-      setError(errText(e));
-    } finally {
-      setBusy(null);
-    }
-  };
+  const act = useCallback(
+    async (key: string, write: () => Promise<unknown>) => {
+      setBusy(key);
+      setError(null);
+      try {
+        await write();
+        load();
+      } catch (e) {
+        setError(errText(e));
+      } finally {
+        setBusy(null);
+      }
+    },
+    [load]
+  );
 
-  const setStandingOf = (m: OrgMember, role: MembershipRole, status: 'active' | 'suspended') =>
-    act(m.user_id, () => api.putMembership(m.user_id, org.id).fetch({ role, status }));
+  const setStandingOf = useCallback(
+    (m: OrgMember, role: MembershipRole, status: 'active' | 'suspended') =>
+      void act(m.user_id, () => api.putMembership(m.user_id, org.id).fetch({ role, status })),
+    [act, api, org.id]
+  );
 
   const addIdentity = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -170,7 +176,8 @@ function Members({ org }: { org: OrganizationRef }) {
     setEmail('');
   };
 
-  const list = members ?? [];
+  // The grid reloads on a new array: the same one while nothing was read again.
+  const list = members ?? NO_MEMBERS;
   const known = new Set(
     list.flatMap((m) => [m.email?.toLowerCase(), m.display_name?.toLowerCase()]).filter(Boolean)
   );
@@ -178,27 +185,33 @@ function Members({ org }: { org: OrganizationRef }) {
     (i) => !known.has(i.email?.toLowerCase()) && !known.has((i.display_name || i.username).toLowerCase())
   );
   const directory = new Map((identities ?? []).map((i) => [i.id, i]));
-  const byId = new Map(list.map((m) => [m.user_id, m]));
-  const nameOfId = (userId: string) => {
-    const m = byId.get(userId);
-    return m ? memberName(m) : undefined;
-  };
+  const nameOfId = useMemo(() => {
+    const byId = new Map(list.map((m) => [m.user_id, m]));
+    return (userId: string) => {
+      const m = byId.get(userId);
+      return m ? memberName(m) : undefined;
+    };
+  }, [list]);
   const pending = invitations.filter((i) => !i.accepted_at_epoch_ms && i.expires_at_epoch_ms > now);
   const activeOwners = list.filter((m) => m.role === 'owner' && m.status === 'active').length;
-  const q = query.trim().toLowerCase();
-  const shown = list
-    .filter((m) => !standing || m.status === standing)
-    .filter(
-      (m) =>
-        !q ||
-        [m.display_name, ...(m.emails?.map((x) => x.address) ?? [m.email]), m.role, m.status, directoryLine(m.directory, nameOfId)]
-          .filter((s): s is string => !!s)
-          .some((s) => s.toLowerCase().includes(q))
-    )
-    .sort((a, b) => memberName(a).localeCompare(memberName(b)));
   const roleLabel = (r: string) => (ROLES.includes(r as MembershipRole) ? t(`role_${r}`) : r);
-  const sourceLabel = (s: string) =>
-    ['creation', 'assignment', 'invitation', 'bootstrap', 'first_login', 'manual'].includes(s) ? t(`joined_${s}`) : s;
+  const opened = open ? list.find((m) => m.user_id === open) : undefined;
+  const toggle = useCallback((m: OrgMember) => setOpen((was) => (was === m.user_id ? null : m.user_id)), []);
+  const remove = useCallback(
+    (m: OrgMember) =>
+      ask(
+        {
+          title: t('people_remove_confirm', { name: memberName(m), org: org.name }),
+          body: t('people_remove_body'),
+          confirmLabel: t('people_remove'),
+        },
+        async () => {
+          await api.removeMembership(m.user_id, org.id).fetch(undefined);
+          load();
+        }
+      ),
+    [ask, t, org.name, org.id, api, load]
+  );
 
   return (
     <>
@@ -221,175 +234,34 @@ function Members({ org }: { org: OrganizationRef }) {
 
       <Card data-people-table>
         <CardContent className={styles.cardBody}>
-          <div className={styles.toolbar}>
-            <Input
-              className={styles.search}
-              value={query}
-              placeholder={t('people_search')}
-              aria-label={t('people_search')}
-              onChange={(e) => setQuery(e.target.value)}
-            />
-            {(['', 'active', 'suspended'] as const).map((s) => (
-              <Button
-                key={s || 'all'}
-                size="sm"
-                variant={standing === s ? 'secondary' : 'ghost'}
-                aria-pressed={standing === s}
-                onClick={() => setStanding(s)}
-              >
-                {s ? t(`standing_${s}`) : t('everyone')}
-              </Button>
-            ))}
-          </div>
           {members === null ? (
             <p className={styles.muted}>{t('reading')}</p>
           ) : readError ? (
-            <div className={styles.inline}>
-              <ErrorLine>{readError}</ErrorLine>
-              <Button size="sm" variant="outline" onClick={load}>
-                {t('retry')}
-              </Button>
-            </div>
-          ) : list.length === 0 ? (
-            <div>
-              <p className={styles.name}>{t('people_empty')}</p>
-              <p className={styles.muted}>{t('people_empty_hint')}</p>
-            </div>
+            <GridFailed message={readError} retry={t('retry')} onRetry={load} />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>{t('people_col_person')}</TableHead>
-                  <TableHead>{t('people_col_position')}</TableHead>
-                  <TableHead>{t('people_col_role')}</TableHead>
-                  <TableHead>{t('people_col_standing')}</TableHead>
-                  <TableHead>{t('people_col_seen')}</TableHead>
-                  <TableHead>{t('people_col_joined')}</TableHead>
-                  <TableHead />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {shown.map((m) => {
-                  const suspended = m.status === 'suspended';
-                  const onlyOwner = m.role === 'owner' && !suspended && activeOwners <= 1;
-                  const line = directoryLine(m.directory, nameOfId);
-                  const others = otherEmails(m);
-                  const first = primaryEmail(m);
-                  return (
-                    <React.Fragment key={m.user_id}>
-                      <TableRow data-member={m.user_id}>
-                        <TableCell>
-                          <div className={styles.person}>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              aria-expanded={open === m.user_id}
-                              aria-label={t('people_details', { name: memberName(m) })}
-                              onClick={() => setOpen(open === m.user_id ? null : m.user_id)}
-                            >
-                              {open === m.user_id ? '▾' : '▸'}
-                            </Button>
-                            {m.avatar_url ? (
-                              <img className={styles.avatar} src={m.avatar_url} alt="" />
-                            ) : (
-                              <span className={styles.avatar}>{initials(memberName(m))}</span>
-                            )}
-                            <div>
-                              <div className={styles.name}>{memberName(m)}</div>
-                              <div className={styles.sub}>
-                                {first && first !== memberName(m) ? first : shortId(m.user_id)}
-                                {others.length > 0 && (
-                                  <span title={others.map((x) => x.address).join(', ')}> +{others.length}</span>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                        </TableCell>
-                        <TableCell>{line || <span className={styles.sub}>—</span>}</TableCell>
-                        <TableCell>
-                          <NativeSelect
-                            size="sm"
-                            aria-label={t('people_role_of', { name: memberName(m) })}
-                            value={m.role}
-                            disabled={busy !== null || onlyOwner}
-                            title={onlyOwner ? t('people_only_owner') : undefined}
-                            onChange={(e) => void setStandingOf(m, e.target.value as MembershipRole, m.status)}
-                          >
-                            {ROLES.map((r) => (
-                              <NativeSelectOption key={r} value={r} title={t(`role_${r}_hint`)}>
-                                {t(`role_${r}`)}
-                              </NativeSelectOption>
-                            ))}
-                            {!ROLES.includes(m.role as MembershipRole) && (
-                              <NativeSelectOption value={m.role}>{m.role}</NativeSelectOption>
-                            )}
-                          </NativeSelect>
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant={suspended ? 'warning' : 'success'}>
-                            {suspended ? t('standing_suspended') : t('standing_active')}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className={styles.sub}>{when(m.last_seen_at_epoch_ms, language)}</TableCell>
-                        <TableCell className={styles.sub}>
-                          {sourceLabel(m.source)} · {when(m.created_at_epoch_ms, language)}
-                        </TableCell>
-                        <TableCell>
-                          <div className={styles.inline}>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              disabled={busy !== null || (onlyOwner && !suspended)}
-                              onClick={() =>
-                                void setStandingOf(m, m.role as MembershipRole, suspended ? 'active' : 'suspended')
-                              }
-                              data-member-standing
-                            >
-                              {suspended ? t('people_resume') : t('people_suspend')}
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              disabled={busy !== null || onlyOwner}
-                              onClick={() =>
-                                ask(
-                                  {
-                                    title: t('people_remove_confirm', { name: memberName(m), org: org.name }),
-                                    body: t('people_remove_body'),
-                                    confirmLabel: t('people_remove'),
-                                  },
-                                  async () => {
-                                    await api.removeMembership(m.user_id, org.id).fetch(undefined);
-                                    load();
-                                  }
-                                )
-                              }
-                              data-member-remove
-                            >
-                              {t('people_remove')}
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                      {open === m.user_id && (
-                        <TableRow>
-                          <TableCell colSpan={7}>
-                            <MemberPanel
-                              orgId={org.id}
-                              member={m}
-                              members={list}
-                              directory={directory}
-                              roleLabel={roleLabel}
-                              onSaved={load}
-                            />
-                          </TableCell>
-                        </TableRow>
-                      )}
-                    </React.Fragment>
-                  );
-                })}
-              </TableBody>
-            </Table>
+            <MembersGrid
+              members={list}
+              t={t}
+              language={language}
+              busy={busy !== null}
+              activeOwners={activeOwners}
+              open={open}
+              nameOfId={nameOfId}
+              onToggle={toggle}
+              onStanding={setStandingOf}
+              onRemove={remove}
+            />
+          )}
+          {/* What a person is known by opens below the list, not under their row. */}
+          {opened && (
+            <MemberPanel
+              orgId={org.id}
+              member={opened}
+              members={list}
+              directory={directory}
+              roleLabel={roleLabel}
+              onSaved={load}
+            />
           )}
         </CardContent>
       </Card>
@@ -496,7 +368,7 @@ function Members({ org }: { org: OrganizationRef }) {
   );
 }
 
-/** Everything one member is known by, opened under their row: how the
+/** Everything one member is known by, opened below the list: how the
  *  organization describes them, each address, each way they sign in, and each
  *  external account attributed to them. A platform administrator also sees
  *  what the IdP says about each realm login. */

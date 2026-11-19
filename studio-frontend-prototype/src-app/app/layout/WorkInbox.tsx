@@ -7,7 +7,7 @@
  * screen that answers everything this panel deliberately does not.
  */
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useState, useSyncExternalStore } from 'react';
 import { eventBus, useDomainExtensions, FRONTX_SCREEN_DOMAIN } from '@gears-frontx/react';
 import {
   DropdownMenu,
@@ -40,9 +40,36 @@ const STATE_ICON: Record<CompletedRun['state'], React.ReactNode> = {
   cancelled: <Minus aria-hidden="true" className="size-4 text-muted-foreground" />,
 };
 
-export const WorkInbox: React.FC = () => {
+// What finished, kept beside the component rather than in it: the top bar
+// and the sidebar each draw a bell, and switching the layout must not forget
+// what finished before the switch.
+let completed: CompletedWork = NO_COMPLETED_WORK;
+const completedListeners = new Set<() => void>();
+const readCompleted = () => completed;
+function subscribeCompleted(listener: () => void): () => void {
+  completedListeners.add(listener);
+  return () => {
+    completedListeners.delete(listener);
+  };
+}
+function setWork(next: (current: CompletedWork) => CompletedWork): void {
+  completed = next(completed);
+  for (const listener of [...completedListeners]) listener();
+}
+
+/** Forgets what finished. For tests. */
+export function resetCompletedWorkForTests(): void {
+  completed = NO_COMPLETED_WORK;
+}
+
+export interface WorkInboxProps {
+  /** Where the panel opens: below the top bar's bell, or above the sidebar's. */
+  side?: 'bottom' | 'top';
+}
+
+export const WorkInbox: React.FC<WorkInboxProps> = ({ side = 'bottom' }) => {
   const t = useShellText();
-  const [work, setWork] = useState<CompletedWork>(NO_COMPLETED_WORK);
+  const work = useSyncExternalStore(subscribeCompleted, readCompleted, readCompleted);
   const [now, setNow] = useState(0);
   const screens = useDomainExtensions(FRONTX_SCREEN_DOMAIN) as StudioScreenExtension[];
   const background = screens.find((screen) => screen.presentation?.route === BACKGROUND_WORK_ROUTE);
@@ -90,7 +117,13 @@ export const WorkInbox: React.FC = () => {
           </span>
         )}
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" sideOffset={6} className="w-80 rounded-lg" aria-label={label}>
+      <DropdownMenuContent
+        align={side === 'top' ? 'start' : 'end'}
+        side={side}
+        sideOffset={6}
+        className="w-80 rounded-lg"
+        aria-label={label}
+      >
         <div className="flex items-center justify-between px-2 py-1.5">
           <span className="text-body font-medium text-foreground">{label}</span>
         </div>

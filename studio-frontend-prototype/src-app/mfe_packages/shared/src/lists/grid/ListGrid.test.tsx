@@ -2,7 +2,7 @@ import React from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { DataGridTableColumn } from '@gears-frontx/ui-kit';
-import { GridEmpty, GridFailed, GridFooter, NoData } from './GridStates';
+import { GridClearFilters, GridEmpty, GridFailed, GridFooter, NoData } from './GridStates';
 import { ListGrid } from './ListGrid';
 import { useLocalGridLoad } from './localGridLoad';
 import { stubResizeObserver } from '@frontx-test-utils/stubResizeObserver';
@@ -17,7 +17,9 @@ interface Row {
 
 const COLUMNS: DataGridTableColumn<Row>[] = [{ id: 'name', label: 'Name' }];
 
-const Empty: React.FC = () => <GridEmpty title="Nothing yet" noMatches="Nothing matched" />;
+const Empty: React.FC = () => (
+  <GridEmpty title="Nothing yet" noMatches="Nothing matched" noMatchesActions={<GridClearFilters label="Clear search" />} />
+);
 
 const List: React.FC<{ rows: Row[] }> = ({ rows }) => {
   const { load, reloadBridge } = useLocalGridLoad(rows, { search: (row) => row.name });
@@ -39,6 +41,15 @@ describe('ListGrid', () => {
     expect(screen.getByRole('table')).toBeTruthy();
     fireEvent.change(screen.getByPlaceholderText('Search'), { target: { value: 'zzz' } });
     expect(await screen.findByText('Nothing matched')).toBeTruthy();
+  });
+
+  it('clears a search that matched nothing', async () => {
+    render(<List rows={[{ id: '1', name: 'Alpha' }]} />);
+    await screen.findByText('Alpha');
+    fireEvent.change(screen.getByPlaceholderText('Search'), { target: { value: 'zzz' } });
+    fireEvent.click(await screen.findByText('Clear search'));
+    expect(await screen.findByText('Alpha')).toBeTruthy();
+    expect((screen.getByPlaceholderText('Search') as HTMLInputElement).value).toBe('');
   });
 
   it('says the list is empty, without filters, in its own words', async () => {

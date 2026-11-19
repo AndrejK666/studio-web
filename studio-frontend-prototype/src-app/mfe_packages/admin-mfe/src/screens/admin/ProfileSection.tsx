@@ -11,7 +11,7 @@
  * docs/parity.md (the Profile row).
  */
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { apiRegistry } from '@gears-frontx/react';
 import {
   Badge,
@@ -22,9 +22,9 @@ import {
   NativeSelect,
   NativeSelectOption,
 } from '@gears-frontx/ui-kit';
-import { AccountsApiService, useOrganization, type Me } from '@constructor-studio/mfe-shared';
+import { AccountsApiService, openScreen, screenView, useOrganization, type Me } from '@constructor-studio/mfe-shared';
 import { AdminApiService } from '../../api/AdminApiService';
-import type { AliasWrite, MyMembership, PersonAlias, PersonEmail, PersonLogin, StudioProfile } from '../../api/types';
+import type { AliasWrite, ConnectorProvider, MyMembership, PersonAlias, PersonEmail, PersonLogin, StudioProfile } from '../../api/types';
 import { initials } from '../../model/members';
 import {
   ALIAS_KINDS,
@@ -43,6 +43,7 @@ import {
 import { ErrorLine, Header, errText, shortId, useAdmin, when } from './common';
 import { EmailList } from './PeopleSection';
 import { Integrations } from './integrations/IntegrationsSection';
+import { AddConnection } from './integrations/AddConnection';
 import styles from './Admin.module.css';
 
 export function ProfileSection() {
@@ -233,18 +234,31 @@ function PersonCard({ memberships }: { memberships: MyMembership[] | null }) {
 }
 
 function IdentitiesCard() {
-  const { t, language } = useAdmin();
+  const { t, language, bridge } = useAdmin();
+  const { org } = useOrganization();
+  const [fromInbox] = useState(() => screenView(window.location.search) === 'github-reviews');
+  const reviewAccounts = useRef<HTMLElement>(null);
   const api = apiRegistry.getService(AdminApiService);
   const accounts = apiRegistry.getService(AccountsApiService);
   const [logins, setLogins] = useState<PersonLogin[] | null>(null);
   const [aliases, setAliases] = useState<PersonAlias[] | null>(null);
   const [emails, setEmails] = useState<PersonEmail[] | null>(null);
-  const [session, setSession] = useState<string | null>(null);
+  const [session, setSession] = useState<Me | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [kind, setKind] = useState<string>('github');
   const [account, setAccount] = useState('');
+  const [githubProvider, setGithubProvider] = useState<ConnectorProvider | null>(null);
+  const aliasesReady = aliases !== null;
+  // The confirmation endpoint reads personal proofs from the caller's tenant.
+  const reviewScope = session?.subject_tenant_id
+    ? { id: session.subject_tenant_id, name: org?.id === session.subject_tenant_id ? org.name : t('prof_title') }
+    : null;
+
+  useEffect(() => {
+    if (fromInbox && aliasesReady) reviewAccounts.current?.focus();
+  }, [fromInbox, aliasesReady]);
 
   useEffect(() => {
     let live = true;
@@ -258,7 +272,7 @@ function IdentitiesCard() {
       .catch((e: unknown) => live && setError(errText(e)));
     accounts.getMe
       .fetch()
-      .then((me) => live && setSession(me?.subject_id ?? null))
+      .then((me) => live && setSession(me ?? null))
       .catch(() => undefined);
     return () => {
       live = false;
@@ -278,6 +292,17 @@ function IdentitiesCard() {
     }
   };
 
+  const confirmReviews = async () => {
+    const report = await api.confirmMyAliases.fetch(undefined);
+    const current = (await api.myAliases.fetch({ staleTime: 0 })).aliases ?? [];
+    setAliases(current);
+    if (fromInbox && current.some((alias) => alias.kind === 'github' && aliasConfidence(alias.confidence) === 'confirmed')) {
+      openScreen(bridge, '/inbox');
+      return;
+    }
+    setNote(confirmSummary(report, t));
+  };
+
   const written = (w: AliasWrite) => {
     setAliases(w.aliases ?? []);
     if (w.outcome === 'refused') setError(w.reason || t('prof_refused'));
@@ -289,17 +314,13 @@ function IdentitiesCard() {
     const id = account.trim();
     if (!id) return;
     void run(async () => {
-      written(await api.claimMyAlias.fetch({ kind, external_id: id }));
+      const result = await api.claimMyAlias.fetch({ kind, external_id: id });
+      written(result);
+      if (result.outcome === 'refused') return;
       setAccount('');
+      if (fromInbox && kind === 'github') await confirmReviews();
     });
   };
-
-  const confirm = () =>
-    run(async () => {
-      const report = await api.confirmMyAliases.fetch(undefined);
-      setAliases((await api.myAliases.fetch({ staleTime: 0 })).aliases ?? []);
-      setNote(confirmSummary(report, t));
-    });
 
   return (
     <Card data-profile-identities>
@@ -307,9 +328,8 @@ function IdentitiesCard() {
         <div className={styles.header}>
           <h3 className={styles.subtitle}>{t('prof_identities')}</h3>
           <div className={styles.headerAction}>
-            <Button size="sm" variant="outline" disabled={busy} onClick={() => void confirm()} data-profile-confirm>
-              {t('prof_check')}
-            </Button>
+            {!fromInbox && <Button size="sm" variant="outline" disabled={busy}
+              onClick={() => void run(confirmReviews)} data-profile-confirm>{t('prof_check')}</Button>}
           </div>
         </div>
         <p className={styles.muted}>{t('prof_identities_about')}</p>
@@ -330,7 +350,7 @@ function IdentitiesCard() {
                   <div className={styles.grow}>
                     <div className={styles.name}>
                       {loginProvider(l.provider, t)}{' '}
-                      {l.subject === session && <Badge variant="info">{t('prof_this_session')}</Badge>}
+                      {l.subject === session?.subject_id && <Badge variant="info">{t('prof_this_session')}</Badge>}
                     </div>
                     <div className={styles.sub}>
                       {l.email
@@ -350,8 +370,29 @@ function IdentitiesCard() {
         )}
 
         {aliases && (
-          <section>
+          <section ref={reviewAccounts} tabIndex={fromInbox ? -1 : undefined} aria-label={fromInbox ? t('prof_identities') : undefined}>
             <h4 className={styles.name}>{t.count('prof_aliases', aliases.length)}</h4>
+            {fromInbox && <div>
+              <p className={styles.muted}>{t('prof_github_reviews_hint')}</p>
+              <Button size="sm" variant="outline" disabled={busy} onClick={() => void run(confirmReviews)} data-profile-confirm>
+                {t('prof_check')}
+              </Button>
+              {reviewScope && !githubProvider && <Button size="sm" variant="outline" disabled={busy} onClick={() => void run(async () => {
+                const providers = await api.connectorProviders.fetch();
+                const github = providers.items?.find((provider) => provider.provider === 'github');
+                if (github) setGithubProvider(github);
+                else setError(t('prof_github_unavailable'));
+              })}>{t('prof_connect_github')}</Button>}
+              <Button size="sm" variant="ghost" onClick={() => openScreen(bridge, '/inbox')}>
+                {t('prof_back_to_inbox')}
+              </Button>
+              {reviewScope && githubProvider && <AddConnection org={reviewScope} providers={[githubProvider]}
+                initialProvider={githubProvider} personal onClose={() => setGithubProvider(null)}
+                onAdded={() => {
+                  setGithubProvider(null);
+                  void run(confirmReviews);
+                }} />}
+            </div>}
             {aliases.length === 0 && (
               <p className={styles.muted} data-profile-no-aliases>
                 {t('prof_no_aliases')}

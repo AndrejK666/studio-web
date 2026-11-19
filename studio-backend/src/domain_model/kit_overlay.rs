@@ -55,6 +55,26 @@ use super::ontology::Ontology;
 
 /// `meta.origin` / `origin` of what a kit brought.
 pub const ORIGIN_KIT: &str = "kit";
+/// `meta.origin` of a type a gear declared (`TypeNeed`): a kit that claims
+/// it decides its `meta.kit` and whether it is installed (ADR-0071 §3).
+pub const ORIGIN_GEAR: &str = "gear";
+
+/// The kits whose claimed gear types the model marks, carried (`meta.kit`)
+/// on a type a gear declared: what an organization's reconciliation also
+/// syncs, so a claiming kit that does not apply leaves them dormant.
+pub fn claiming(o: &Ontology) -> Vec<String> {
+    let mut out: Vec<String> = o
+        .entities()
+        .iter()
+        .filter_map(|e| e.get("meta"))
+        .filter(|m| str_of(m, "origin") == Some(ORIGIN_GEAR))
+        .filter_map(|m| str_of(m, "kit"))
+        .map(str::to_owned)
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -248,12 +268,44 @@ impl OverlayType {
     }
 
     /// The GTS id it is catalogued under: a declared type keeps Studio's,
-    /// a kit's own is under the kit's namespace.
-    pub fn gts(&self, slug: &str) -> String {
-        match &self.id {
-            Some(id) => super::gts::node_type_id(id),
-            None => kit_type_gts(slug, &self.name),
+    /// a kit's own is under the kit's namespace, and a kit's own type that
+    /// `extends` another is derived from it, its id chained onto the base's
+    /// (`gts.cf.studio.domain.project.v1~cf.studio.kit.gears_project.project.v1~`).
+    /// `extends` names one of `siblings` (the overlay's types) by its
+    /// `name`, or a model type by its id.
+    pub fn gts_in(&self, slug: &str, siblings: &[OverlayType]) -> String {
+        match (&self.id, &self.extends) {
+            (Some(id), _) => super::gts::node_type_id(id),
+            (None, Some(base)) => {
+                let base = siblings
+                    .iter()
+                    .find(|t| t.name == *base && t.name != self.name)
+                    .map_or_else(|| super::gts::node_type_id(base), |t| t.gts_in(slug, &[]));
+                derived_type_gts(&base, slug, &self.name)
+            }
+            (None, None) => kit_type_gts(slug, &self.name),
         }
+    }
+}
+
+/// The GTS id of kit `slug`'s type `name` derived from the type `base` (a
+/// GTS type id ending in `~`): the kit's segment chained onto the base's.
+fn derived_type_gts(base: &str, slug: &str, name: &str) -> String {
+    let own = kit_type_gts(slug, name);
+    format!("{base}{}", own.trim_start_matches("gts."))
+}
+
+/// The core type a project is (ADR-0010: a project is a tenant, and its
+/// object in the model is of this type).
+pub const PROJECT_ENTITY: &str = "project";
+
+impl KitOverlay {
+    /// The kit's own type derived from the core Project type, if it brings
+    /// one: what makes a kit a project type (ADR-0073).
+    pub fn project_subtype(&self) -> Option<&OverlayType> {
+        self.types
+            .iter()
+            .find(|t| t.id.is_none() && t.extends.as_deref() == Some(PROJECT_ENTITY))
     }
 }
 
@@ -533,6 +585,7 @@ pub fn sync(
     overlay: Option<&KitOverlay>,
     inhabited: &dyn Fn(&str) -> bool,
 ) -> Result<KitModelChange, KitModelError> {
+    let uninstall = overlay.is_none();
     let empty = KitOverlay::default();
     let overlay = overlay.unwrap_or(&empty);
     validate(slug, overlay)?;
@@ -548,8 +601,14 @@ pub fn sync(
         .filter(|t| t.id.is_some())
         .map(|t| t.entity_id(slug))
         .collect();
-    let resolve = |name: &str| -> Result<String, KitModelError> {
-        if let Some(t) = overlay.types.iter().find(|t| t.name == name) {
+    // `except`: the type whose base is resolved, which is never its own
+    // base -- a kit's `project` that extends `project` extends Studio's.
+    let resolve_except = |name: &str, except: Option<&str>| -> Result<String, KitModelError> {
+        if let Some(t) = overlay
+            .types
+            .iter()
+            .find(|t| t.name == name && Some(t.name.as_str()) != except)
+        {
             return Ok(t.entity_id(slug));
         }
         o.resolve_entity_id(name).ok_or_else(|| {
@@ -558,12 +617,17 @@ pub fn sync(
             ))
         })
     };
+    let resolve = |name: &str| resolve_except(name, None);
 
     // What the overlay wants: types, then properties by (entity, name), then
     // lifecycles by (entity, field).
     let mut want_types: Vec<(String, Value)> = Vec::new();
     for t in &overlay.types {
-        let extends = t.extends.as_deref().map(&resolve).transpose()?;
+        let extends = t
+            .extends
+            .as_deref()
+            .map(|b| resolve_except(b, Some(t.name.as_str())))
+            .transpose()?;
         let id = t.entity_id(slug);
         let bucket = t
             .bucket
@@ -584,7 +648,7 @@ pub fn sync(
             want["meta"]["origin"] = json!(ORIGIN_KIT);
             want["meta"]["kit"] = json!(slug);
             want["meta"]["kit_version"] = json!(version);
-            want["meta"]["gts"] = json!(t.gts(slug));
+            want["meta"]["gts"] = json!(t.gts_in(slug, &overlay.types));
             want_types.push((id.clone(), want));
             continue;
         }
@@ -603,7 +667,7 @@ pub fn sync(
                     "origin": ORIGIN_KIT,
                     "kit": slug,
                     "kit_version": version,
-                    "gts": t.gts(slug),
+                    "gts": t.gts_in(slug, &overlay.types),
                 },
                 "properties": [],
                 "methods": [],
@@ -999,6 +1063,32 @@ pub fn sync(
             && leave(meta, slug, &at)
         {
             change.kept.push(id.clone());
+        }
+    }
+    // The gear's types the kit claims (ADR-0071 §3): the gear declares them
+    // and keeps writing them; the kit decides only whether they are
+    // installed. Without the kit they are dormant, left by it; with it, they
+    // are its again.
+    for e in entities.iter_mut() {
+        let id = str_of(e, "id").unwrap_or_default().to_owned();
+        let Some(meta) = e.get_mut("meta").and_then(Value::as_object_mut) else {
+            continue;
+        };
+        if meta.get("origin").and_then(Value::as_str) != Some(ORIGIN_GEAR) {
+            continue;
+        }
+        let marked = meta.get("kit").and_then(Value::as_str) == Some(slug);
+        let left = meta
+            .get("left_by")
+            .and_then(|l| l.get("kit"))
+            .and_then(Value::as_str)
+            == Some(slug);
+        if uninstall && marked && leave(meta, slug, &at) {
+            change.kept.push(id);
+        } else if !uninstall && left {
+            meta.remove("left_by");
+            meta.insert("kit".into(), json!(slug));
+            change.updated.push(format!("type {id}"));
         }
     }
     let before_len = entities.len();

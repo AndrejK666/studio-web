@@ -3,13 +3,29 @@
 The prototype's Product and Components project tabs, carried over (ADR-0069).
 One entry, two extensions switched on the shell's `section`:
 
-- **Product** (`/product`, kit `product-releases`) — the page of
+- **Product** (`/product`, kit `project-product`) — the page of
   `product-sections-view.tsx`: header with the engine's verdict and the next
   action, what the product is, the strip from configured to running, the
   sources its revision pins, and its parts: Map, Infrastructure, Backend
   (the configurator and gear config), Frontend (the constructor), Parts.
 - **Components** (`/project-components`, kit `components`) — the project's
   inventory (`project-components-view.tsx`).
+
+Product also says how the product is assembled (ADR-0072,
+`src/screens/product/assembly/`): the strategy it uses (`spec_mapping` or
+`gears_matcher`), where that comes from, the project's choice, and "Propose
+gears", which goes through the engine's completion and the person's
+confirmation.
+
+A second entry (`./gearsMatcherLifecycle`, `GearsMatcherRoot.tsx`) is the
+Gears matcher kit's (`gears-matcher`, opt-in), shown only where it is
+installed:
+
+- **Gear match** (`/gear-match`, project) — what the gears-matcher service
+  read in the specs (`src/screens/product/match/`); it was a section of
+  Product.
+- **Gears matcher** (`/gears-matcher`, organization) — the service's state
+  and the organization's default strategy (`src/screens/matcher/`).
 
 Layout:
 

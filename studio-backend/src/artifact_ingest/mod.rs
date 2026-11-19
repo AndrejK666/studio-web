@@ -24,6 +24,12 @@ pub(crate) mod gts;
 mod index;
 mod mcp;
 pub(crate) use mcp::tools as mcp_tools;
+
+/// Every type this gear declares in the model, for the kits' claims test.
+#[cfg(test)]
+pub(crate) fn declared_types() -> Vec<crate::domain_model::port::TypeNeed> {
+    model_store::needs()
+}
 mod detach_task; // a source taken out of a project as one run (#1042)
 mod ingest_task;
 pub mod sdk;
@@ -386,7 +392,15 @@ impl RestApiCapability for StudioArtifactIngestGear {
                 )
                 .with_work_root_failure(work_root_failure)
                 .with_connectors(crate::connectors::sdk::Connectors::new(ctx.client_hub()))
-                .with_platform(platform_client(ctx)?),
+                .with_kits(ctx.client_hub())
+                .with_platform(platform_client(ctx)?)
+                .with_clone_outcomes(
+                    self.clone_status
+                        .get()
+                        .cloned()
+                        .flatten()
+                        .map(|s| s as Arc<dyn port::CloneOutcomes>),
+                ),
             ))
         };
 
@@ -458,11 +472,18 @@ impl RestApiCapability for StudioArtifactIngestGear {
         // Retain for the process lifetime; the router also owns a clone.
         let _ = self.service.set(service.clone());
         let router = rest::register_routes(router, openapi, service, ctx.client_hub());
-        Ok(clone_status::register_routes(
+        let router = clone_status::register_routes(
             router,
             openapi,
             self.clone_status.get().cloned().flatten(),
             ctx.client_hub(),
+        );
+        // The write routes a kit claims answer KIT_NOT_INSTALLED without it
+        // (ADR-0071 §4): studio-kits' one shared check.
+        Ok(crate::kit_registry::port::with_claimed_routes(
+            router,
+            ctx.client_hub(),
+            "studio-artifact-ingest",
         ))
     }
 }

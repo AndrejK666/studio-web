@@ -315,5 +315,11 @@
   "delete_version_body": "Она удаляется из реестра вместе со всеми своими тегами. Развёртывание, которое её называет, больше не сможет её скачать.",
   "this_version": "эту версию",
   "no_digest_to_delete": "Листинг реестра не даёт для неё digest.",
-  "deleting_version": "Удаляем её из реестра."
+  "deleting_version": "Удаляем её из реестра.",
+  "search_assignments": "Поиск по проекту, окружению или namespace",
+  "search_projects": "Поиск по проекту",
+  "no_matches": "По этому поиску ничего не найдено.",
+  "clear_search": "Сбросить поиск",
+  "assignments_unreadable": "Не удалось прочитать назначения namespace: {error}",
+  "retry": "Повторить"
 }

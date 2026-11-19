@@ -78,6 +78,29 @@ pub struct ArtifactIndex {
     db: Db,
 }
 
+/// A pull request's fields the activity reads.
+#[derive(Debug, FromQueryResult)]
+struct PullRow {
+    repo: String,
+    updated_at: String,
+    created_at: Option<String>,
+    state: Option<String>,
+    merged: bool,
+}
+
+/// A commit's repository and time.
+#[derive(Debug, FromQueryResult)]
+struct CommitRow {
+    repo: String,
+    created_at: Option<String>,
+}
+
+/// A repository with commits.
+#[derive(Debug, FromQueryResult)]
+struct RepoRow {
+    repo: String,
+}
+
 /// A file row, read without its payload.
 #[derive(Debug, FromQueryResult)]
 struct FileRow {
@@ -295,6 +318,141 @@ impl ArtifactIndex {
                 repo: r.repo,
             })
             .collect())
+    }
+
+    /// [`GraphStore::repos_of_files`]: the files of `scope` among `ids`, by
+    /// their columns, a statement per [`ROWS_PER_STATEMENT`] ids.
+    async fn repos_of_files(
+        &self,
+        tenant: Uuid,
+        scope: &str,
+        ids: &[String],
+    ) -> anyhow::Result<HashMap<String, String>> {
+        let conn = self.db.conn()?;
+        let mut out = HashMap::new();
+        for chunk in ids.chunks(ROWS_PER_STATEMENT) {
+            let rows: Vec<FileRow> = node::Entity::find()
+                .secure()
+                .scope_with(&AccessScope::for_tenant(tenant))
+                .filter(
+                    Self::in_scope(&[gts::FILE_TYPE], scope)
+                        .add(node::Column::IsDir.eq(false))
+                        .add(node::Column::Path.ne(""))
+                        .add(node::Column::Repo.ne(""))
+                        .add(node::Column::InstanceId.is_in(chunk.iter().cloned())),
+                )
+                .project_all(&conn, |q| {
+                    q.select_only()
+                        .column(node::Column::InstanceId)
+                        .column(node::Column::Path)
+                        .column(node::Column::Repo)
+                        .into_model::<FileRow>()
+                })
+                .await?;
+            out.extend(rows.into_iter().map(|r| (r.instance_id, r.repo)));
+        }
+        Ok(out)
+    }
+
+    /// [`GraphStore::repo_activity`] from the columns, never a payload.
+    ///
+    /// Pull requests are few and every one counts (one open for months is
+    /// the one worth seeing), so each is read as its five fields. Commits
+    /// are what a repository has most of and only the window's count: the
+    /// repositories that have any are one `GROUP BY`, and only the commits
+    /// whose `created_at` falls in the window, give or take two days for an
+    /// offset, are read. Both are then folded by the reference's own rules
+    /// ([`super::activity::repo_activity`]), so the answer cannot drift.
+    async fn repo_activity(
+        &self,
+        tenant: Uuid,
+        scope: &str,
+        now: i64,
+        days: usize,
+    ) -> anyhow::Result<std::collections::BTreeMap<String, super::activity::RepoActivity>> {
+        // A string field of the payload, `NULL` when it is not a string, as
+        // the reference reads it.
+        fn text(key: &str) -> Expr {
+            Expr::cust(format!(
+                "CASE WHEN jsonb_typeof(payload->'{key}') = 'string' THEN payload->>'{key}' END"
+            ))
+        }
+        let conn = self.db.conn()?;
+        let scope_of = AccessScope::for_tenant(tenant);
+        let pulls: Vec<PullRow> = node::Entity::find()
+            .secure()
+            .scope_with(&scope_of)
+            .filter(Self::in_scope(&[gts::PULL_REQUEST_TYPE], scope).add(node::Column::Repo.ne("")))
+            .project_all(&conn, |q| {
+                q.select_only()
+                    .column(node::Column::Repo)
+                    .column(node::Column::UpdatedAt)
+                    .column_as(text("created_at"), "created_at")
+                    .column_as(text("state"), "state")
+                    .column_as(
+                        Expr::cust("COALESCE(payload->'merged' = 'true'::jsonb, false)"),
+                        "merged",
+                    )
+                    .into_model::<PullRow>()
+            })
+            .await?;
+        let commit_scope =
+            || Self::in_scope(&[gts::COMMIT_TYPE], scope).add(node::Column::Repo.ne(""));
+        let repos: Vec<RepoRow> = node::Entity::find()
+            .secure()
+            .scope_with(&scope_of)
+            .filter(commit_scope())
+            .project_all(&conn, |q| {
+                q.select_only()
+                    .column(node::Column::Repo)
+                    .group_by(node::Column::Repo)
+                    .into_model::<RepoRow>()
+            })
+            .await?;
+        // The window's first day, less two: an RFC 3339 time with an offset
+        // can name the day before the instant it is, and never two.
+        let first_day =
+            now.div_euclid(super::activity::DAY_MS) - i64::try_from(days).unwrap_or(0) - 1;
+        let since = super::activity::date_of_day(first_day);
+        let commits: Vec<CommitRow> = node::Entity::find()
+            .secure()
+            .scope_with(&scope_of)
+            .filter(commit_scope().add(sea_orm::sea_query::ExprTrait::gte(
+                text("created_at"),
+                since,
+            )))
+            .project_all(&conn, |q| {
+                q.select_only()
+                    .column(node::Column::Repo)
+                    .column_as(text("created_at"), "created_at")
+                    .into_model::<CommitRow>()
+            })
+            .await?;
+
+        let field = |v: Option<String>| v.map_or(Value::Null, Value::String);
+        let pulls: Vec<Value> = pulls
+            .into_iter()
+            .map(|p| {
+                serde_json::json!({
+                    "repo": p.repo,
+                    "updated_at": p.updated_at,
+                    "created_at": field(p.created_at),
+                    "state": field(p.state),
+                    "merged": p.merged,
+                })
+            })
+            .collect();
+        // Every repository with a commit has a row, as it would from the
+        // whole listing: an old commit draws a flat line, not nothing.
+        let commits: Vec<Value> =
+            repos
+                .into_iter()
+                .map(|r| serde_json::json!({ "repo": r.repo }))
+                .chain(commits.into_iter().map(
+                    |c| serde_json::json!({ "repo": c.repo, "created_at": field(c.created_at) }),
+                ))
+                .collect();
+        Ok(super::activity::repo_activity(&pulls, &commits, now, days))
     }
 
     async fn page(
@@ -548,8 +706,16 @@ async fn fill_tenant(
 #[async_trait]
 impl GraphStore for IndexedGraphStore {
     async fn upsert_nodes(&self, ctx: &SecurityContext, nodes: &[GtsNode]) -> anyhow::Result<()> {
-        self.inner.upsert_nodes(ctx, nodes).await?;
         let tenant = ctx.subject_tenant_id();
+        if let Err(e) = self.inner.upsert_nodes(ctx, nodes).await {
+            // The graph writes in chunks, so a failure may come after earlier
+            // chunks landed, and a write whose answer was lost (a deadline)
+            // may have landed whole. Which rows the graph now has is not
+            // reported, so the index cannot follow it row by row: the tenant
+            // goes back to the graph until a fill reads what is there.
+            self.withdraw(tenant, &e).await;
+            return Err(e);
+        }
         // Not a file's content: nothing lists it, and its excerpt is the
         // weight the file rows were split to shed (see `gts::is_listed`). The
         // fill skips it the same way, because the graph never lists it.
@@ -674,6 +840,45 @@ impl GraphStore for IndexedGraphStore {
             }
         }
         self.inner.files_in_scope(ctx, scope).await
+    }
+
+    async fn repos_of_files(
+        &self,
+        ctx: &SecurityContext,
+        scope: &str,
+        node_ids: &[String],
+    ) -> anyhow::Result<HashMap<String, String>> {
+        if self.ready(ctx).await {
+            match self
+                .index
+                .repos_of_files(ctx.subject_tenant_id(), scope, node_ids)
+                .await
+            {
+                Ok(found) => return Ok(found),
+                Err(e) => Self::fell_back(&e),
+            }
+        }
+        self.inner.repos_of_files(ctx, scope, node_ids).await
+    }
+
+    async fn repo_activity(
+        &self,
+        ctx: &SecurityContext,
+        scope: &str,
+        now: i64,
+        days: usize,
+    ) -> anyhow::Result<std::collections::BTreeMap<String, super::activity::RepoActivity>> {
+        if self.ready(ctx).await {
+            match self
+                .index
+                .repo_activity(ctx.subject_tenant_id(), scope, now, days)
+                .await
+            {
+                Ok(found) => return Ok(found),
+                Err(e) => Self::fell_back(&e),
+            }
+        }
+        self.inner.repo_activity(ctx, scope, now, days).await
     }
 
     async fn page(

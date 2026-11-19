@@ -37,6 +37,20 @@ fn plan() -> Plan {
     }
 }
 
+#[test]
+fn a_typed_project_schedules_kit_installation_without_material_kits() {
+    let mut plan = plan();
+    plan.kits.clear();
+    assert!(!steps_of(&plan).contains(&"kits"));
+    for slug in ["gears-project", "constructor-research"] {
+        plan.config.insert("project_type_kit".into(), json!(slug));
+        assert_eq!(plan.project_type_kit(), Some(slug));
+        assert_eq!(steps_of(&plan).last(), Some(&"kits"));
+        assert!(crate::kit_registry::port::project_type_kit(slug).is_some());
+    }
+    assert!(crate::kit_registry::port::project_type_kit("delivery").is_none());
+}
+
 /// Steps that succeed, except the ones told to fail, and remember what ran.
 #[derive(Default)]
 struct Fake {
@@ -96,6 +110,9 @@ impl Steps for Fake {
     }
     async fn kits(&self, _: &Plan) -> Result<String, StepError> {
         self.step("kits")
+    }
+    async fn model(&self, _: &Plan) -> Result<String, StepError> {
+        self.step("model")
     }
 }
 
@@ -178,8 +195,10 @@ async fn a_failed_step_stops_the_run_and_a_retry_continues_from_it() {
         .lock()
         .unwrap()
         .push(("prd".into(), StepError::Retry("documents down".into())));
-    let (record, ended, _) = go(&p, Record::resume(&p, None), &fake).await;
+    let (record, ended, seen) = go(&p, Record::resume(&p, None), &fake).await;
     assert_eq!(ended, Err(StepError::Retry("documents down".into())));
+    // The last report, which the poll reads, has the step stopped.
+    assert_eq!(seen.last(), Some(&record));
     let prd = record.steps.iter().find(|s| s.key == "prd").unwrap();
     assert_eq!(prd.state, "failed");
     assert_eq!(prd.detail.as_deref(), Some("documents down"));
@@ -285,4 +304,31 @@ fn the_configuration_takes_the_plan_but_never_moves_a_status_back() {
     assert!(!with_fields(&mut moved_on, &fields));
     assert_eq!(moved_on["status"], "active");
     assert_eq!(moved_on["brief"], "kept");
+}
+
+#[test]
+fn a_typed_project_ends_by_giving_its_model_object_that_type() {
+    let mut plan = plan();
+    plan.config
+        .insert("project_type_kit".into(), json!("gears-project"));
+    assert!(!steps_of(&plan).contains(&"model"));
+    plan.config.insert(
+        "project_type_id".into(),
+        json!("gts.cf.studio.domain.project.v1~cf.studio.kit.gears_project.project.v1~"),
+    );
+    assert_eq!(steps_of(&plan).last(), Some(&"model"));
+    let id = "gts.cf.studio.domain.project.v1~cf.studio.kit.gears_project.project.v1~";
+    // None yet: the object the sweep would make, with the type.
+    let made = typed_project_object(None, &plan, id, "gears-project-project").unwrap();
+    assert_eq!(made["tenant_id"], plan.project_id.to_string());
+    assert_eq!(made["parent_tenant_id"], plan.workspace_id.to_string());
+    assert_eq!(made["project_type_id"], id);
+    assert_eq!(made["project_type"], "gears-project-project");
+    // One there: what people wrote on it stays.
+    let stored = json!({"tenant_id": "t", "name": "Shop", "budget": 3});
+    let typed = typed_project_object(Some(&stored), &plan, id, "gears-project-project").unwrap();
+    assert_eq!(typed["budget"], 3);
+    assert_eq!(typed["project_type_id"], id);
+    // Typed already: nothing to write.
+    assert!(typed_project_object(Some(&typed), &plan, id, "gears-project-project").is_none());
 }

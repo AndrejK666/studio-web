@@ -36,32 +36,43 @@ fn the_builtin_screens_are_today_s_tabs() {
     };
     assert_eq!(
         screens("project-tests"),
-        [("Tests".to_owned(), Some("/tests".to_owned()))]
-    );
-    assert_eq!(
-        screens("project-artifacts"),
-        [(
-            "Artifacts".to_owned(),
-            Some("/projects/artifacts".to_owned())
-        )]
-    );
-    assert_eq!(
-        screens("project-activity"),
         [
-            ("Activity".to_owned(), Some("/projects/activity".to_owned())),
-            ("Timeline".to_owned(), Some("/projects/timeline".to_owned()))
+            ("Tests".to_owned(), Some("/tests".to_owned())),
+            // Its open pull requests section, which needs project-git's type.
+            ("Open pull requests".to_owned(), Some("/tests".to_owned()))
+        ]
+    );
+    // Connections, the project's People and Artifacts are the shell's
+    // (ADR-0071 step 6): no kit brings them.
+    for gone in ["org-connections", "project-team", "project-artifacts"] {
+        assert!(builtin_catalogue().iter().all(|k| k.slug != gone), "{gone}");
+    }
+    assert_eq!(
+        screens("project-git"),
+        [("Activity".to_owned(), Some("/projects/activity".to_owned()))]
+    );
+    // Issues went to the Project model, as Open questions; Timeline to
+    // Planning, with no `needs` (ADR-0071 step 4); Activity to Git
+    // collaboration (step 5).
+    assert_eq!(
+        screens("project-domain-model"),
+        [
+            (
+                "Project domain model".to_owned(),
+                Some("/domain-model".to_owned())
+            ),
+            ("Open questions".to_owned(), Some("/issues".to_owned())),
         ]
     );
     assert_eq!(
-        screens("project-issues"),
-        [("Issues".to_owned(), Some("/issues".to_owned()))]
-    );
-    assert_eq!(
         screens("project-lifecycle"),
-        [(
-            "Project templates".to_owned(),
-            Some("/project-templates".to_owned())
-        )]
+        [
+            (
+                "Project templates".to_owned(),
+                Some("/project-templates".to_owned())
+            ),
+            ("Timeline".to_owned(), Some("/projects/timeline".to_owned())),
+        ]
     );
     assert_eq!(
         screens("project-specs"),
@@ -124,27 +135,28 @@ fn the_builtin_screens_are_today_s_tabs() {
                 Some("/platform/publication-requests")
             ),
             at("organization", "Components", Some("/components")),
-            at("project", "Components", Some("/project-components")),
         ]
     );
     assert_eq!(
-        levels("org-infrastructure"),
-        [at(
-            "organization",
-            "Infrastructure",
-            Some("/infrastructure")
-        )]
-    );
-    assert_eq!(
-        levels("product-releases"),
+        levels("delivery"),
         [
-            at("project", "Product", Some("/product")),
+            at("organization", "Infrastructure", Some("/infrastructure")),
             at("project", "Releases", Some("/releases"))
         ]
     );
     assert_eq!(
+        levels("project-product"),
+        [
+            at("project", "Product", Some("/product")),
+            at("project", "Components", Some("/project-components"))
+        ]
+    );
+    assert_eq!(
         levels("project-domain-model"),
-        [at("project", "Project domain model", Some("/domain-model"))]
+        [
+            at("project", "Project domain model", Some("/domain-model")),
+            at("project", "Open questions", Some("/issues"))
+        ]
     );
     // Constructor Research: one organization tab, and the MCP tools that
     // make a Research environment.
@@ -171,6 +183,43 @@ fn the_builtin_screens_are_today_s_tabs() {
     assert_eq!(tools, ["research_projects", "research_hardware"]);
     let mcp: Vec<&str> = crate::mcp::tools().iter().map(|t| t.name).collect();
     assert!(tools.iter().all(|t| mcp.contains(t)), "{tools:?}");
+    // Gears matcher (ADR-0072): the project's Gear match, out of Product,
+    // and the organization's page with its default assembly strategy.
+    assert_eq!(
+        levels("gears-matcher"),
+        [
+            at("project", "Gear match", Some("/gear-match")),
+            at("organization", "Gears matcher", Some("/gears-matcher"))
+        ]
+    );
+    let matcher = describe(
+        builtin_catalogue()
+            .into_iter()
+            .find(|kit| kit.slug == "gears-matcher")
+            .unwrap(),
+    );
+    let tools: Vec<&str> = matcher
+        .contents
+        .mcp_tools
+        .iter()
+        .map(|t| t.name.as_str())
+        .collect();
+    assert_eq!(
+        tools,
+        [
+            "project_gear_match",
+            "project_gear_match_report",
+            "gear_match_usage"
+        ]
+    );
+    assert_eq!(matcher.contents.requires, ["project-product"]);
+    let inbox: Vec<&str> = matcher
+        .contents
+        .inbox
+        .iter()
+        .map(|s| s.id.as_str())
+        .collect();
+    assert_eq!(inbox, ["gear-match-questions"]);
 }
 
 #[test]

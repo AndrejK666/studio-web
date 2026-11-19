@@ -33,6 +33,7 @@ import {
 } from '@gears-frontx/ui-kit';
 import {
   AccountsApiService,
+  pollWhileVisible,
   refusalReason,
   useOrganization,
   type OrganizationRef,
@@ -137,10 +138,11 @@ function WhoIsOnline() {
       );
     void read();
     // Refreshed on the cadence people report in on: faster shows the same answer more often.
-    const timer = setInterval(() => void read(), PRESENCE_REFRESH_MS);
+    // Not while the tab is hidden: shown again, it reads at once.
+    const stop = pollWhileVisible(() => void read(), PRESENCE_REFRESH_MS);
     return () => {
       live = false;
-      clearInterval(timer);
+      stop();
     };
   }, [api, tick]);
 
@@ -810,7 +812,7 @@ function GearsTable({ data }: { data: unknown }) {
                 <Pills items={g.dependencies} />
               </TableCell>
               <TableCell className={styles.sub}>{g.deployment_mode ?? '—'}</TableCell>
-              <TableCell className={styles.num}>{g.instances?.length ?? 0}</TableCell>
+              <TableCell className={styles.num}>{g.instances ? g.instances.length : '—'}</TableCell>
             </TableRow>
           ))}
         </TableBody>

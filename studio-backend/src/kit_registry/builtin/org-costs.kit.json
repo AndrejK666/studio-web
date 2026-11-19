@@ -23,5 +23,30 @@
         }
       }
     ]
-  }
+  },
+  "permissions": {
+    "reads": [
+      "GET /studio-usage/v1/costs",
+      "GET /studio-usage/v1/prices",
+      "GET /studio-usage/v1/budgets",
+      "GET /studio-usage/v1/budget-status"
+    ],
+    "writes": [
+      "PUT /studio-usage/v1/budgets",
+      "PUT /studio-usage/v1/prices"
+    ]
+  },
+  "gears": [
+    {
+      "gear": "studio-usage",
+      "types": [
+        "budget",
+        "model-price"
+      ],
+      "routes": [
+        "PUT /studio-usage/v1/budgets",
+        "PUT /studio-usage/v1/prices"
+      ]
+    }
+  ]
 }

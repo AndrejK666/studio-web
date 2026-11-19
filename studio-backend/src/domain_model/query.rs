@@ -1682,6 +1682,51 @@ mod tests {
         assert_eq!(out.rows.total, 1, "a hidden row is not counted either");
     }
 
+    /// Many projects the caller cannot read and a few it can: a bounded read
+    /// must fill its page from the readable ones and say whether more are
+    /// there, not cut the store's read first and lose them to the PDP.
+    async fn mostly_hidden() -> Arc<InMemoryDomainStore> {
+        let store = Arc::new(InMemoryDomainStore::default());
+        let open = DomainModelService::new(store.clone());
+        for i in 0..40 {
+            in_project(&open, "project", &format!("hidden-{i:02}"), THEIRS).await;
+        }
+        for key in ["apollo", "gemini", "mercury"] {
+            in_project(&open, "project", key, MINE).await;
+        }
+        store
+    }
+
+    #[tokio::test]
+    async fn the_objects_graph_pages_after_access() {
+        let s = DomainModelService::new(mostly_hidden().await).with_policy(Arc::new(OneProject));
+        let (nodes, _, more) = s
+            .objects_graph(&ctx(), 2, Some("project"), None)
+            .await
+            .unwrap();
+        assert_eq!(nodes.len(), 2, "a full page of readable objects");
+        assert!(more, "and the third is still there");
+        assert!(nodes.iter().all(|n| !n.name.starts_with("hidden")));
+
+        let (nodes, _, more) = s
+            .objects_graph(&ctx(), 3, Some("project"), None)
+            .await
+            .unwrap();
+        assert_eq!(nodes.len(), 3);
+        assert!(!more, "nothing readable is left");
+    }
+
+    #[tokio::test]
+    async fn conformance_checks_a_full_page_after_access() {
+        let s = DomainModelService::new(mostly_hidden().await).with_policy(Arc::new(OneProject));
+        let report = s.conformance(&ctx(), "project", None, 2).await.unwrap();
+        assert_eq!(report.checked, 2);
+        assert!(report.truncated);
+        let report = s.conformance(&ctx(), "project", None, 10).await.unwrap();
+        assert_eq!(report.checked, 3);
+        assert!(!report.truncated);
+    }
+
     /// `project.uses` (→ repository) and `project.includes_3` (→ managed-object)
     /// are both `references` edges, and a repository is a managed-object. The
     /// edge's discriminator is what keeps one out of the other.

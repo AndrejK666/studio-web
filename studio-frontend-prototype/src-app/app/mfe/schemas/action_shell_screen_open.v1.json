@@ -16,6 +16,10 @@
           "minLength": 1,
           "pattern": "^/",
           "$comment": "The target screen's presentation.route, e.g. /projects/specs or /connections."
+        },
+        "view": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*$"
         }
       },
       "required": ["route"]

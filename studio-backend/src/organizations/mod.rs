@@ -12,6 +12,10 @@
 //! resumed (see `service`).
 
 mod access_grants;
+#[cfg(test)]
+pub(crate) use access_grants::{
+    ChangeError as AccessChangeError, save_document as save_access_document,
+};
 mod creation;
 mod events;
 pub mod logo;
@@ -23,6 +27,8 @@ mod project_create_rest;
 pub mod project_types;
 /// The logo document only this gear writes, for the PDP's gear-held list.
 pub use logo::LOGO_METADATA_TYPE;
+/// The subject the organization gear acts as (its project creation run, the logo).
+pub use logo::SERVICE_SUBJECT_ID;
 /// The project status tool (`crate::mcp`).
 pub(crate) use mcp::tools as mcp_tools;
 pub mod port;
@@ -216,6 +222,7 @@ impl RestApiCapability for StudioOrganizationsGear {
                 sources: Arc::clone(sources),
                 hub: ctx.client_hub(),
                 answers: overview::Answers::default(),
+                project_lines: overview::Answers::default(),
             })
         });
         // The metrics board reads through the overview's sources, and admits
@@ -252,8 +259,15 @@ impl RestApiCapability for StudioOrganizationsGear {
                 hub: ctx.client_hub(),
             });
         let router = project_create_rest::register(router, openapi, creations);
-        Ok(rest::register_routes(
+        let router = rest::register_routes(
             router, openapi, service, creation, sources, overview, metrics, access,
+        );
+        // The write routes a kit claims answer KIT_NOT_INSTALLED without it
+        // (ADR-0071 §4): Project lifecycle's project types.
+        Ok(crate::kit_registry::port::with_claimed_routes(
+            router,
+            ctx.client_hub(),
+            "studio-organizations",
         ))
     }
 }

@@ -31,13 +31,21 @@ function stageWord(b: IdeBuild): string {
 
 /** Where the builds stand: its newest product build, or how to make one.
  *  `canBuildInStudio`: an environment has a registry login to push with. */
-export function buildsHint(builds: readonly IdeBuild[], canBuildInStudio: boolean, now = Date.now()): PipelineHint {
+/** `infrastructure`: whether Organization › Infrastructure is a screen here; a line never sends a person to one that is not. */
+export function buildsHint(
+  builds: readonly IdeBuild[],
+  canBuildInStudio: boolean,
+  now = Date.now(),
+  infrastructure = true
+): PipelineHint {
   const latest = builds.find((b) => b.action !== "run");
   if (!latest) {
     return {
       text: canBuildInStudio
         ? "Nothing built yet: Build in Studio below, open the project in the IDE, or propose a CI workflow."
-        : "Nothing built yet. Building in Studio needs an environment with a registry connection (Organization › Infrastructure); the IDE and CI build without one.",
+        : infrastructure
+          ? "Nothing built yet. Building in Studio needs an environment with a registry connection (Organization › Infrastructure); the IDE and CI build without one."
+          : "Nothing built yet. Building in Studio needs an environment with a registry connection, which an organization administrator adds; the IDE and CI build without one.",
       tone: "todo",
     };
   }

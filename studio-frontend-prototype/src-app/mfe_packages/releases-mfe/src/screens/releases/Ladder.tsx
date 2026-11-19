@@ -9,6 +9,7 @@
  */
 
 import React, { Fragment, useEffect, useState } from 'react';
+import { pollWhileVisible } from '@constructor-studio/mfe-shared';
 import { Badge, Button, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@gears-frontx/ui-kit';
 import type { Connection, Deployment, DeploymentStatus, ProjectTargets, TaskRun } from '../../api/types';
 import type { IdeBuild } from '../../model/builds';
@@ -277,10 +278,11 @@ function DeployProgress({ deployment, onEnded }: { deployment: Deployment; onEnd
       }
     };
     void look();
-    const timer = window.setInterval(() => void look(), PROGRESS_MS);
+    // Not while the tab is hidden: shown again, it looks at once.
+    const stop = pollWhileVisible(() => void look(), PROGRESS_MS);
     return () => {
       live = false;
-      window.clearInterval(timer);
+      stop();
     };
   }, [api, organizationId, deployment, onEnded, t]);
   const workloads = rollout?.workloads ?? [];

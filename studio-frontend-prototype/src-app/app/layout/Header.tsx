@@ -1,17 +1,9 @@
 /** Header Component — the global top bar. */
 
-import React, { useCallback, useState } from 'react';
-import {
-  useFrontX,
-  useDomainExtensions,
-  overlayDomain,
-  FRONTX_ACTION_MOUNT_EXT,
-} from '@gears-frontx/react';
-import { executeAndSettle } from '@/app/mfe/shellOutcomes';
+import React from 'react';
 import { Button } from '@gears-frontx/ui-kit/button';
-import { Icon } from '@iconify/react';
 import { cn } from '@/app/lib/utils';
-import type { OverlayExtension } from './overlayExtension';
+import { BundledIcon } from '@/app/icons/BundledIcon';
 import { ContextChain } from './ContextChain';
 import { ProjectStatusSlot } from './KitSlot';
 import { UserMenu } from './UserMenu';
@@ -19,6 +11,7 @@ import { ProductMenu } from './ProductMenu';
 import { PinsMenu } from './PinsMenu';
 import { WorkInbox } from './WorkInbox';
 import { useInboxEntry } from './useInboxEntry';
+import { useSearchEntry } from './useSearchEntry';
 import { useShellText } from '@/app/i18n/shellTranslations';
 
 export interface HeaderProps {
@@ -43,7 +36,7 @@ const IconPill: React.FC<{
       title={title ?? label}
       aria-disabled={disabled || undefined}
       onClick={disabled ? undefined : onClick}
-      icon={<Icon icon={icon} />}
+      icon={<BundledIcon declared={icon} />}
       className={cn(
         'rounded-full [--button-bg:var(--muted)] [--icon-size-sm:1.125rem]',
         disabled
@@ -68,33 +61,12 @@ const IconPill: React.FC<{
 );
 
 export const Header: React.FC<HeaderProps> = ({ children }) => {
-  const { mfeRegistry } = useFrontX();
-
-  const overlayExtensions = useDomainExtensions(overlayDomain.id) as OverlayExtension[];
-  const searchExtension = overlayExtensions.find((ext) => ext.presentation?.route === '/search');
+  const search = useSearchEntry();
+  const searchExtension = search.extension;
   // The Inbox is a screen (organization-mfe, `/inbox`), opened from here with
   // how many items wait on the person (the prototype's InboxButton).
   const inbox = useInboxEntry();
   const t = useShellText();
-
-  const [mounting, setMounting] = useState(false);
-
-  const openOverlayExtension = useCallback(
-    async (extensionId: string) => {
-      if (!mfeRegistry || mounting) return;
-      setMounting(true);
-      try {
-        await executeAndSettle(mfeRegistry, {
-          type: FRONTX_ACTION_MOUNT_EXT,
-          target: overlayDomain.id,
-          payload: { subject: extensionId },
-        }).catch(() => undefined);
-      } finally {
-        setMounting(false);
-      }
-    },
-    [mfeRegistry, mounting]
-  );
 
   return (
     <header className="flex h-14 shrink-0 items-center border-b border-border bg-card pr-4">
@@ -117,16 +89,14 @@ export const Header: React.FC<HeaderProps> = ({ children }) => {
 
       <div className="ml-auto flex items-center gap-2">
         <IconPill
-          icon={searchExtension?.presentation?.icon ?? 'material-symbols:search'}
+          icon={searchExtension?.presentation?.icon ?? 'lucide:search'}
           label={searchExtension?.presentation?.label ?? 'Search'}
           disabled={!searchExtension}
-          onClick={
-            searchExtension ? () => void openOverlayExtension(searchExtension.id) : undefined
-          }
+          onClick={searchExtension ? search.open : undefined}
         />
-        {/* The count is the server's (GET /me/inbox): nothing shows while it is unknown. */}
+        {/* The count is the server's (GET /me/inbox/count): nothing shows while it is unknown. */}
         <IconPill
-          icon={inbox.screen?.presentation?.icon ?? 'material-symbols:inbox'}
+          icon={inbox.screen?.presentation?.icon ?? 'lucide:inbox'}
           label={t('inbox')}
           title={inbox.count ? t('inbox_waiting', { count: inbox.count }) : t('inbox')}
           count={inbox.count}

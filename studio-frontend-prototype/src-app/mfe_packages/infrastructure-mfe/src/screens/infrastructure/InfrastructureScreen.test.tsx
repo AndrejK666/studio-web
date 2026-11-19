@@ -1,6 +1,10 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { stubResizeObserver } from '@frontx-test-utils/stubResizeObserver';
 import type { Connection, DeployEnvironment, Deployment, EnvironmentList } from '../../api/types';
+
+// The kit's DataGrid measures its header.
+stubResizeObserver();
 
 const { service, calls, openScreen } = vi.hoisted(() => ({
   service: {} as Record<string, unknown>,
@@ -106,6 +110,7 @@ function setUp({
   kits?: string[];
 } = {}) {
   calls.length = 0;
+  window.localStorage.clear();
   for (const k of Object.keys(service)) delete service[k];
   const list: EnvironmentList = { items: environments, total: environments.length, may_manage: mayManage, open_clusters: { connection_ids: [] } };
   Object.assign(service, {
@@ -115,7 +120,7 @@ function setUp({
       items: [conn({}), conn({ id: 'c-reg', provider: 'registry', label: 'ghcr', base_url: 'https://ghcr.io' })],
     }),
     deployments: read('deployments', { items: deployments, total: deployments.length }),
-    tenantUsers: read('tenantUsers', { items: [] }),
+    orgMembers: read('orgMembers', { items: [], total: 0 }),
     getWorkspaces: read('getWorkspaces', { items: [{ id: 'w1', name: 'Web' }] }),
     getProjects: read('getProjects', { items: [{ id: 'p1', name: 'Shop' }] }),
     testConnection: write('testConnection', {
@@ -148,11 +153,36 @@ describe('Organization › Infrastructure', () => {
     expect(document.querySelector('[data-place="ghcr"][data-place-kind="registry"]')).not.toBeNull();
   });
 
+  it('opens the registry field of the environment linked from Releases', async () => {
+    const current = window.location.href;
+    window.history.replaceState(null, '', '?screen=infrastructure;view=build-registry-e-dev');
+    try {
+      renderScreen();
+      const login = await screen.findByLabelText('field_registry_login');
+      expect(login.closest('[data-place-panel="cluster"]')).toBeTruthy();
+      await waitFor(() => expect(document.activeElement).toBe(login));
+    } finally {
+      window.history.replaceState(null, '', current);
+    }
+  });
+
   it('asks every cluster and registry once when it opens, and says what a cluster may not do', async () => {
     renderScreen();
     await waitFor(() => expect(calls.filter((c) => c.name === 'testConnection').map((c) => c.args[0])).toEqual(['c-k8s', 'c-reg']));
     const card = document.querySelector('[data-place="main cluster"]') as HTMLElement;
     await waitFor(() => expect(within(card).getByText(/may_not/).textContent).toContain('create namespaces'));
+  });
+
+  it('does not test the places again on a second visit within five minutes', async () => {
+    const first = renderScreen();
+    await waitFor(() => expect(calls.filter((c) => c.name === 'testConnection')).toHaveLength(2));
+    first.unmount();
+    calls.length = 0;
+    renderScreen();
+    await waitFor(() =>
+      expect(within(document.querySelector('[data-place="main cluster"]') as HTMLElement).getByText(/may_not/)).toBeTruthy()
+    );
+    expect(calls.filter((c) => c.name === 'testConnection')).toHaveLength(0);
   });
 
   it('says the deploys waiting for a decision, and an administrator approves one', async () => {
@@ -191,6 +221,30 @@ describe('Organization › Infrastructure', () => {
     const prod = document.querySelector('[data-runs-cell="Shop/prod"]') as HTMLElement;
     expect(prod.textContent).toContain('nothing_runs_cell');
     expect(prod.textContent).toContain('1.2.0 · Waiting for approval');
+  });
+
+  it('lists what runs where through the grid: the search narrows the projects, and says when nothing matched', async () => {
+    setUp({
+      deployments: [
+        deployment({ id: 'd0', environment_id: 'e-dev', environment_name: 'dev', state: 'succeeded' }),
+        deployment({ id: 'd2', project_id: 'p2', project_name: 'Blog', environment_id: 'e-dev', environment_name: 'dev', state: 'succeeded' }),
+      ],
+    });
+    renderScreen();
+    fireEvent.click(await screen.findByText('tab_where'));
+    await waitFor(() => expect(document.querySelector('[data-list-grid="runs-where"] [data-runs-row="Blog"]')).not.toBeNull());
+    fireEvent.change(screen.getByPlaceholderText('search_projects'), { target: { value: 'sho' } });
+    await waitFor(() => expect(document.querySelector('[data-runs-row="Blog"]')).toBeNull());
+    expect(document.querySelector('[data-runs-row="Shop"]')).not.toBeNull();
+    fireEvent.change(screen.getByPlaceholderText('search_projects'), { target: { value: 'nothing' } });
+    expect(await screen.findByText('no_matches')).toBeTruthy();
+  });
+
+  it('says nothing runs anywhere when no project was deployed', async () => {
+    setUp({ deployments: [] });
+    renderScreen();
+    fireEvent.click(await screen.findByText('tab_where'));
+    expect(await screen.findByText('nothing_runs')).toBeTruthy();
   });
 
   it('adds an environment from the place it runs on', async () => {

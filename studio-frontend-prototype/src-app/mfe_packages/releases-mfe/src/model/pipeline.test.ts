@@ -88,6 +88,9 @@ describe("where the Builds tab stands", () => {
   it("says how to build when nothing is built", () => {
     expect(buildsHint([], true).text).toMatch(/Build in Studio/);
     expect(buildsHint([], false).text).toMatch(/registry connection/);
+    // Organization › Infrastructure is named only where it is a screen (walk 2026-11-16).
+    expect(buildsHint([], false, Date.now(), true).text).toMatch(/Organization › Infrastructure/);
+    expect(buildsHint([], false, Date.now(), false).text).not.toMatch(/Infrastructure/);
   });
 
   it("sends a published build on to Deploys", () => {

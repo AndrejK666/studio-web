@@ -1,0 +1,72 @@
+# kit.gdl rendered by Studio from the built-in kit.json and Studio's screens: not an authored kit.gdl.
+# project-lifecycle at 0.0.0-golden, on the builtin shelf. The shape is ADR-0068 §3 (GDL 1.7).
+# Kit type: gears (brings gears, model).
+gdl_version = "1.7"
+
+kit(
+    slug = "project-lifecycle",
+    name = "Planning",
+    version = "0.0.0-golden",
+    description = "Project phases and templates, milestones, risks and delivery scope, and the project's Timeline.",
+    publisher = "Constructor Fabric",
+    icon = "lucide:route",
+    levels = ["organization", "workspace", "project"],
+    types = [
+        kit_type(gts = "gts.cf.studio.kit.project_lifecycle.phase.v1~", id = "project-lifecycle-phase", name = "Project phase", description = "One of the phases a project moves through: idea, discovery, build, run.", fields = [kit_field(name = "order", type = "integer", description = "Where the phase sits in the lifecycle"), kit_field(name = "summary", type = "string?", description = "What a project does in this phase")]),
+        kit_type(gts = "gts.cf.studio.domain.risk.v1~", id = "risk", name = "Risk", adopts = True, description = "A scoped uncertainty that may affect delivery or outcomes, tracked with probability, impact, ownership, mitigation and evidence.", fields = [kit_field(name = "id", type = "EntityId", required = True, origin = "core"), kit_field(name = "title", type = "string", required = True, origin = "core"), kit_field(name = "scope_ref", type = "EntityRef", required = True, origin = "core"), kit_field(name = "category", type = "schedule | cost | technical | security | compliance | operational", origin = "core"), kit_field(name = "probability", type = "0..1", origin = "core"), kit_field(name = "impact", type = "low | medium | high | critical", origin = "core"), kit_field(name = "score", type = "decimal?", origin = "core"), kit_field(name = "owner_ref", type = "ActorRef?", origin = "core"), kit_field(name = "mitigation_ref", type = "EntityRef?", origin = "core"), kit_field(name = "status", type = "identified | analyzing | mitigating | accepted | closed", origin = "core")]),
+        kit_type(gts = "gts.cf.studio.domain.dependency.v1~", id = "dependency", name = "Dependency", adopts = True, description = "A dated, attributed record that one object depends on another: what blocks what, since when, and how badly. A reified relationship, so its dates and criticality survive.", fields = [kit_field(name = "id", type = "EntityId", required = True, origin = "core"), kit_field(name = "source_ref", type = "EntityId", required = True, origin = "core", description = "The object that depends"), kit_field(name = "target_ref", type = "EntityId", required = True, origin = "core", description = "The object depended on"), kit_field(name = "dependency_kind", type = "blocks | requires | affects", required = True, origin = "core"), kit_field(name = "criticality", type = "low | medium | high | blocking", origin = "core"), kit_field(name = "valid_from", type = "timestamp", required = True, origin = "core"), kit_field(name = "valid_to", type = "timestamp?", origin = "core"), kit_field(name = "status", type = "proposed | confirmed | resolved | retired", required = True, origin = "core"), kit_field(name = "note", type = "string?", origin = "core")]),
+        kit_type(gts = "gts.cf.studio.domain.lifecycle_stage.v1~", id = "lifecycle-stage", name = "Lifecycle Stage", adopts = True, description = "One stage of a kit-defined construction lifecycle, containing activities per performer role and gates.", fields = [kit_field(name = "id", type = "EntityId", required = True, origin = "core"), kit_field(name = "phase_ref", type = "PhaseId", required = True, origin = "core"), kit_field(name = "name", type = "string", required = True, origin = "core"), kit_field(name = "ordinal", type = "integer", required = True, origin = "core"), kit_field(name = "activity_refs", type = "EntityId[]", origin = "core"), kit_field(name = "quality_gate_refs", type = "EntityId[]", origin = "core")]),
+        kit_type(gts = "gts.cf.studio.domain.milestone.v1~", id = "milestone", name = "Milestone", adopts = True, description = "A significant dated outcome or decision point on a roadmap, product or project.", fields = [kit_field(name = "id", type = "EntityId", required = True, origin = "core"), kit_field(name = "name", type = "string", required = True, origin = "core"), kit_field(name = "target_at", type = "timestamp", required = True, origin = "core"), kit_field(name = "status", type = "planned | at_risk | achieved | missed | cancelled", origin = "core"), kit_field(name = "completion_criteria", type = "Criterion[]", origin = "core"), kit_field(name = "owner_ref", type = "EntityId?", origin = "core")]),
+    ],
+    model = path("model/overlay.json"),
+    # Fields and relations its model adds on types it does not bring.
+    extends = [
+        kit_field(on = "project", name = "phase", type = "idea | discovery | build | run", description = "The phase the project is in"),
+        kit_field(on = "project", name = "phase_owner", type = "string?", description = "Who moves the project on from its phase (a subject id)"),
+        kit_field(on = "project", name = "phase_since", type = "timestamp?", description = "When the project entered its phase"),
+        kit_relation(on = "risk", name = "owned_by", target = "person", verb = "member", label = "owned by", origin = "core"),
+        kit_relation(on = "risk", name = "mitigated_by", target = "work-item", verb = "references", label = "mitigated by", origin = "core"),
+        kit_relation(on = "risk", name = "assessed_as", target = "evidence", verb = "derives", label = "assessed as", origin = "core"),
+        kit_relation(on = "dependency", name = "depends_on", target = "managed-object", verb = "references", label = "depends_on", origin = "core"),
+        kit_relation(on = "lifecycle-stage", name = "defines", target = "activity", verb = "composes", label = "defines", origin = "core"),
+        kit_relation(on = "milestone", name = "tracks", target = "project", verb = "references", label = "tracks", origin = "core"),
+        kit_relation(on = "milestone", name = "tracks_2", target = "work-item", verb = "references", label = "tracks", origin = "core"),
+        kit_relation(on = "project", name = "tracks", target = "risk", verb = "composes", label = "tracks", origin = "core"),
+    ],
+    tabs = [
+        kit_tab(level = "workspace", label = "Project templates", route = "/project-templates"),
+        kit_tab(level = "project", label = "Timeline", route = "/projects/timeline"),
+        kit_tab(level = "project", name = "phases", label = "Phases", shows = "project-lifecycle-phase"),
+        kit_tab(level = "workspace", name = "ptypes", label = "Templates & phases", shows = "project-type"),
+    ],
+    inbox = [
+        kit_inbox_source(id = "phase-waiting", label = "A project waiting in its phase on its owner"),
+    ],
+    mcp_tools = [
+        "project_phase",
+        "project_phase_set",
+        "project_phases",
+    ],
+    gears = [
+        kit_gear_claim(gear = "studio-kits", mcp_tools = ["project_phase", "project_phase_set", "project_phases"], routes = ["PUT /studio-kits/v1/project-phase"]),
+        kit_gear_claim(gear = "studio-organizations", types = ["project-type"], routes = ["PUT /studio-organizations/v1/project-types", "DELETE /studio-organizations/v1/project-types"]),
+        kit_gear_claim(gear = "studio-documents", types = ["lifecycle-stage", "delivery-scope", "delivery-limit", "delivery-scope-version"]),
+    ],
+    permissions = permissions(
+        reads = [
+            "GET /studio-organizations/v1/project-types",
+            "GET /studio-kits/v1/project-phase",
+            "GET /studio-kits/v1/project-phases",
+            "GET /studio-domain-model/v1/types",
+            "POST /studio-domain-model/v1/query",
+        ],
+        writes = [
+            "PUT /studio-kits/v1/project-phase",
+            "PUT /studio-organizations/v1/project-types",
+            "DELETE /studio-organizations/v1/project-types",
+            "POST /studio-domain-model/v1/mutate",
+        ],
+        listens = [],
+    ),
+    material = [],
+)

@@ -1,0 +1,259 @@
+import { cleanup, fireEvent, render, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createRef } from 'react';
+import type { ChildMfeBridge } from '@gears-frontx/react';
+
+vi.mock('../../../i18n', () => ({
+  useAssemblyTranslations: () => ({
+    t: (key: string, params?: Record<string, unknown>) => (params ? `${key} ${JSON.stringify(params)}` : key),
+    loading: false,
+  }),
+}));
+
+import { api } from '../../../api/client';
+import type { AssemblyStrategy } from '../../../model/assembly';
+import type { GearMatch } from '../../../model/gear-match';
+import { ScopeContext, type Scope } from '../../common';
+import { AssemblyPanel } from './AssemblyPanel';
+
+const scope: Scope = {
+  projectId: 'p1',
+  workspaceId: 'w1',
+  orgId: 'o1',
+  language: 'en',
+  bridge: {} as ChildMfeBridge,
+  container: createRef<HTMLDivElement>(),
+};
+
+const strategy = (extra: Partial<AssemblyStrategy> = {}): AssemblyStrategy => ({
+  organization_id: 'o1',
+  project_id: 'p1',
+  strategy: 'spec_mapping',
+  chosen: 'spec_mapping',
+  source: 'studio',
+  gears_matcher: { kit_installed: true, configured: true, offered: true },
+  strategies: ['spec_mapping', 'gears_matcher'],
+  settable: true,
+  may_set_default: false,
+  ...extra,
+});
+
+const MATCH: GearMatch = {
+  summary: { match_id: 'm1', state: 'succeeded', requested_by: 'u', created_at: '2026-11-18T10:00:00Z' },
+  project_id: 'p1',
+  product: 'todo-app',
+  documents: [],
+  questions: [],
+  requirements: [
+    {
+      requirement_id: 'cpt-x-fr-sign-in',
+      kind: 'fr',
+      coverage: 'covered',
+      low_confidence: false,
+      extracted: false,
+      reason: '',
+      gear_provides: '',
+      remaining_work: '',
+      action: 'propose',
+      candidates: [
+        {
+          gear_id: 'gears-rust/authn-resolver',
+          pick: 'authn-resolver',
+          verdict: 'covered',
+          role: 'chosen',
+          evidence: '',
+          covers: '',
+          missing: '',
+          rationale: '',
+          proposed: true,
+        },
+      ],
+    },
+  ],
+};
+
+const found = (selector: string) =>
+  waitFor(() => {
+    const el = document.querySelector(selector);
+    if (!el) throw new Error(`not drawn: ${selector}`);
+    return el as HTMLElement;
+  });
+
+function draw() {
+  const changed = vi.fn();
+  render(
+    <ScopeContext.Provider value={scope}>
+      <AssemblyPanel round={0} onChanged={changed} />
+    </ScopeContext.Provider>
+  );
+  return changed;
+}
+
+describe('AssemblyPanel', () => {
+  beforeEach(() => {
+    vi.spyOn(api, 'projectProduct').mockResolvedValue({ product_id: 'todo-app', gears: ['api-gateway'] });
+    vi.spyOn(api, 'gearboxCatalogue').mockRejectedValue(new Error('no corpus'));
+  });
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it('shows the strategy used and where it comes from, and why it falls back', async () => {
+    vi.spyOn(api, 'assemblyStrategy').mockResolvedValue(
+      strategy({
+        chosen: 'gears_matcher',
+        source: 'organization',
+        organization_default: 'gears_matcher',
+        fallback: { code: 'KIT_NOT_INSTALLED', reason: 'not installed' },
+        gears_matcher: { kit_installed: false, configured: true, offered: false },
+      })
+    );
+    draw();
+    expect((await found('[data-product-assembly-effective]')).getAttribute('data-product-assembly-effective')).toBe('spec_mapping');
+    expect(document.querySelector('[data-product-assembly-source="organization"]')).toBeTruthy();
+    expect(document.querySelector('[data-product-assembly-fallback="KIT_NOT_INSTALLED"]')).toBeTruthy();
+    // The matcher is shown, not offered.
+    expect((document.querySelector('[data-product-assembly-choice="gears_matcher"]') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('says under the choice why the matcher is not offered, when nothing falls back', async () => {
+    vi.spyOn(api, 'assemblyStrategy').mockResolvedValue(
+      strategy({ gears_matcher: { kit_installed: false, configured: true, offered: false } })
+    );
+    draw();
+    const line = await found('[data-product-assembly-unavailable]');
+    expect(line.getAttribute('data-product-assembly-unavailable')).toBe('kit_not_installed');
+    expect(line.textContent).toContain('unavailable_kit_not_installed');
+    expect((document.querySelector('[data-product-assembly-choice="gears_matcher"]') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('keeps the project choice', async () => {
+    vi.spyOn(api, 'assemblyStrategy').mockResolvedValue(strategy());
+    const set = vi
+      .spyOn(api, 'setAssemblyStrategy')
+      .mockResolvedValue(strategy({ strategy: 'gears_matcher', chosen: 'gears_matcher', source: 'project', project: 'gears_matcher' }));
+    draw();
+    fireEvent.click(await found('[data-product-assembly-choice="gears_matcher"]'));
+    await waitFor(() => expect(set).toHaveBeenCalledWith('', 'p1', 'gears_matcher'));
+    await found('[data-product-assembly-effective="gears_matcher"]');
+    fireEvent.click(document.querySelector('[data-product-assembly-choice="default"]')!);
+    await waitFor(() => expect(set).toHaveBeenCalledWith('', 'p1', null));
+  });
+
+  it('proposes from the spec plan and adds only what the person confirms', async () => {
+    vi.spyOn(api, 'assemblyStrategy').mockResolvedValue(strategy());
+    vi.spyOn(api, 'projectPlan').mockResolvedValue({
+      items: [
+        {
+          capability: 'auth',
+          gap: false,
+          unbuilt: false,
+          candidates: [{ name: 'authn-resolver', kind: 'gear', step: 'contract', score: 1, why: [], built: 'built', composable: 'runs' }],
+        },
+      ],
+      total: 1,
+    });
+    const complete = vi
+      .spyOn(api, 'completeProduct')
+      .mockResolvedValue({ gears: ['api-gateway', 'authn-resolver', 'tenant-resolver'], changes: [
+        { gear: 'tenant-resolver', added: true, reason: 'needed' },
+        { gear: 'authn-resolver', added: false, reason: 'needs configuration', needs: ['issuer'] },
+      ], config: {} });
+    const save = vi.spyOn(api, 'saveProjectProduct').mockResolvedValue({} as never);
+    const changed = draw();
+    fireEvent.click(await found('[data-product-assembly-propose]'));
+    await found('[data-product-assembly-proposal="authn-resolver"]');
+    expect(complete).toHaveBeenCalledWith('', ['api-gateway', 'authn-resolver'], {});
+    expect(save).not.toHaveBeenCalled();
+    // What the completion changed is said with its reason; a gear still wanting settings is flagged.
+    expect(document.querySelector('[data-product-assembly-change="tenant-resolver"]')).toBeTruthy();
+    expect(document.querySelector('[data-product-assembly-needs="authn-resolver"]')).toBeTruthy();
+    fireEvent.click(document.querySelector('[data-product-assembly-confirm]')!);
+    await waitFor(() => expect(changed).toHaveBeenCalled());
+    expect(save.mock.calls[0][2]).toMatchObject({ product_id: 'todo-app', gears: ['api-gateway', 'authn-resolver', 'tenant-resolver'] });
+  });
+
+  it('proposes from the latest gear match and accepts what went in', async () => {
+    vi.spyOn(api, 'assemblyStrategy').mockResolvedValue(
+      strategy({ strategy: 'gears_matcher', chosen: 'gears_matcher', source: 'project', project: 'gears_matcher' })
+    );
+    // The newest run failed; the proposals come from the finished one before it.
+    vi.spyOn(api, 'gearMatches').mockResolvedValue({
+      items: [
+        { match_id: 'm2', state: 'failed', requested_by: 'u', created_at: '2026-11-18T11:00:00Z' },
+        MATCH.summary,
+      ],
+      total: 2,
+    } as never);
+    const read = vi.spyOn(api, 'gearMatch').mockResolvedValue(MATCH);
+    vi.spyOn(api, 'completeProduct').mockResolvedValue({ gears: ['api-gateway', 'authn-resolver'], changes: [], config: {} });
+    vi.spyOn(api, 'saveProjectProduct').mockResolvedValue({} as never);
+    const decide = vi.spyOn(api, 'putGearMatchDecision').mockResolvedValue({ subject: 'cpt-x-fr-sign-in' });
+    draw();
+    fireEvent.click(await found('[data-product-assembly-propose]'));
+    fireEvent.click(await found('[data-product-assembly-confirm]'));
+    await waitFor(() => expect(decide).toHaveBeenCalled());
+    expect(decide.mock.calls[0][2]).toMatchObject({ gear_id: 'gears-rust/authn-resolver', decision: 'accepted' });
+    expect(read).toHaveBeenCalledWith('', 'p1', 'm1');
+  });
+
+  it('says when no gear match has finished, and why', async () => {
+    vi.spyOn(api, 'assemblyStrategy').mockResolvedValue(
+      strategy({ strategy: 'gears_matcher', chosen: 'gears_matcher', source: 'project', project: 'gears_matcher' })
+    );
+    vi.spyOn(api, 'gearMatches').mockResolvedValue({
+      items: [{ match_id: 'm2', state: 'failed', requested_by: 'u', created_at: '2026-11-18T11:00:00Z' }],
+      total: 1,
+    } as never);
+    const read = vi.spyOn(api, 'gearMatch');
+    draw();
+    fireEvent.click(await found('[data-product-assembly-propose]'));
+    await waitFor(() => expect(document.body.textContent).toContain('no_finished_match'));
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it('with no strategy kit, says the product is assembled by hand and points to Kits', async () => {
+    vi.spyOn(api, 'assemblyStrategy').mockResolvedValue(
+      strategy({ strategy: 'manual', chosen: 'manual', strategies: [], strategy_kits: [] })
+    );
+    draw();
+    await found('[data-product-assembly-manual]');
+    expect(document.querySelector('[data-product-assembly-effective="manual"]')).toBeTruthy();
+    expect(document.querySelector('[data-product-assembly-kits]')).toBeTruthy();
+    expect(document.querySelector('[data-product-assembly-propose]')).toBeNull();
+    expect(document.querySelector('[data-product-assembly-choice]')).toBeNull();
+  });
+
+  it('with one strategy kit, proposes by it with nothing to choose', async () => {
+    vi.spyOn(api, 'assemblyStrategy').mockResolvedValue(
+      strategy({
+        strategy: 'gears_matcher',
+        chosen: 'gears_matcher',
+        strategies: ['gears_matcher'],
+        strategy_kits: [{ id: 'gears_matcher', name: 'Gears matcher', description: '', kit: 'gears-matcher', offered: true }],
+      })
+    );
+    draw();
+    await found('[data-product-assembly-effective="gears_matcher"]');
+    expect(document.querySelector('[data-product-assembly-propose]')).toBeTruthy();
+    expect(document.querySelector('[data-product-assembly-choice]')).toBeNull();
+  });
+
+  it('offers only the strategies the installed kits provide', async () => {
+    vi.spyOn(api, 'assemblyStrategy').mockResolvedValue(
+      strategy({
+        strategies: ['spec_mapping', 'gears_matcher'],
+        strategy_kits: [
+          { id: 'spec_mapping', name: 'Spec mapping', description: '', kit: 'spec-mapping', offered: true },
+          { id: 'gears_matcher', name: 'Gears matcher', description: '', kit: 'gears-matcher', offered: false, reason: 'no address' },
+        ],
+      })
+    );
+    draw();
+    const matcher = (await found('[data-product-assembly-choice="gears_matcher"]')) as HTMLButtonElement;
+    expect(matcher.disabled).toBe(true);
+    expect(matcher.title).toBe('no address');
+    expect((document.querySelector('[data-product-assembly-choice="spec_mapping"]') as HTMLButtonElement).disabled).toBe(false);
+  });
+});

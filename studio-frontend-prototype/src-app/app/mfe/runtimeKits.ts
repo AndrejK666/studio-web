@@ -50,8 +50,7 @@ import {
   type MfeRegistry,
   type MfManifest,
 } from '@gears-frontx/react';
-import { prewarmShadowStyles } from '@constructor-studio/mfe-shared';
-import { mfeStylesheetHrefs, registerMfePackage, type MfeManifestConfig } from '@/app/mfe/bootstrap';
+import { registerMfePackage, type MfeManifestConfig } from '@/app/mfe/bootstrap';
 import { forgetLoadedRemote } from '@/app/mfe/remoteCache';
 import { tokenOf } from '@/app/routing/screenTokens';
 import type { StudioScreenExtension } from '@/app/mfe/screenLevels';
@@ -348,7 +347,6 @@ export class RuntimeKits {
           extensions.map((ext) => [ext.id, String(presented(ext, 'label') ?? ext.id)])
         ),
       });
-      prewarmShadowStyles(mfeStylesheetHrefs([config]));
     }
     if (changed) this.changes += 1;
     if (!this.setFailures([...failures.values()]) && changed) this.emit();

@@ -47,15 +47,16 @@ export const CLONE_CAUSES = [
   'unreachable',
   'provider_error',
   'not_http',
+  'branch_not_found',
 ] as const;
 export type CloneCause = (typeof CLONE_CAUSES)[number];
 
 /** What fixes a failed clone. */
-export const CLONE_ACTIONS = ['connect', 'reconnect', 'ask_admin', 'check_repository', 'retry'] as const;
+export const CLONE_ACTIONS = ['connect', 'reconnect', 'ask_admin', 'check_repository', 'retry', 'pick_branch'] as const;
 export type CloneAction = (typeof CLONE_ACTIONS)[number];
 
-/** Who cloned: a desktop through Studio's Git remote, or an IDE session's launch. */
-export type CloneChannel = 'desktop' | 'ide_session' | null;
+/** Who cloned: a desktop through Studio's Git remote, an IDE session's launch, or the server's sync of the shared checkout. */
+export type CloneChannel = 'desktop' | 'ide_session' | 'sync' | null;
 
 /**
  * The last clone or fetch of a source (#1071). `unknown` when the clone
@@ -197,7 +198,7 @@ function oneOf<T extends string>(known: readonly T[], value: string | null | und
 }
 
 function channelOf(by: string | null | undefined): CloneChannel {
-  return by === 'desktop' || by === 'ide_session' ? by : null;
+  return by === 'desktop' || by === 'ide_session' || by === 'sync' ? by : null;
 }
 
 /**
@@ -366,4 +367,14 @@ export function sourcesFooter(
  */
 export function neverSynced(rows: readonly SourcesTableRow[]): number {
   return rows.filter((row) => row.kind === 'repository' && row.lastSync.kind === 'not_synced').length;
+}
+
+/** The repositories syncing now: the footer says so rather than "all synced" beside a "Syncing…" row. */
+export function syncingNow(rows: readonly SourcesTableRow[]): number {
+  return rows.filter((row) => row.kind === 'repository' && row.sync.kind === 'in_flight').length;
+}
+
+/** The repositories whose last clone failed: synced on the server, yet nobody can open them in an IDE. */
+export function cloneFailures(rows: readonly SourcesTableRow[]): number {
+  return rows.filter((row) => row.kind === 'repository' && row.clone.kind === 'failed').length;
 }

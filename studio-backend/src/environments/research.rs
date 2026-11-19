@@ -299,6 +299,19 @@ fn build_values(
         .cloned()
         .unwrap_or_else(|| serde_json::json!({}));
     for i in images {
+        // A generated product's UI reads its image as one string, `ui.image`,
+        // and its values allow no configuration secret: a table there makes
+        // `helm template` refuse the chart's schema (as `model::image_values`
+        // gives a cluster's deploy).
+        if is_generated_ui(i) {
+            super::model::merge(
+                &mut values,
+                serde_json::json!({ i.app.clone(): { "image":
+                    format!("{}/{}:build", research_app::PENDING_IMAGE, i.app),
+                }}),
+            );
+            continue;
+        }
         super::model::merge(
             &mut values,
             serde_json::json!({ i.app.clone(): { "image": {
@@ -317,6 +330,15 @@ fn build_values(
         }
     }
     values
+}
+
+/// Gearbox's generated UI application (`gbx-…` image, app `ui`).
+fn is_generated_ui(i: &BuildImage) -> bool {
+    i.app == super::build::UI_APP
+        && i.name
+            .rsplit('/')
+            .next()
+            .is_some_and(|name| name.starts_with("gbx-"))
 }
 
 /// Write `text` at `path`, making its folder.
@@ -669,6 +691,14 @@ pub struct ResearchDeploy {
     /// which uses the environment's.
     #[serde(default)]
     pub sign_in: Option<SignIn>,
+    /// The description revision Studio keeps (ADR-0053 §2), as the build
+    /// took it: a product whose description lives only in Studio has no file
+    /// in the checkout to render the chart from. Absent in a deploy queued
+    /// before it was kept, and for a product described only by its file.
+    #[serde(default)]
+    pub description_revision: Option<i64>,
+    #[serde(default)]
+    pub description_text: Option<String>,
 }
 
 /// The credstore reference of a database server's password: kept, since the
@@ -849,10 +879,13 @@ pub async fn deploy(
         &ctx.security,
         &r.repo,
         Some(r.commit.clone()),
-        // TODO(ADR-0053 §2): a deploy re-renders the chart from the
-        // checkout's file at the build's commit; a build that took its
-        // description from Studio should be rendered with that revision too.
-        None,
+        // The chart is rendered from the revision the build took, laid at
+        // the product's path, as the build laid it (ADR-0053 §2); else from
+        // the checkout's file at the build's commit.
+        r.description_text
+            .clone()
+            .filter(|t| !t.trim().is_empty())
+            .map(|t| (r.description_revision, t)),
         &r.product_file,
         &r.profile,
     )
@@ -1115,6 +1148,35 @@ fn log_text(service: &str, tail: anyhow::Result<Option<String>>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_generated_ui_gets_its_image_as_one_string_and_no_configuration_secret() {
+        // Seen on Research DEV, 2026-11-18: `helm template` refused
+        // `ui.image: Invalid type. Expected: string, given: object`.
+        let image = |app: &str, name: &str| BuildImage {
+            app: app.into(),
+            name: name.into(),
+            dockerfile: "Dockerfile".into(),
+            context: ".".into(),
+        };
+        let images = [
+            image("api-gateway", "gbx-studioweb-api-gateway"),
+            image("ui", "gbx-studioweb-frontend"),
+        ];
+        let v = build_values(None, &images, &["K".into()], "studioweb");
+        assert_eq!(
+            v["ui"],
+            serde_json::json!({ "image": format!("{}/ui:build", research_app::PENDING_IMAGE) })
+        );
+        assert_eq!(
+            v["api-gateway"]["image"]["repository"],
+            format!("{}/api-gateway", research_app::PENDING_IMAGE)
+        );
+        assert!(v["api-gateway"]["existingSecret"].is_string());
+        // A repository's own `ui` image keeps the usual keys.
+        let own = build_values(None, &[image("ui", "shop-web")], &[], "shop");
+        assert_eq!(own["ui"]["image"]["tag"], "build");
+    }
 
     #[test]
     fn a_restarted_service_says_how_often_and_what_the_container_before_printed() {

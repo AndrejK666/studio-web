@@ -93,6 +93,13 @@ pub trait BundleSource: Send + Sync {
     /// The packages `slug` has at `version` for `org`; empty when this source
     /// has none.
     async fn packages(&self, org: Uuid, slug: &str, version: &str) -> Result<Vec<String>>;
+    /// A kit this source keeps in a local directory: where it is and what
+    /// its `kit.gdl` says. `None` for a kit it has not, and for a source
+    /// that reads elsewhere.
+    fn local_kit(&self, slug: &str) -> Option<LocalKit> {
+        let _ = slug;
+        None
+    }
     /// One file of a package, `None` when there is no such file.
     async fn read(
         &self,
@@ -200,6 +207,19 @@ fn url_safe_version(version: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | '+'))
 }
 
+/// A kit kept in a local directory (a [`DirSource`]), as its page and its
+/// archive read it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalKit {
+    /// The kit's directory, holding `kit.gdl` and `mfe/<package>/`.
+    pub root: PathBuf,
+    pub version: String,
+    /// `mfe/<package>`, as the passport names them.
+    pub mfe: Vec<String>,
+    pub docs: Vec<String>,
+    pub kinds: Vec<String>,
+}
+
 /// One package of one kit, as the shell registers it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct KitMfeManifest {
@@ -274,6 +294,11 @@ impl KitBundles {
     /// Kits the sources add to the library.
     pub fn kits(&self) -> Vec<KitDescriptor> {
         self.sources().iter().flat_map(|s| s.kits()).collect()
+    }
+
+    /// The kit `slug` a source keeps in a local directory.
+    pub fn local_kit(&self, slug: &str) -> Option<LocalKit> {
+        self.sources().iter().find_map(|s| s.local_kit(slug))
     }
 
     /// The source that has bundles for `slug` at `version` in `org`, and
@@ -549,6 +574,8 @@ struct DirKit {
     kit: KitDescriptor,
     root: PathBuf,
     packages: Vec<String>,
+    docs: Vec<String>,
+    kinds: Vec<String>,
 }
 
 /// A directory of kits: each subdirectory with a `kit.gdl` that names its
@@ -640,6 +667,8 @@ fn read_kit(root: &Path) -> Result<DirKit> {
         },
         root: root.to_path_buf(),
         packages,
+        docs: passport.docs.clone(),
+        kinds: passport.kinds.clone(),
     })
 }
 
@@ -647,6 +676,19 @@ fn read_kit(root: &Path) -> Result<DirKit> {
 impl BundleSource for DirSource {
     fn kits(&self) -> Vec<KitDescriptor> {
         self.kits.iter().map(|k| k.kit.clone()).collect()
+    }
+
+    fn local_kit(&self, slug: &str) -> Option<LocalKit> {
+        self.kits
+            .iter()
+            .find(|k| k.kit.slug == slug)
+            .map(|k| LocalKit {
+                root: k.root.clone(),
+                version: k.kit.default_version.clone(),
+                mfe: k.packages.iter().map(|p| format!("mfe/{p}")).collect(),
+                docs: k.docs.clone(),
+                kinds: k.kinds.clone(),
+            })
     }
 
     async fn packages(&self, _org: Uuid, slug: &str, version: &str) -> Result<Vec<String>> {

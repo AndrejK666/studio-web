@@ -73,7 +73,7 @@ export class ProjectPhaseApiService extends BaseApiService {
 
 /** One step of a project's creation. */
 export interface ProjectCreationStep {
-  /** `tenant`, `config`, `repository`, `sources`, `scaffold`, `prd` or `kits`. */
+  /** `tenant`, `config`, `repository`, `sources`, `scaffold`, `prd`, `kits` or `model`. */
   key: string;
   state: 'pending' | 'done' | 'failed';
   detail?: string | null;
@@ -98,8 +98,53 @@ export interface CreateProjectBody {
   mode?: string;
   brief?: string;
   owner_id?: string;
+  project_type_kit?: string;
   sources?: { connection_id: string; full_path: string; clone_url: string; default_branch?: string }[];
   idempotency_key?: string;
+}
+
+/** What the person does next once a project of a type exists (the type kit's manifest). */
+export interface ProjectNextStep {
+  /** Unique within the type; a dismissed step is kept by it in `project.config` `next_steps_dismissed`. */
+  id: string;
+  label: string;
+  description: string;
+  /** The shell route of the screen where it is done. */
+  route: string;
+  /** The project path step (`ProjectStatus.path[].step`) whose being done makes this one done. */
+  done_when?: string | null;
+}
+
+/**
+ * A project type (`GET project-creation-types`): a kit's subtype of the core
+ * Project type (ADR-0073). Older servers answer `slug`, `name` and
+ * `description` only.
+ */
+export interface ProjectTypeKit {
+  /** The kit, sent back as `project_type_kit`. */
+  slug: string;
+  /** The type's GTS id, derived from Project's. */
+  type_id?: string;
+  name: string;
+  description: string;
+  kit_name?: string;
+  mode?: string;
+  /** The optional creation steps it takes: `repository`, `sources`, `scaffold`, `prd`. */
+  steps?: string[];
+  next_steps?: ProjectNextStep[];
+}
+
+/** One row of `GET /rollups` (`RollupDto`): the counts the projects list reads. Null means not asked, not zero. */
+export interface ProjectRollup {
+  id: string;
+  name: string;
+  /** `workspace` or `project`. */
+  kind: string;
+  open_findings?: number | null;
+  findings?: number | null;
+  pulls_open?: number | null;
+  pulls_merged?: number | null;
+  activity_days?: number | null;
 }
 
 export class ProjectStatusApiService extends BaseApiService {
@@ -110,8 +155,17 @@ export class ProjectStatusApiService extends BaseApiService {
     super({ baseURL: STUDIO_ORGANIZATIONS_API_BASE_URL }, restProtocol, restEndpoints);
   }
 
+  /** A workspace and its projects as the portfolio rollup counts them; every count may be null (not asked). */
+  readonly rollups = this.protocol(RestEndpointProtocol).queryWith<{ items: ProjectRollup[]; total: number }, { workspaceId: string }>(
+    ({ workspaceId }) => `/rollups?${new URLSearchParams({ workspace_id: workspaceId })}`
+  );
+
   readonly status = this.protocol(RestEndpointProtocol).queryWith<ProjectStatus, { projectId: string }>(
     ({ projectId }) => `/project-status?${new URLSearchParams({ project_id: projectId })}`
+  );
+
+  readonly projectTypeKits = this.protocol(RestEndpointProtocol).query<{ items: ProjectTypeKit[] }>(
+    '/project-creation-types'
   );
 
   /** Check a project's creation as the caller and queue it as one run (202). */

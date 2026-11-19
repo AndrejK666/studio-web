@@ -29,6 +29,8 @@ import { apiRegistry, useMfeBridge } from '@gears-frontx/react';
 import { Badge, Button } from '@gears-frontx/ui-kit';
 import {
   errorMessage,
+  openScreen,
+  reportInboxCount,
   responseStatus,
   useScreenAvailability,
   useStudioEventRefresh,
@@ -105,14 +107,16 @@ export function InboxGroup({
       setOpen(next);
       onCount?.(next.total);
       onSources?.(inboxSources(next.items));
+      // The top bar shows this count rather than reading the Inbox again (#1077).
+      reportInboxCount(bridge, next.total);
     },
-    [onCount, onSources]
+    [onCount, onSources, bridge]
   );
 
   useEffect(() => {
     let live = true;
     api
-      .inbox({ view: 'open', offset: 0, limit: INBOX_PAGE })
+      .inbox({ organizationId, view: 'open', offset: 0, limit: INBOX_PAGE })
       .fetch({ staleTime: 0 })
       .then((page) => {
         if (!live) return;
@@ -125,24 +129,25 @@ export function InboxGroup({
         setFailed({ status: responseStatus(e), message: errorMessage(e) });
         onFailed?.(true);
         onCount?.(0);
+        reportInboxCount(bridge, null);
       });
     return () => {
       live = false;
     };
-  }, [api, tick, reloadKey, shown, onCount, onFailed]);
+  }, [api, organizationId, tick, reloadKey, shown, onCount, onFailed, bridge]);
 
   useEffect(() => {
     if (!showHidden) return;
     let live = true;
     api
-      .inbox({ view: 'hidden', offset: 0, limit: INBOX_PAGE })
+      .inbox({ organizationId, view: 'hidden', offset: 0, limit: INBOX_PAGE })
       .fetch({ staleTime: 0 })
       .then((page) => live && setHidden(page))
       .catch((e: unknown) => live && setHidden({ items: [], total: 0, other: 0, unread: [errorMessage(e)] }));
     return () => {
       live = false;
     };
-  }, [api, showHidden, tick, reloadKey]);
+  }, [api, organizationId, showHidden, tick, reloadKey]);
 
   /** The next page of open items, after the ones shown. */
   const readMore = async () => {
@@ -150,7 +155,7 @@ export function InboxGroup({
     setMore(true);
     try {
       const page = await api
-        .inbox({ view: 'open', offset: open.items.length, limit: INBOX_PAGE })
+        .inbox({ organizationId, view: 'open', offset: open.items.length, limit: INBOX_PAGE })
         .fetch({ staleTime: 0 });
       shown({ ...page, items: [...open.items, ...page.items] });
     } catch {
@@ -233,6 +238,12 @@ export function InboxGroup({
                 <>
                   {t('inbox_nothing')}{' '}
                   <span title={t('inbox_why')}>{myEmptyMessage({ membersKnown: true, workspaces })}</span>
+                  {workspaces > 0 && (
+                    <button type="button" className={styles.linklike}
+                      onClick={() => openScreen(bridge, '/profile', 'github-reviews')}>
+                      {t('inbox_review_account')}
+                    </button>
+                  )}
                 </>
               )}
         </p>

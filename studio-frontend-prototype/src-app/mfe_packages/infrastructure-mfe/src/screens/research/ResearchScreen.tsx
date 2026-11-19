@@ -14,7 +14,7 @@
  *      Research project is listed here, with its status, logs and address.
  *
  * The build, deploy, rollback and uninstall themselves stay on a project's
- * Releases (product-releases): the server refuses them with
+ * Releases (delivery): the server refuses them with
  * `KIT_NOT_INSTALLED` where this kit is not installed.
  */
 
@@ -114,8 +114,8 @@ function OrgResearch({
   const [busy, setBusy] = useState<string | null>(null);
   const [round, setRound] = useState(0);
   const load = useCallback(() => setRound((n) => n + 1), []);
-  const { projects, workspaceIds } = useProjects(org.id);
-  const people = usePeople([org.id, ...workspaceIds]);
+  const { projects } = useProjects(org.id);
+  const people = usePeople(org.id);
 
   useEffect(() => {
     let live = true;

@@ -1,6 +1,6 @@
 /**
  * The project's path to running (#1050), on top of Releases (kit
- * `product-releases`): Specs → Product → Build → Image → Environment →
+ * `delivery` (Builds, releases & environments, ADR-0071 step 5)): Specs → Product → Build → Image → Environment →
  * Running, each with its state, why in plain words, what is missing as a
  * checklist, and one action. The server decides Product to Running
  * (`GET /project-path`); Specs is the size of the spec mapping's plan. A
@@ -10,6 +10,7 @@
 
 import { useState } from 'react';
 import { Badge, Button } from '@gears-frontx/ui-kit';
+import { useScreenAvailability } from '@constructor-studio/mfe-shared';
 import type { FailureCause, PathAction, PathCheck, PathStep, PathStepState } from '../../api/types';
 import { intentOf, type Intent } from '../../model/path';
 import { useReleases } from './parts';
@@ -41,8 +42,11 @@ export function ActionButton({
   variant?: 'default' | 'outline' | 'ghost';
 }) {
   const { t } = useReleases();
+  const screens = useScreenAvailability();
   const intent = intentOf(action, deploymentId);
   if (intent.kind === 'none') return null;
+  // A button to a screen that is not here (Organization › Infrastructure without its kit) leads nowhere.
+  if (intent.kind === 'screen' && !screens.route(intent.route)) return null;
   const key = `action_${action.kind}`;
   const label = t(key);
   return (

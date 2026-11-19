@@ -1,6 +1,6 @@
 {
   "title": "Background work",
-  "about": "Every run this deployment has queued, and the schedules that fire them. Runs survive a restart, are retried with backoff, and end up in a dead-letter table rather than nowhere. The list opens on what failed and what is running; a scheduled task's succeeded runs fold into one row.",
+  "about": "Every run this organization, its workspaces and its projects have queued, and the schedules that fire them for it. Runs survive a restart, are retried with backoff, and end up in a dead-letter table rather than nowhere. The list opens on what failed and what is running; a scheduled task's succeeded runs fold into one row.",
   "count_running": "{count} running",
   "count_queued": "{count} queued",
   "count_failed": "{count} failed",
@@ -10,9 +10,7 @@
   "load_failed": "The runs could not be read: {error}",
   "action_failed": "That did not work: {error}",
   "runs": "Runs",
-  "filter_attention": "Failed + running",
   "filter_every": "every state",
-  "filter_every_type": "Every task type",
   "state_queued": "queued",
   "state_running": "running",
   "state_succeeded": "succeeded",
@@ -52,5 +50,13 @@
   "col_next": "Next",
   "col_last": "Last",
   "disabled": "disabled",
-  "run_now": "Run now"
+  "run_now": "Run now",
+  "showing_attention": "Showing what failed and what is running; choose a state to see the others.",
+  "filter_task_type": "Task type",
+  "search_runs": "Search runs",
+  "runs_no_matches": "No run matches.",
+  "search_schedules": "Search schedules",
+  "schedules_no_matches": "No schedule matches.",
+  "clear_search": "Clear search",
+  "try_again": "Try again"
 }

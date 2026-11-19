@@ -360,6 +360,9 @@ pub(super) fn apply(value: &mut Option<Value>, delta: &Delta) {
     }
 }
 
+#[path = "kit_rename.rs"]
+mod kit_rename;
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]

@@ -45,6 +45,7 @@ mod service;
 mod sources_flight;
 mod spec_model;
 mod spec_rows;
+mod spec_texts;
 mod stamp;
 #[cfg(test)]
 mod sync_analysis_tests;
@@ -67,6 +68,18 @@ use repo::DocumentsRepo;
 use service::{DocumentsService, SyncAnalysis};
 
 pub(crate) use mcp::tools as mcp_tools;
+
+/// Every type this gear declares in the model, for the kits' claims test:
+/// its tables' rows, their chunks, the review records and the process's.
+#[cfg(test)]
+pub(crate) fn declared_types() -> Vec<crate::domain_model::port::TypeNeed> {
+    let mut out = data::table_needs();
+    out.push(model_table::chunk_need("studio-documents"));
+    out.push(process_store::stage_need());
+    out.push(process_store::capability_need());
+    out.extend(review_store::needs());
+    out
+}
 
 /// `gears.studio-documents.config`.
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -217,6 +230,13 @@ impl toolkit::Gear for StudioDocumentsGear {
         // (studio-organizations).
         ctx.client_hub()
             .register::<dyn port::ProjectDocuments>(service.clone());
+        // A project's specifications with their text, for studio-product's
+        // gear match (the matcher reads them as files).
+        ctx.client_hub()
+            .register::<dyn port::SpecTexts>(Arc::new(spec_texts::SpecTextsPort::new(
+                service.clone(),
+                ctx.client_hub(),
+            )));
 
         self.service
             .set(service)
@@ -247,11 +267,13 @@ impl RestApiCapability for StudioDocumentsGear {
             warn!("studio-documents: not initialized (no database) — no routes registered");
             return Ok(router);
         };
-        Ok(rest::register_routes(
+        let router = rest::register_routes(router, openapi, service, ctx.client_hub());
+        // The write routes a kit claims answer KIT_NOT_INSTALLED without it
+        // (ADR-0071 §4): studio-kits' one shared check.
+        Ok(crate::kit_registry::port::with_claimed_routes(
             router,
-            openapi,
-            service,
             ctx.client_hub(),
+            "studio-documents",
         ))
     }
 }
