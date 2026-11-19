@@ -679,6 +679,9 @@ keycloak:
     issuer: ""             # e.g. https://<constructor host>/idp
     clientId: ""           # the client registered at that IdP
     displayName: "Constructor"
+    # The tenant_id a new Constructor user gets: Studio refuses a token
+    # without one. The sandbox tenant, as the github broker's mapper sets.
+    tenantId: "00000000-0000-0000-0000-000000000002"
     # How long the Job waits for Keycloak to accept the admin sign-in.
     waitSeconds: 600
     resources:

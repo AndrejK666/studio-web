@@ -32,6 +32,8 @@
 #                                Keycloak resolves it at sign-in. The secret
 #                                never passes through this script.
 #   CONSTRUCTOR_IDP_DISPLAY_NAME default: Constructor
+#   CONSTRUCTOR_IDP_TENANT_ID    the tenant_id a new user gets, default the
+#                                sandbox tenant the github broker assigns
 #   KC_WAIT_SECONDS              how long to wait for Keycloak, default 300
 set -euo pipefail
 
@@ -122,7 +124,8 @@ set_args=(
     -s "displayName=${CONSTRUCTOR_IDP_DISPLAY_NAME:-Constructor}"
     -s enabled=true
     # Signing in proves who a person is and grants nothing (ADR-0011): no
-    # mapper sets a tenant, a role or a group.
+    # mapper sets a role or a group. The one mapper below gives a new user the
+    # tenant_id attribute every Studio token must carry, as github's does.
     #
     # trustEmail: Keycloak's OIDC broker then takes the IdP's email_verified
     # claim as the user's emailVerified, and falls back to "verified" only
@@ -161,3 +164,28 @@ else
     "$kcadm" create identity-provider/instances "${cfg[@]}" -r "$realm" "${set_args[@]}"
     say "created '$alias' in realm $realm: issuer $issuer, client $client_id"
 fi
+
+# ------------------------------------------------------------------ the mapper
+# Studio's authentication refuses a token without a `tenant_id` claim
+# ("missing claim"), and the realm user is where the portal client's mapper
+# reads it from. The github, google and microsoft brokers set it the same way:
+# the sandbox tenant, on the first sign-in only (INHERIT = the broker's
+# IMPORT). It is not an organization: membership is Studio's (ADR-0011).
+tenant=${CONSTRUCTOR_IDP_TENANT_ID:-00000000-0000-0000-0000-000000000002}
+mapper=constructor-tenant-id
+mapper_id=$("$kcadm" get "identity-provider/instances/$alias/mappers" "${cfg[@]}" -r "$realm" \
+    --fields id,name --format csv --noquotes | sed -n "s/^\([^,]*\),$mapper$/\1/p" | head -n1)
+mapper_args=(
+    -s "name=$mapper"
+    -s "identityProviderAlias=$alias"
+    -s identityProviderMapper=hardcoded-attribute-idp-mapper
+    -s config.syncMode=INHERIT
+    -s config.attribute=tenant_id
+    -s "config.\"attribute.value\"=$tenant"
+)
+if [ -n "$mapper_id" ]; then
+    "$kcadm" update "identity-provider/instances/$alias/mappers/$mapper_id" "${cfg[@]}" -r "$realm" "${mapper_args[@]}"
+else
+    "$kcadm" create "identity-provider/instances/$alias/mappers" "${cfg[@]}" -r "$realm" "${mapper_args[@]}" >/dev/null
+fi
+say "mapper $mapper: a new user's tenant_id is $tenant"

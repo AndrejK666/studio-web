@@ -12,8 +12,11 @@ Status: accepted · 2026-08-27 · Amends ADR-0004 · §3 and §4 superseded by [
 
 Amendment 2026-11-19: §1 covers every broker, not only GitHub. The
 `constructor` broker (the IdP behind Constructor Research,
-[`keycloak/CONSTRUCTOR_SSO.md`](../../keycloak/CONSTRUCTOR_SSO.md)) is added
-without a tenant mapper, so a Constructor sign-in establishes identity only.
+[`keycloak/CONSTRUCTOR_SSO.md`](../../keycloak/CONSTRUCTOR_SSO.md)) grants no
+role, group or membership. It does carry the sandbox `tenant_id` mapper that
+github's has: the "hard-coded mapper is removed" step in §1 never happened in
+the realm. Studio's authentication refuses a token without a `tenant_id` claim,
+so no broker can drop that mapper until the claim stops being required.
 
 ## Table of Contents
 

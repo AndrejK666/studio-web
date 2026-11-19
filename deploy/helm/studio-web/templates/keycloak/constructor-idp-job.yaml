@@ -66,6 +66,8 @@ spec:
               value: {{ $idp.clientId | quote }}
             - name: CONSTRUCTOR_IDP_DISPLAY_NAME
               value: {{ $idp.displayName | quote }}
+            - name: CONSTRUCTOR_IDP_TENANT_ID
+              value: {{ $idp.tenantId | quote }}
             # Only whether the key exists is read here; Keycloak reads the value.
             - name: CONSTRUCTOR_IDP_VAULT_DIR
               value: /vault

@@ -17,13 +17,28 @@ consuming the same Keycloak issuer and receives no Constructor token.
 | First sign-in, new address | Keycloak's stock `first broker login` creates the realm user, as it does for GitHub. |
 | First sign-in, an address a user already has | The same flow asks that user to confirm the link by signing in as themselves first. Keycloak never links on the address alone (`keycloak/tests/account-takeover.test.mjs`). |
 | Email trust | `trustEmail` is on, and Keycloak's OIDC broker then copies the IdP's `email_verified` claim to the user. An address the IdP does not vouch for stays unverified in the realm. Only when the ID token carries no `email_verified` at all does Keycloak fall back to "verified". |
-| Organizations | None. Signing in proves who the person is and grants nothing (ADR-0011): no mapper sets a tenant, role or group. They land in the no-access state until an invitation or an administrator adds them. |
+| Tenant claim | Studio refuses a token without `tenant_id` ("missing claim"), so the broker has one mapper, `constructor-tenant-id`, which gives a new user the sandbox tenant `00000000-0000-0000-0000-000000000002` exactly as `github-tenant-id` does (`keycloak.constructorIdp.tenantId`, `CONSTRUCTOR_IDP_TENANT_ID`). |
+| Organizations | None. Signing in proves who the person is and grants nothing (ADR-0011): no mapper sets a role or a group, and the tenant above is not an organization. They land in the no-access state until an invitation or an administrator adds them. |
 | Invitations | Accepted only for an address the realm holds as verified (`studio-user` reads it from the directory), so the IdP's `email_verified` decides whether a Constructor sign-in can take an invitation. |
 | Alias | The brokered link confirms an alias `constructor:<handle>` through the same `FederatedIdentityReader` the other brokers use (ADR-0015). Keycloak names the linked account by the IdP's `preferred_username`, and by the email when there is none. |
 
-Signing out of Studio also signs the browser out at the IdP: the broker has
-the IdP's `end_session_endpoint` as its logout URL, so Keycloak sends the
+Signing out of Studio should also sign the browser out at the IdP: the broker
+has the IdP's `end_session_endpoint` as its logout URL, so Keycloak sends the
 browser there and back to `.../broker/constructor/endpoint/logout_response`.
+That leg was not exercised on the stand.
+
+### Known gap: the portal does not show an organization joined by invitation
+
+Checked on the local stand (2026-11-19) with a Constructor user. The
+invitation is listed and accepted, and `GET /studio-user/v1/me/memberships`
+then shows the membership as active. The portal still shows "You are not in
+an organization yet". It resolves each membership through
+`GET /account-management/v1/tenants/{org}`, which answers 404 for a token
+whose home tenant is the sandbox `…0002`. On the stand that tenant does not
+exist at all. A GitHub, Google or Microsoft user who joins by invitation is in
+the same position, because their mappers set the same tenant. This is the
+ADR-0011 tenant question, not a Constructor one, and the broker does not fix
+it.
 
 ## Configuration
 
