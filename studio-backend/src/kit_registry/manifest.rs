@@ -28,7 +28,7 @@ use super::contents::{
     KitNamed, KitPermissions, KitRelation, KitScreen, KitType, ORIGIN_CORE, ORIGIN_KIT,
 };
 use super::service::normalize_slug;
-use crate::domain_model::port::{KitOverlay, OverlayType, validate_kit_overlay};
+use crate::domain_model::port::{KitOverlay, OverlayType, PROJECT_ENTITY, validate_kit_overlay};
 
 /// Studio's interim manifest.
 pub const KIT_JSON: &str = "kit.json";
@@ -64,7 +64,10 @@ pub struct KitManifest {
     pub version: Option<String>,
     #[serde(default)]
     pub levels: Vec<String>,
-    /// This built-in kit can be selected as the project's type at creation.
+    /// Says the kit is a project type. Only a cache: a kit is a project type
+    /// when its `model` derives a type of its own from the core Project type
+    /// (ADR-0073, [`KitManifest::project_subtype`]), and a manifest that says
+    /// so without one is refused.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub project_type: bool,
     /// The kit's icon (#1081): `lucide:<name>`, as a screen's `mfe.json`
@@ -118,6 +121,219 @@ pub struct KitManifest {
     /// unresolved while that kit is absent (ADR-0070 §2).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub requires: Vec<String>,
+    /// A project type's creation (`project_type` only): which of the
+    /// optional creation steps a project of this type takes, the `mode` it
+    /// starts with, and the next steps the person is shown once it exists
+    /// ([`ManifestProjectCreation`]). Absent: every optional step a request
+    /// asks for, `greenfield`, and no next steps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_creation: Option<ManifestProjectCreation>,
+}
+
+/// The optional steps of a project's creation, beyond the tenant, its
+/// configuration and its kits, which every creation takes
+/// (`organizations/project_create.rs`): the repository the project's gears
+/// go to, repositories taken as sources, a starter gear, a PRD from the brief.
+pub const PROJECT_CREATION_STEPS: [&str; 4] = ["repository", "sources", "scaffold", "prd"];
+
+/// The `mode` a project's configuration may start with.
+pub const PROJECT_MODES: [&str; 2] = ["greenfield", "modernize"];
+
+/// What a next step may be done by: a step of the project's path as
+/// `GET /studio-organizations/v1/project-status` answers it (`path[].step`,
+/// `organizations/status.rs`).
+pub const NEXT_STEP_DONE_WHEN: [&str; 7] = [
+    "repos", "types", "model", "findings", "kind", "product", "build",
+];
+
+/// The most next steps a project type names: a short list, not a plan.
+pub const MAX_NEXT_STEPS: usize = 8;
+
+/// What a project type decides about a project's creation and what follows
+/// it. The New project wizard asks for a name, the type, a goal and the
+/// owner; the rest is the type's.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ManifestProjectCreation {
+    /// The `mode` a project of this type starts with in `project.config`
+    /// ([`PROJECT_MODES`]); `greenfield` when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+    /// The optional creation steps ([`PROJECT_CREATION_STEPS`]) a project of
+    /// this type takes. A request that asks for one not named is refused;
+    /// `prd` is written from the brief whenever there is one.
+    #[serde(default)]
+    pub steps: Vec<String>,
+    /// What the person does next, in order, shown on the project's Overview
+    /// until each is done or dismissed.
+    #[serde(default)]
+    pub next_steps: Vec<ManifestNextStep>,
+}
+
+/// One next step after a project's creation.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ManifestNextStep {
+    /// Unique within the kit: lowercase letters, digits and `-`. A dismissed
+    /// step is remembered by it (`project.config` `next_steps_dismissed`).
+    pub id: String,
+    pub label: String,
+    #[serde(default)]
+    pub description: String,
+    /// The shell route of the screen where it is done, a screen's
+    /// `presentation.route` (`/projects/sources`, `/product`, `/releases`).
+    pub route: String,
+    /// The project path step ([`NEXT_STEP_DONE_WHEN`]) whose being done
+    /// makes this one done; absent, the step is done when it is dismissed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub done_when: Option<String>,
+}
+
+/// The type a project-type kit derives from the core Project type
+/// (ADR-0073): what a project of that type is in the model.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProjectSubtype {
+    /// The model entity, `<slug>-<name>` (`gears-project-project`).
+    pub entity: String,
+    /// Its GTS id, derived from Project's
+    /// (`gts.cf.studio.domain.project.v1~cf.studio.kit.gears_project.project.v1~`).
+    pub gts: String,
+    /// Its label, else the kit's name.
+    pub name: String,
+    /// Its description, else the kit's.
+    pub description: String,
+}
+
+impl KitManifest {
+    /// The type this kit derives from the core Project type, when it is a
+    /// project type: its overlay declares a type of its own that `extends`
+    /// `project`. A kit is a project type by its model, not by a flag.
+    pub fn project_subtype(&self) -> Option<ProjectSubtype> {
+        let overlay = overlay_of(self).ok().flatten()?;
+        let t = overlay.project_subtype()?;
+        Some(ProjectSubtype {
+            entity: t.entity_id(&self.slug),
+            gts: t.gts_in(&self.slug, &overlay.types),
+            name: t
+                .label
+                .clone()
+                .filter(|l| !l.trim().is_empty())
+                .unwrap_or_else(|| self.name.clone()),
+            description: t
+                .description
+                .clone()
+                .filter(|d| !d.trim().is_empty())
+                .unwrap_or_else(|| self.description.clone()),
+        })
+    }
+
+    /// Whether a creation of this project type takes the optional `step`:
+    /// every step when the kit says nothing about its creation.
+    pub fn creation_takes(&self, step: &str) -> bool {
+        self.project_creation
+            .as_ref()
+            .is_none_or(|c| c.steps.iter().any(|s| s == step))
+    }
+
+    /// The `mode` a project of this type starts with.
+    pub fn creation_mode(&self) -> &str {
+        self.project_creation
+            .as_ref()
+            .and_then(|c| c.mode.as_deref())
+            .unwrap_or("greenfield")
+    }
+}
+
+fn check_project_creation(m: &KitManifest, project_type: bool) -> Result<(), String> {
+    let Some(c) = &m.project_creation else {
+        return Ok(());
+    };
+    let at = |why: String| format!("{KIT_JSON}: project_creation: {why}");
+    if !project_type {
+        return Err(at(format!(
+            "only a project type -- a kit whose `model` derives a type from `{PROJECT_ENTITY}` -- says how a project is created"
+        )));
+    }
+    if let Some(mode) = c.mode.as_deref()
+        && !PROJECT_MODES.contains(&mode)
+    {
+        return Err(at(format!(
+            "mode `{mode}` is none of {}",
+            PROJECT_MODES.join(", ")
+        )));
+    }
+    let mut seen: Vec<&str> = Vec::new();
+    for s in &c.steps {
+        if !PROJECT_CREATION_STEPS.contains(&s.as_str()) {
+            return Err(at(format!(
+                "step `{s}` is none of {}",
+                PROJECT_CREATION_STEPS.join(", ")
+            )));
+        }
+        if seen.contains(&s.as_str()) {
+            return Err(at(format!("step `{s}` is named twice")));
+        }
+        seen.push(s);
+    }
+    if seen.contains(&"scaffold") && !seen.contains(&"repository") {
+        return Err(at(
+            "a starter gear (`scaffold`) needs the `repository` step to go into".into(),
+        ));
+    }
+    if c.next_steps.len() > MAX_NEXT_STEPS {
+        return Err(at(format!("at most {MAX_NEXT_STEPS} next steps")));
+    }
+    let mut ids: Vec<&str> = Vec::new();
+    for n in &c.next_steps {
+        let id_ok = !n.id.is_empty()
+            && n.id.len() <= 64
+            && n.id
+                .chars()
+                .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-');
+        if !id_ok {
+            return Err(at(format!(
+                "next step `{}`: an id is 1..=64 lowercase letters, digits and `-`",
+                n.id
+            )));
+        }
+        if ids.contains(&n.id.as_str()) {
+            return Err(at(format!("next step `{}` is named twice", n.id)));
+        }
+        ids.push(&n.id);
+        let label = n.label.trim();
+        if label.is_empty() || label.chars().count() > 120 {
+            return Err(at(format!(
+                "next step `{}`: `label` is 1..=120 characters",
+                n.id
+            )));
+        }
+        if n.description.chars().count() > 400 {
+            return Err(at(format!(
+                "next step `{}`: `description` is at most 400 characters",
+                n.id
+            )));
+        }
+        let route_ok = n.route.starts_with('/')
+            && n.route.len() <= 200
+            && !n.route.contains(['?', '#'])
+            && !n.route.chars().any(char::is_whitespace);
+        if !route_ok {
+            return Err(at(format!(
+                "next step `{}`: `route` is a screen's route, `/<path>`, without a query",
+                n.id
+            )));
+        }
+        if let Some(done) = n.done_when.as_deref()
+            && !NEXT_STEP_DONE_WHEN.contains(&done)
+        {
+            return Err(at(format!(
+                "next step `{}`: `done_when` `{done}` is none of the project path's steps ({})",
+                n.id,
+                NEXT_STEP_DONE_WHEN.join(", ")
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// The GTS id a screen's `needs` names a domain type by (ADR-0071 §5):
@@ -503,7 +719,7 @@ pub fn builtin_manifest(slug: &str) -> Option<KitManifest> {
 }
 
 pub(crate) fn project_type_kit(slug: &str) -> Option<KitManifest> {
-    builtin_manifest(slug).filter(|kit| kit.project_type)
+    builtin_manifest(slug).filter(|kit| kit.project_subtype().is_some())
 }
 
 pub(crate) fn project_type_kits() -> impl Iterator<Item = KitManifest> {
@@ -580,11 +796,6 @@ fn check(m: &KitManifest) -> Result<(), String> {
                 ORGANIZATION_LEVELS.join(", ")
             ));
         }
-    }
-    if m.project_type && !m.levels.iter().any(|level| level == "project") {
-        return Err(format!(
-            "{KIT_JSON}: a project type must name the project level"
-        ));
     }
     for s in &m.screens {
         if !matches!(s.kind.as_str(), "tab" | "section") {
@@ -743,7 +954,30 @@ fn check(m: &KitManifest) -> Result<(), String> {
     check_claims(m)?;
     // The overlay's own rules (ADR-0067 §6); the organization's model is
     // checked against it when the kit is installed.
-    overlay_of(m)?;
+    let overlay = overlay_of(m)?;
+    let subtypes = overlay.as_ref().map_or(0, |o| {
+        o.types
+            .iter()
+            .filter(|t| t.id.is_none() && t.extends.as_deref() == Some(PROJECT_ENTITY))
+            .count()
+    });
+    if subtypes > 1 {
+        return Err(format!(
+            "{KIT_JSON}: a kit derives at most one type from `{PROJECT_ENTITY}`: it is one project type"
+        ));
+    }
+    let project_type = subtypes == 1;
+    if m.project_type && !project_type {
+        return Err(format!(
+            "{KIT_JSON}: `project_type` says the kit is a project type, but its `model` derives no type of its own from `{PROJECT_ENTITY}`"
+        ));
+    }
+    if project_type && !m.levels.iter().any(|level| level == "project") {
+        return Err(format!(
+            "{KIT_JSON}: a project type must name the project level"
+        ));
+    }
+    check_project_creation(m, project_type)?;
     Ok(())
 }
 
@@ -1026,6 +1260,10 @@ fn model_contents(slug: &str, model: Option<&Value>) -> (Vec<KitType>, KitModel)
             .map_or_else(|| x.to_owned(), |(_, id)| id.clone())
     };
 
+    let siblings: Vec<OverlayType> = list("types")
+        .iter()
+        .filter_map(|t| serde_json::from_value(t.clone()).ok())
+        .collect();
     let mut types = Vec::new();
     for t in list("types") {
         let Some(name) = t.get("name").and_then(Value::as_str) else {
@@ -1051,7 +1289,7 @@ fn model_contents(slug: &str, model: Option<&Value>) -> (Vec<KitType>, KitModel)
             }
         }
         types.push(KitType {
-            gts: declared.map_or_else(|| kit_type_gts(slug, name), |d| d.gts(slug)),
+            gts: declared.map_or_else(|| kit_type_gts(slug, name), |d| d.gts_in(slug, &siblings)),
             name: text(t, "label").unwrap_or(name).to_owned(),
             description: text(t, "description").map(str::to_owned),
             adopts: text(t, "id").is_some(),

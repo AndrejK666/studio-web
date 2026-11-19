@@ -352,6 +352,23 @@ kit described only by `.cf-studio-kit.toml` brings working material: its
 resources' install paths and its artifact kinds; a manifest that lists
 several kits needs `slug` to say which.
 
+A kit is a **project type** when its `model` derives one type of its own from
+the core Project type (`{name, extends: "project", label?, description?,
+fields?}`, catalogued as
+`gts.cf.studio.domain.project.v1~cf.studio.kit.<slug>.project.v1~`; ADR-0073).
+`project_type: true` is only a cache of that and is refused without the
+subtype; a project type names the `project` level. Only a project type may
+carry **`project_creation`**: `mode` (`greenfield` | `modernize`, what
+`project.config` starts with), `steps` (the optional creation steps it takes,
+of `repository`, `sources`, `scaffold` — which needs `repository` — and
+`prd`; absent section: all) and `next_steps` (at most 8, in order: `{id,
+label, description?, route, done_when?}`, `id` lowercase with `-`, `route` a
+shell screen's route, `done_when` a step of the project path that
+`project-status` answers — `repos`, `types`, `model`, `findings`, `kind`,
+`product`, `build`). The built-in project types' overlays are carried by every
+organization's model, so installing one in a single project is not
+`MODEL_KIT_NOT_FOR_PROJECT`.
+
 The shelf is visible to that organization only: `GET /catalog` lists it
 only with `organization_id`, and `GET /catalog/{kit_slug}` finds it in the
 caller's (or the named) organization. Adding, refreshing and removing need

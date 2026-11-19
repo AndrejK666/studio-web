@@ -514,7 +514,12 @@ impl KitInstaller {
                     .contains_key(&slug),
                 None => false,
             };
-            if !carried {
+            // A built-in project type brings its model into the
+            // organization's whatever level it is installed on (ADR-0073):
+            // the reconciliation keeps it there.
+            if !carried && super::manifest::project_type_kit(&slug).is_some() {
+                self.apply_model(org, &kit, &record.version).await?;
+            } else if !carried {
                 return Err(Refusal::ModelKitNotForProject(slug));
             }
         }

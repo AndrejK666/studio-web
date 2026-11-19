@@ -26,5 +26,9 @@
   "phase_build": "Build",
   "phase_run": "Run",
   "phase_since": "since {date}",
-  "phase_move": "Move to {phase}"
+  "phase_move": "Move to {phase}",
+  "next_title": "Next steps for this {type}",
+  "next_open": "Open",
+  "next_dismiss": "Dismiss",
+  "next_dismiss_failed": "The step was not dismissed: {error}"
 }

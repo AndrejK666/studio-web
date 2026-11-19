@@ -31,8 +31,14 @@ export interface ProjectSource {
  * interface IS the contract.
  */
 export interface ProjectConfig {
+  /** Kept for the projects that have one; a new project gets its type's (or `greenfield`). */
   mode?: ProjectMode;
+  /** The kit that is the project's type. */
   project_type_kit?: string;
+  /** The project's type: its kit's subtype of Project, a GTS id (ADR-0073). */
+  project_type_id?: string;
+  /** The type's next steps (by id) the team dismissed on the Overview. */
+  next_steps_dismissed?: string[];
   stages?: string[];
   status?: ProjectStatus;
   sources?: ProjectSource[];

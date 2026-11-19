@@ -41,8 +41,6 @@ vi.mock('../../shared/useCurrentUser', () => ({
 
 // The steps have their own tests; here each is a marker the frame shows or holds back.
 vi.mock('./steps/DetailsStep', () => ({ DetailsStep: () => <p>details step</p> }));
-vi.mock('./steps/RepositoriesStep', () => ({ RepositoriesStep: () => null }));
-vi.mock('./steps/RepositoriesFooterNote', () => ({ RepositoriesFooterNote: () => null }));
 
 async function mountWizard() {
   const { mfeApp } = await import('../../init');
@@ -70,7 +68,7 @@ it('requires a project type when kits supply a choice', async () => {
   ];
   const { app } = await mountWizard();
   const { editDraft } = await import('../../slices/createSlice');
-  act(() => { app.store.dispatch(editDraft({ name: 'Shop', mode: 'greenfield' })); });
+  act(() => { app.store.dispatch(editDraft({ name: 'Shop' })); });
   const create = screen.getByRole<HTMLButtonElement>('button', { name: 'create' });
   expect(create.disabled).toBe(true);
   act(() => { app.store.dispatch(editDraft({ typeKit: 'constructor-research' })); });
@@ -103,43 +101,18 @@ describe('the wizard behind its first-load skeleton', () => {
   });
 });
 
-describe('the repositories step', () => {
-  async function onRepositories() {
+describe('one step: the type decides what follows', () => {
+  it('creates from the details, with Cancel beside it and no Continue', async () => {
     const { app } = await mountWizard();
-    const { editDraft, goToStep } = await import('../../slices/createSlice');
+    const { editDraft } = await import('../../slices/createSlice');
     act(() => {
-      app.store.dispatch(editDraft({ name: 'Billing', mode: 'modernize' }));
-      app.store.dispatch(goToStep('repositories'));
+      app.store.dispatch(editDraft({ name: 'Billing' }));
     });
-    return app;
-  }
-
-  it('has Back alone until a provider is chosen', async () => {
-    const app = await onRepositories();
-    expect(screen.getByRole('heading', { name: 'repos_title' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'back' })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'create' })).toBeNull();
-
-    const { chooseProvider } = await import('../../slices/createSlice');
-    act(() => {
-      app.store.dispatch(chooseProvider('github'));
-    });
-    expect(screen.getByRole('button', { name: 'create' })).toBeTruthy();
-  });
-
-  it('goes Back to the providers first, then to the details', async () => {
-    const app = await onRepositories();
-    const { chooseProvider } = await import('../../slices/createSlice');
-    act(() => {
-      app.store.dispatch(chooseProvider('github'));
-    });
-
-    fireEvent.click(screen.getByRole('button', { name: 'back' }));
-    expect(screen.getByRole('heading', { name: 'repos_title' })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'create' })).toBeNull();
-
-    fireEvent.click(screen.getByRole('button', { name: 'back' }));
     expect(screen.getByRole('heading', { name: 'title' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'continue' })).toBeNull();
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: 'create' }).disabled).toBe(false);
+
+    fireEvent.click(screen.getByRole('button', { name: 'cancel' }));
     expect(screen.getByText('details step')).toBeTruthy();
   });
 });

@@ -39,7 +39,8 @@ fn every_built_in_kit_is_built_on_the_gears() {
             .unwrap()
     };
     assert_eq!(brings("project-lifecycle"), [KIND_GEARS, KIND_MODEL]);
-    assert_eq!(brings("constructor-research"), [KIND_GEARS]);
+    // Its subtype of Project (ADR-0073).
+    assert_eq!(brings("constructor-research"), [KIND_GEARS, KIND_MODEL]);
     assert_eq!(brings("studio-api-docs"), [KIND_GEARS]);
 }
 

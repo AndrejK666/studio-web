@@ -194,13 +194,15 @@ fn a_cf_studio_kit_toml_brings_material_for_one_kit() {
 }
 
 #[test]
-fn constructor_research_brings_two_endpoint_sources_and_no_model() {
+fn constructor_research_brings_two_endpoint_sources_and_only_its_project_type() {
     let m = builtin_manifest("constructor-research").expect("compiled in");
     assert_eq!(m.levels, ["organization", "project"]);
-    assert!(
-        m.model.is_none(),
-        "no model: it may be installed for one project"
-    );
+    // Its model is its subtype of Project and nothing else (ADR-0073): every
+    // organization carries it, so it is still installed for one project.
+    let overlay = overlay_of(&m).unwrap().expect("a project type");
+    assert_eq!(overlay.types.len(), 1);
+    assert!(overlay.project_subtype().is_some());
+    assert!(overlay.fields.is_empty() && overlay.relations.is_empty() && overlay.tabs.is_empty());
     let sources: Vec<(&str, &str, Option<&str>)> = m
         .inbox
         .iter()
@@ -569,5 +571,111 @@ fn a_claim_is_refused_when_it_names_no_write_route_of_its_gear() {
             &[]
         )
         .contains("does not read")
+    );
+}
+
+const TYPED: &str = r#"{
+  "slug": "deals",
+  "name": "Deals",
+  "description": "Mergers and acquisitions",
+  "levels": ["project"],
+  "model": {"types": [{"name": "project", "extends": "project", "label": "Deal",
+                       "description": "A deal worked as a project"}]},
+  "project_creation": {
+    "mode": "modernize",
+    "steps": ["sources"],
+    "next_steps": [{"id": "connect-data-room", "label": "Connect the data room",
+                    "route": "/projects/sources", "done_when": "repos"}]
+  }
+}"#;
+
+#[test]
+fn a_kit_is_a_project_type_by_the_subtype_of_project_its_model_derives() {
+    let m = read_kit_json(TYPED).unwrap();
+    let t = m.project_subtype().expect("a project type");
+    assert_eq!(t.entity, "deals-project");
+    assert_eq!(
+        t.gts,
+        "gts.cf.studio.domain.project.v1~cf.studio.kit.deals.project.v1~"
+    );
+    assert_eq!(
+        (t.name.as_str(), t.description.as_str()),
+        ("Deal", "A deal worked as a project")
+    );
+    assert_eq!(m.creation_mode(), "modernize");
+    assert!(m.creation_takes("sources"));
+    assert!(!m.creation_takes("prd"));
+    // Without the section every optional step is the request's to ask for.
+    let bare = read_kit_json(&TYPED.replace(
+        r#""project_creation": {
+    "mode": "modernize",
+    "steps": ["sources"],
+    "next_steps": [{"id": "connect-data-room", "label": "Connect the data room",
+                    "route": "/projects/sources", "done_when": "repos"}]
+  }"#,
+        r#""project_type": true"#,
+    ))
+    .unwrap();
+    assert!(bare.creation_takes("prd") && bare.creation_takes("repository"));
+    assert_eq!(bare.creation_mode(), "greenfield");
+    // The built-in types are such kits, and nothing else built in is.
+    for slug in ["gears-project", "constructor-research"] {
+        let kit = project_type_kit(slug).expect(slug);
+        assert!(kit.project_subtype().is_some());
+        assert!(
+            kit.project_creation
+                .is_some_and(|c| !c.next_steps.is_empty())
+        );
+    }
+    let types: Vec<String> = project_type_kits().map(|k| k.slug).collect();
+    assert_eq!(types, ["gears-project", "constructor-research"]);
+}
+
+#[test]
+fn a_project_types_creation_is_checked() {
+    let refused = |from: &str, to: &str| {
+        let body = TYPED.replace(from, to);
+        assert_ne!(body, TYPED, "{from}");
+        read_kit_json(&body).expect_err(to)
+    };
+    // The flag is a cache of the model: it is refused without a subtype.
+    assert!(
+        read_kit_json(r#"{"slug": "x", "name": "X", "levels": ["project"], "project_type": true}"#)
+            .unwrap_err()
+            .contains("derives no type")
+    );
+    assert!(
+        refused(r#""levels": ["project"]"#, r#""levels": ["organization"]"#)
+            .contains("project level")
+    );
+    assert!(refused(r#""mode": "modernize""#, r#""mode": "import""#).contains("mode"));
+    assert!(
+        refused(
+            r#""steps": ["sources"]"#,
+            r#""steps": ["sources", "sources"]"#
+        )
+        .contains("twice")
+    );
+    assert!(refused(r#""steps": ["sources"]"#, r#""steps": ["deploy"]"#).contains("none of"));
+    assert!(refused(r#""steps": ["sources"]"#, r#""steps": ["scaffold"]"#).contains("repository"));
+    assert!(refused(r#""done_when": "repos""#, r#""done_when": "deployed""#).contains("done_when"));
+    assert!(refused(r#""route": "/projects/sources""#, r#""route": "projects""#).contains("route"));
+    assert!(refused(r#""id": "connect-data-room""#, r#""id": "Connect""#).contains("id"));
+    assert!(
+        refused(
+            r#""description": "A deal worked as a project"}]"#,
+            r#""description": "A deal worked as a project"},
+                       {"name": "other", "extends": "project"}]"#
+        )
+        .contains("at most one")
+    );
+    // A kit that is no project type says nothing of a project's creation.
+    assert!(
+        read_kit_json(
+            r#"{"slug": "x", "name": "X", "levels": ["project"],
+                "project_creation": {"steps": ["prd"]}}"#
+        )
+        .unwrap_err()
+        .contains("only a project type")
     );
 }

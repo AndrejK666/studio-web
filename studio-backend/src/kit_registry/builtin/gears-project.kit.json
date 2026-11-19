@@ -6,6 +6,42 @@
   "publisher": "Constructor Fabric",
   "icon": "lucide:boxes",
   "levels": ["project"],
-  "project_type": true,
-  "requires": ["project-product", "delivery"]
+  "requires": ["project-product", "delivery"],
+  "model": {
+    "types": [
+      {
+        "name": "project",
+        "extends": "project",
+        "label": "Gears project",
+        "description": "A project whose product is composed from Gears and shipped through Releases.",
+        "fields": [
+          {
+            "name": "gear_repository",
+            "type": "string?",
+            "description": "The repository the project's own gears go to, owner/name"
+          }
+        ]
+      }
+    ]
+  },
+  "project_creation": {
+    "mode": "greenfield",
+    "steps": ["repository", "sources", "scaffold", "prd"],
+    "next_steps": [
+      {
+        "id": "connect-repositories",
+        "label": "Connect your repositories",
+        "description": "Attach the repositories the product's code and documents are in. Change branch on a row picks the branch Studio reads.",
+        "route": "/projects/sources",
+        "done_when": "repos"
+      },
+      {
+        "id": "compose-product",
+        "label": "Compose the product",
+        "description": "Pick the gears the product is made of and preview how they resolve together.",
+        "route": "/product",
+        "done_when": "product"
+      }
+    ]
+  }
 }

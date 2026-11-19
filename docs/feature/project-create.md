@@ -21,8 +21,9 @@ owner: studio-team
   - [1.3 Actors](#13-actors)
   - [1.4 References](#14-references)
 - [2. Actor Flows (CDSL)](#2-actor-flows-cdsl)
-  - [Create an empty project](#create-an-empty-project)
+  - [Create a project of a type](#create-a-project-of-a-type)
   - [Create a project from an existing repository](#create-a-project-from-an-existing-repository)
+  - [Follow the type's next steps](#follow-the-types-next-steps)
   - [Abandon the wizard](#abandon-the-wizard)
 - [3. Processes / Business Logic (CDSL)](#3-processes--business-logic-cdsl)
   - [Resolve the applicable step sequence](#resolve-the-applicable-step-sequence)
@@ -38,6 +39,7 @@ owner: studio-team
   - [The draft never survives a close](#the-draft-never-survives-a-close)
   - [Creation is two writes and is not atomic](#creation-is-two-writes-and-is-not-atomic)
   - [One or more sources, capped](#one-or-more-sources-capped)
+  - [The type decides what comes next](#the-type-decides-what-comes-next)
   - [Each root resolves the organization for itself](#each-root-resolves-the-organization-for-itself)
   - [The list learns without polling](#the-list-learns-without-polling)
 - [6. Acceptance Criteria](#6-acceptance-criteria)
@@ -48,9 +50,21 @@ owner: studio-team
 
 ### 1.1 Overview
 
-A two-step wizard, opened from the Projects list, that creates a project either
-empty or from existing repositories. It is rendered by the projects MFE into
-the shell's overlay domain, not as a dialog the MFE draws itself.
+A one-step wizard, opened from the Projects list, that asks for a project's
+name, its type, a goal and shows its owner, and creates it. The type decides the
+rest: what the creation does, and the next steps the project's Overview then
+shows until each is done or dismissed
+([ADR-0073](../adr/0073-a-project-type-is-a-kits-subtype-of-project.md)). It is
+rendered by the projects MFE into the shell's overlay domain, not as a dialog
+the MFE draws itself.
+
+**Superseded**: the wizard had a second question, the starting point (Start
+from scratch or Import existing work), and with Import a second step that picked
+repositories. The type answers what the starting point did: connecting existing
+repositories is one of a type's next steps, done in the project's Sources
+(Connect source, Change branch). The FrontX portal (`studio-frontend`) still has
+the old two steps until it follows; the flow and the repository picker below
+describe it and Connect source.
 
 ### 1.2 Purpose
 
@@ -79,7 +93,7 @@ changes the code:
   asks rather than assumes. Reading it is best-effort: a project is created with
   no stages rather than not created at all, because an empty stage list is
   something a user can fix and a missing project is not.
-- A modernization takes **one or more** repositories, at most 100 in total. The
+- *(Connect source, and the FrontX portal's wizard)* A modernization takes **one or more** repositories, at most 100 in total. The
   mockup's checkboxes and "3 selected" counter are literal, and the selection
   spans connection tabs — a project may be seeded from a GitHub repository and a
   GitLab one. ADR-0010 lists "modernize carries exactly one source" among the
@@ -134,16 +148,16 @@ evidence is the acceptance criteria in section 6, exercised against a running
 stack; the implementation claims they rest on are the Definitions of Done, which
 are traced.
 
-**Use case**: create a project, empty or from existing repositories.
+**Use case**: create a project of a type, then do what the type says comes next.
 
-### Create an empty project
+### Create a project of a type
 
 - [ ] `p1` - **ID**: `cpt-studiofrontend-flow-project-create-greenfield`
 
 **Actor**: Member
 
 **Success Scenarios**:
-- A project appears in the list with status Draft and the given name.
+- A project appears in the list with status Draft and the given name, and opens on its Overview with its type's next steps.
 
 **Error Scenarios**:
 - The name duplicates a sibling; account-management refuses and the wizard keeps the draft.
@@ -153,16 +167,20 @@ are traced.
 1. [ ] - `p1` - Member activates "New project" in the list header - `inst-1`
 2. [ ] - `p1` - Mount the overlay extension in the shell's overlay domain - `inst-2`
 3. [ ] - `p1` - Reset the draft so no earlier attempt is carried in - `inst-3`
-4. [ ] - `p1` - Member enters a name, picks the project type, an optional goal, and "Start from scratch" - `inst-4`
-5. [ ] - `p1` - **IF** the mode is greenfield - `inst-5`
-   1. [ ] - `p1` - The repositories step is not applicable, so the primary action reads "Create project" - `inst-6`
+4. [ ] - `p1` - Member enters a name, picks the project type and an optional goal; the owner is shown - `inst-4`
+5. [ ] - `p1` - **IF** a type is picked, say under the types what its next steps are - `inst-5`
+   1. [ ] - `p1` - The details are the only step, so the primary action reads "Create project" - `inst-6`
 6. [ ] - `p1` - Run `cpt-studiofrontend-algo-project-create-write` - `inst-7`
 7. [ ] - `p1` - Announce the created project on the MFE event bus so the list refetches - `inst-8`
-8. [ ] - `p1` - **RETURN** unmount the overlay extension - `inst-9`
+8. [ ] - `p1` - **RETURN** unmount the overlay extension; the shell opens the project on its Overview - `inst-9`
 
 ### Create a project from an existing repository
 
 - [ ] `p1` - **ID**: `cpt-studiofrontend-flow-project-create-modernize`
+
+**Superseded** in the prototype portal: its wizard has no starting point and no
+repositories step; a Gears project's first next step opens Sources, where Connect
+source draws the same picker. The FrontX portal's wizard still takes this flow.
 
 **Actor**: Member
 
@@ -182,6 +200,25 @@ are traced.
 6. [ ] - `p1` - Member picks one or more repositories, across providers and connections if needed, up to the cap - `inst-5`
 7. [ ] - `p1` - Run `cpt-studiofrontend-algo-project-create-write` - `inst-6`
 8. [ ] - `p1` - **RETURN** unmount the overlay extension and announce the created project - `inst-7`
+
+### Follow the type's next steps
+
+- [ ] `p1` - **ID**: `cpt-studiofrontend-flow-project-create-next-steps`
+
+**Actor**: Member
+
+**Success Scenarios**:
+- The Overview of a typed project lists what its type says to do next, opens the screen for each, and stops listing a step once it is done or dismissed.
+
+**Error Scenarios**:
+- The dismissal cannot be written; the row stays and the card says why.
+
+**Steps**:
+1. [ ] - `p1` - `API: GET /cf/studio-organizations/v1/project-creation-types (the type's next_steps) and the project's project.config (project_type_kit, next_steps_dismissed)` - `inst-1`
+2. [ ] - `p1` - Leave out a step whose `done_when` path step is done in `GET /cf/studio-organizations/v1/project-status`, and one dismissed - `inst-2`
+3. [ ] - `p1` - Member opens a step's screen (Sources, Product, Constructor Research, Releases), or dismisses it - `inst-3`
+4. [ ] - `p1` - `API: PUT /cf/account-management/v1/tenants/{id}/metadata/{type} (project.config with the id added to next_steps_dismissed)` - `inst-4`
+5. [ ] - `p1` - **RETURN** the steps left; none, and the card is not drawn - `inst-5`
 
 ### Abandon the wizard
 
@@ -237,18 +274,28 @@ the picked repositories as sources) and, with a brief, its PRD, each step
 recorded so a retry continues where it stopped. The wizard no longer makes
 those requests itself.
 
-The project type is a kit: `GET /cf/studio-organizations/v1/project-creation-types`
-lists the built-in kits marked `project_type` (Gears, then Constructor
-Research), the wizard offers them as one choice, and the request names the
-pick as `project_type_kit`. The run records it in the configuration and its
-`kits` step installs that kit in the new project, as studio-organizations'
-service, after checking the project sits in the organization the request was
-approved for. The organization need not have the kit itself; what the kit
-`requires` must already apply to the organization, or the request is refused.
+The project type is a kit's subtype of Project
+([ADR-0073](../adr/0073-a-project-type-is-a-kits-subtype-of-project.md)): a
+kit whose model derives a type of its own from the core Project type.
+`GET /cf/studio-organizations/v1/project-creation-types` lists the built-in
+ones (Gears, then Constructor Research) with the type's id, name and
+description, the `mode` and optional creation steps it takes, and its next
+steps. The wizard offers them as one choice and the request names the pick as
+`project_type_kit`, with no `mode` and no sources: the type decides. The run
+records `project_type_kit` and the type's id (`project_type_id`) in the
+configuration, takes the type's `mode`, writes a PRD from the brief only when
+the type takes `prd`, refuses a step the type does not take, and its `kits`
+step installs that kit in the new project, as studio-organizations' service,
+after checking the project sits in the organization the request was approved
+for; its last step, `model`, gives the project's object in the domain model the
+type. The organization need not have the kit itself; what the kit `requires`
+must already apply to the organization, or the request is refused. Gears takes
+the repository, sources, starter gear and PRD steps; Constructor Research takes
+sources and the PRD.
 
 **Steps**:
 1. [x] - `p1` - Trim the name; reject an empty one before any request - `inst-1`
-2. [x] - `p1` - `API: POST /cf/studio-organizations/v1/project-creations (workspace, name, mode, brief, owner, sources, an idempotency key)` - `inst-2`
+2. [x] - `p1` - `API: POST /cf/studio-organizations/v1/project-creations (workspace, name, brief, owner, the type kit, an idempotency key)` - `inst-2`
 3. [x] - `p1` - **IF** the server refuses (the workspace, a connection) - `inst-3`
    1. [x] - `p1` - **RETURN** the refusal; the draft survives so the member can correct it - `inst-4`
 4. [x] - `p1` - `API: GET /cf/studio-organizations/v1/project-creations/{run_id}?organization_id= (the run's state and each step's), shown in the dialog until it ends` - `inst-5`
@@ -295,14 +342,16 @@ blamed for them:
 
 - [ ] `p2` - **ID**: `cpt-studiofrontend-state-project-create-wizard`
 
-**States**: Details, Repositories
+**States**: Details, Creating
 
 **Initial State**: Details
 
+The FrontX portal's wizard keeps its Repositories state (Details to Repositories
+when the starting point is Import existing work); the prototype's has none.
+
 **Transitions**:
-1. [ ] - `p1` - **FROM** Details **TO** Repositories **WHEN** the primary action is used and the mode is modernize - `inst-1`
-2. [ ] - `p1` - **FROM** Repositories **TO** Details **WHEN** Back is used before a provider is chosen; with one chosen, Back returns the step to the provider choice and keeps the picks - `inst-2`
-3. [ ] - `p1` - **FROM** Repositories **TO** Details **WHEN** the mode is changed to greenfield, which strands the current step - `inst-3`
+1. [ ] - `p1` - **FROM** Details **TO** Creating **WHEN** Create project is used; the run's steps replace the form - `inst-1`
+2. [ ] - `p1` - **FROM** Creating **TO** Details **WHEN** the run stops; the draft is kept, and Create project again continues the run - `inst-2`
 
 ### Project Status State Machine
 
@@ -430,6 +479,27 @@ slice.
 **Touches**:
 - Entities: `createSlice`, `projectDraft`, `RepositoryPicker`, `RepositoriesStep`
 
+### The type decides what comes next
+
+- [x] `p1` - **ID**: `cpt-studiofrontend-dod-project-create-type-next`
+
+The system **MUST NOT** ask for a starting point or repositories in the wizard,
+**MUST** leave the project's `mode` and optional creation steps to the type
+(the request sends neither), and **MUST** show on the project's Overview the
+type's next steps that are neither done (their `done_when` path step is done)
+nor dismissed, each opening the screen its `route` names where this portal has
+it for the project. A dismissal **MUST** be kept in `project.config`
+`next_steps_dismissed` with everything else in the configuration written back
+as it was. A project without a type (created before them) shows no next steps.
+
+**Implements**:
+- `cpt-studiofrontend-flow-project-create-greenfield`
+- `cpt-studiofrontend-flow-project-create-next-steps`
+
+**Touches**:
+- API: `GET /cf/studio-organizations/v1/project-creation-types`
+- Entities: `DetailsStep`, `wizardEffects`, `NextSteps`, `nextSteps`
+
 ### Each root resolves the organization for itself
 
 - [x] `p1` - **ID**: `cpt-studiofrontend-dod-project-create-org-scope`
@@ -474,10 +544,15 @@ row.
 - [ ] Activating "New project" opens the overlay; the projects list stays visible behind the scrim.
 - [ ] Escape, a click on the scrim, and Cancel all close the overlay and write nothing.
 - [ ] Reopening the wizard after abandoning a filled-in draft shows an empty first step.
-- [ ] With "Start from scratch" selected, the details step's primary action reads "Create project" and there is no second step.
-- [ ] With "Import existing work" selected, the primary action reads "Continue" and leads to the repositories step.
-- [ ] Switching back to "Start from scratch" while on the repositories step returns to the details step.
-- [ ] The primary action is disabled until the current step is complete: a non-empty name and a chosen starting point on the details step, at least one chosen repository on the repositories step.
+- [ ] The wizard asks for a name, the project type and a goal and shows the owner; there is no starting point and no second step, and the primary action reads "Create project".
+- [ ] Picking a type says under the types what its next steps are.
+- [ ] Create project is disabled until the name is not empty and a type is picked.
+- [ ] A created project opens on its Overview, which lists its type's next steps: Gears — connect the repositories (Sources), compose the product (Product); Constructor Research — connect a Research project (Constructor Research), build and run it there (Releases).
+- [ ] A next step leaves the Overview once its path step is done (a Gears project with a repository no longer lists Connect your repositories) or once anybody dismisses it; a dismissal survives a reload and is the same for the whole team.
+- [ ] A project created before project types, or of a type with nothing left, shows no Next steps card.
+- [ ] A created project's `project.config` carries `project_type_kit`, `project_type_id` (`gts.cf.studio.domain.project.v1~cf.studio.kit.<kit>.project.v1~`) and the type's `mode`; its object in the domain model carries `project_type_id` and `project_type`.
+- [ ] A request that names a type and asks for a step the type does not take (sources on a type without `sources`) is refused; one that sends `mode` and `sources` without a type still works.
+- *(Connect source and the FrontX portal's wizard)* The criteria below about picking repositories.
 - [ ] Picking a second repository keeps the first; picking a selected one removes it; the footer counts what is selected.
 - [ ] The selection survives switching providers and connection tabs, and a created project records every picked repository.
 - [ ] Each recorded repository carries its default branch as `branch` and `share_mode: branch`.
@@ -492,7 +567,7 @@ row.
 - [ ] A model provider (an API key) is offered neither as a chip nor as a connection on the repositories step.
 - [ ] A created project is a tenant of the project type whose parent is the workspace in scope, with `status = draft`, an `owner_id`, and the stages its workspace's catalogue marks required.
 - [ ] A workspace whose catalogue marks a different stage required seeds new projects with that one, and no code change is involved.
-- [ ] The details step offers the project types as one choice, Gears first, and Create project stays disabled until one is picked; the starting point is a separate choice.
+- [ ] The details step offers the project types as one choice, Gears first, and Create project stays disabled until one is picked.
 - [ ] A project created as Gears has the `gears-project` kit installed in it, one created as Constructor Research the `constructor-research` kit; neither installs the other.
 - [ ] A creation that stops shows the stopped step as stopped, and Create project again (or Retry in Background work) continues from that step without a second tenant.
 - [ ] The owner field names the signed-in member and offers no way to change them; the created project carries their subject id as `owner_id`.
