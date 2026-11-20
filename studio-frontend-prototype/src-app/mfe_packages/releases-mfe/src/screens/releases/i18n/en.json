@@ -1,5 +1,13 @@
 {
   "title": "Releases",
+  "release_overview": "Release overview",
+  "release_last_deployment": "Latest deployment",
+  "release_view_builds": "View builds",
+  "release_environments": "Environments",
+  "release_history": "Deployment history",
+  "release_diagnostics": "Release diagnostics",
+  "release_builds_unavailable": "Builds unavailable",
+  "release_deployments_unavailable": "Deployments unavailable",
   "about": "Build the product, deploy it to the first environment, then let the release climb the environments in order: each environment takes from the one before it. A build is published in Studio, the IDE or CI; a deploy names it and the server installs it with the environment's connection. A protected environment waits for an administrator to approve.",
   "no_project": "Open a project to see how its product goes out.",
   "reading": "Reading…",

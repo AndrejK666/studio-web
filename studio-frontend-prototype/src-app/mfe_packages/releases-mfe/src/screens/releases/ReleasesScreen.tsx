@@ -1,58 +1,28 @@
-/**
- * Project › Releases (ADR-0056 §4), the prototype's ProjectReleases
- * (releases-tab.tsx at 00828880) carried over as the built-in kit
- * `delivery` (Builds, releases & environments, ADR-0071 step 5) (ADR-0069 §5): how the project's product goes out.
- *
- *   - The header says where the product stands, read from the ladder
- *     (releaseStatus), with Deploy to…: one dialog listing every target,
- *     Constructor Research among them where its kit applies (#1053).
- *   - The path to running (#1050): Specs → Product → Build → Image →
- *     Environment → Running, each step's state, reason, checklist and one
- *     action (ProjectPath.tsx); a failed step its cause (#1054).
- *   - A deploy the address names (`&deployment=`, the Inbox's link) opens
- *     by itself, with its cause and log (DeploymentDetail.tsx).
- *   - Then the steps, as tabs: Build, Deploy and History. It opens on the
- *     step that is next -- Build until something is published, then Deploy
- *     -- unless the member picked another for the project before.
- *   - Build: Build in CI and the product's builds (Builds.tsx).
- *   - Deploy: the ladder -- the environments the project may deploy to in
- *     `promote_from` order, each with what runs there, how its newest deploy
- *     went, whether one waits for approval, and the action that applies
- *     (Ladder.tsx); Deploy… opens under a row the rest an environment's
- *     deploys need: deploy a build, roll back, uninstall, decide, previews,
- *     the release's values and secrets (DeployActions.tsx). Folded under it,
- *     which profile each environment runs (Bindings.tsx).
- *   - History: every deploy of the project (History.tsx).
- *
- * A build is published in Studio, the IDE or CI; a deploy names it and the
- * server installs it with the environment's connection (ADR-0048). What the
- * prototype had here and this kit does not yet is in docs/parity.md.
- */
+/** The project release overview, with builds, deploy history and diagnostics on demand. */
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { ChildMfeBridge } from '@gears-frontx/react';
 import { useSharedProperty } from '@gears-frontx/react';
-import { Badge, Button, Skeleton, Tabs, TabsList, TabsTrigger } from '@gears-frontx/ui-kit';
+import { Badge, Button, Skeleton } from '@gears-frontx/ui-kit';
 import { STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT, isNotFound, openScreen, screenView, useHostChrome, useScreenAvailability } from '@constructor-studio/mfe-shared';
 import type { Deployment, PathAction, ProjectPath, ProjectTargets } from '../../api/types';
-import { ROUTES, deploymentFromSearch, pathSteps, type Intent, type SpecsSeen } from '../../model/path';
+import { ROUTES, deploymentFromSearch, intentOf, pathSteps, type Intent, type SpecsSeen } from '../../model/path';
 import { DeployDialog } from './DeployDialog';
 import { DeploymentDetail } from './DeploymentDetail';
-import { ProjectPathView } from './ProjectPath';
+import { ActionButton, ProjectPathView } from './ProjectPath';
 import { ideBuildsOf, type IdeBuild } from '../../model/builds';
-import { deploysHint } from '../../model/pipeline';
 import { deployableBuilds } from '../../model/project-deploys';
-import { ladderSteps, releaseStatus } from '../../model/releases';
+import { ladderSteps, releaseStatus, versionOf } from '../../model/releases';
 import { useReleasesTranslations } from '../../i18n';
 import { ProjectBindings } from './Bindings';
 import { ProjectBuilds } from './Builds';
 import { EnvironmentActions, EnvironmentConfig, EnvironmentPreviews } from './DeployActions';
 import { DeployHistory } from './History';
 import { ReleaseLadder } from './Ladder';
-import { NextLine } from './NextLine';
 import {
   ErrorLine,
   ReleasesProvider,
+  StateBadge,
   TONE_BADGE,
   errText,
   useApi,
@@ -60,29 +30,6 @@ import {
   type ReleasesContextValue,
 } from './parts';
 import styles from './ReleasesScreen.module.css';
-
-/** The steps of a release, as Releases' tabs. */
-type ReleaseTab = 'build' | 'deploy' | 'history';
-const TABS: ReleaseTab[] = ['build', 'deploy', 'history'];
-
-/** The tab this member last picked for the project; storage may be missing
- *  or refuse, which is only a convenience lost. */
-const tabKey = (projectId: string) => `studio.releases.tab.${projectId}`;
-function storedTab(projectId: string): ReleaseTab | null {
-  try {
-    const t = window.localStorage.getItem(tabKey(projectId));
-    return t && (TABS as string[]).includes(t) ? (t as ReleaseTab) : null;
-  } catch {
-    return null;
-  }
-}
-function storeTab(projectId: string, t: ReleaseTab) {
-  try {
-    window.localStorage.setItem(tabKey(projectId), t);
-  } catch {
-    // Not remembered; the tabs still work.
-  }
-}
 
 /** The project in scope, from the shell's shared property. */
 function useProjectId(): string | null {
@@ -136,7 +83,8 @@ function addressedDeployment(): string | null {
 function Releases({ projectId, onOrganization }: { projectId: string; onOrganization: (id: string) => void }) {
   const { t, bridge } = useReleases();
   // Organization › Infrastructure is named only where its kit put the screen.
-  const noEnvironmentKey = useScreenAvailability().route(ROUTES.infrastructure) ? 'no_environment' : 'no_environment_admin';
+  const screens = useScreenAvailability();
+  const noEnvironmentKey = screens.route(ROUTES.infrastructure) ? 'no_environment' : 'no_environment_admin';
   const api = useApi();
   const [path, setPath] = useState<ProjectPath | null>(null);
   const [specs, setSpecs] = useState<SpecsSeen>('unavailable');
@@ -147,6 +95,8 @@ function Releases({ projectId, onOrganization }: { projectId: string; onOrganiza
   const [targets, setTargets] = useState<ProjectTargets | null>(null);
   const [deployments, setDeployments] = useState<Deployment[]>([]);
   const [builds, setBuilds] = useState<IdeBuild[]>([]);
+  const [buildRead, setBuildRead] = useState<'loading' | 'ready' | 'failed'>('loading');
+  const [deploymentError, setDeploymentError] = useState<string | null>(null);
   // When the screen last read: what "lost" and "took" are measured against.
   const [now, setNow] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -159,11 +109,13 @@ function Releases({ projectId, onOrganization }: { projectId: string; onOrganiza
     screenView(window.location.search) ?? ''
   )?.[1] ?? null);
   const [open, setOpen] = useState<string | null>(addressedEnvironment);
-  // The tab the member picked; none until they pick one, and the step that is next shows.
-  const [picked, setPicked] = useState<ReleaseTab | null>(() => addressedEnvironment ? 'deploy' : storedTab(projectId));
-  const pick = (tab: ReleaseTab) => {
-    setPicked(tab);
-    storeTab(projectId, tab);
+  const [showBuilds, setShowBuilds] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const buildsSection = useRef<HTMLElement>(null);
+  const environmentsSection = useRef<HTMLElement>(null);
+  const openBuilds = () => {
+    setShowBuilds(true);
+    buildsSection.current?.scrollIntoView?.({ block: 'start' });
   };
   const changed = useCallback((message: string) => {
     setNotice(message);
@@ -180,36 +132,35 @@ function Releases({ projectId, onOrganization }: { projectId: string; onOrganiza
       .projectPath({ projectId, include: 'targets,deployments' })
       .fetch({ staleTime: 0 })
       .catch(() => null);
+    void api.nodes({ projectId, type: 'build', limit: 200, sort: 'updated' }).fetch({ staleTime: 0 }).then(
+      (p) => {
+        if (!live) return;
+        setBuilds(ideBuildsOf(p.nodes ?? []));
+        setBuildRead('ready');
+      },
+      () => { if (live) setBuildRead('failed'); }
+    );
+    void api.specPlan({ projectId }).fetch({ staleTime: 0 }).then(
+      (p) => { if (live) setSpecs({ count: p.total ?? p.items?.length ?? 0 }); },
+      () => { if (live) setSpecs('unavailable'); }
+    );
     Promise.all([
       pathRead.then((pt) => pt?.targets ?? api.targets({ projectId }).fetch({ staleTime: 0 })),
-      pathRead.then(
-        (pt) =>
-          pt?.deployments ??
-          api
-            .deployments({ projectId })
-            .fetch({ staleTime: 0 })
-            .catch(() => ({ items: [] as Deployment[], total: 0 }))
+      pathRead.then((pt) => pt?.deployments ?? api.deployments({ projectId }).fetch({ staleTime: 0 })).then(
+        (data) => ({ data, error: null }),
+        (e: unknown) => ({ data: null, error: errText(e) })
       ),
-      api
-        .nodes({ projectId, type: 'build', limit: 200, sort: 'updated' })
-        .fetch({ staleTime: 0 })
-        .then((p) => ideBuildsOf(p.nodes ?? []))
-        .catch(() => [] as IdeBuild[]),
       pathRead,
-      api
-        .specPlan({ projectId })
-        .fetch({ staleTime: 0 })
-        .then((p): SpecsSeen => ({ count: p.total ?? p.items?.length ?? 0 }))
-        .catch((): SpecsSeen => 'unavailable'),
     ])
-      .then(([tg, d, b, pt, sp]) => {
+      .then(([tg, d, pt]) => {
         if (!live) return;
         setNow(Date.now());
         setTargets(tg);
-        setDeployments(d.items);
-        setBuilds(b);
+        setError(null);
+        setUnavailable(false);
+        setDeployments(d.data?.items ?? []);
+        setDeploymentError(d.error);
         setPath(pt);
-        setSpecs(sp);
         onOrganization(tg.organization_id);
       })
       .catch((e: unknown) => {
@@ -226,14 +177,19 @@ function Releases({ projectId, onOrganization }: { projectId: string; onOrganiza
   const envName = (id: string) => targets?.environments.find((x) => x.environment.id === id)?.environment.name ?? id;
   const steps = targets ? ladderSteps(targets.environments, deployments, builds) : [];
   const noEnvironment = !!targets && targets.environments.length === 0;
-  const published = deployableBuilds(builds).length;
+  const readyBuilds = deployableBuilds(builds);
+  const published = readyBuilds.length;
   const runningIn = steps.find((s) => !!s.runs)?.environment.name ?? null;
-  const status = targets ? releaseStatus(steps, published) : null;
+  const status = targets && !deploymentError && buildRead === 'ready' ? releaseStatus(steps, published) : null;
 
-  const tabs: ReleaseTab[] = unavailable ? ['build', 'deploy'] : TABS;
-  // What is next: build until something is published, then deploy it.
-  const next: ReleaseTab | null = targets || unavailable || error ? (published === 0 ? 'build' : 'deploy') : null;
-  const tab = picked && tabs.includes(picked) ? picked : next;
+  const current = path?.steps.find((step) => step.id === path.current);
+  const action = current?.action;
+  const intent = action ? intentOf(action) : null;
+  const hasAction = intent && intent.kind !== 'none' && (intent.kind !== 'screen' || screens.route(intent.route));
+  const lastDeploy = deployments.reduce<Deployment | null>(
+    (latest, deploy) => !deploy.preview && (!latest || deploy.requested_at > latest.requested_at) ? deploy : latest,
+    null
+  );
 
   // What a path step's or a cause's button does here.
   const onIntent = (intent: Intent, action: Partial<PathAction>) => {
@@ -242,8 +198,11 @@ function Releases({ projectId, onOrganization }: { projectId: string; onOrganiza
         openScreen(bridge, intent.route);
         return;
       case 'tab':
-        pick(intent.tab);
-        if (intent.tab === 'deploy' && action.environment_id) setOpen(action.environment_id);
+        if (intent.tab === 'build') openBuilds();
+        else {
+          if (action.environment_id) setOpen(action.environment_id);
+          environmentsSection.current?.scrollIntoView?.({ block: 'start' });
+        }
         return;
       case 'deploy':
         setDialog({ environmentId: intent.environmentId, research: intent.research });
@@ -256,24 +215,6 @@ function Releases({ projectId, onOrganization }: { projectId: string; onOrganiza
         return;
       default:
     }
-  };
-
-  const tabStatus = (x: ReleaseTab): string => {
-    if (x === 'build')
-      return published > 0
-        ? t.count('status_build_published', published)
-        : runningIn
-          ? t('status_build_outside', { environment: runningIn })
-          : t('status_build_none');
-    if (x === 'deploy')
-      return noEnvironment
-        ? t('status_deploy_no_environment')
-        : steps.some((s) => !!s.runs)
-          ? t('status_deploy_running')
-          : published === 0
-            ? t('status_deploy_once_published')
-            : t('status_deploy_newest');
-    return deployments.length ? t.count('status_history', deployments.length) : t('nothing_deployed');
   };
 
   return (
@@ -290,25 +231,51 @@ function Releases({ projectId, onOrganization }: { projectId: string; onOrganiza
           ) : unavailable ? (
             <Badge variant="secondary">{t('no_environments_here')}</Badge>
           ) : (
-            !error && <span className={styles.muted}>{t('reading')}</span>
+            !error && deploymentError === null && buildRead !== 'failed' && <span className={styles.muted}>{t('reading')}</span>
           )}
         </div>
-        {targets && (
-          <Button size="sm" onClick={() => setDialog({ environmentId: null, research: false })} data-deploy-to>
-            {t('deploy_to')}
-          </Button>
-        )}
       </header>
-      <p className={styles.about}>{t('about')}</p>
-      {shown && <DeploymentDetail key={shown} id={shown} onClose={() => setShown(null)} onIntent={onIntent} />}
-      {path && (
-        <ProjectPathView
-          steps={pathSteps(path, specs)}
-          current={path.current}
-          specsCount={specs === 'unavailable' ? null : specs.count}
-          onIntent={onIntent}
-        />
+      {(targets || unavailable) && (
+        <section className={styles.card} data-release-overview>
+          <h2 className={styles.subTitle}>{t('release_overview')}</h2>
+          <dl className={styles.releaseFacts}>
+            <div>
+              <dt>{t('newest_build')}</dt>
+              <dd>{buildRead === 'ready'
+                ? readyBuilds[0]?.chartVersion ?? readyBuilds[0]?.buildId ?? t('nothing_published')
+                : t(buildRead === 'failed' ? 'release_builds_unavailable' : 'reading')}</dd>
+            </div>
+            <div>
+              <dt>{t('release_last_deployment')}</dt>
+              <dd>
+                {deploymentError !== null ? t('release_deployments_unavailable') : lastDeploy ? (
+                  <span className={styles.chips}>
+                    <button type="button" className={styles.releaseLink} onClick={() => setShown(lastDeploy.id)}>
+                      {lastDeploy.environment_name} · {versionOf(lastDeploy) ?? lastDeploy.product}
+                    </button>
+                    <StateBadge d={lastDeploy} />
+                  </span>
+                ) : t('nothing_deployed')}
+              </dd>
+            </div>
+          </dl>
+          {current?.reason && <p className={styles.muted}>{current.reason}</p>}
+          <div className={styles.row}>
+            {action && hasAction ? (
+              <ActionButton action={action} onIntent={onIntent} />
+            ) : buildRead !== 'loading' && published === 0 && (
+              <Button size="sm" onClick={openBuilds}>{t('release_view_builds')}</Button>
+            )}
+            {targets && (
+              <Button size="sm" variant={hasAction || published === 0 ? 'outline' : 'default'}
+                onClick={() => setDialog({ environmentId: null, research: false })} data-deploy-to>
+                {t('deploy_to')}
+              </Button>
+            )}
+          </div>
+        </section>
       )}
+      {shown && <DeploymentDetail key={shown} id={shown} onClose={() => setShown(null)} onIntent={onIntent} />}
       {dialog && targets && (
         <DeployDialog
           environments={targets.environments.map((x) => x.environment)}
@@ -320,57 +287,20 @@ function Releases({ projectId, onOrganization }: { projectId: string; onOrganiza
           onIntent={onIntent}
         />
       )}
-      {targets && published > 0 && (
-        <NextLine
-          hint={deploysHint({
-            environments: targets.environments.length,
-            bound: targets.bindings.length,
-            deployable: published,
-            deployments,
-          })}
-        />
-      )}
       {error && <ErrorLine>{error}</ErrorLine>}
+      {deploymentError !== null && <ErrorLine>{deploymentError}</ErrorLine>}
       {notice && (
         <div className={styles.notice} role="status" data-deploy-notice>
           {notice}
         </div>
       )}
-      {tab && (
-        <Tabs value={tab} onValueChange={(v) => pick(v as ReleaseTab)}>
-          <TabsList variant="line" aria-label={t('tabs_label')} data-release-tabs>
-            {tabs.map((x) => (
-              <TabsTrigger key={x} value={x} data-release-tab={x} data-release-tab-next={x === next || undefined}>
-                {t(`tab_${x}`)}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-        </Tabs>
-      )}
-      {tab && (
-        <div className={styles.stack} data-step={tab}>
-          <p className={styles.muted} data-release-tab-status>
-            {tabStatus(tab)}
-          </p>
-          {tab === 'build' && (
-            <ProjectBuilds
-              ideBuilds={builds}
-              environments={targets?.environments.map((x) => x.environment) ?? []}
-              environmentsReady={targets !== null}
-              deployments={deployments}
-              round={round}
-              now={now}
-              onChanged={changed}
-              onFollow={follow}
-              runningIn={runningIn}
-            />
-          )}
-          {tab === 'deploy' &&
-            (unavailable ? (
+      {(targets || unavailable || error) && (
+        <>
+          <section ref={environmentsSection} className={styles.stack} data-step="deploy">
+            <h2 className={styles.subTitle}>{t('release_environments')}</h2>
+            {unavailable ? (
               <p className={styles.muted}>{t('no_environments_backend')}</p>
-            ) : targets === null ? (
-              !error && <p className={styles.muted}>{t('loading')}</p>
-            ) : noEnvironment ? (
+            ) : targets && !deploymentError && (noEnvironment ? (
               <section className={styles.card}>
                 <p className={styles.muted}>{t(noEnvironmentKey)}</p>
                 {noEnvironmentKey === 'no_environment' && <Button size="sm" variant="outline"
@@ -411,17 +341,50 @@ function Releases({ projectId, onOrganization }: { projectId: string; onOrganiza
                 )}
               />
             ))}
-          {tab === 'deploy' && targets && !noEnvironment && (
-            // Folded: the exception, not the way a release goes (ADR-0056 §1).
-            <details className={styles.card} data-project-own-environments>
-              <summary className={styles.summary}>
-                <b>{t('own_environments')}</b> <span className={styles.muted}>{t('own_environments_sub')}</span>
-              </summary>
-              <ProjectBindings key={round} targets={targets} onSaved={() => changed(t('bindings_saved'))} />
-            </details>
-          )}
-          {tab === 'history' && <DeployHistory deployments={deployments} />}
-        </div>
+            {targets && !noEnvironment && (
+              // Folded: the exception, not the way a release goes (ADR-0056 §1).
+              <details className={styles.card} data-project-own-environments>
+                <summary className={styles.summary}>
+                  <b>{t('own_environments')}</b> <span className={styles.muted}>{t('own_environments_sub')}</span>
+                </summary>
+                <ProjectBindings key={round} targets={targets} onSaved={() => changed(t('bindings_saved'))} />
+              </details>
+            )}
+          </section>
+          <section ref={buildsSection} className={styles.card}>
+            <Button size="sm" variant="ghost" aria-expanded={showBuilds} data-release-tab="build"
+              onClick={() => setShowBuilds(!showBuilds)}>{t('builds_title')}</Button>
+            {showBuilds && (
+              <ProjectBuilds
+                ideBuilds={builds}
+                environments={targets?.environments.map((x) => x.environment) ?? []}
+                environmentsReady={targets !== null}
+                deployments={deployments}
+                round={round}
+                now={now}
+                onChanged={changed}
+                onFollow={follow}
+                runningIn={runningIn}
+              />
+            )}
+          </section>
+          <section className={styles.card}>
+            <Button size="sm" variant="ghost" aria-expanded={showHistory} data-release-tab="history"
+              onClick={() => setShowHistory(!showHistory)}>{t('release_history')}</Button>
+            {showHistory && <DeployHistory deployments={deployments} />}
+          </section>
+        </>
+      )}
+      {path && (
+        <details className={styles.card}>
+          <summary className={styles.summary}>{t('release_diagnostics')}</summary>
+          <ProjectPathView
+            steps={pathSteps(path, specs)}
+            current={path.current}
+            specsCount={specs === 'unavailable' ? null : specs.count}
+            onIntent={onIntent}
+          />
+        </details>
       )}
     </div>
   );

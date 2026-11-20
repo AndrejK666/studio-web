@@ -130,18 +130,18 @@ describe('Organization › Constructor Research', () => {
     setUp();
   });
 
-  it('lists only the Research projects, each with what runs there', async () => {
+  it('shows what runs by Studio project and keeps Research places in setup', async () => {
     renderScreen();
-    const place = await screen.findByText('demo');
-    const card = place.closest('[data-research-place]') as HTMLElement;
-    expect(card.getAttribute('data-research-place')).toBe('demo');
+    await screen.findByText('applications_title');
+    const card = document.querySelector('[data-research-place="demo"]') as HTMLElement;
+    const app = document.querySelector('[data-research-application="Shop"]') as HTMLElement;
     expect(document.querySelector('[data-research-place="dev"]')).toBeNull();
     expect(within(card).getByText('rp-1')).toBeTruthy();
     expect(within(card).getByText('cpu-small')).toBeTruthy();
-    expect(card.querySelector('[data-research-application="Shop"]')).not.toBeNull();
-    // A running application can be asked for its status in Research.
-    expect(card.querySelector('[data-deployment-status]')).not.toBeNull();
-    expect(screen.getByText('count_running_one 1', { exact: false })).toBeTruthy();
+    expect(within(app).getByText('demo')).toBeTruthy();
+    expect(app.querySelector('[data-deployment-status]')).not.toBeNull();
+    expect(document.querySelector('[data-research-running]')?.textContent).toBe('1');
+    expect(card.closest('details')?.open).toBe(false);
   });
 
   it('walks a member who has not signed in to Connections first', async () => {
@@ -159,9 +159,25 @@ describe('Organization › Constructor Research', () => {
     expect(document.querySelector('[data-research-connect]')).toBeNull();
   });
 
+  it('counts a running application and a newer failure separately across Research projects', async () => {
+    setUp({ deployments: [
+      deployment({}),
+      deployment({ id: 'd2', state: 'failed', requested_at: '2026-11-09T10:00:00Z' }),
+      deployment({ id: 'd3', project_id: 'p2', project_name: 'Billing', state: 'awaiting_approval' }),
+      deployment({ id: 'd4', project_id: 'p3', project_name: 'Other', environment_id: 'e-k' }),
+    ] });
+    renderScreen();
+    const total = async (key: string) => (await screen.findByText(key)).nextElementSibling?.textContent;
+    expect(await total('studio_projects')).toBe('2');
+    expect(await total('apps_running')).toBe('1');
+    expect(await total('deploys_pending')).toBe('1');
+    expect(await total('deploys_failed')).toBe('1');
+    expect(screen.getByText('latest_attempt')).toBeTruthy();
+  });
+
   it('marks the steps done as an organization gets there', async () => {
     renderScreen();
-    await screen.findByText('demo');
+    await screen.findByText('applications_title');
     const state = (s: string) => document.querySelector(`[data-research-step="${s}"]`)?.getAttribute('data-step-state');
     expect(state('sign_in')).toBe('done');
     expect(state('connect_project')).toBe('done');
