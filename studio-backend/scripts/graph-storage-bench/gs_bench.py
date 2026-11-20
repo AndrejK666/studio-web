@@ -493,6 +493,72 @@ async def functional(api: Api, run: str) -> list[dict]:
     code, body, _ = await api.call("POST", "/ingest", json={"nodes": [], "edges": [{"type_id": ns.edge("links"), "src_node_key": "ph-a", "dst_node_key": "ph-b"}]})
     m.record("F22b", "by default an edge to unknown keys creates phantoms (DESIGN default)", None, {"status": code, "counts": body.get("counts") if code == 200 else short(body)})
 
+    # ── graph-storage 0.4 ──────────────────────────────────────────────────
+    # F24 purge frees a tombstoned key (n5 was soft-deleted in F16a)
+    code, body, _ = await api.call("DELETE", "/nodes/n5", params={"mode": "purge", "only_tombstoned": "true"})
+    c2, b2, _ = await api.call("POST", "/ingest", json={"nodes": [item(ns, "n5", rng)]})
+    m.record("F24a", "purge of a tombstoned node frees its key for a new ingest", code == 204 and c2 == 200,
+             {"purge_status": code, "purge_body": short(body, 200) if code != 204 else None, "reingest_status": c2, "reingest": short(b2, 200) if c2 != 200 else b2.get("counts")})
+    code, body, _ = await api.call("DELETE", "/nodes/n4", params={"mode": "purge", "only_tombstoned": "true"})
+    m.record("F24b", "purge only_tombstoned on a live node is 409", code == 409, {"status": code, "problem": short(body, 200)})
+    c0, b0, _ = await api.call("GET", "/nodes/n4")
+    created = b0.get("envelope", {}).get("created_at") if c0 == 200 else None
+    code, body, _ = await api.call("DELETE", "/nodes/n4", params={"mode": "purge", "expected_created_at": "2001-01-01T00:00:00Z"})
+    c2, _, _ = await api.call("DELETE", "/nodes/n4", params={"mode": "purge", "expected_created_at": created}) if created else (None, None, None)
+    c3, _, _ = await api.call("GET", "/nodes/n4")
+    m.record("F24c", "purge with expected_created_at: another instant 409, the node's own 204, then gone",
+             code == 409 and c2 == 204 and c3 == 404, {"wrong_instant": code, "own_instant": c2, "read_after": c3, "created_at": created})
+    code, _, _ = await api.call("DELETE", "/nodes/never-existed-2", params={"mode": "purge"})
+    m.record("F24d", "purge of a key nothing holds is 204 (idempotent retry)", code == 204, {"status": code})
+
+    # F25 delete parameter validation
+    checks = {
+        "mode=bogus": {"mode": "bogus"},
+        "only_tombstoned without purge": {"only_tombstoned": "true"},
+        "expected_created_at without purge": {"expected_created_at": "2026-01-01T00:00:00Z"},
+    }
+    got = {}
+    for label, params in checks.items():
+        code, body, _ = await api.call("DELETE", "/nodes/n3", params=params)
+        got[label] = code
+    c3, _, _ = await api.call("GET", "/nodes/n3")
+    m.record("F25", "DELETE refuses an unknown mode and purge-only parameters without mode=purge (400), node untouched",
+             all(v == 400 for v in got.values()) and c3 == 200, {**got, "n3_after": c3})
+
+    # F26 edge listing pages through a hub past node_read_max_adjacency
+    seen, pages, cursor, code = set(), 0, None, 200
+    while True:
+        params = {"limit": 200, "direction": "outgoing"}
+        if cursor:
+            params["cursor"] = cursor
+        code, body, _ = await api.call("GET", "/nodes/hub/edges", params=params)
+        if code != 200:
+            break
+        pages += 1
+        items, cursor = page_items(body)
+        seen.update(e.get("edge_key") for e in items)
+        if not cursor or pages > 50:
+            break
+    c_in, b_in, _ = await api.call("GET", "/nodes/hub/edges", params={"direction": "incoming"})
+    m.record("F26", "GET /nodes/{key}/edges lists all 1500 hub edges once each over cursor pages; incoming is empty",
+             code == 200 and len(seen) == hub_n and c_in == 200 and not page_items(b_in)[0],
+             {"status": code, "pages": pages, "unique_edges": len(seen), "incoming_status": c_in, "incoming": len(page_items(b_in)[0]) if c_in == 200 else short(b_in)})
+    c4, b4, _ = await api.call("GET", "/nodes/hub/edges", params={"limit": 200, "cursor": "not-a-cursor"})
+    m.record("F26b", "a malformed edge-listing cursor is 400", c4 == 400, {"status": c4, "problem": short(b4, 200)})
+
+    # F27 edge payload in traversal only on request
+    code, body, _ = await api.call("POST", "/ingest", json={"nodes": [item(ns, "ep-a", rng), item(ns, "ep-b", rng)],
+                                                           "edges": [{"type_id": ns.edge("links"), "src_node_key": "ep-a", "dst_node_key": "ep-b", "payload": {"weight": 3}}]})
+    c1, b1, _ = await api.call("POST", "/graph/traverse", json={"seeds": ["ep-a"], "depth": 1})
+    c2, b2, _ = await api.call("POST", "/graph/traverse", json={"seeds": ["ep-a"], "depth": 1, "include_edge_payload": True})
+    c3, b3, _ = await api.call("POST", "/graph/neighborhood", json={"root": "ep-a", "depth": 1, "include_edge_payload": True})
+    e1 = (b1.get("edges") or [{}])[0] if c1 == 200 else {}
+    e2 = (b2.get("edges") or [{}])[0] if c2 == 200 else {}
+    e3 = (b3.get("edges") or [{}])[0] if c3 == 200 else {}
+    m.record("F27", "traverse omits edge payload by default and returns it with include_edge_payload (also neighborhood)",
+             code == 200 and "payload" not in e1 and e2.get("payload") == {"weight": 3} and e3.get("payload") == {"weight": 3},
+             {"ingest": code, "default_keys": sorted(e1), "with_flag": e2.get("payload"), "neighborhood": e3.get("payload")})
+
     # F23 readiness + revision
     code, body, _ = await api.call("GET", "/health/ready")
     m.record("F23", "readiness document", code == 200, {"status": code, "ready": body.get("ready") if code == 200 else None,
@@ -576,7 +642,7 @@ async def load_contention(api: Api, ns: Ns, args) -> dict:
             "latency": lat_summary(lat), "errors": errors[:8]}
 
 
-READ_OPS = ("get", "filter_eq", "filter_range", "order", "traverse", "lexical", "vector", "hybrid")
+READ_OPS = ("get", "filter_eq", "filter_range", "order", "traverse", "edges", "lexical", "vector", "hybrid")
 
 
 async def load_reads(api: Api, ns: Ns, args) -> dict:
@@ -601,6 +667,8 @@ async def load_reads(api: Api, ns: Ns, args) -> dict:
             r = await api.call("GET", "/nodes", params={"type_pattern": tp, "$filter": f"payload/repo eq 'repo-{rng.randrange(20)}'", "$orderby": "payload/created desc", "$top": 50})
         elif op == "traverse":
             r = await api.call("POST", "/graph/traverse", json={"seeds": [rng.choice(keys)], "depth": 2, "max_nodes": 1000})
+        elif op == "edges":
+            r = await api.call("GET", f"/nodes/{rng.choice(keys)}/edges", params={"limit": 50})
         else:
             r = await api.call("POST", "/search", json={"mode": op, "query": sentence(rng, 3), "limit": 10, "type_patterns": [tp]})
         code, body, dt = r
@@ -627,6 +695,17 @@ async def load_reads(api: Api, ns: Ns, args) -> dict:
             "latency": {o: lat_summary(v) for o, v in lat.items()}, "codes": codes, "errors": errors}
 
 
+async def load_rw(api: Api, ns: Ns, args) -> dict:
+    """Ingest writers (disjoint fresh keys) and readers over an existing population, at once:
+    what writes do to read latency, and the other way round."""
+    wargs = argparse.Namespace(**{**vars(args), "seed": args.seed + 1})
+    rargs = argparse.Namespace(**{**vars(args), "concurrency": args.readers})
+    reads_task = asyncio.create_task(load_reads(api, ns, rargs))
+    ingest = await load_ingest(api, ns, wargs)
+    reads = await reads_task
+    return {"scenario": "rw", "ingest": ingest, "reads": reads}
+
+
 async def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--user", default="admin")
@@ -636,7 +715,7 @@ async def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("func")
     lp = sub.add_parser("load")
-    lp.add_argument("scenario", choices=["ingest", "contention", "reads"])
+    lp.add_argument("scenario", choices=["ingest", "contention", "reads", "rw"])
     lp.add_argument("--concurrency", type=int, default=4)
     lp.add_argument("--batch", type=int, default=500)
     lp.add_argument("--edges", type=int, default=2)
@@ -649,6 +728,7 @@ async def main():
     lp.add_argument("--population", type=int, default=20_000)
     lp.add_argument("--prefix", default="w0-")
     lp.add_argument("--seed", type=int, default=1)
+    lp.add_argument("--readers", type=int, default=8)
     args = ap.parse_args()
 
     api = Api(Auth(args.user, args.password), max_conns=max(64, getattr(args, "concurrency", 1) * 2),
@@ -661,7 +741,7 @@ async def main():
             print(f"\n{verdicts.count('PASS')} pass, {verdicts.count('FAIL')} fail, {verdicts.count('NOTE')} note")
         else:
             await ensure_types(api, ns)  # idempotent: a reads run reuses an ingest run's --run
-            fn = {"ingest": load_ingest, "contention": load_contention, "reads": load_reads}[args.scenario]
+            fn = {"ingest": load_ingest, "contention": load_contention, "reads": load_reads, "rw": load_rw}[args.scenario]
             out = {"run": args.run, **await fn(api, ns, args)}
             print(json.dumps(out, indent=2, ensure_ascii=False))
         if args.out:

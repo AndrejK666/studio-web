@@ -716,6 +716,15 @@ gears:
         hnsw.iterative_scan: "relaxed_order"
         hnsw.ef_search: "200"
     config:
+      # The organization's model is one node (`name: studio`) whose payload
+      # carries the core layer (ADR-0070 §5) and the gear declarations: about
+      # 158 KB on 2026-11-17, growing with the core's types. The gear's default
+      # of 64 KiB refuses it, and then nothing kept in the domain model can be
+      # written (connections included). 256 KiB is the most this key can be
+      # without raising item_max_bytes, which the edge-listing response bound
+      # (edge_list_max_page x item_max_bytes <= response_max_bytes) then
+      # caps; the lasting fix is a smaller node.
+      payload_max_bytes: 262144
       # The relation graph is read back by one traversal per 400 seeds, and the
       # gear budgets a traversal by TOTAL NODES with the seeds counted in. The
       # default of 1,000 would leave 600 for the expansion of 400 seeds, and an

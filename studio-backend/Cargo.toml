@@ -181,8 +181,8 @@ resource_group_sdk = { package = "cf-gears-resource-group-sdk", version = "=0.3.
 #
 # NB: this gear runs ONLY against `pg_graph` (PostgreSQL 19 + pgvector) — see
 # the graph-postgres service in docker-compose.yml.
-graph_storage = { package = "cf-gears-graph-storage", version = "=0.3.2", optional = true }
-graph_storage_sdk = { package = "cf-gears-graph-storage-sdk", version = "=0.3.1", optional = true }
+graph_storage = { package = "weftgraph", version = "=0.4.0-rc.3", optional = true }
+graph_storage_sdk = { package = "weftgraph-sdk", version = "=0.4.0-rc.3", optional = true }
 
 # ── Core toolkit ──
 toolkit = { package = "cf-gears-toolkit", version = "=0.13.1", features = ["bootstrap"] }
@@ -289,4 +289,4 @@ libc = "0.2"
 # test can drive the real graph-storage service in process: type updates, the
 # `index` trait and the projection's payload `$filter` are the gear's rules,
 # and a fake of the client would only restate what we think they are.
-graph_storage = { package = "cf-gears-graph-storage", version = "=0.3.2", features = ["test-support"] }
+graph_storage = { package = "weftgraph", version = "=0.4.0-rc.3", features = ["test-support"] }

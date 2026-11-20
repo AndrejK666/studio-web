@@ -264,6 +264,7 @@ impl GraphStorageBackend {
                     max_nodes: Some(TRAVERSE_NODE_BUDGET),
                     direction: None,
                     edge_discriminators: Vec::new(),
+                    include_edge_payload: false,
                 },
             )
             .await
