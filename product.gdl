@@ -69,6 +69,7 @@ product(
         use_gear("studio-scheduler", source = "studio-backend"),
         use_gear("studio-secrets-bootstrap", source = "studio-backend"),
         use_gear("studio-session", source = "studio-backend"),
+        use_gear("studio-spec-graph", source = "studio-backend"),
         use_gear("studio-spec-mapping", source = "studio-backend"),
         use_gear("studio-spec-quality", source = "studio-backend"),
         use_gear("studio-tasks", source = "studio-backend"),

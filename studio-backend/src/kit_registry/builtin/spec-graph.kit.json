@@ -1,0 +1,132 @@
+{
+  "manifest_version": "1",
+  "slug": "spec-graph",
+  "icon": "lucide:waypoints",
+  "name": "Spec graph",
+  "description": "A project's documents as a typed graph: deterministic rules that may gate a pull request, contradictions judged by models and calibrated on people's decisions, review threads, and the graph to resolve what was found. Extends Project model.",
+  "publisher": "Constructor Fabric",
+  "levels": [
+    "organization",
+    "project"
+  ],
+  "requires": [
+    "project-domain-model"
+  ],
+  "mcp_tools": [
+    {
+      "name": "spec_graph_project",
+      "description": "Whether a project is set up for the spec graph, and the service's state"
+    },
+    {
+      "name": "spec_graph_setup",
+      "description": "Set a project up: its source, branch and documents"
+    },
+    {
+      "name": "spec_graph_check",
+      "description": "Every deterministic spec finding now, by document"
+    },
+    {
+      "name": "spec_graph_findings",
+      "description": "The spec findings stored in the project's graph"
+    },
+    {
+      "name": "spec_graph_review",
+      "description": "Review a pull request: its findings and the threads to post"
+    },
+    {
+      "name": "spec_graph_run_start",
+      "description": "Start a long job: index, contradictions, a judge"
+    },
+    {
+      "name": "spec_graph_run",
+      "description": "A run's state, steps and result"
+    },
+    {
+      "name": "spec_graph_run_cancel",
+      "description": "Cancel a run"
+    },
+    {
+      "name": "spec_graph_finding_decide",
+      "description": "Confirm or dismiss a finding"
+    },
+    {
+      "name": "spec_graph_finding_label",
+      "description": "Label a finding to calibrate its rule"
+    },
+    {
+      "name": "spec_graph_calibration",
+      "description": "Precision of each rule from the labels"
+    },
+    {
+      "name": "spec_graph_search",
+      "description": "Search the project's spec graph"
+    },
+    {
+      "name": "spec_graph_node",
+      "description": "One node of the graph"
+    },
+    {
+      "name": "spec_graph_neighbors",
+      "description": "The edges at a node"
+    },
+    {
+      "name": "spec_graph_metrics",
+      "description": "The project's spec quality in numbers"
+    }
+  ],
+  "permissions": {
+    "reads": [
+      "GET /studio-spec-graph/v1/project",
+      "GET /studio-spec-graph/v1/findings",
+      "GET /studio-spec-graph/v1/runs/{run_id}",
+      "GET /studio-spec-graph/v1/calibration",
+      "POST /studio-spec-graph/v1/graph/search",
+      "GET /studio-spec-graph/v1/graph/node",
+      "GET /studio-spec-graph/v1/graph/neighbors",
+      "GET /studio-spec-graph/v1/metrics",
+      "GET /studio-git/v1/sources",
+      "GET /studio-artifact-ingest/v1/open-pull-requests"
+    ],
+    "writes": [
+      "PUT /studio-spec-graph/v1/project",
+      "POST /studio-spec-graph/v1/checks",
+      "POST /studio-spec-graph/v1/reviews",
+      "POST /studio-spec-graph/v1/runs",
+      "POST /studio-spec-graph/v1/runs/{run_id}/cancel",
+      "POST /studio-spec-graph/v1/findings/{fingerprint}/decision",
+      "PUT /studio-spec-graph/v1/findings/{fingerprint}/label",
+      "POST /studio-documents/v1/project-domain-model/findings/{fingerprint}/decision"
+    ]
+  },
+  "gears": [
+    {
+      "gear": "studio-spec-graph",
+      "mcp_tools": [
+        "spec_graph_project",
+        "spec_graph_setup",
+        "spec_graph_check",
+        "spec_graph_findings",
+        "spec_graph_review",
+        "spec_graph_run_start",
+        "spec_graph_run",
+        "spec_graph_run_cancel",
+        "spec_graph_finding_decide",
+        "spec_graph_finding_label",
+        "spec_graph_calibration",
+        "spec_graph_search",
+        "spec_graph_node",
+        "spec_graph_neighbors",
+        "spec_graph_metrics"
+      ],
+      "routes": [
+        "PUT /studio-spec-graph/v1/project",
+        "POST /studio-spec-graph/v1/checks",
+        "POST /studio-spec-graph/v1/reviews",
+        "POST /studio-spec-graph/v1/runs",
+        "POST /studio-spec-graph/v1/runs/{run_id}/cancel",
+        "POST /studio-spec-graph/v1/findings/{fingerprint}/decision",
+        "PUT /studio-spec-graph/v1/findings/{fingerprint}/label"
+      ]
+    }
+  ]
+}

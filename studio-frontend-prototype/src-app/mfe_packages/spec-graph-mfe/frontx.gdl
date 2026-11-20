@@ -1,0 +1,27 @@
+# This micro-frontend's passport: everything a tool that assembles a product
+# from FrontX packages (Gearbox, Constructor Studio) needs to know about it, in
+# one file. It restates what package.json and mfe.json say, and those tools
+# check that they agree, so keep them in step when either changes.
+#
+# The Spec graph kit: a built-in kit, opt-in. Its one screen is a project-level
+# tab: the project's spec findings, now and stored, confirmed or dismissed; the
+# review of an open pull request; and the graph around one node.
+gdl_version = "1.5"
+
+mfe(
+    name = "@constructor-studio/spec-graph-mfe",
+    version = "0.1.0-alpha.0",
+
+    # The backend gears its screen calls, by gear id: the open pull requests
+    # come from studio-artifact-ingest.
+    requires = ["studio-artifact-ingest", "studio-spec-graph"],
+
+    screens = ["Spec graph"],
+    mounts = ["/spec-graph"],
+
+    frontx = "0.2.0-alpha.15",
+
+    roles = [],
+
+    preview = ["/spec-graph"],
+)

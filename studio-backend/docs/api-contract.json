@@ -4321,6 +4321,125 @@
     },
     {
       "method": "GET",
+      "path": "/studio-spec-graph/v1/calibration",
+      "operation_id": "studio_spec_graph.get_calibration",
+      "tag": "StudioSpecGraph",
+      "summary": "Precision of each spec-graph rule from a project's labels",
+      "authenticated": true,
+      "responses": [
+        "SpecGraphAnswerDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-spec-graph/v1/findings",
+      "operation_id": "studio_spec_graph.list_findings",
+      "tag": "StudioSpecGraph",
+      "summary": "The spec findings stored in a project's graph, by document",
+      "authenticated": true,
+      "responses": [
+        "SpecGraphFindingListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-spec-graph/v1/graph/neighbors",
+      "operation_id": "studio_spec_graph.get_graph_neighbors",
+      "tag": "StudioSpecGraph",
+      "summary": "The edges at a node of a project's spec graph",
+      "authenticated": true,
+      "responses": [
+        "SpecGraphAnswerDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-spec-graph/v1/graph/node",
+      "operation_id": "studio_spec_graph.get_graph_node",
+      "tag": "StudioSpecGraph",
+      "summary": "One node of a project's spec graph",
+      "authenticated": true,
+      "responses": [
+        "SpecGraphAnswerDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-spec-graph/v1/metrics",
+      "operation_id": "studio_spec_graph.get_metrics",
+      "tag": "StudioSpecGraph",
+      "summary": "A project's spec quality in numbers",
+      "authenticated": true,
+      "responses": [
+        "SpecGraphAnswerDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-spec-graph/v1/project",
+      "operation_id": "studio_spec_graph.get_project",
+      "tag": "StudioSpecGraph",
+      "summary": "Whether a project is set up for the spec graph, and the service's state",
+      "authenticated": true,
+      "responses": [
+        "SpecGraphProjectDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-spec-graph/v1/runs/{run_id}",
+      "operation_id": "studio_spec_graph.get_run",
+      "tag": "StudioSpecGraph",
+      "summary": "A spec-graph run's state, steps and result",
+      "authenticated": true,
+      "responses": [
+        "SpecGraphRunDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-spec-mapping/v1/capabilities",
       "operation_id": "studio_spec_mapping.list_project_capabilities",
       "tag": "StudioSpecMapping",
@@ -7737,6 +7856,113 @@
     },
     {
       "method": "POST",
+      "path": "/studio-spec-graph/v1/checks",
+      "operation_id": "studio_spec_graph.run_check",
+      "tag": "StudioSpecGraph",
+      "summary": "Every deterministic spec finding of a project now, by document",
+      "authenticated": true,
+      "request": "SpecGraphCheckRequest",
+      "responses": [
+        "SpecGraphCheckDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-spec-graph/v1/findings/{fingerprint}/decision",
+      "operation_id": "studio_spec_graph.decide_finding",
+      "tag": "StudioSpecGraph",
+      "summary": "Confirm or dismiss a spec-graph finding of a project",
+      "authenticated": true,
+      "request": "SpecGraphDecisionRequest",
+      "responses": [
+        "SpecGraphDecisionDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-spec-graph/v1/graph/search",
+      "operation_id": "studio_spec_graph.search_graph",
+      "tag": "StudioSpecGraph",
+      "summary": "Search a project's spec graph: sections, requirements, decisions",
+      "authenticated": true,
+      "request": "SpecGraphSearchRequest",
+      "responses": [
+        "SpecGraphAnswerDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-spec-graph/v1/reviews",
+      "operation_id": "studio_spec_graph.run_review",
+      "tag": "StudioSpecGraph",
+      "summary": "Review a pull request of a project: its findings and the threads to post",
+      "authenticated": true,
+      "request": "SpecGraphReviewRequest",
+      "responses": [
+        "SpecGraphReviewDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-spec-graph/v1/runs",
+      "operation_id": "studio_spec_graph.start_run",
+      "tag": "StudioSpecGraph",
+      "summary": "Start a long spec-graph job on a project: index, contradictions or a judge",
+      "authenticated": true,
+      "request": "SpecGraphRunRequest",
+      "responses": [
+        "SpecGraphRunDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-spec-graph/v1/runs/{run_id}/cancel",
+      "operation_id": "studio_spec_graph.cancel_run",
+      "tag": "StudioSpecGraph",
+      "summary": "Cancel a project's spec-graph run",
+      "authenticated": true,
+      "responses": [
+        "SpecGraphRunDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-spec-mapping/v1/conformance",
       "operation_id": "studio_spec_mapping.create_conformance_report",
       "tag": "StudioSpecMapping",
@@ -9043,6 +9269,42 @@
       "request": "ReportSourceInputDto",
       "responses": [
         "ReportSourceDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-spec-graph/v1/findings/{fingerprint}/label",
+      "operation_id": "studio_spec_graph.upsert_finding_label",
+      "tag": "StudioSpecGraph",
+      "summary": "Say whether a spec-graph finding is real, to calibrate its rule",
+      "authenticated": true,
+      "request": "SpecGraphLabelRequest",
+      "responses": [
+        "SpecGraphLabelDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-spec-graph/v1/project",
+      "operation_id": "studio_spec_graph.upsert_project",
+      "tag": "StudioSpecGraph",
+      "summary": "Set a project up for the spec graph: which source, branch and documents",
+      "authenticated": true,
+      "request": "SpecGraphProjectRequest",
+      "responses": [
+        "SpecGraphProjectDto"
       ],
       "errors": [
         "400",

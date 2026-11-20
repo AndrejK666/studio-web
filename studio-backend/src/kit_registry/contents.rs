@@ -456,6 +456,12 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
         // organization may uninstall; its tools and the decision route are
         // claimed in `builtin/spec-mapping.kit.json`.
         "spec-mapping" => KitContents::default(),
+        // `spec-graph-mfe`: the project's spec findings, now and stored,
+        // confirmed or dismissed.
+        "spec-graph" => KitContents {
+            screens: vec![project_tab("Spec graph", Some("/spec-graph"))],
+            ..KitContents::default()
+        },
         // `assistant-mfe`: Studio AI, docked in the shell's sidebar beside
         // whatever screen is open (the old prototype's `studio-ai.tsx`). No
         // route: it is not a tab. It answers through studio-llm-proxy on the

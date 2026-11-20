@@ -847,6 +847,10 @@ const BUILTIN_MANIFESTS: &[(&str, &str)] = &[
         "spec-mapping",
         include_str!("builtin/spec-mapping.kit.json"),
     ),
+    // A project's spec graph through the external spec-graph service
+    // (studio-spec-graph): its tools and write routes; opt-in, extends
+    // Project model.
+    ("spec-graph", include_str!("builtin/spec-graph.kit.json")),
     // The API reference: a screen (`contents.rs`) and the route it reads.
     (
         "studio-api-docs",

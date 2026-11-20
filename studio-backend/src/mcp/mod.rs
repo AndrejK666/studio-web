@@ -55,6 +55,7 @@ pub fn tools_by_gear() -> Vec<(&'static str, sdk::Tool)> {
     // What the documents describe and what is left to decide before a build.
     add("studio-documents", crate::documents::mcp_tools());
     add("studio-spec-mapping", crate::spec_mapping::mcp_tools());
+    add("studio-spec-graph", crate::spec_graph::mcp_tools());
     // Where a project stands.
     add("studio-organizations", crate::organizations::mcp_tools());
     // What waits on the person.

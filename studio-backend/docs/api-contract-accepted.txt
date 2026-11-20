@@ -1026,6 +1026,18 @@ request	POST /studio-session/v1/sessions	root_path	String	optional
 request	POST /studio-session/v1/sessions	root_repo_url	String	optional
 request	POST /studio-session/v1/sessions	root_token_ref	String	optional
 request	POST /studio-session/v1/sessions	workspace_id	Uuid	required
+request	POST /studio-spec-graph/v1/checks	branch	String	optional
+request	POST /studio-spec-graph/v1/findings/{}/decision	decision	String	required
+request	POST /studio-spec-graph/v1/findings/{}/decision	note	String	optional
+request	POST /studio-spec-graph/v1/findings/{}/decision	rule	String	required
+request	POST /studio-spec-graph/v1/graph/search	limit	u32	optional
+request	POST /studio-spec-graph/v1/graph/search	query	String	required
+request	POST /studio-spec-graph/v1/graph/search	types	Vec<String>	optional
+request	POST /studio-spec-graph/v1/reviews	base	String	required
+request	POST /studio-spec-graph/v1/reviews	head	String	required
+request	POST /studio-spec-graph/v1/reviews	model	bool	optional
+request	POST /studio-spec-graph/v1/runs	job	String	required
+request	POST /studio-spec-graph/v1/runs	params	Value	optional
 request	POST /studio-spec-mapping/v1/conformance	capabilities	Vec<String>	required
 request	POST /studio-spec-mapping/v1/conformance	contracts	BTreeMap<String,Vec<String>>	optional
 request	POST /studio-spec-mapping/v1/conformance	decisions	Vec<{}>	optional
@@ -1363,6 +1375,12 @@ request	PUT /studio-reports/v1/reports/{}/source	consumers	BTreeMap<String,Strin
 request	PUT /studio-reports/v1/reports/{}/source	plan_file	String	optional
 request	PUT /studio-reports/v1/reports/{}/source	plan_yaml	String	optional
 request	PUT /studio-reports/v1/reports/{}/source	roots	Vec<String>	optional
+request	PUT /studio-spec-graph/v1/findings/{}/label	note	String	optional
+request	PUT /studio-spec-graph/v1/findings/{}/label	rule	String	required
+request	PUT /studio-spec-graph/v1/findings/{}/label	verdict	String	required
+request	PUT /studio-spec-graph/v1/project	branch	String	optional
+request	PUT /studio-spec-graph/v1/project	scope	String	required
+request	PUT /studio-spec-graph/v1/project	source	String	optional
 request	PUT /studio-usage/v1/budgets	budgets	Vec<{}>	required
 request	PUT /studio-usage/v1/budgets	budgets.monthly	f64	required
 request	PUT /studio-usage/v1/budgets	budgets.tenant_id	String	optional
@@ -5797,6 +5815,19 @@ response	GET /studio-session/v1/sessions/{}	sources	Vec<String>	always
 response	GET /studio-session/v1/sessions/{}	state	String	always
 response	GET /studio-session/v1/sessions/{}	url	String	always
 response	GET /studio-session/v1/sessions/{}	workspace_id	Uuid	always
+response	GET /studio-spec-graph/v1/calibration	answer	Value	always
+response	GET /studio-spec-graph/v1/findings	dismissed	u32	always
+response	GET /studio-spec-graph/v1/findings	items	Vec<Value>	always
+response	GET /studio-spec-graph/v1/findings	total	u32	always
+response	GET /studio-spec-graph/v1/graph/neighbors	answer	Value	always
+response	GET /studio-spec-graph/v1/graph/node	answer	Value	always
+response	GET /studio-spec-graph/v1/metrics	answer	Value	always
+response	GET /studio-spec-graph/v1/project	project	Value	always
+response	GET /studio-spec-graph/v1/project	project_id	String	always
+response	GET /studio-spec-graph/v1/project	registered	bool	always
+response	GET /studio-spec-graph/v1/project	repository	String	optional
+response	GET /studio-spec-graph/v1/project	service	Value	always
+response	GET /studio-spec-graph/v1/runs/{}	run	Value	always
 response	GET /studio-spec-mapping/v1/capabilities	items	Vec<{}>	always
 response	GET /studio-spec-mapping/v1/capabilities	items.key	String	always
 response	GET /studio-spec-mapping/v1/capabilities	items.sources	Vec<{}>	always
@@ -8306,6 +8337,18 @@ response	POST /studio-session/v1/sessions	sources	Vec<String>	always
 response	POST /studio-session/v1/sessions	state	String	always
 response	POST /studio-session/v1/sessions	url	String	always
 response	POST /studio-session/v1/sessions	workspace_id	Uuid	always
+response	POST /studio-spec-graph/v1/checks	blocking	u32	always
+response	POST /studio-spec-graph/v1/checks	count	u32	always
+response	POST /studio-spec-graph/v1/checks	dismissed	u32	always
+response	POST /studio-spec-graph/v1/checks	documents	Vec<Value>	always
+response	POST /studio-spec-graph/v1/checks	revision	String	always
+response	POST /studio-spec-graph/v1/findings/{}/decision	decision	Value	always
+response	POST /studio-spec-graph/v1/findings/{}/decision	label	Value	always
+response	POST /studio-spec-graph/v1/graph/search	answer	Value	always
+response	POST /studio-spec-graph/v1/reviews	review	Value	always
+response	POST /studio-spec-graph/v1/reviews	run	Value	always
+response	POST /studio-spec-graph/v1/runs	run	Value	always
+response	POST /studio-spec-graph/v1/runs/{}/cancel	run	Value	always
 response	POST /studio-spec-mapping/v1/conformance	components_in_code	Vec<String>	always
 response	POST /studio-spec-mapping/v1/conformance	gearbox	Vec<{}>	always
 response	POST /studio-spec-mapping/v1/conformance	gearbox.added	bool	always
@@ -9195,6 +9238,12 @@ response	PUT /studio-reports/v1/reports/{}/source	snapshot.from	String	optional
 response	PUT /studio-reports/v1/reports/{}/source	snapshot.read_at	String	optional
 response	PUT /studio-reports/v1/reports/{}/source	snapshot.sha	String	optional
 response	PUT /studio-reports/v1/reports/{}/source	snapshot.size	u32	optional
+response	PUT /studio-spec-graph/v1/findings/{}/label	label	Value	always
+response	PUT /studio-spec-graph/v1/project	project	Value	always
+response	PUT /studio-spec-graph/v1/project	project_id	String	always
+response	PUT /studio-spec-graph/v1/project	registered	bool	always
+response	PUT /studio-spec-graph/v1/project	repository	String	optional
+response	PUT /studio-spec-graph/v1/project	service	Value	always
 response	PUT /studio-usage/v1/budgets	budgets	Vec<{}>	always
 response	PUT /studio-usage/v1/budgets	budgets.monthly	f64	always
 response	PUT /studio-usage/v1/budgets	budgets.tenant_id	String	optional
@@ -9520,6 +9569,13 @@ route	GET /studio-scheduler/v1/schedules/{}
 route	GET /studio-session/v1/desktop-sessions
 route	GET /studio-session/v1/sessions
 route	GET /studio-session/v1/sessions/{}
+route	GET /studio-spec-graph/v1/calibration
+route	GET /studio-spec-graph/v1/findings
+route	GET /studio-spec-graph/v1/graph/neighbors
+route	GET /studio-spec-graph/v1/graph/node
+route	GET /studio-spec-graph/v1/metrics
+route	GET /studio-spec-graph/v1/project
+route	GET /studio-spec-graph/v1/runs/{}
 route	GET /studio-spec-mapping/v1/capabilities
 route	GET /studio-spec-mapping/v1/decisions
 route	GET /studio-spec-mapping/v1/findings
@@ -9720,6 +9776,12 @@ route	POST /studio-scheduler/v1/schedules
 route	POST /studio-scheduler/v1/schedules/{}/run-now
 route	POST /studio-session/v1/desktop-sessions
 route	POST /studio-session/v1/sessions
+route	POST /studio-spec-graph/v1/checks
+route	POST /studio-spec-graph/v1/findings/{}/decision
+route	POST /studio-spec-graph/v1/graph/search
+route	POST /studio-spec-graph/v1/reviews
+route	POST /studio-spec-graph/v1/runs
+route	POST /studio-spec-graph/v1/runs/{}/cancel
 route	POST /studio-spec-mapping/v1/conformance
 route	POST /studio-spec-mapping/v1/decisions
 route	POST /studio-spec-mapping/v1/plan
@@ -9797,6 +9859,8 @@ route	PUT /studio-reports/v1/reports/{}/plan/projects
 route	PUT /studio-reports/v1/reports/{}/plan/units
 route	PUT /studio-reports/v1/reports/{}/schedule
 route	PUT /studio-reports/v1/reports/{}/source
+route	PUT /studio-spec-graph/v1/findings/{}/label
+route	PUT /studio-spec-graph/v1/project
 route	PUT /studio-usage/v1/budgets
 route	PUT /studio-usage/v1/prices
 route	PUT /studio-user/v1/capacity/allocations

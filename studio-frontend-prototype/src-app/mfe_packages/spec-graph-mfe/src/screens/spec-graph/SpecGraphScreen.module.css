@@ -1,0 +1,249 @@
+/*
+ * Project › Spec graph over ui-kit semantic tokens (see theme.css in
+ * @gears-frontx/ui-kit). No Tailwind: inside the shadow root the re-anchored
+ * kit tokens shadow the shell's HSL triplets.
+ */
+
+.screen {
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-height: 100%;
+  padding: var(--space-6);
+  color: var(--foreground);
+}
+
+.screen[data-theme] {
+  background: transparent;
+}
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-heading-1-size);
+  line-height: var(--text-heading-1-line-height);
+  font-weight: var(--text-heading-1-weight);
+}
+
+.chips,
+.actions,
+.rowActions,
+.findingHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.actions {
+  margin-left: auto;
+}
+
+.muted {
+  margin: 0;
+  color: var(--muted-foreground);
+}
+
+.error {
+  margin: 0;
+  color: var(--destructive);
+}
+
+.skeleton {
+  height: 8rem;
+}
+
+.document {
+  min-width: 0;
+}
+
+.path {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--text-body-size);
+  overflow-wrap: anywhere;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.finding {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: var(--radius);
+}
+
+.finding[data-gate='block'] {
+  border-left-color: var(--destructive);
+}
+
+.rule {
+  color: var(--muted-foreground);
+  font-size: 0.85em;
+}
+
+.message,
+.place {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.quote {
+  color: var(--muted-foreground);
+}
+
+.related {
+  margin: 0;
+  padding-left: var(--space-5);
+  overflow-wrap: anywhere;
+}
+
+.suggestion {
+  margin: 0;
+  padding: var(--space-2);
+  border-radius: var(--radius);
+  background: var(--muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.setup {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.label {
+  display: flex;
+  flex: 1 1 20rem;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.input {
+  padding: var(--space-2);
+  border: 1px solid var(--input);
+  border-radius: var(--radius);
+  background: var(--background);
+  color: var(--foreground);
+  font: inherit;
+}
+
+.pull {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.thread {
+  margin: 0;
+  font-family: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* The base branch: a field of its own width, not grown like the setup form's. */
+.baseField {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  max-width: 28rem;
+}
+
+.hits {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.hit {
+  display: inline-flex;
+  gap: var(--space-2);
+  align-items: baseline;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--background);
+  color: var(--foreground);
+  font: inherit;
+  cursor: pointer;
+}
+
+.graphScroll {
+  overflow-x: auto;
+}
+
+.graph {
+  display: block;
+  font-size: 12px;
+}
+
+.graphNode {
+  cursor: pointer;
+}
+
+.graphNode rect {
+  fill: var(--muted);
+  stroke: var(--border);
+}
+
+.graphNode:hover rect,
+.graphNode:focus rect {
+  stroke: var(--primary);
+}
+
+/* A spec item (requirement, component, decision): framed, not filled, so its text stays legible. */
+.graphNode[data-kind='item'] rect {
+  fill: var(--background);
+  stroke: var(--primary);
+}
+
+.graphNode text {
+  fill: var(--foreground);
+}
+
+.graphEdge {
+  stroke: var(--border);
+  stroke-width: 1.5;
+}
+
+/* A judge's conclusion: told apart by the dash, not by colour alone. */
+.graphJudged {
+  stroke: var(--primary);
+  stroke-width: 1.5;
+  stroke-dasharray: 6 4;
+}
+
+.graphEdgeLabel {
+  fill: var(--muted-foreground);
+  font-size: 10px;
+}
+
+.graphCenter rect {
+  fill: var(--primary);
+}
+
+.graphCenter text {
+  fill: var(--primary-foreground);
+  font-weight: 600;
+}

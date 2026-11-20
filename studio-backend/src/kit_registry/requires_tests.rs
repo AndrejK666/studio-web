@@ -117,6 +117,12 @@ fn the_built_in_kits_declare_the_adr_s_two_requirements() {
                 "gears-matcher".to_owned(),
                 vec!["project-product".to_owned()]
             ),
+            // The spec graph extends Project model: its decisions are Project
+            // model's, and it reads the same documents.
+            (
+                "spec-graph".to_owned(),
+                vec!["project-domain-model".to_owned()]
+            ),
         ]
     );
     // Every required kit is one of the library's built-in kits.

@@ -114,6 +114,13 @@ backend:
   # gears_matcher_secret [optional]. Empty: gear matches answer 503.
   gearsMatcher:
     url: ""
+  # The spec-graph service (the Spec graph kit): its address, e.g.
+  # "http://spec-graph:8099", and the gateway address it clones projects' sources
+  # through (this backend's, with /cf); its API key is appSecrets key
+  # spec_graph_secret [optional]. Empty: the spec-graph routes answer 503.
+  specGraph:
+    url: ""
+    gitUrl: ""
   # WHO ADMINISTERS THIS INSTALLATION, as Keycloak subject ids, comma-separated.
   #
   # A platform administrator is a membership of the platform root and nothing

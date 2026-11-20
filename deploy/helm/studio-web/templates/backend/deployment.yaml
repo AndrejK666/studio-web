@@ -362,6 +362,15 @@ spec:
               value: {{ .Values.backend.gearsMatcher.url | default "" | quote }}
             - name: STUDIO_GEARS_MATCHER_SECRET
               valueFrom: { secretKeyRef: { name: {{ .Values.backend.appSecrets.existingSecret }}, key: gears_matcher_secret, optional: true } }
+            # The spec-graph service (studio-spec-graph): its address, its key
+            # (secret key spec_graph_secret), and the gateway address it clones
+            # projects' sources through.
+            - name: STUDIO_SPEC_GRAPH_URL
+              value: {{ .Values.backend.specGraph.url | default "" | quote }}
+            - name: STUDIO_SPEC_GRAPH_GIT_URL
+              value: {{ .Values.backend.specGraph.gitUrl | default "" | quote }}
+            - name: STUDIO_SPEC_GRAPH_SECRET
+              valueFrom: { secretKeyRef: { name: {{ .Values.backend.appSecrets.existingSecret }}, key: spec_graph_secret, optional: true } }
             - name: GITHUB_TOKEN
               valueFrom: { secretKeyRef: { name: {{ .Values.backend.appSecrets.existingSecret }}, key: github_token, optional: true } }
             - name: STUDIO_LLM_HOST

@@ -51,6 +51,11 @@ fn the_builtin_screens_are_today_s_tabs() {
         screens("project-git"),
         [("Activity".to_owned(), Some("/projects/activity".to_owned()))]
     );
+    // The Spec graph kit's one tab, drawn by spec-graph-mfe.
+    assert_eq!(
+        screens("spec-graph"),
+        [("Spec graph".to_owned(), Some("/spec-graph".to_owned()))]
+    );
     // Issues went to the Project model, as Open questions; Timeline to
     // Planning, with no `needs` (ADR-0071 step 4); Activity to Git
     // collaboration (step 5).

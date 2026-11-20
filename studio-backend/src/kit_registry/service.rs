@@ -78,6 +78,7 @@ pub const OPT_IN_BUILTIN: &[&str] = &[
     CONSTRUCTOR_RESEARCH_KIT,
     GEARS_MATCHER_KIT,
     "gears-project",
+    SPEC_GRAPH_KIT,
     MNA_KIT,
 ];
 
@@ -106,6 +107,13 @@ pub const GEARS_MATCHER_KIT: &str = "gears-matcher";
 /// base kits an organization may uninstall for itself
 /// ([`ORGANIZATION_REMOVABLE_BASE`]).
 pub const SPEC_MAPPING_KIT: &str = "spec-mapping";
+
+/// The Spec graph kit: a project's documents as a typed graph through the
+/// external spec-graph service (studio-spec-graph) -- deterministic rules that
+/// may gate a pull request, contradictions judged and calibrated, and the graph
+/// to resolve them. An extension of Project model (`requires`), opt-in: an
+/// organization with the service installs it.
+pub const SPEC_GRAPH_KIT: &str = "spec-graph";
 
 /// Base kits an organization administrator may uninstall for that
 /// organization alone (ADR-0074): the uninstall is recorded in the
@@ -884,6 +892,7 @@ pub const BUILTIN_ICONS: &[(&str, &str)] = &[
     ("project-domain-model", "lucide:shapes"),
     (CONSTRUCTOR_RESEARCH_KIT, "lucide:atom"),
     (GEARS_MATCHER_KIT, "lucide:scan-search"),
+    (SPEC_GRAPH_KIT, "lucide:waypoints"),
     (SPEC_MAPPING_KIT, "lucide:git-compare-arrows"),
     ("gears-project", "lucide:boxes"),
     (MNA_KIT, "lucide:handshake"),
@@ -1006,6 +1015,14 @@ pub fn builtin_catalogue() -> Vec<KitDescriptor> {
             SPEC_MAPPING_KIT,
             "Spec mapping",
             "The gears that could provide each capability a project's specifications name, matched by words and contracts: the plan on Components, the product map and the gear match, and a product assembled from it. Instant, free and deterministic. For the whole organization, or for one project.",
+            &["organization", "project"],
+        ),
+        // Not a base kit by default: an organization that runs the
+        // spec-graph service installs it.
+        kit(
+            SPEC_GRAPH_KIT,
+            "Spec graph",
+            "A project's documents as a typed graph: deterministic rules that may gate a pull request, contradictions judged by models and calibrated on people's decisions, review threads, and the graph to resolve what was found. Extends Project model. For the whole organization, or for one project.",
             &["organization", "project"],
         ),
         // A project type (ADR-0073), installed for the one project a deal is.
@@ -1370,6 +1387,7 @@ mod tests {
                 "constructor-research",
                 "gears-matcher",
                 "spec-mapping",
+                "spec-graph",
                 "mna",
                 "assistant",
                 "project-git"

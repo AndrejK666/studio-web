@@ -284,6 +284,13 @@ describe('generated MFE manifest', () => {
         'gts.cf.studio.domain.pull_request.v1~',
       ]);
     });
+
+    it("declares Spec graph's Pull requests view on project-git's pull-request", () => {
+      const specGraph = extensions.find((ext) => ext.presentation?.route === '/spec-graph');
+      expect((specGraph?.presentation as { sectionNeeds?: string[] } | undefined)?.sectionNeeds).toEqual([
+        'gts.cf.studio.domain.pull_request.v1~',
+      ]);
+    });
   });
 
   describe('docked kit panels (sidebar)', () => {
@@ -478,6 +485,10 @@ describe('generated MFE manifest', () => {
         // right after Specs, as in the prototype — it is made of the specs.
         // Not the Studio domain model (Admin › Domain model, ADR-0066).
         'Project domain model',
+        // The Spec graph kit's screen (spec-graph-mfe, order 32): right after
+        // the Project domain model it extends; shown only where that opt-in kit
+        // is installed.
+        'Spec graph',
         // The Tests kit's own screen (ADR-0069), between the shell's sections.
         'Tests',
         // The Product kit's two (product-mfe): Product and the project's

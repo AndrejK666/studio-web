@@ -233,6 +233,13 @@ services:
       # match routes answer 503 and nothing else changes.
       STUDIO_GEARS_MATCHER_SECRET: ${STUDIO_GEARS_MATCHER_SECRET:-}
       STUDIO_GEARS_MATCHER_URL: ${STUDIO_GEARS_MATCHER_URL:-}
+      # A project's spec graph through the spec-graph service (studio-spec-graph):
+      # its address, its API key, and how it reaches this backend's gateway to
+      # clone a project's sources through the Git proxy. Unset, the routes
+      # answer 503 naming what to set.
+      STUDIO_SPEC_GRAPH_URL: ${STUDIO_SPEC_GRAPH_URL:-}
+      STUDIO_SPEC_GRAPH_SECRET: ${STUDIO_SPEC_GRAPH_SECRET:-}
+      STUDIO_SPEC_GRAPH_GIT_URL: ${STUDIO_SPEC_GRAPH_GIT_URL:-}
       # Encryption key for credstore secret VALUES at rest (issue #66, base64,
       # 32 bytes). Without it the backend falls back to the in-memory value
       # store and every secret typed into the portal — source PATs, connector

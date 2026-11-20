@@ -51,6 +51,7 @@ mod reports; // studio-reports: report definitions, sources and drawing (ADR-003
 mod research_emulator; // `research-emulator`: a stand-in for Constructor Research until Studio can reach one (ADR-0049)
 mod scheduler; // studio-scheduler: cron/interval schedules that enqueue into studio-tasks
 mod secrets_bootstrap; // self-heal for config-seeded credstore secrets at boot
+mod spec_graph; // studio-spec-graph: a project's spec graph through the external spec-graph service
 mod spec_mapping; // studio-spec-mapping: from a project's specification to the gears that build it
 mod spec_quality; // studio-spec-quality: authenticated wrapper over the external spec-quality detector service
 mod studio_authz_plugin; // Studio PDP: the AuthZ resolver plugin (ADR-0009)
@@ -564,7 +565,7 @@ mod operation_docs_tests {
     /// A module missing from this list is simply not checked, so add the entry
     /// with the module: [`every_rest_module_is_listed`] catches the common way
     /// of forgetting, but it cannot see a module nobody mentioned anywhere.
-    const REST_MODULES: [(&str, &str); 21] = [
+    const REST_MODULES: [(&str, &str); 22] = [
         ("artifact_ingest", include_str!("artifact_ingest/rest.rs")),
         ("assembly", include_str!("assembly/rest.rs")),
         (
@@ -586,6 +587,7 @@ mod operation_docs_tests {
         ("product", include_str!("product/rest.rs")),
         ("reports", include_str!("reports/rest.rs")),
         ("scheduler", include_str!("scheduler/rest.rs")),
+        ("spec_graph", include_str!("spec_graph/rest.rs")),
         ("spec_quality", include_str!("spec_quality/rest.rs")),
         ("studio_session", include_str!("studio_session/rest.rs")),
         ("studio_theia", include_str!("studio_theia/rest.rs")),
