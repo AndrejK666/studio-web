@@ -3,11 +3,13 @@
 A kit from outside the portal's build (ADR-0068 phase 5): one project tab,
 **Hello**, whose screen the portal loads at run time from the kit's own
 bundle, and two contributions into screens the kit does not own — a panel on
-Project › Overview (slot `screen.panels`) and a chip beside the open project
+Project › Overview (slot `project.overview.content`) and a chip beside the open project
 in the path bar (slot `project.header.status`). Installing the kit shows them,
 uninstalling takes them out (and a page showing the tab says it is not
 available here), installing a new version swaps them in without a reload, and
-the portal is not rebuilt for any of it.
+the portal is not rebuilt for any of it. The Overview panel calculates an
+estimate from the remaining item count and the daily throughput. Its own
+browser code runs the calculation without an API or a gear.
 
 It is deliberately not under `src-app/mfe_packages/`: nothing in the portal's
 `npm run build` sees it. It builds with the portal's `node_modules` (it sits
@@ -67,8 +69,9 @@ example `-v $PWD/studio-frontend-prototype/examples/kits:/kits:ro` and
    `PUT /cf/studio-kits/v1/project-kits/hello-kit?project_id=<project>` with `{}`.
 3. `GET /cf/studio-kits/v1/mfe-manifests?project_id=<project>` lists the
    package `hello` with its `base_path`.
-4. Open the project in the portal: a **Hello** tab is there. The portal was
-   not rebuilt.
+4. Open the project in the portal. Open **Hello**, then **Overview**. In
+   **Delivery estimate**, enter 13 items and 3 items per workday. The kit
+   reports 5 workdays.
 5. `DELETE /cf/studio-kits/v1/project-kits/hello-kit?project_id=<project>`:
    the tab is gone.
 

@@ -165,7 +165,7 @@ and its [type/relationship analysis](../../docs/design/domain-model-split.md).
    are refused; import/revert cannot replace trusted needs. The compatibility
    projection still feeds the flat reader until #1032; this does not implement
    the dormant visibility rules of #1033.
-3. #1032: compose shared core, gear requirements, installed kit declarations and
+3. **#1032 closed:** compose shared core, gear requirements, installed kit declarations and
    organization overrides; migrate existing stored flat models without rewriting
    object identities or losing custom fields/history. Property slice delivered: pinned kit property/lifecycle sources and named
    organization overrides/tombstones survive upgrade, source gaps, reinstall,
@@ -177,7 +177,7 @@ and its [type/relationship analysis](../../docs/design/domain-model-split.md).
    irreversible boundary. Still pending: kit types' entity-level overrides, one
    composition for gear/kit/core layers, head invalidation on install/deploy and
    showing a refused migration to administrators.
-4. #1033: installed / dormant / absent states. Delivered: dormant types and
+4. **#1033 closed:** installed / dormant / absent states. Delivered: dormant types and
    fields are left out of `GET /types` unless an administrator asks
    `include=dormant` (Admin › Studio domain model does); people's writes are
    refused with `DOMAIN_TYPE_DORMANT` naming the kit while the holding gear's
@@ -187,35 +187,43 @@ and its [type/relationship analysis](../../docs/design/domain-model-split.md).
 5. #1034–#1038: move feature definitions and their incoming relations/tabs into
    their owners, then lifecycle, Git and Assistant; retire `gears` and numbered
    package relations. Keep existing graph type ids and registry schemas stable.
-6. #1039: complete Inbox and status ownership, including the permission-aware
-   behavior of MCP tools for uninstalled kits (`KIT_NOT_INSTALLED`).
+6. **#1039 closed:** Inbox sources and project-status signals carry kit
+   ownership. Claimed operations check installation, including MCP tools
+   (`KIT_NOT_INSTALLED`). The Inbox and Overview render those results in
+   the active organization and project scope.
 
 Required evidence for that migration: old-tenant upgrade, repeated upgrade,
 organization edits/deletions surviving kit upgrade/reinstall, two organizations
 with different kits, uninstall with and without objects, inherited file fields,
 replay/revert, and matching graph/PostgreSQL reads. The effective projection still lives in organization models; pinned kit property
 sources/overrides are separate, but full core/entity composition is not complete.
+The embedded seed contains 44 type declarations. The effective organization
+model also receives declarations from running gears and from platform base
+kits. A new organization with stock settings therefore exposes more than
+the shared core. Domain model administration includes dormant types in its
+count, and its origin badges classify each type by its visible provenance.
 
 ### Runtime kits and remaining portal work
 
-- #1006: frontend done — cold deep links wait for runtime registration, unload
+- #1006: cold deep links wait for runtime registration, unload
   and remount on uninstall/upgrade, named slots (`project.header.status`,
-  `screen.toolbar.actions`, `screen.panels`); see the row above. Left:
-  slots inside an MFE's own page, and an upstream FrontX API to evict a loaded
-  remote. Done on the backend (#1045): repository-backed bundles for an
+  `screen.toolbar.actions`, `screen.panels`). Project Overview, Organization
+  Overview and Inbox expose in-page slots `project.overview.content`,
+  `organization.overview.content` and `organization.inbox.content`. The hello-kit example calculates a delivery
+  estimate in the Overview slot. A public FrontX API to evict a loaded
+  remote is still pending. Backend support (#1045) includes repository-backed bundles for an
   organization's shelf kit (`docs/design/studio-kits.md` §3.12) and the
   installer's `kit.installed` / `kit.uninstalled` events.
-- Materialize organization shelf kits into IDE checkouts; the IDE installer still
-  allow-lists Constructor kits. Retain commit/version pinning throughout.
+- Project › Kits › In the IDE accepts organizational shelf kits declared by
+  `.cf-studio-kit.toml`. Studio reads the selected kit files at the pinned
+  commit through the organization's connection, then sends them to the web
+  IDE's CFS installer over the trusted control API. The current source-transfer
+  ceiling is 1.9 MB of JSON. The desktop kit browser still lists official kits.
 - Carry the remaining model administration controls listed above (saved Views are carried: Admin › Views).
-- Complete the `partial` portal rows: Inbox entry/triage and the overviews'
-  destinations are in; left are the kits' contributions to the overviews
-  (metrics board, "This project now", Recent activity, the pull request list —
-  each from the kit that owns it, once screens mount kit contributions), the
-  kit-owned review/pull sources (#1036 / #1039), the portal's use of the
-  server's new Inbox answers (organization scope, failed runs, a source's
-  destination, `members_known`; deploy approvals once the Releases kit
-  declares the source), and the remaining
+- The Git collaboration kit contributes Recent activity and a short open-PR
+  list to Project Overview. The full PR queues by person, the metrics board,
+  and "This project now" remain open.
+- Continue the remaining `partial` portal rows, including the
   source/connector workflows;
   preserve the reference behavior and refusal states. Then address the remaining
   architecture/desktop/other extra-page entries. Recheck descriptions against code

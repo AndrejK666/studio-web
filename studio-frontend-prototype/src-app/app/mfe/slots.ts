@@ -39,9 +39,9 @@
  * | `screen.toolbar.actions` | the end of the level's tab row | an action button for the level or one screen |
  * | `screen.panels` | above the screen, for the screen it names | a panel on Project › Overview |
  *
- * A slot inside a micro-frontend's own page (between two of its cards) is not
- * here: that needs the screen to host a domain in its shadow root, which
- * FrontX 0.4 nested hosts do not offer to Studio's screens yet.
+ * Overview and Inbox also expose named anchors inside their screen. The host
+ * mounts the slot domain into each anchor while keeping ownership of the
+ * lifecycle and contribution visibility.
  */
 
 import type { Extension, ExtensionPresentation } from '@gears-frontx/react';
@@ -57,6 +57,9 @@ export const SHELL_SLOTS = {
   projectHeaderStatus: { name: 'project.header.status', domainId: slotDomain('project_header_status') },
   screenToolbarActions: { name: 'screen.toolbar.actions', domainId: slotDomain('screen_toolbar_actions') },
   screenPanels: { name: 'screen.panels', domainId: slotDomain('screen_panels') },
+  projectOverviewContent: { name: 'project.overview.content', domainId: slotDomain('project_overview_content') },
+  organizationOverviewContent: { name: 'organization.overview.content', domainId: slotDomain('organization_overview_content') },
+  organizationInboxContent: { name: 'organization.inbox.content', domainId: slotDomain('organization_inbox_content') },
 } as const;
 
 export type ShellSlot = (typeof SHELL_SLOTS)[keyof typeof SHELL_SLOTS];

@@ -31,6 +31,7 @@ import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Skeleton } fro
 import {
   errorMessage,
   isRunEnding,
+  KitContentSlot,
   openScreen,
   responseStatus,
   useScreenAvailability,
@@ -209,6 +210,8 @@ function StatusView({
       <p className={styles.about}>{t('about')}</p>
 
       <PathStrip steps={status.path} t={t} open={open} reach={reach} />
+
+      <KitContentSlot name="project.overview.content" />
 
       <Card data-project-needs>
         <CardHeader>

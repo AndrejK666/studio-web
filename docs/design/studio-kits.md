@@ -761,6 +761,9 @@ is tried again only when its registration changes.
 | `project.header.status` | `…shell.slots.project_header_status.v1` | beside the open project in the path bar |
 | `screen.toolbar.actions` | `…shell.slots.screen_toolbar_actions.v1` | at the end of the level's tab row |
 | `screen.panels` | `…shell.slots.screen_panels.v1` | above the screen, e.g. `screen = "/projects/overview"` |
+| `project.overview.content` | `…shell.slots.project_overview_content.v1` | inside Project › Overview |
+| `organization.overview.content` | `…shell.slots.organization_overview_content.v1` | inside Organization › Overview |
+| `organization.inbox.content` | `…shell.slots.organization_inbox_content.v1` | inside the Inbox |
 
 `examples/kits/hello-kit` contributes a panel to Project › Overview and a
 status chip. A slot inside a micro-frontend's own page is not offered: the

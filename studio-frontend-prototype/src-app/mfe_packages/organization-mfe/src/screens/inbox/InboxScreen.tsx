@@ -14,7 +14,7 @@
 
 import React, { useCallback, useState } from 'react';
 import { Badge, Button, Skeleton } from '@gears-frontx/ui-kit';
-import { useOrganization, usePollWhileVisible } from '@constructor-studio/mfe-shared';
+import { KitContentSlot, useOrganization, usePollWhileVisible } from '@constructor-studio/mfe-shared';
 import { InboxGroup } from '../overview/InboxGroup';
 import type { InboxSourceCount } from '../../inbox/model';
 import { useOverviewTranslations } from '../../i18n';
@@ -110,6 +110,7 @@ function InboxPage({ organizationId, t }: { organizationId: string; t: Text }) {
         </Button>
       </div>
 
+      <KitContentSlot name="organization.inbox.content" />
       <InboxGroup
         organizationId={organizationId}
         workspaces={1}

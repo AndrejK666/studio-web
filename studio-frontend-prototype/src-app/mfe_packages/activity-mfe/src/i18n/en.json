@@ -1,6 +1,9 @@
 {
   "no_project": "Open a project to see what happened in it.",
   "activity_title": "Activity",
+  "recent_activity": "Recent activity",
+  "open_activity": "Open activity",
+  "open_pulls": "Open pull requests ({count})",
   "activity_about": "What happened in the project's documents: the comments people left and the checks the detectors ran. Only the latest are kept — a detector's verdict is one record per detector per document, so running one again replaces its answer rather than adding to it. A run of the same check one after another is one row; open it for its documents.",
   "comments_one": "{count} comment",
   "comments_many": "{count} comments",
