@@ -211,7 +211,8 @@ fn the_claims_name_a_kit_for_the_types_the_adr_lists() {
     assert_eq!(kit("deployment").as_deref(), Some("delivery"));
     assert_eq!(kit("product-build").as_deref(), Some("delivery"));
     assert_eq!(kit("project-product").as_deref(), Some("project-product"));
-    assert_eq!(kit("mapping-decision").as_deref(), Some("project-product"));
+    // ADR-0074 as amended: the decisions are Spec mapping's.
+    assert_eq!(kit("mapping-decision").as_deref(), Some("spec-mapping"));
     assert_eq!(kit("work-item").as_deref(), Some("project-git"));
     assert_eq!(kit("comment").as_deref(), Some("project-git"));
     assert_eq!(kit("finding").as_deref(), Some("project-domain-model"));

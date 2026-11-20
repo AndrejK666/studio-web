@@ -67,9 +67,18 @@ pub struct LastRun {
     pub totals: Option<Totals>,
 }
 
+/// One strategy's runs and model use in a project, in the period.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct StrategyUsage {
+    pub runs: u64,
+    pub usage: ModelUsage,
+}
+
 /// One project's use of the matcher.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ProjectUsage {
+    /// The same runs and use, by the strategy whose service ran them.
+    pub strategies: BTreeMap<String, StrategyUsage>,
     /// Runs started in the period, by [`counted_state`].
     pub runs: BTreeMap<&'static str, u64>,
     /// The model use of the runs started in the period.
@@ -92,6 +101,7 @@ impl ProjectUsage {
 #[derive(Debug, FromQueryResult)]
 struct RunGroup {
     project_id: Uuid,
+    strategy: String,
     state: String,
     n: i64,
     calls: i64,
@@ -174,6 +184,7 @@ impl MatchStore {
             .project_all(&conn, |s| {
                 s.select_only()
                     .column(matches::Column::ProjectId)
+                    .column(matches::Column::Strategy)
                     .column(matches::Column::State)
                     .column_as(Expr::cust("COUNT(*)"), "n")
                     .column_as(usage_sum("calls"), "calls")
@@ -181,6 +192,7 @@ impl MatchStore {
                     .column_as(usage_sum("input_tokens"), "input_tokens")
                     .column_as(usage_sum("output_tokens"), "output_tokens")
                     .group_by(matches::Column::ProjectId)
+                    .group_by(matches::Column::Strategy)
                     .group_by(matches::Column::State)
                     .into_model::<RunGroup>()
             })
@@ -188,12 +200,16 @@ impl MatchStore {
         for g in groups {
             let p = out.entry(g.project_id).or_default();
             *p.runs.entry(counted_state(&g.state)).or_default() += non_negative(g.n);
-            p.usage.add(ModelUsage {
+            let used = ModelUsage {
                 calls: non_negative(g.calls),
                 cache_hits: non_negative(g.cache_hits),
                 input_tokens: non_negative(g.input_tokens),
                 output_tokens: non_negative(g.output_tokens),
-            });
+            };
+            p.usage.add(used);
+            let by = p.strategies.entry(g.strategy).or_default();
+            by.runs += non_negative(g.n);
+            by.usage.add(used);
         }
 
         // Each project's last match, whenever it ran.

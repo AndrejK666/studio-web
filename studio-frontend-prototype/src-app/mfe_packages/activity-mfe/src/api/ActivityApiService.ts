@@ -15,6 +15,7 @@
  */
 
 import { BaseApiService, RestEndpointProtocol, RestProtocol } from '@gears-frontx/react';
+import type { OpenPullRequest } from '@constructor-studio/mfe-shared';
 import type { ActivityFeed, DomainMutation, DomainQuery, DomainQueryResult, DomainTypesResponse } from './types';
 
 const q = (params: Record<string, string>) => new URLSearchParams(params).toString();
@@ -30,6 +31,13 @@ export class ActivityApiService extends BaseApiService {
   readonly activity = this.protocol(RestEndpointProtocol).queryWith<ActivityFeed, { projectId: string }>(
     ({ projectId }) => `/studio-artifact-ingest/v1/activity?${q({ project_id: projectId })}`
   );
+
+  readonly openPulls = this.protocol(RestEndpointProtocol).queryWith<
+    { items: OpenPullRequest[]; total: number; members_known?: boolean },
+    { projectId: string; offset: number }
+  >(({ projectId, offset }) => `/studio-artifact-ingest/v1/open-pull-requests?${q({
+    project_id: projectId, limit: '200', offset: String(offset),
+  })}`);
 
   /** The installed model: without `include=dormant`, so a dormant `milestone` is absent (ADR-0070 §4). */
   readonly domainTypes = this.protocol(RestEndpointProtocol).queryWith<DomainTypesResponse, { orgId: string }>(

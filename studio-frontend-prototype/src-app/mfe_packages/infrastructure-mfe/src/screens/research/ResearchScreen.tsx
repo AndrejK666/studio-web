@@ -108,6 +108,7 @@ function OrgResearch({
   const [mayManage, setMayManage] = useState(false);
   const [connections, setConnections] = useState<Connection[]>([]);
   const [deployments, setDeployments] = useState<Deployment[]>([]);
+  const [deploymentError, setDeploymentError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<DeployEnvironment | 'new' | null>(null);
   const [answers, setAnswers] = useState<Record<string, { ok: boolean; text: string }>>({});
@@ -128,7 +129,7 @@ function OrgResearch({
       api
         .deployments({ organizationId: org.id })
         .fetch({ staleTime: 0 })
-        .catch(() => ({ items: [] as Deployment[], total: 0 })),
+        .then((data) => ({ data, error: null }), (e: unknown) => ({ data: null, error: errText(e) })),
     ])
       .then(([envs, conns, deps]) => {
         if (!live) return;
@@ -136,7 +137,8 @@ function OrgResearch({
         setEnvironments(envs.items);
         setMayManage(envs.may_manage);
         setConnections(conns.items);
-        setDeployments(deps.items);
+        setDeployments(deps.data?.items ?? []);
+        setDeploymentError(deps.error);
       })
       .catch((e: unknown) => {
         if (!live) return;
@@ -153,7 +155,18 @@ function OrgResearch({
   const places = useMemo(() => researchEnvironments(environments ?? []), [environments]);
   const applications = useMemo(() => researchApplications(places, deployments), [places, deployments]);
   const step: ResearchStep = nextResearchStep(signIn, places, applications);
-  const running = [...applications.values()].reduce((n, apps) => n + apps.filter((a) => a.runs).length, 0);
+  const byProject = new Map<string, { name: string; apps: { environment: string; running: Deployment | null; latest: Deployment }[] }>();
+  for (const place of places) {
+    for (const app of applications.get(place.id) ?? []) {
+      const project = byProject.get(app.projectId) ?? { name: app.projectName, apps: [] };
+      project.apps.push({ environment: place.name, running: app.runs, latest: app.latest });
+      byProject.set(app.projectId, project);
+    }
+  }
+  const appRows = [...byProject.values()].flatMap((project) => project.apps);
+  const running = appRows.filter((app) => app.running).length;
+  const pending = appRows.filter((app) => ['awaiting_approval', 'queued', 'running'].includes(app.latest.state)).length;
+  const failed = appRows.filter((app) => app.latest.state === 'failed').length;
 
   const testEnvironment = async (e: DeployEnvironment) => {
     setBusy(e.id);
@@ -174,9 +187,9 @@ function OrgResearch({
         <div className={styles.chips}>
           {environments === null ? (
             <Badge variant="info">{t('reading')}</Badge>
-          ) : (
+          ) : !error && (
             <span className={styles.muted} data-research-count>
-              {t.count('count_projects', places.length)} · {t.count('count_running', running)}
+              {t.count('count_projects', places.length)}
             </span>
           )}
         </div>
@@ -188,9 +201,6 @@ function OrgResearch({
           </div>
         )}
       </header>
-      <div className={styles.about}>
-        <p>{t('about', { org: org.name })}</p>
-      </div>
       {error && (
         <p role="alert" className={styles.error}>
           {error}
@@ -201,92 +211,135 @@ function OrgResearch({
         <Skeleton className={styles.skeleton} />
       ) : (
         <>
-          <ol className={own.steps} aria-label={t('steps_label')}>
-            <Step
-              n={1}
-              t={t}
-              state={signIn ? 'done' : 'next'}
-              title={t('step_sign_in')}
-              data="sign_in"
-              body={
-                signIn ? (
-                  <span className={styles.muted} data-research-signed-in>
-                    {t('signed_in_as', { account: signIn.account || signIn.label })}
-                  </span>
-                ) : (
-                  <>
-                    <span className={styles.muted}>{t('sign_in_why')}</span>
-                    <Button size="sm" onClick={onOpenConnections} data-research-sign-in>
-                      {t('sign_in')}
-                    </Button>
-                  </>
-                )
-              }
-            />
-            <Step
-              n={2}
-              t={t}
-              state={places.length > 0 ? 'done' : step === 'connect_project' ? 'next' : 'later'}
-              title={t('step_connect')}
-              data="connect_project"
-              body={
-                places.length > 0 ? (
-                  <span className={styles.muted}>{t.count('connected_count', places.length)}</span>
-                ) : mayManage ? (
-                  <>
-                    <span className={styles.muted}>{t('connect_why')}</span>
-                    {signIn && (
-                      <Button size="sm" onClick={() => setEditing('new')}>
-                        {t('connect_project')}
-                      </Button>
-                    )}
-                  </>
-                ) : (
-                  <span className={styles.muted}>{t('connect_admin')}</span>
-                )
-              }
-            />
-            <Step
-              n={3}
-              t={t}
-              state={step === 'running' ? 'done' : step === 'deploy' ? 'next' : 'later'}
-              title={t('step_deploy')}
-              data="deploy"
-              body={<span className={styles.muted}>{t('deploy_how')}</span>}
-            />
-          </ol>
-
-          <h3 className={styles.part}>{t('projects_title')}</h3>
-          {places.length === 0 ? (
-            <Empty>
-              <EmptyHeader>
-                <EmptyTitle>{t('no_projects')}</EmptyTitle>
-              </EmptyHeader>
-            </Empty>
-          ) : (
-            <div className={own.places}>
-              {places.map((e) => (
-                <ResearchPlace
-                  key={e.id}
-                  t={t}
-                  e={e}
-                  apps={applications.get(e.id) ?? []}
-                  mayManage={mayManage}
-                  busy={busy === e.id}
-                  answer={answers[e.id] ?? null}
-                  people={people}
-                  onTest={() => void testEnvironment(e)}
-                  onChange={() => setEditing(e)}
-                />
-              ))}
-            </div>
+          {!error && (
+            <section className={own.overview} data-research-overview>
+              <div className={styles.line}>
+                <h3 className={styles.part}>{t('applications_title')}</h3>
+                <Button size="sm" variant="outline" onClick={load}>{t('refresh')}</Button>
+              </div>
+              {deploymentError !== null ? (
+                <p role="alert" className={styles.error}>{t('deployments_failed', { error: deploymentError })}</p>
+              ) : (
+                <>
+                  <dl className={own.totals}>
+                    <div><dt>{t('studio_projects')}</dt><dd>{byProject.size}</dd></div>
+                    <div><dt>{t('apps_running')}</dt><dd data-research-running>{running}</dd></div>
+                    <div><dt>{t('deploys_pending')}</dt><dd>{pending}</dd></div>
+                    <div><dt>{t('deploys_failed')}</dt><dd>{failed}</dd></div>
+                  </dl>
+                  {byProject.size === 0 && <p className={styles.muted}>{t('no_applications')}</p>}
+                  {[...byProject.entries()].sort(([, a], [, b]) => a.name.localeCompare(b.name)).map(([id, project]) => (
+                    <Card key={id} data-research-application={project.name}>
+                      <CardContent className={styles.cardBody}>
+                        <h4 className={own.projectName}>{project.name}</h4>
+                        {project.apps.map(({ environment, running, latest }) => (
+                          <div key={latest.environment_id} className={own.application}>
+                            <b>{environment}</b>
+                            {running && <Badge variant="success">{t('running')}</Badge>}
+                            <DeploymentLine d={running ?? latest} showProject={false} people={people} />
+                            {running && running.id !== latest.id && (
+                              <div>
+                                <span className={styles.muted}>{t('latest_attempt')}</span>
+                                <DeploymentLine d={latest} showProject={false} people={people} />
+                              </div>
+                            )}
+                            {running && <StatusButton d={running} research />}
+                          </div>
+                        ))}
+                      </CardContent>
+                    </Card>
+                  ))}
+                </>
+              )}
+            </section>
           )}
-          <p className={styles.hint}>
-            {t('infrastructure_hint')}{' '}
-            <button type="button" className={own.inline} onClick={onOpenInfrastructure}>
-              {t('open_infrastructure')}
-            </button>
-          </p>
+          <details className={own.setup} open={!signIn || places.length === 0 || undefined}>
+            <summary>{t('setup')}</summary>
+            <ol className={own.steps} aria-label={t('steps_label')}>
+              <Step
+                n={1}
+                t={t}
+                state={signIn ? 'done' : 'next'}
+                title={t('step_sign_in')}
+                data="sign_in"
+                body={
+                  signIn ? (
+                    <span className={styles.muted} data-research-signed-in>
+                      {t('signed_in_as', { account: signIn.account || signIn.label })}
+                    </span>
+                  ) : (
+                    <>
+                      <span className={styles.muted}>{t('sign_in_why')}</span>
+                      <Button size="sm" onClick={onOpenConnections} data-research-sign-in>
+                        {t('sign_in')}
+                      </Button>
+                    </>
+                  )
+                }
+              />
+              <Step
+                n={2}
+                t={t}
+                state={places.length > 0 ? 'done' : step === 'connect_project' ? 'next' : 'later'}
+                title={t('step_connect')}
+                data="connect_project"
+                body={
+                  places.length > 0 ? (
+                    <span className={styles.muted}>{t.count('connected_count', places.length)}</span>
+                  ) : mayManage ? (
+                    <>
+                      <span className={styles.muted}>{t('connect_why')}</span>
+                      {signIn && (
+                        <Button size="sm" onClick={() => setEditing('new')}>
+                          {t('connect_project')}
+                        </Button>
+                      )}
+                    </>
+                  ) : (
+                    <span className={styles.muted}>{t('connect_admin')}</span>
+                  )
+                }
+              />
+              <Step
+                n={3}
+                t={t}
+                state={step === 'running' ? 'done' : step === 'deploy' ? 'next' : 'later'}
+                title={t('step_deploy')}
+                data="deploy"
+                body={<span className={styles.muted}>{t('deploy_how')}</span>}
+              />
+            </ol>
+
+            <h3 className={styles.part}>{t('projects_title')}</h3>
+            {places.length === 0 ? (
+              <Empty>
+                <EmptyHeader>
+                  <EmptyTitle>{t('no_projects')}</EmptyTitle>
+                </EmptyHeader>
+              </Empty>
+            ) : (
+              <div className={own.places}>
+                {places.map((e) => (
+                  <ResearchPlace
+                    key={e.id}
+                    t={t}
+                    e={e}
+                    mayManage={mayManage}
+                    busy={busy === e.id}
+                    answer={answers[e.id] ?? null}
+                    onTest={() => void testEnvironment(e)}
+                    onChange={() => setEditing(e)}
+                  />
+                ))}
+              </div>
+            )}
+            <p className={styles.hint}>
+              {t('infrastructure_hint')}{' '}
+              <button type="button" className={own.inline} onClick={onOpenInfrastructure}>
+                {t('open_infrastructure')}
+              </button>
+            </p>
+          </details>
         </>
       )}
 
@@ -371,21 +424,17 @@ function Step({
 function ResearchPlace({
   t,
   e,
-  apps,
   mayManage,
   busy,
   answer,
-  people,
   onTest,
   onChange,
 }: {
   t: ResearchText;
   e: DeployEnvironment;
-  apps: readonly { projectId: string; projectName: string; runs: Deployment | null; latest: Deployment }[];
   mayManage: boolean;
   busy: boolean;
   answer: { ok: boolean; text: string } | null;
-  people: ReadonlyMap<string, string>;
   onTest: () => void;
   onChange: () => void;
 }) {
@@ -421,16 +470,6 @@ function ResearchPlace({
           <div className={answer.ok ? styles.answerOk : styles.error} data-environment-answer>
             {answer.text}
           </div>
-        )}
-        {apps.length === 0 ? (
-          <span className={styles.muted}>{t('nothing_runs')}</span>
-        ) : (
-          apps.map((a) => (
-            <div key={a.projectId} className={styles.stack} data-research-application={a.projectName}>
-              <DeploymentLine d={a.runs ?? a.latest} showProject people={people} />
-              {a.runs && <StatusButton d={a.runs} research />}
-            </div>
-          ))
         )}
       </CardContent>
     </Card>

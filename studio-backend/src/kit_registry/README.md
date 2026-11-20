@@ -48,7 +48,10 @@ This README is what you need to work in the directory.
   may uninstall for that organization alone: its document's `removed_base`,
   taken back by installing the kit for it again (ADR-0074). A kit's manifest
   may declare the assembly strategy it provides (`assembly_strategy`,
-  `port::assembly_strategies`). A feature ported into the portal is added here,
+  `port::assembly_strategies`, `KitPresence::strategies` for an organization's
+  own kit at its pin); a strategy a service runs declares
+  `service: {contract: "gears-matcher/v1"}` and requires `gears-matcher`
+  (ADR-0074 amendment). A feature ported into the portal is added here,
   with its screens in `contents.rs` (a route only once the portal has one)
   and everything else in its compiled-in `builtin/<slug>.kit.json` — every
   built-in kit has one, `studio-api-docs` too: its model, what it claims

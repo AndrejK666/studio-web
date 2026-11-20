@@ -213,7 +213,7 @@ without the portal; each step is the REST route the portal calls for it.
 | | `product_kind` | what the product is: Studio's proposal from the specs with its reasons, and the confirmed kind |
 | | `product_kind_confirm` | *changes:* keeps the kind in the project's configuration |
 | | `product_assembly_strategy` | how the product is assembled: one of the strategies the installed kits provide (`spec_mapping`, `gears_matcher`) or `manual`, whether that is the project's choice, the organization's default or the kits', and why it falls back ([ADR-0072](adr/0072-gears-matcher-is-a-kit-and-a-product-is-assembled-by-a-strategy.md), [ADR-0074](adr/0074-spec-mapping-is-a-kit-and-strategies-come-from-kits.md)) |
-| | `project_gear_match` | *changes:* (Gears matcher kit) sends the project's specifications to the gears-matcher service as one background run (paid model calls); answers `match_id` and `run_id` |
+| | `project_gear_match` | *changes:* (Gears matcher kit) sends the project's specifications to the gears-matcher service as one background run (paid model calls), or to the service of an organization kit's own `strategy` (ADR-0074); answers `match_id` and `run_id` |
 | | `project_gear_match_report` | (Gears matcher kit) a gear match (`latest` or by id): per requirement the verdict, candidate gears with evidence, the passage, and what Studio offers ([design](design/product-gear-match.md)) |
 | | `gear_match_usage` | (Gears matcher kit) how the organization's projects use the matcher over `period_days`: per project the strategy and why, the last run's coverage, runs by state, model calls and tokens, decisions, open questions; summed; and whether the service answers now |
 | Environments | `deploy_targets` | where the product can deploy, the bindings, the secret keys |
@@ -255,16 +255,17 @@ ADR-0069 §4); an agent installs one the way a person does.
 
 **A tool that comes with a kit.** Most tools above belong to a kit, which
 claims them (ADR-0071 §4; `kits_describe` lists them under `gears`): the
-`project_domain_model_*` tools are the Project model's
-(`project-domain-model`); `project_capabilities`, `project_findings`,
-`project_plan` and `project_requirements` Spec mapping's (`spec-mapping`, a base
-kit an organization may uninstall, ADR-0074); `project_gear_match*` and
+`project_domain_model_*` tools, `project_capabilities` and
+`project_requirements` are the Project model's (`project-domain-model`);
+`project_findings` and `project_plan` Spec mapping's (`spec-mapping`, a base kit
+an organization may uninstall, ADR-0074); `project_gear_match*` and
 `gear_match_usage` the Gears matcher's (`gears-matcher`); `review_requests`, `review_verdict`, `spec_check`
 and `spec_check_result` Specs'; `project_phase*` Planning's
 (`project-lifecycle`); the `product_*` tools and `gdl_file` Product's
 (`project-product`); `build_list` and every environments tool but
 `research_*` Builds, releases & environments' (`delivery`, which
-`constructor-research` requires); `research_*` Constructor Research's
+`constructor-research` requires); `research_*` Constructor Research's;
+the `mna_*` tools M&A due diligence's (`mna`, studio-web#1024)
 (ADR-0071 §6; until step 5 the last three were `product-releases` and
 `org-infrastructure`, now aliases of these for one release). The kit library, the Studio domain
 model, a project's creation, status and sources, connections, the Inbox and
@@ -294,6 +295,12 @@ The tool list itself does not change with the kits.
 | `project_phase` | a project's phase (Project lifecycle): the phase, its owner, since when, and the moves open |
 | `project_phase_set` | *changes:* moves a project to a phase along the declared lifecycle (`NO_SUCH_TRANSITION` otherwise) |
 | `project_phases` | an organization's projects with their phases |
+| `mna_deal` | a deal of the M&A due diligence kit (a project of the M&A type): target, thesis, phase, IC date, recommendation and conditions, sign-off, the deal lead, and the evidence summary, each fact with its source (`available: false` with the reason where it has none) |
+| `mna_deal_update` | *changes:* a deal's fields; `sign_off: true` signs the recommendation off, the deal lead only (`DEAL_LEAD_REQUIRED`) |
+| `mna_findings` | a deal's findings |
+| `mna_finding_upsert` | *changes:* records a finding, or replaces one by `finding_id` |
+| `mna_risks` | a deal's risk ledger |
+| `mna_risk_upsert` | *changes:* records a risk, or replaces one by `risk_id` |
 | `kits_inbox_sources` | the Inbox sources of the kits installed for an organization: each query over a kit's objects that says what waits on whom |
 
 **The inbox.** Everything that waits for you in one organization, as the

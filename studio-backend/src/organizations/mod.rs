@@ -22,7 +22,7 @@ pub mod logo;
 mod mcp;
 mod metrics;
 mod overview;
-mod project_create;
+pub(crate) mod project_create;
 mod project_create_rest;
 pub mod project_types;
 /// The logo document only this gear writes, for the PDP's gear-held list.

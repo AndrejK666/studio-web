@@ -15,7 +15,11 @@ import type { PlanRow } from '../api/types';
 import { addability, type GearMatch } from './gear-match';
 import { candidateStrength, couldBecomeGear } from './spec-coverage';
 
-export type StrategyId = 'spec_mapping' | 'gears_matcher';
+/** A strategy's id as its kit declares it: `spec_mapping`, `gears_matcher`, or an organization's kit's own (ADR-0074). */
+export type StrategyId = string;
+
+/** The strategy Studio ships whose service is the gears-matcher; every service strategy runs through its pipeline. */
+export const SHIPPED_SERVICE: StrategyId = 'gears_matcher';
 
 /** What a product is assembled by: a strategy, or `manual` where none can be used. */
 export type StrategyUsed = StrategyId | 'manual';
@@ -31,6 +35,8 @@ export interface StrategyKit {
   description: string;
   /** The kit that provides it. */
   kit: string;
+  /** The contract of the service that runs it (`gears-matcher/v1`); null for `spec_mapping`. */
+  service?: string | null;
   /** It can be used now; else `reason` says why. */
   offered: boolean;
   reason?: string | null;
@@ -98,8 +104,26 @@ export function offeredStrategies(a: AssemblyStrategy): StrategyKit[] {
     name: id,
     description: '',
     kit: id === 'gears_matcher' ? 'gears-matcher' : 'spec-mapping',
+    service: id === 'spec_mapping' ? null : 'gears-matcher/v1',
     offered: id === 'spec_mapping' || a.gears_matcher.offered,
   }));
+}
+
+/** Whether `id` is run by a service through the gear-match pipeline (every strategy but `spec_mapping`). */
+export function isServiceStrategy(a: AssemblyStrategy | null, id: string): boolean {
+  if (id === 'spec_mapping' || id === 'manual') return false;
+  const kit = a ? offeredStrategies(a).find((k) => k.id === id) : undefined;
+  return kit ? !!kit.service : true;
+}
+
+/** A strategy's name: Studio's own in the screen's words, an organization's as its kit names it. */
+export function strategyName(
+  id: string,
+  t: (key: string) => string,
+  kits: readonly Pick<StrategyKit, 'id' | 'name'>[] = []
+): string {
+  if (id === 'spec_mapping' || id === 'gears_matcher' || id === 'manual') return t(`strategy_${id}`);
+  return kits.find((k) => k.id === id)?.name ?? id;
 }
 
 /** One gear a strategy proposes, and what it answers. */

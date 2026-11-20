@@ -26,8 +26,8 @@ pub use super::gts::node_type_id;
 /// A kit's model overlay and what applying it changed (ADR-0067 §6): the
 /// format another gear (studio-kits) reads from a kit's manifest.
 pub use super::kit_overlay::{
-    KitModelChange, KitModelError, KitOverlay, OverlayType, PROJECT_ENTITY, kit_type_gts,
-    validate as validate_kit_overlay,
+    KitModelChange, KitModelError, KitOverlay, OverlayType, PROJECT_ENTITY, kit_entity_id,
+    kit_type_gts, validate as validate_kit_overlay,
 };
 use super::service::{DomainModelService, WriteOptions};
 use super::validate::ValidateMode;
@@ -66,6 +66,10 @@ pub struct OwnedObject {
     pub scope: String,
     pub payload: Value,
 }
+
+/// What [`DomainObjects::retype_in`] stores: the payload, from what is
+/// stored now (`None`: nothing yet) and the entity the new type is.
+pub type Retype = Box<dyn FnOnce(Option<&Value>, &str) -> Value + Send>;
 
 /// One stored object.
 #[derive(Clone, Debug, PartialEq)]
@@ -117,6 +121,23 @@ pub trait DomainObjects: Send + Sync {
     /// Delete an object (it is marked, see `store::DELETED_FIELD`).
     async fn delete(&self, _ctx: &SecurityContext, _instance_id: &str) -> anyhow::Result<()> {
         anyhow::bail!("deletes are not offered here")
+    }
+
+    /// Store the object of `from` keyed `key` in `scope` as `to`, a type that
+    /// is a `from` (a kit's Project subtype of `project`, ADR-0073
+    /// amendment): `make` answers its payload from what is stored now. The
+    /// object gets the new type's id, keeps its relations, and the old one is
+    /// marked deleted. Answers the new id and whether anything was written.
+    async fn retype_in(
+        &self,
+        _ctx: &SecurityContext,
+        _from: &str,
+        _to: &str,
+        _key: &str,
+        _scope: &str,
+        _make: Retype,
+    ) -> anyhow::Result<(String, bool)> {
+        anyhow::bail!("retyping is not offered here")
     }
 
     /// Make sure the caller's model has the type and its fields, adding what
@@ -372,6 +393,20 @@ impl DomainObjects for Objects {
         self.0.delete_object(ctx, instance_id).await
     }
 
+    async fn retype_in(
+        &self,
+        ctx: &SecurityContext,
+        from: &str,
+        to: &str,
+        key: &str,
+        scope: &str,
+        make: Retype,
+    ) -> anyhow::Result<(String, bool)> {
+        self.0
+            .retype_object(ctx, from, to, key, Some(scope), make)
+            .await
+    }
+
     async fn prepare_model(&self, ctx: &SecurityContext) -> anyhow::Result<()> {
         self.0.prepare_model(ctx).await
     }
@@ -617,6 +652,20 @@ impl DomainObjects for KeptByGear {
 
     async fn delete(&self, ctx: &SecurityContext, instance_id: &str) -> anyhow::Result<()> {
         self.0.delete(&as_gear(ctx)?, instance_id).await
+    }
+
+    async fn retype_in(
+        &self,
+        ctx: &SecurityContext,
+        from: &str,
+        to: &str,
+        key: &str,
+        scope: &str,
+        make: Retype,
+    ) -> anyhow::Result<(String, bool)> {
+        self.0
+            .retype_in(&as_gear(ctx)?, from, to, key, scope, make)
+            .await
     }
 
     async fn ensure_type(&self, ctx: &SecurityContext, need: &TypeNeed) -> anyhow::Result<()> {

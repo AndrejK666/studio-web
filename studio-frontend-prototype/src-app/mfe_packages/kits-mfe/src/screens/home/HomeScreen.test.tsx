@@ -150,14 +150,12 @@ describe('HomeScreen', () => {
       },
     });
     render(<HomeScreen bridge={fixture.bridge} />);
-    // Today's card: the repository and the bundled SVG as an image.
+    // The card carries the kit's type and bundled SVG.
     const tile = await waitFor(() => {
       const found = document.querySelector('[data-kit-tiles] [data-kit="sdlc"]');
       expect(found).toBeTruthy();
       return found as HTMLElement;
     });
-    expect(within(tile).getByText('github.com/example/sdlc')).toBeTruthy();
-    // The tile says the kit's type too.
     expect(tile.querySelector('[data-kit-kind="material"]')).toBeTruthy();
     expect(tile.querySelector('img')?.getAttribute('src')).toBe(
       '/cf/studio-kits/v1/kits/sdlc/v1.2.0/mfe/grant/sdlc/icon.svg'
@@ -199,6 +197,40 @@ describe('HomeScreen', () => {
     fireEvent.change(screen.getByPlaceholderText('search'), { target: { value: 'compet' } });
     await waitFor(() => expect(screen.queryByRole('button', { name: 'SDLC' })).toBeNull());
     expect(screen.getByRole('button', { name: 'Competitive Analysis' })).toBeTruthy();
+  });
+
+  it('groups visible tiles and keeps the category filter when switching to the table', async () => {
+    const kits = [
+      SDLC,
+      { ...SDLC, slug: 'compete', name: 'Competitive Analysis' },
+      { ...SDLC, slug: 'team-notes', name: 'Team Notes', shelf: 'organization' },
+    ];
+    useApiQueryMock.mockReturnValue({ isLoading: false, isError: false, data: { items: kits, total: kits.length } });
+    const { bridge } = createMfeBridgeFixture({
+      domainId: TEST_DOMAIN_ID,
+      instanceId: TEST_INSTANCE_ID,
+      initialProperties: {
+        [STUDIO_SHARED_PROPERTY_UI_PREFERENCES]: { 'mfe.kits.view': 'tiles' } as never,
+      },
+    });
+    render(<HomeScreen bridge={bridge} />);
+
+    const other = await screen.findByRole('region', { name: 'category_other' });
+    expect(within(other).getByRole('button', { name: 'Team Notes' })).toBeTruthy();
+    expect(screen.getAllByRole('region').map((section) => section.getAttribute('aria-label'))).toEqual([
+      'category_planning', 'category_research', 'category_other',
+    ]);
+
+    fireEvent.click(screen.getByText('filter_category'));
+    fireEvent.click(await screen.findByText('category_research', { selector: 'button, [role="option"], label, span' }));
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'category_other' })).toBeNull());
+    expect(screen.queryByRole('region', { name: 'category_planning' })).toBeNull();
+
+    fireEvent.click(screen.getByLabelText('Table view'));
+    await waitFor(() => expect(document.querySelector('[data-kit-tiles]')).toBeNull());
+    expect(screen.getByRole('button', { name: 'Competitive Analysis' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'SDLC' })).toBeNull();
+    expect(within(screen.getByRole('row', { name: /Competitive Analysis/ })).getByText('category_research')).toBeTruthy();
   });
 
   it.each(['dark', 'dracula', 'dracula-large'])(
@@ -351,10 +383,13 @@ describe('HomeScreen', () => {
     render(<HomeScreen bridge={bridge} />);
     // The card's one line, from the kit's contents.
     expect(await screen.findByText(/sum_screens/)).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'inside' }));
+    fireEvent.click(screen.getByRole('button', { name: 'SDLC' }));
     // The page: one block per manifest section, an empty one says so.
     expect(await screen.findByText('sec_screens')).toBeTruthy();
-    // "Inside the kit" carries the kit's icon beside its name.
+    expect(screen.getByRole('link', { name: 'github.com/example/sdlc' }).getAttribute('href')).toBe(
+      'https://github.com/example/sdlc'
+    );
+    // The kit page carries the icon beside its name.
     expect(document.querySelector('[data-kit-detail="sdlc"] [data-kit-icon="lucide:workflow"]')).toBeTruthy();
     expect(screen.getByText('sec_permissions')).toBeTruthy();
     // The tool, among the agent's items and again in Contents with its description.
@@ -366,7 +401,7 @@ describe('HomeScreen', () => {
     expect(screen.getByText('PRD')).toBeTruthy();
     expect(screen.getByText('.cf-studio-kit.toml')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /back/ }));
-    expect(await screen.findByRole('button', { name: 'inside' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'SDLC' })).toBeTruthy();
   });
 });
 

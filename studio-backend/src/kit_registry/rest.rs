@@ -960,7 +960,7 @@ async fn installed_entries(
     entries
 }
 
-fn refused(refusal: Refusal) -> CanonicalError {
+pub(super) fn refused(refusal: Refusal) -> CanonicalError {
     match refusal {
         Refusal::Forbidden(reason) => KitRegistryError::permission_denied()
             .with_reason(reason)
@@ -1066,6 +1066,9 @@ fn refused(refusal: Refusal) -> CanonicalError {
         ),
         Refusal::NoSuchTransition(detail) => KitRegistryError::failed_precondition()
             .with_precondition_violation("phase", detail, NO_SUCH_TRANSITION)
+            .create(),
+        Refusal::Precondition(subject, detail, kind) => KitRegistryError::failed_precondition()
+            .with_precondition_violation(subject, detail, kind)
             .create(),
         Refusal::Internal(error) => internal(error),
     }

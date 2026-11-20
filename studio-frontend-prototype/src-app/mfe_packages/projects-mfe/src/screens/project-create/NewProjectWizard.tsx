@@ -48,10 +48,13 @@ const WizardBody: React.FC = () => {
   const submitting = useAppSelector((state) => state[CREATE_SLICE_KEY].submitting);
   const error = useAppSelector((state) => state[CREATE_SLICE_KEY].error);
   const progress = useAppSelector((state) => state[CREATE_SLICE_KEY].progress);
-  const { loading: orgLoading } = useOrganization();
+  const { org, loading: orgLoading } = useOrganization();
   const { workspace, loading: workspaceLoading } = useWorkspace();
   const workspaceId = workspace?.id ?? null;
-  const types = useApiQuery(apiRegistry.getService(ProjectStatusApiService).projectTypeKits);
+  // The organization's project types: the built-in ones and its own kits'.
+  const types = useApiQuery(
+    apiRegistry.getService(ProjectStatusApiService).projectTypeKits({ organizationId: org?.id ?? null })
+  );
   const projectTypes = types.data?.items ?? [];
   const typeReadFailed = types.isError && !isNotFound(types.error);
   const typeMissing = projectTypes.length > 0 && !projectTypes.some((kit) => kit.slug === draft.typeKit);

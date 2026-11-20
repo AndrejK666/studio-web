@@ -198,10 +198,13 @@ organization. A project the caller cannot reach answers 404.
 - [ ] `p2` - **ID**: `cpt-studio-constraint-spec-mapping-kit`
 
 The plan is the **Spec mapping** kit's (`spec-mapping`, ADR-0074), a base kit by
-default that an organization may uninstall for itself. The kit claims the gear's
-MCP tools (`project_capabilities`, `project_findings`, `project_plan`,
-`project_requirements`) and its write route (`POST /decisions`), which answer
-`KIT_NOT_INSTALLED` where it does not apply. The plan's reads (`GET /plan`,
+default that an organization may uninstall for itself. The kit claims the plan's
+MCP tools (`project_plan`, `project_findings`), its write route
+(`POST /decisions`), which answer `KIT_NOT_INSTALLED` where it does not apply, and
+the decisions' type (`mapping-decision`, dormant without the kit: its rows stay,
+readable; ADR-0074 amendment §B). `project_capabilities` and
+`project_requirements` read what the documents say, and are the Project model
+kit's. The plan's reads (`GET /plan`,
 `GET /findings`, `GET /decisions`) ask the same shared check themselves, once
 the caller is shown to reach the project, and answer `KIT_NOT_INSTALLED` too;
 the screens that draw the plan (Components, Gear match, the domain model's

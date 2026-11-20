@@ -74,7 +74,17 @@ pub const SHELF_BUILTIN: &str = "builtin";
 /// only where someone asks for them"). An organization installs one for
 /// itself, or a platform administrator makes it a base kit for every
 /// organization; until then it is in the library and applies nowhere.
-pub const OPT_IN_BUILTIN: &[&str] = &[CONSTRUCTOR_RESEARCH_KIT, GEARS_MATCHER_KIT, "gears-project"];
+pub const OPT_IN_BUILTIN: &[&str] = &[
+    CONSTRUCTOR_RESEARCH_KIT,
+    GEARS_MATCHER_KIT,
+    "gears-project",
+    MNA_KIT,
+];
+
+/// The M&A due diligence kit (studio-web#1024, `docs/design/mna-kit.md`): a
+/// project type whose project is a deal, installed for that one project by
+/// its creation.
+pub const MNA_KIT: &str = "mna";
 
 /// The Constructor Research kit (`docs/design/studio-kits.md` §3.13): building
 /// a project's product in Constructor Research and running it there as one of
@@ -140,6 +150,10 @@ pub struct KitInstallation {
     pub version: String,
     pub source: String,
     pub repository_url: String,
+    /// A private shelf installation keeps the exact registered origin. Older
+    /// installations come from the official catalogue.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shelf_origin: Option<super::shelf::KitOrigin>,
     pub install_mode: String,
     /// Desired-state status of the most recent materialize attempt. Only a
     /// trusted `cfs` runner may advance this to `installed`; the registry API
@@ -226,6 +240,7 @@ pub struct KitRegistryService {
     bundle_kits: Vec<KitDescriptor>,
     /// Kits whose micro-frontends are served at run time (ADR-0068 phase 5).
     bundles: Arc<super::bundles::KitBundles>,
+    ide_shelf: Option<Arc<super::installed::KitInstaller>>,
     #[cfg(feature = "theia-bridge")]
     client_hub: Arc<ClientHub>,
 }
@@ -262,9 +277,15 @@ impl KitRegistryService {
             catalogue,
             bundle_kits,
             bundles: Arc::new(bundles),
+            ide_shelf: None,
             #[cfg(feature = "theia-bridge")]
             client_hub: _client_hub,
         })
+    }
+
+    pub(super) fn with_ide_shelf(mut self, shelf: Arc<super::installed::KitInstaller>) -> Self {
+        self.ide_shelf = Some(shelf);
+        self
     }
 
     /// Every kit of the library: the built-in kits first, then the official
@@ -357,16 +378,43 @@ impl KitRegistryService {
         let version = normalize_version(version)?;
         let install_mode = normalize_install_mode(install_mode)?;
         let scope = normalize_scope(scope)?;
-        let kit = self
+        let mut installations = self.list_installations(ctx, project_id).await?;
+        let (kit, shelf_origin) = match self
             .installable()
             .into_iter()
             .find(|kit| kit.slug == kit_slug)
-            .context("kit is not registered")?;
-        if kit.source == "github" && install_mode != "copy" {
-            bail!("GitHub registry kits use the managed copy install mode");
+        {
+            Some(kit) => (kit, None),
+            None => {
+                let shelf = self.ide_shelf.as_ref().context("kit is not registered")?;
+                let kit = shelf
+                    .shelf_kit(ctx, project_id, &kit_slug)
+                    .await
+                    .map_err(|error| anyhow::anyhow!("{error:?}"))?
+                    .context("kit is not registered")?;
+                if kit.origin.manifest_file != super::manifest::CF_STUDIO_KIT_TOML {
+                    bail!("IDE kits require a .cf-studio-kit.toml manifest");
+                }
+                if version != kit.origin.commit {
+                    let Some(previous) = installations
+                        .iter()
+                        .find(|entry| entry.kit_slug == kit_slug && entry.version == version)
+                    else {
+                        bail!("select the kit's pinned commit {}", kit.origin.commit);
+                    };
+                    let origin = previous
+                        .shelf_origin
+                        .clone()
+                        .context("the previous kit pin has no shelf origin")?;
+                    (kit.kit, Some(origin))
+                } else {
+                    (kit.kit, Some(kit.origin))
+                }
+            }
+        };
+        if (kit.source == "github" || shelf_origin.is_some()) && install_mode != "copy" {
+            bail!("repository kits use the managed copy install mode");
         }
-
-        let mut installations = self.list_installations(ctx, project_id).await?;
         // Re-requesting a kit -- which is what the portal's "Reinstall /
         // update" does before every materialize -- must not forget where the
         // kit already is. `materializations` is observed state about
@@ -389,6 +437,7 @@ impl KitRegistryService {
             version,
             source: kit.source,
             repository_url: kit.repository_url,
+            shelf_origin,
             install_mode,
             status: "pending".to_owned(),
             requested_by: ctx.subject_id().to_string(),
@@ -491,6 +540,24 @@ impl KitRegistryService {
                 .client_hub
                 .try_get::<dyn TheiaControlClientV1>()
                 .context("Theia control bridge is not enabled")?;
+            let entry = &installations[index];
+            let shelf_files = if let Some(origin) = &entry.shelf_origin {
+                let shelf = self
+                    .ide_shelf
+                    .as_ref()
+                    .context("organization shelf is not available")?;
+                let org = shelf.shelf_organization(ctx, project_id).await;
+                anyhow::ensure!(
+                    entry.version == origin.commit,
+                    "the IDE kit pin is inconsistent"
+                );
+                Some(
+                    super::archive::ide_source(shelf.reader(), org, &entry.kit_slug, origin)
+                        .await?,
+                )
+            } else {
+                None
+            };
             client
                 .install_kit(
                     ctx,
@@ -501,6 +568,7 @@ impl KitRegistryService {
                         kit_slug: installations[index].kit_slug.clone(),
                         version: installations[index].version.clone(),
                         repository_id,
+                        shelf_files,
                     },
                 )
                 .await
@@ -818,6 +886,7 @@ pub const BUILTIN_ICONS: &[(&str, &str)] = &[
     (GEARS_MATCHER_KIT, "lucide:scan-search"),
     (SPEC_MAPPING_KIT, "lucide:git-compare-arrows"),
     ("gears-project", "lucide:boxes"),
+    (MNA_KIT, "lucide:handshake"),
     ("assistant", "lucide:sparkles"),
     ("project-git", "lucide:git-pull-request"),
 ];
@@ -938,6 +1007,13 @@ pub fn builtin_catalogue() -> Vec<KitDescriptor> {
             "Spec mapping",
             "The gears that could provide each capability a project's specifications name, matched by words and contracts: the plan on Components, the product map and the gear match, and a product assembled from it. Instant, free and deterministic. For the whole organization, or for one project.",
             &["organization", "project"],
+        ),
+        // A project type (ADR-0073), installed for the one project a deal is.
+        kit(
+            MNA_KIT,
+            "M&A due diligence",
+            "Technical due diligence of an acquisition target: the deal as a project, the target's repositories as its sources, findings, risks and open questions, the evidence Studio already holds, and a recommendation the deal lead signs off.",
+            &["project"],
         ),
         kit(
             "assistant",
@@ -1294,6 +1370,7 @@ mod tests {
                 "constructor-research",
                 "gears-matcher",
                 "spec-mapping",
+                "mna",
                 "assistant",
                 "project-git"
             ]
@@ -1609,6 +1686,7 @@ b",
             version: version.to_owned(),
             source: "github".to_owned(),
             repository_url: "https://github.com/constructorfabric/studio-kit-sdlc".to_owned(),
+            shelf_origin: None,
             install_mode: "copy".to_owned(),
             status: "installed".to_owned(),
             requested_by: "user-1".to_owned(),

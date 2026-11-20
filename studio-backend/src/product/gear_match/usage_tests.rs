@@ -85,6 +85,7 @@ fn row(
         usage: usage.map(str::to_owned),
         error: None,
         cancel_requested: false,
+        strategy: "gears_matcher".into(),
     }
 }
 
@@ -259,6 +260,8 @@ async fn a_period_is_counted_per_project_from_the_gear_s_own_tables() {
     // The last finished match asks two questions; one is answered.
     assert_eq!((ua.questions_open, ua.questions_answered), (1, 1));
 
+    assert_eq!(ua.strategies["gears_matcher"].runs, 3);
+    assert_eq!(ua.strategies["gears_matcher"].usage.calls, 127);
     let ub = &usage[&b];
     assert_eq!(ub.runs.get("partial"), Some(&1));
     assert_eq!(ub.runs.get("cancelled"), Some(&1));

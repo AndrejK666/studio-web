@@ -98,6 +98,21 @@ pub struct HttpMatcher {
 }
 
 impl HttpMatcher {
+    /// A service an organization connected for a strategy (an
+    /// `assembly-service` connection): its address and its secret.
+    pub fn connected(base_url: &str, secret: String, timeout_secs: u64) -> Self {
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(timeout_secs.max(5)))
+            .build()
+            .unwrap_or_default();
+        Self {
+            client,
+            base_url: base_url.trim_end_matches('/').to_owned(),
+            secret: Some(secret),
+            missing: None,
+        }
+    }
+
     pub fn from_config(cfg: &MatcherConfig) -> Self {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(cfg.request_timeout_secs.max(5)))

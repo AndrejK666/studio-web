@@ -119,22 +119,70 @@ impl crate::model_sweep::TenantMover for TenantObjects {
             .await
             .map_err(|e| anyhow::anyhow!("{e:?}"))?;
         let row = found.rows.items.first();
-        let Some(op) = operation_for(
+        if let Some(op) = operation_for(
             level,
             tenant,
             &t.name,
             t.parent_id.map(|p| p.0),
             row.map(|r| (r.id.as_str(), &r.value)),
-        ) else {
-            return Ok(());
-        };
-        let op: Operation = serde_json::from_value(op)?;
-        mutate::run(&self.service, ctx, vec![op], ValidateMode::Off)
-            .await
-            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        ) {
+            let op: Operation = serde_json::from_value(op)?;
+            mutate::run(&self.service, ctx, vec![op], ValidateMode::Off)
+                .await
+                .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        }
+        // A project's object that names its type but is stored as a plain
+        // `project` (written before projects were stored as their subtype,
+        // ADR-0073 amendment) is stored as that subtype. Once it is, the
+        // query above answers the subtype and nothing is left to do.
+        if let Some(r) = row
+            && r.entity == PROJECT
+            && let Some(subtype) = self.subtype_named(ctx, &r.value).await?
+        {
+            let (_, wrote) = self
+                .service
+                .retype_object(ctx, PROJECT, &subtype, "self", Some(&tenant.to_string()), {
+                    let seen = r.value.clone();
+                    move |stored: Option<&Value>, _: &str| stored.cloned().unwrap_or(seen)
+                })
+                .await?;
+            if wrote {
+                tracing::info!(%tenant, subtype, "studio-domain-model: a project's object is stored as its subtype");
+            }
+        }
         Ok(())
     }
 }
+
+impl TenantObjects {
+    /// The Project subtype a plain project's object names
+    /// (`project_type`, the entity, else `project_type_id`, its GTS id), when
+    /// the organization's model has it.
+    async fn subtype_named(
+        &self,
+        ctx: &SecurityContext,
+        value: &Value,
+    ) -> anyhow::Result<Option<String>> {
+        if value.get("project_type").is_none() && value.get("project_type_id").is_none() {
+            return Ok(None);
+        }
+        let model = self.service.model(ctx).await?;
+        Ok(subtype_named_in(&model, value))
+    }
+}
+
+/// The Project subtype `value` names in `model`: `project_type` (the
+/// entity), else `project_type_id` (its GTS id).
+pub(crate) fn subtype_named_in(model: &super::ontology::Ontology, value: &Value) -> Option<String> {
+    ["project_type", "project_type_id"]
+        .iter()
+        .filter_map(|f| value.get(*f).and_then(Value::as_str))
+        .filter_map(|named| model.resolve_entity_id(named))
+        .find(|e| e != PROJECT && model.is_project(e))
+}
+
+/// The core type a project's object is.
+const PROJECT: &str = super::ontology::project_types::PROJECT;
 
 #[cfg(test)]
 mod tests {

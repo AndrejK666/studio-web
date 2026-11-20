@@ -201,9 +201,11 @@ describe('ReleasesScreen', () => {
     expect(screen.getByText('no_project')).toBeTruthy();
   });
 
-  it('opens on Deploy with the ladder: what runs where, and Promote to the next rung', async () => {
+  it('shows the release summary and environments immediately, with Promote to the next environment', async () => {
     render(<ReleasesScreen bridge={null} />);
     expect(await screen.findByText('0.2.0 runs in dev')).toBeTruthy();
+    expect(document.querySelector('[data-release-overview]')).not.toBeNull();
+    expect(document.querySelector('[data-release-tab="history"]')?.getAttribute('aria-expanded')).toBe('false');
     const dev = document.querySelector('[data-ladder-step="dev"]');
     expect(dev?.getAttribute('data-ladder-state')).toBe('runs');
     const prod = document.querySelector('[data-ladder-step="prod"]');
@@ -258,7 +260,7 @@ describe('ReleasesScreen', () => {
   it('lists the builds on Build: the newest open, a failed one with whose it is to fix', async () => {
     setUp({ deployments: [] });
     render(<ReleasesScreen bridge={null} />);
-    await screen.findByText('status_deploy_newest');
+    await screen.findByText('release_overview');
     fireEvent.click(document.querySelector('[data-release-tab="build"]') as HTMLElement);
     const failed = await waitFor(() => {
       const card = document.querySelector('[data-build-card="desktop-3"]');
@@ -286,7 +288,7 @@ describe('ReleasesScreen', () => {
       ],
     });
     render(<ReleasesScreen bridge={null} />);
-    await screen.findByText('status_deploy_newest');
+    await screen.findByText('release_overview');
     fireEvent.click(document.querySelector('[data-release-tab="build"]') as HTMLElement);
     expect(await screen.findByText('Fix the cart')).toBeTruthy();
     expect(screen.getByText('Add billing')).toBeTruthy();
@@ -345,15 +347,15 @@ describe('ReleasesScreen', () => {
       expect(asked('deployments')).toBe(1);
     });
 
-    it('reads them on their own when the path fails, with their own failures as before', async () => {
+    it('reads them on their own when the path fails and shows an unreadable deployment history', async () => {
       Object.assign(service, {
         projectPath: read('projectPath', new Error('path is down')),
         deployments: read('deployments', new Error('deploys are down')),
       });
       render(<ReleasesScreen bridge={null} />);
-      // A failed deploys read is an empty ladder, not an error.
-      await waitFor(() => expect(document.querySelector('[data-ladder-step="dev"]')).toBeTruthy());
-      expect(document.querySelector('[data-ladder-step="dev"]')?.getAttribute('data-ladder-state')).toBe('empty');
+      expect(await screen.findByText('release_deployments_unavailable')).toBeTruthy();
+      expect(screen.getByText('deploys are down')).toBeTruthy();
+      expect(document.querySelector('[data-ladder-step="dev"]')).toBeNull();
       expect(asked('targets')).toBe(1);
       expect(asked('deployments')).toBe(1);
     });

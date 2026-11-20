@@ -21,7 +21,7 @@ import {
 import { rememberSignInReturn, SIGN_IN_CALLBACK_PATH, type OrganizationRef } from '@constructor-studio/mfe-shared';
 import { AdminApiService } from '../../../api/AdminApiService';
 import type { ConnectorIdentity, ConnectorProvider } from '../../../api/types';
-import { CATEGORY_KEYS, personalProviders, reachFor, type Reach } from '../../../model/connections';
+import { ASSEMBLY_SERVICE, CATEGORY_KEYS, personalProviders, reachFor, type Reach } from '../../../model/connections';
 import { kubeconfigServer } from '../../../model/kubeconfig';
 import { ErrorLine, errText, useAdmin } from '../common';
 import { ConnectorLogo, LogoSlot } from './ConnectorLogo';
@@ -188,11 +188,14 @@ function CredentialForm({
   const api = apiRegistry.getService(AdminApiService);
   const [label, setLabel] = useState('');
   const [baseUrl, setBaseUrl] = useState('');
+  const [strategy, setStrategy] = useState('');
   const [pat, setPat] = useState('');
   const [reveal, setReveal] = useState(false);
   const [busy, setBusy] = useState<'probe' | 'save' | null>(null);
   const [result, setResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const assembly = provider.provider === ASSEMBLY_SERVICE;
+  const validStrategy = /^[a-z][a-z0-9_]{0,39}$/.test(strategy.trim());
 
   const submit = async (mode: 'probe' | 'save') => {
     setBusy(mode);
@@ -210,7 +213,13 @@ function CredentialForm({
       } else {
         // The organization row is inherited by every workspace under it; "personal"
         // also keeps the token to its owner. Both are stored on the organization here.
-        const r = await api.createConnection.fetch({ ...body, label, scope: reach, owner_tenant_id: org.id });
+        const r = await api.createConnection.fetch({
+          ...body,
+          label,
+          scope: assembly ? 'organization' : reach,
+          owner_tenant_id: org.id,
+          ...(assembly ? { options: { strategy: strategy.trim() } } : {}),
+        });
         onAdded(r);
       }
     } catch (e) {
@@ -244,7 +253,7 @@ function CredentialForm({
         </span>
       </div>
 
-      {!fixedReach && (
+      {!fixedReach && !assembly && (
         <label className={styles.field}>
           {t('int_available_to')}
           <NativeSelect value={reach} onChange={(e) => onReach(e.target.value as Reach)} data-connection-reach>
@@ -263,6 +272,14 @@ function CredentialForm({
           onChange={(e) => setLabel(e.target.value)}
         />
       </label>
+
+      {assembly && (
+        <label className={styles.field}>
+          {t('int_assembly_strategy')}
+          <Input value={strategy} onChange={(e) => setStrategy(e.target.value)} maxLength={40} />
+          <span className={own.hint}>{t('int_assembly_strategy_hint')}</span>
+        </label>
+      )}
 
       {/* A webhook's URL is its whole address; asking for an instance URL too invites a contradiction. */}
       {provider.fixed_target ? (
@@ -325,7 +342,7 @@ function CredentialForm({
           type="button"
           size="sm"
           variant="outline"
-          disabled={!pat.trim() || busy !== null}
+          disabled={!pat.trim() || (assembly && !baseUrl.trim()) || busy !== null}
           onClick={() => void submit('probe')}
           data-connection-probe-go
         >
@@ -334,7 +351,7 @@ function CredentialForm({
         <Button
           type="button"
           size="sm"
-          disabled={!pat.trim() || !label.trim() || busy !== null}
+          disabled={!pat.trim() || !label.trim() || (assembly && (!validStrategy || !baseUrl.trim())) || busy !== null}
           onClick={() => void submit('save')}
           data-connection-create
         >

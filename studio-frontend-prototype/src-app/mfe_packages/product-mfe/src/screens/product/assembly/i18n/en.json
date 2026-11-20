@@ -66,7 +66,7 @@
   "usage_reading": "Reading the usage…",
   "usage_error": "The usage could not be read: {error}",
   "tile_strategies": "Assembled by",
-  "tile_strategies_note": "{matcher} by Gears matcher, {spec} by Spec mapping, {manual} by hand",
+  "tile_strategies_note": "{matcher} by a matching service, {spec} by Spec mapping, {manual} by hand",
   "tile_fallbacks": "{count} fall back",
   "tile_runs": "Runs",
   "tile_runs_note": "{succeeded} succeeded, {partial} partial, {failed} failed, {cancelled} stopped, {running} running",
@@ -108,5 +108,17 @@
   "source_short_organization": "org default",
   "source_short_studio": "kits' default",
   "open_project": "Open the project's Gear match",
-  "calls": "{count} calls"
+  "calls": "{count} calls",
+  "no_match_service": "No {strategy} match yet: run one with Run a match, then propose again once it has finished.",
+  "run_match": "Run a match",
+  "running_match": "Starting…",
+  "match_started": "A {strategy} match is running in Background work: propose again once it has finished.",
+  "org_service_of": "{name} service",
+  "org_service_unconnected": "Not connected",
+  "org_service_runs": "{runs} runs in the period, {calls} model calls",
+  "service_connect_lead": "This strategy comes with one of the organization's kits and runs on a service the organization provides: connect its address and secret. They are kept as a connection, never in the kit.",
+  "service_connect_url": "Service address (https://…)",
+  "service_connect_secret": "Shared secret",
+  "service_connect": "Connect",
+  "service_connect_admin": "An organization administrator connects its service here."
 }

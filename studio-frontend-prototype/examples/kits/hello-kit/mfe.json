@@ -55,10 +55,10 @@
     },
     {
       "id": "gts.frontx.mfes.ext.extension.v1~constructor_studio.shell.slots.contribution.v1~example.hello_kit.slots.overview_panel.v1",
-      "domain": "gts.frontx.mfes.ext.domain.v1~constructor_studio.shell.slots.screen_panels.v1",
+      "domain": "gts.frontx.mfes.ext.domain.v1~constructor_studio.shell.slots.project_overview_content.v1",
       "entry": "gts.frontx.mfes.mfe.entry.v1~frontx.mfes.mfe.entry_mf.v1~example.hello_kit.mfe.panel.v1",
       "presentation": {
-        "label": "Hello panel",
+        "label": "Delivery estimate",
         "order": 90,
         "level": "project",
         "screen": "/projects/overview",

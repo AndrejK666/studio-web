@@ -18,10 +18,14 @@ pub(crate) mod installed;
 mod kind;
 mod manifest;
 mod mcp;
+mod mna;
+mod mna_mcp;
+mod mna_rest;
 mod models;
 mod owners;
 mod phase;
 pub mod port;
+mod project_types;
 mod requires;
 mod rest;
 pub(crate) mod service;
@@ -53,20 +57,21 @@ pub struct StudioKitsGear {
     service: OnceLock<Arc<KitRegistryService>>,
     installer: OnceLock<Arc<KitInstaller>>,
     access: OnceLock<crate::org_scope::OrgAccess>,
+    mna: OnceLock<Arc<mna::Mna>>,
 }
 
 #[async_trait]
 impl Gear for StudioKitsGear {
     async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
         let account_management = ctx.client_hub().get::<dyn AccountManagementClient>()?;
-        let service = Arc::new(KitRegistryService::new(
+        let service = KitRegistryService::new(
             crate::model_metadata::client_for(
                 ctx,
                 account_management.clone(),
                 service::MODEL_KINDS,
             ),
             ctx.client_hub(),
-        )?);
+        )?;
         // Which kits apply to an organization (ADR-0069 §4): plain tenant
         // metadata, written as the gear after it has checked who asks.
         let installer = Arc::new(
@@ -85,6 +90,7 @@ impl Gear for StudioKitsGear {
             // again when somebody else changes them.
             .with_events(Arc::new(events::HubEvents(ctx.client_hub()))),
         );
+        let service = Arc::new(service.with_ide_shelf(Arc::clone(&installer)));
         // An organization's own kits' screens, read from its repository at the
         // pinned commit (ADR-0068 phases 5 and 7).
         service
@@ -92,6 +98,16 @@ impl Gear for StudioKitsGear {
             .add_source(Arc::new(shelf_bundles::ShelfBundles::new(
                 Arc::clone(&installer) as Arc<dyn shelf_bundles::ShelfLookup>,
             )));
+        // M&A due diligence's function (studio-web#1024): the deal on the
+        // project's object, its findings, risks and open questions, and the
+        // evidence read from what Studio already holds.
+        let mna = Arc::new(mna::Mna::new(
+            Arc::clone(&installer),
+            Arc::new(mna::HubProjects::new(
+                account_management.clone(),
+                ctx.client_hub(),
+            )),
+        ));
         let access = crate::org_scope::OrgAccess(Arc::new(
             crate::studio_session::sdk::TenantMembership::new(account_management),
         ));
@@ -121,6 +137,9 @@ impl Gear for StudioKitsGear {
         self.access
             .set(access)
             .map_err(|_| anyhow::anyhow!("studio-kits already initialized"))?;
+        self.mna
+            .set(mna)
+            .map_err(|_| anyhow::anyhow!("studio-kits already initialized"))?;
         Ok(())
     }
 }
@@ -148,9 +167,16 @@ impl toolkit::contracts::RestApiCapability for StudioKitsGear {
             .get()
             .ok_or_else(|| anyhow::anyhow!("studio-kits not initialized"))?
             .clone();
-        let router = rest::register_routes(router, openapi, service, installer, access);
+        let mna = self
+            .mna
+            .get()
+            .ok_or_else(|| anyhow::anyhow!("studio-kits not initialized"))?
+            .clone();
+        let router = rest::register_routes(router, openapi, service, installer, access.clone());
+        let router = mna_rest::register_routes(router, openapi, mna, access);
         // The write routes a kit claims answer KIT_NOT_INSTALLED without it
-        // (ADR-0071 §4): Project lifecycle's `PUT /project-phase`.
+        // (ADR-0071 §4): Project lifecycle's `PUT /project-phase`, M&A due
+        // diligence's deal, findings, risks and open questions.
         Ok(gate::with_claimed_routes(
             router,
             ctx.client_hub(),

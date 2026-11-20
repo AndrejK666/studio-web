@@ -332,7 +332,9 @@ pub fn tools() -> Vec<Tool> {
                         "glob": { "type": "string" },
                         "extract_max_calls": { "type": "integer", "minimum": 1,
                             "description": "Also read documents not in the spec format, with at most this many model calls." },
-                        "idempotency_key": { "type": "string" }
+                        "idempotency_key": { "type": "string" },
+                        "strategy": { "type": "string",
+                            "description": "The service strategy that runs the match: `gears_matcher` when absent, or one an organization's kit provides (see `product_assembly_strategy`)." }
                     }),
                     &["project_id"],
                 )
@@ -341,7 +343,7 @@ pub fn tools() -> Vec<Tool> {
             experimental: true,
             run: Run::Post {
                 path: "/studio-product/v1/gear-matches",
-                query: &["project_id"],
+                query: &["project_id", "strategy"],
             },
         },
         Tool {
@@ -359,7 +361,9 @@ pub fn tools() -> Vec<Tool> {
                     json!({
                         "project_id": project_id(),
                         "match_id": { "type": "string",
-                            "description": "A match's id from `project_gear_match`, or `latest`." }
+                            "description": "A match's id from `project_gear_match`, or `latest`." },
+                        "strategy": { "type": "string",
+                            "description": "Whose `latest`: the service strategy, `gears_matcher` when absent." }
                     }),
                     &["project_id", "match_id"],
                 )

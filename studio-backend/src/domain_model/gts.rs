@@ -221,6 +221,51 @@ pub fn derived_node_schema(type_id: &str) -> serde_json::Value {
     schema
 }
 
+/// The type a chained domain type id derives from: everything before its
+/// last segment (`gts.cf.studio.domain.project.v1~` for
+/// `gts.cf.studio.domain.project.v1~cf.studio.kit_mna.project.v1~`). `None`
+/// for a type of one segment, which derives from its graph-storage family.
+pub fn parent_type_id(type_id: &str) -> Option<&str> {
+    let body = type_id.strip_suffix('~')?;
+    let cut = body.rfind('~')?;
+    Some(&type_id[..=cut])
+}
+
+/// The schema a node type registers with: [`derived_node_schema`] for a type
+/// of one segment, the same for every type, content-free.
+///
+/// A type chained onto another (a Project subtype, ADR-0073 amendment)
+/// derives from that type instead of the family -- its traits and its
+/// `_scope` come down the chain -- and declares its own fields
+/// (`payload`, name to JSON schema), so graph-storage validates them on every
+/// write across the derivation chain. Those fields are the kit's, and a kit
+/// version that changes them re-registers the type: the store asks
+/// graph-storage to update a stored type when the rows it holds still
+/// validate (`registration_options`).
+pub fn node_registration_schema(
+    type_id: &str,
+    payload: &serde_json::Map<String, serde_json::Value>,
+) -> serde_json::Value {
+    let Some(parent) = parent_type_id(type_id) else {
+        return derived_node_schema(type_id);
+    };
+    serde_json::json!({
+        "$id": format!("gts://{}", graph_type_id(type_id)),
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "allOf": [
+            { "$ref": format!("gts://{}", graph_type_id(parent)) },
+            {
+                "type": "object",
+                "properties": { "payload": {
+                    "type": "object",
+                    "properties": payload,
+                } },
+            },
+        ],
+    })
+}
+
 /// The payload field a scoped object names its workspace or project in.
 pub const SCOPE_FIELD: &str = "_scope";
 
@@ -343,17 +388,16 @@ pub fn edge_key(type_id: &str, from: &str, to: &str) -> String {
 /// under, so a screen shows the ids without deriving them a second time:
 /// `{types: {entity id: {type, stored_as}}, relations: {kind: {type, stored_as}}}`.
 /// `type` is our id; `stored_as` the one graph-storage keeps, with its family.
-pub fn catalog_of(ontology: &serde_json::Value) -> serde_json::Value {
+pub fn catalog_of(ontology: &super::ontology::Ontology) -> serde_json::Value {
     use serde_json::{Map, Value, json};
     let ids = |type_id: String| json!({ "stored_as": graph_type_id(&type_id), "type": type_id });
     let mut types = Map::new();
     let mut relations = Map::new();
-    let entities = ontology.get("entities").and_then(Value::as_array);
-    for e in entities.into_iter().flatten() {
+    for e in ontology.entities() {
         let Some(id) = e.get("id").and_then(Value::as_str) else {
             continue;
         };
-        types.insert(id.to_owned(), ids(node_type_id(id)));
+        types.insert(id.to_owned(), ids(ontology.type_id_of(id)));
         let properties = e.get("properties").and_then(Value::as_array);
         for p in properties.into_iter().flatten() {
             let is_relation = matches!(
@@ -386,7 +430,7 @@ mod tests {
             ] },
             { "id": "team" }
         ] });
-        let c = catalog_of(&doc);
+        let c = catalog_of(&super::super::ontology::Ontology::from_value(doc).unwrap());
         assert_eq!(
             c["types"]["role-assignment"]["type"],
             "gts.cf.studio.domain.role_assignment.v1~"
@@ -404,6 +448,23 @@ mod tests {
             "gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~cf.studio.domainrel.owns.v1~"
         );
         assert_eq!(c["relations"].as_object().map(|r| r.len()), Some(1));
+    }
+
+    #[test]
+    fn the_catalog_reports_the_registered_chain_of_project_subtypes() {
+        let project = node_type_id("project");
+        let subtype = format!("{project}cf.studio.kit_mna.project.v1~");
+        let doc = serde_json::json!({ "entities": [
+            { "id": "project" },
+            { "id": "deal-project", "extends": "project", "meta": { "gts": subtype } },
+        ] });
+        let model = super::super::ontology::Ontology::from_value(doc).unwrap();
+        let catalog = catalog_of(&model);
+        assert_eq!(catalog["types"]["deal-project"]["type"], subtype);
+        assert_eq!(
+            catalog["types"]["deal-project"]["stored_as"],
+            graph_type_id(&subtype)
+        );
     }
 
     #[test]
@@ -427,6 +488,32 @@ mod tests {
     fn node_and_edge_derive_from_the_right_family() {
         assert!(graph_type_id(&node_type_id("team")).starts_with(OWNED_NODE_FAMILY));
         assert!(graph_type_id(&edge_type_id("owns")).starts_with(STATIC_EDGE_FAMILY));
+    }
+
+    #[test]
+    fn a_chained_type_derives_from_its_parent_and_declares_its_fields() {
+        let sub = "gts.cf.studio.domain.project.v1~cf.studio.kit_mna.project.v1~";
+        assert_eq!(
+            parent_type_id(sub),
+            Some("gts.cf.studio.domain.project.v1~")
+        );
+        assert_eq!(parent_type_id("gts.cf.studio.domain.project.v1~"), None);
+        let mut fields = serde_json::Map::new();
+        fields.insert("deal_size".into(), serde_json::json!({"type": "number"}));
+        let schema = node_registration_schema(sub, &fields);
+        assert_eq!(
+            schema["allOf"][0]["$ref"],
+            "gts://gts.cf.core.graph.node.v1~cf.core.graph.owned_node.v1~cf.studio.domain.project.v1~"
+        );
+        assert_eq!(
+            schema["allOf"][1]["properties"]["payload"]["properties"]["deal_size"]["type"],
+            "number"
+        );
+        // A type of one segment keeps the content-free schema.
+        assert_eq!(
+            node_registration_schema("gts.cf.studio.domain.team.v1~", &fields),
+            derived_node_schema("gts.cf.studio.domain.team.v1~")
+        );
     }
 
     #[test]

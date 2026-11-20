@@ -23,7 +23,7 @@ use super::gear_match_rest::GearMatchTotalsDto;
 use super::*;
 use crate::pagination::{DEFAULT_LIMIT, MAX_LIMIT, PageQuery};
 use crate::product::assembly::{self, StrategyStore};
-use crate::product::gear_match::usage::{ModelUsage, ProjectUsage};
+use crate::product::gear_match::usage::{ModelUsage, ProjectUsage, StrategyUsage};
 use crate::product::gear_match::{GearMatches, LiveInfo};
 
 /// The periods a person picks from; any 1 to 365 days is answered.
@@ -152,10 +152,23 @@ pub struct GearMatcherLimitsDto {
     pub max_request_bytes: Option<u64>,
 }
 
-/// Whether the gears-matcher service can be used now.
+/// Whether a service strategy's service can be used now.
 #[derive(Debug)]
 #[toolkit_macros::api_dto(response)]
 pub struct GearMatcherServiceDto {
+    /// The strategy it runs (`gears_matcher`, or an organization kit's).
+    pub strategy: String,
+    /// The strategy's name, as its kit's manifest says it.
+    pub name: String,
+    /// The kit that provides the strategy.
+    pub kit: String,
+    /// Why it cannot run here, by code: `MATCHER_NOT_CONFIGURED` (the
+    /// deployment has no gears-matcher) or `STRATEGY_NOT_CONNECTED` (the
+    /// organization connected no service for it); null when it can.
+    pub code: Option<String>,
+    /// Runs it started in the period, and what they spent.
+    pub runs: u64,
+    pub usage: GearMatchModelUsageDto,
     /// Its address and secret are set.
     pub configured: bool,
     /// What is missing when it is not.
@@ -185,7 +198,10 @@ pub struct GearMatchUsageDto {
     /// The period's start, RFC 3339.
     pub since: String,
     pub summary: GearMatchUsageSummaryDto,
+    /// The shipped `gears_matcher` strategy's service (as `services` has it).
     pub service: GearMatcherServiceDto,
+    /// Service availability and run statistics keyed by assembly strategy.
+    pub services: BTreeMap<String, GearMatcherServiceDto>,
     /// A page of the projects, by workspace then name.
     pub items: Vec<GearMatchUsageItemDto>,
     pub total: u32,
@@ -226,10 +242,22 @@ fn str_of(v: &Value, path: &[&str]) -> Option<String> {
 
 /// The service block from what was last asked.
 pub(crate) fn service_dto(
-    missing: Option<String>,
+    strategy: (&str, &str, &str),
+    refusal: Option<(&'static str, String)>,
     live: Option<LiveInfo>,
+    spent: &StrategyUsage,
 ) -> GearMatcherServiceDto {
+    let (code, missing) = match refusal {
+        Some((code, why)) => (Some(code.to_owned()), Some(why)),
+        None => (None, None),
+    };
     let mut dto = GearMatcherServiceDto {
+        strategy: strategy.0.to_owned(),
+        name: strategy.1.to_owned(),
+        kit: strategy.2.to_owned(),
+        code,
+        runs: spent.runs,
+        usage: usage_dto(spent.usage),
         configured: missing.is_none(),
         missing,
         answers: None,
@@ -344,7 +372,7 @@ async fn get_gear_match_usage(
     let now = crate::product::gear_match::store::now_ms();
     let since = now.saturating_sub(i64::from(days) * 86_400_000);
 
-    let (counted, median, settings, live) = tokio::join!(
+    let (counted, median, settings) = tokio::join!(
         store.usage(org, &ids, since),
         store.median_run_ms(org, &ids, since),
         async {
@@ -353,7 +381,6 @@ async fn get_gear_match_usage(
                 None => Ok(None),
             }
         },
-        matches.live_info(),
     );
     let internal = |e: anyhow::Error| CanonicalError::internal(format!("{e:#}")).create();
     let counted = counted.map_err(internal)?;
@@ -363,14 +390,15 @@ async fn get_gear_match_usage(
         .unwrap_or_default()
         .into_iter()
         .collect();
-    let default = settings.get(&org).copied();
+    let default = settings.get(&org).cloned();
 
     // Each project's effective strategy, from its own kits.
     let hub = Arc::clone(&product.hub);
     let resolved: BTreeMap<Uuid, assembly::Effective> = stream::iter(ids.iter().copied())
         .map(|project| {
             let (hub, ctx, matches) = (Arc::clone(&hub), ctx.clone(), Arc::clone(&matches));
-            let choice = settings.get(&project).copied();
+            let choice = settings.get(&project).cloned();
+            let default = default.clone();
             async move {
                 let (avail, _) = available(&hub, Some(matches.as_ref()), &ctx, project).await;
                 (project, assembly::resolve(choice, default, avail))
@@ -384,13 +412,14 @@ async fn get_gear_match_usage(
     let mut by_source: BTreeMap<String, u32> = BTreeMap::new();
     let mut by_fallback: BTreeMap<String, u32> = BTreeMap::new();
     let mut total_usage = ModelUsage::default();
+    let mut by_service: BTreeMap<String, StrategyUsage> = BTreeMap::new();
     let mut all = ProjectUsage::default();
     let mut items = Vec::with_capacity(projects.len());
     for p in &projects {
         let u = counted.get(&p.id).cloned().unwrap_or_default();
         let e = resolved.get(&p.id);
-        let strategy = assembly::wire(e.and_then(|e| e.strategy)).to_owned();
-        let chosen = assembly::wire(e.and_then(|e| e.chosen)).to_owned();
+        let strategy = assembly::wire(e.and_then(|e| e.strategy.as_ref())).to_owned();
+        let chosen = assembly::wire(e.and_then(|e| e.chosen.as_ref())).to_owned();
         let source = e
             .map_or(assembly::Source::Studio, |e| e.source)
             .as_str()
@@ -402,6 +431,11 @@ async fn get_gear_match_usage(
             *by_fallback.entry((*code).to_owned()).or_default() += 1;
         }
         total_usage.add(u.usage);
+        for (id, spent) in &u.strategies {
+            let by = by_service.entry(id.clone()).or_default();
+            by.runs += spent.runs;
+            by.usage.add(spent.usage);
+        }
         for (state, n) in &u.runs {
             *all.runs.entry(state).or_default() += n;
         }
@@ -458,7 +492,11 @@ async fn get_gear_match_usage(
     let offset = page.offset.unwrap_or(0);
     let limit = page.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
     let projects_matched = to_u32(counted.values().filter(|u| u.last.is_some()).count());
-    let strategy_order: Vec<&str> = assembly::Strategy::ALL
+    // The organization's strategies, in the order offered, by hand last.
+    let (org_available, provided) =
+        available(&product.hub, Some(matches.as_ref()), &ctx, org).await;
+    let offered = org_available.provided();
+    let strategy_order: Vec<&str> = offered
         .iter()
         .map(|s| s.as_str())
         .chain([assembly::MANUAL])
@@ -477,13 +515,45 @@ async fn get_gear_match_usage(
         questions_answered: all.questions_answered,
         median_run_ms: median,
     };
-    let service = service_dto(matches.matcher.missing(), live);
+    // One block per service strategy, the shipped one always (its kit is
+    // this page's).
+    let mut service_ids: Vec<String> = offered
+        .iter()
+        .filter(|s| org_available.offer(s.as_str()).is_some_and(|o| o.service))
+        .map(|s| s.as_str().to_owned())
+        .collect();
+    let shipped = crate::product::gear_match::services::SHIPPED_STRATEGY;
+    if !service_ids.iter().any(|s| s == shipped) {
+        service_ids.insert(0, shipped.to_owned());
+    }
+    let block = |id: String| {
+        let named = provided.iter().find(|p| p.id == id).cloned();
+        let matches = Arc::clone(&matches);
+        let ctx = ctx.clone();
+        let spent = by_service.get(&id).cloned().unwrap_or_default();
+        async move {
+            let name = named.as_ref().map_or("Gears matcher", |p| p.name.as_str());
+            let kit = named
+                .as_ref()
+                .map_or(assembly::GEARS_MATCHER_KIT, |p| p.kit.as_str());
+            let refusal = matches.service_refusal(&ctx, org, &id).await;
+            // Asked at most every 30 s per organization and strategy.
+            let live = matches.live_info(&ctx, org, &id).await;
+            service_dto((id.as_str(), name, kit), refusal, live, &spent)
+        }
+    };
+    let mut services_all = BTreeMap::new();
+    for id in &service_ids {
+        services_all.insert(id.clone(), block(id.clone()).await);
+    }
+    let service = block(shipped.to_owned()).await;
     Ok(Json(GearMatchUsageDto {
         organization_id: org.to_string(),
         period_days: days,
         since: rfc3339(since),
         summary,
         service,
+        services: services_all,
         items: items.into_iter().skip(offset).take(limit).collect(),
         total,
     }))

@@ -355,7 +355,7 @@ several kits needs `slug` to say which.
 A kit is a **project type** when its `model` derives one type of its own from
 the core Project type (`{name, extends: "project", label?, description?,
 fields?}`, catalogued as
-`gts.cf.studio.domain.project.v1~cf.studio.kit.<slug>.project.v1~`; ADR-0073).
+`gts.cf.studio.domain.project.v1~cf.studio.kit_<slug>.project.v1~`; ADR-0073).
 `project_type: true` is only a cache of that and is refused without the
 subtype; a project type names the `project` level. Only a project type may
 carry **`project_creation`**: `mode` (`greenfield` | `modernize`, what
@@ -365,9 +365,27 @@ of `repository`, `sources`, `scaffold` — which needs `repository` — and
 label, description?, route, done_when?}`, `id` lowercase with `-`, `route` a
 shell screen's route, `done_when` a step of the project path that
 `project-status` answers — `repos`, `types`, `model`, `findings`, `kind`,
-`product`, `build`). The built-in project types' overlays are carried by every
+`product`, `build` — or `field:<name>`, a field of the kit's own project type,
+done once the project's object in the model has it set). The built-in project types' overlays are carried by every
 organization's model, so installing one in a single project is not
 `MODEL_KIT_NOT_FOR_PROJECT`.
+
+An organization's own kit can be a project type too (ADR-0073 Amendment 2).
+An organization's project types are the built-in ones plus the kits it
+installed from its shelf whose overlay derives a subtype of Project
+(`kit_registry/project_types.rs`, `GET project-creation-types?organization_id=`):
+installing one is the administrator's trust decision; a kit that is only on
+the shelf is no type. Such a kit runs no code at creation: its
+`project_creation.steps` are Studio's fixed vocabulary (checked when the
+manifest is read, and again at install), and every `next_steps[].route` must
+be a screen Studio has -- one of the shell's own sections (`SHELL_ROUTES`, a
+test holds them to the portal's `mfe.json` routes), a built-in kit's screen,
+or one of the kit's own `screens[].route`. An organization install that fails
+either is refused (400 `invalid_argument`, naming the step or the route and
+the routes it may use). A project created with it gets the kit at the version
+the organization installed (`InstalledRecord.version`, the manifest kept in
+`shelf_versions` once the shelf is refreshed), not the shelf's latest commit;
+a built-in type the organization installed itself comes at that version too.
 
 The shelf is visible to that organization only: `GET /catalog` lists it
 only with `organization_id`, and `GET /catalog/{kit_slug}` finds it in the
@@ -743,6 +761,9 @@ is tried again only when its registration changes.
 | `project.header.status` | `…shell.slots.project_header_status.v1` | beside the open project in the path bar |
 | `screen.toolbar.actions` | `…shell.slots.screen_toolbar_actions.v1` | at the end of the level's tab row |
 | `screen.panels` | `…shell.slots.screen_panels.v1` | above the screen, e.g. `screen = "/projects/overview"` |
+| `project.overview.content` | `…shell.slots.project_overview_content.v1` | inside Project › Overview |
+| `organization.overview.content` | `…shell.slots.organization_overview_content.v1` | inside Organization › Overview |
+| `organization.inbox.content` | `…shell.slots.organization_inbox_content.v1` | inside the Inbox |
 
 `examples/kits/hello-kit` contributes a panel to Project › Overview and a
 status chip. A slot inside a micro-frontend's own page is not offered: the
@@ -1036,6 +1057,25 @@ loses it. Catalogue (`components`) writes no connection any more.
      `screenShows` and `kitAvailable` (back to `has`).
   4. The retired slugs in tests (`MAY_NAME_A_RETIRED_SLUG`), fixtures and
      docs (this section's table becomes history in ADR-0071).
+
+### 3.16 The M&A due diligence kit
+
+- [ ] `p2` - **ID**: `cpt-studio-design-kits-mna-entry`
+
+The third built-in project type (studio-web#1024): slug `mna`, name "M&A due
+diligence", level `project`, opt-in (`OPT_IN_BUILTIN`). A deal is a project
+of its subtype of Project
+(`gts.cf.studio.domain.project.v1~cf.studio.kit_mna.project.v1~`: target,
+thesis, `deal_phase`, IC date, recommendation, conditions, sign-off), with
+findings, risks and open questions as the kit's own types
+(`gts.cf.studio.kit.mna.*`). It creates a project in `modernize` mode taking
+`sources` only; its next steps connect the target's repositories, fill in the
+thesis (`done_when: field:thesis`) and review the evidence. Its function is
+compiled into this gear (`kit_registry/mna.rs`, routes under
+`/studio-kits/v1/mna/`, MCP `mna_*`), its screen is `mna-mfe`'s Project ›
+Deal; the deal lead who signs off is the project's owner. The design, the
+evidence summary and the follow-ups: [`mna-kit.md`](mna-kit.md)
+(`cpt-studio-design-kits-mna`).
 
 ## 4. Additional context
 

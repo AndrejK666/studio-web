@@ -759,20 +759,10 @@ impl Steps for InProcess {
 
     async fn model(&self, plan: &Plan) -> Result<String, StepError> {
         use crate::domain_model::port::DomainObjects;
-        let Some(type_id) = plan.project_type_id() else {
+        let Some(type_id) = plan.project_type_id().map(str::to_owned) else {
             return Err(StepError::Fail(
                 "the plan names no project type".to_string(),
             ));
-        };
-        let Some(subtype) = plan
-            .project_type_kit()
-            .and_then(crate::kit_registry::port::project_type_kit)
-            .and_then(|kit| kit.project_subtype())
-            .filter(|t| t.gts == type_id)
-        else {
-            return Err(StepError::Fail(format!(
-                "`{type_id}` is no project type this Studio knows"
-            )));
         };
         // A deployment without the domain model has only the configuration
         // to say the type; that is not a failed creation.
@@ -783,27 +773,46 @@ impl Steps for InProcess {
         // (`domain_model/tenant_objects.rs`): as the gear, in the organization.
         let objects = crate::domain_model::port::KeptByGear::wrap(objects);
         let ctx = service_ctx(plan.organization_id)?;
-        let scope = plan.project_id.to_string();
-        let stored = objects
-            .list_in(&ctx, "project", &scope)
+        let wrote = store_typed_project_object(objects.as_ref(), &ctx, plan, &type_id)
             .await
-            .map_err(|e| retry("the project's object cannot be read", e))?
-            .into_iter()
-            .find(|o| o.payload.get("tenant_id").and_then(Value::as_str) == Some(scope.as_str()));
-        let Some(value) = typed_project_object(
-            stored.as_ref().map(|o| &o.payload),
-            plan,
-            type_id,
-            &subtype.entity,
-        ) else {
-            return Ok(format!("{} already", subtype.name));
-        };
-        objects
-            .upsert_in(&ctx, "project", "self", &scope, value)
-            .await
-            .map_err(|e| retry("the project's object could not be written", e))?;
-        Ok(format!("a {} ({type_id})", subtype.name))
+            .map_err(|e| retry("the project's object could not be stored as its type", e))?;
+        Ok(if wrote {
+            format!("stored as {type_id}")
+        } else {
+            format!("{type_id} already")
+        })
     }
+}
+
+/// Store the project's object (`self` in its scope) as its type, the kit's
+/// subtype of Project named by its GTS id `type_id` (ADR-0073 amendment):
+/// the creation's `model` step. The model the kits step brought the type
+/// into knows it; graph-storage validates the subtype's fields on this
+/// write; a plain `project` object the sweep made first becomes the
+/// subtype, with its relations. Answers whether anything was written.
+pub async fn store_typed_project_object(
+    objects: &dyn crate::domain_model::port::DomainObjects,
+    ctx: &SecurityContext,
+    plan: &Plan,
+    type_id: &str,
+) -> anyhow::Result<bool> {
+    let seed = plan.clone();
+    let id = type_id.to_owned();
+    let (_, wrote) = objects
+        .retype_in(
+            ctx,
+            "project",
+            type_id,
+            "self",
+            &plan.project_id.to_string(),
+            Box::new(move |stored: Option<&Value>, entity: &str| {
+                typed_project_object(stored, &seed, &id, entity)
+                    .or_else(|| stored.cloned())
+                    .unwrap_or_else(|| json!({}))
+            }),
+        )
+        .await?;
+    Ok(wrote)
 }
 
 /// The project's object in the model (`project`, keyed `self` in the

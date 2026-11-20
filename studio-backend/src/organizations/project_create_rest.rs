@@ -29,8 +29,12 @@ use super::project_create::{
 use super::rest::OrganizationError;
 use super::sdk::{ORGANIZATION_TENANT_TYPE, WORKSPACE_TENANT_TYPE};
 use crate::kit_registry::port::{
-    KitPresence, PROJECT_CREATION_STEPS, project_type_kit, project_type_kits,
+    KitPresence, OrgProjectType, PROJECT_CREATION_STEPS, ProjectKitRequests, project_type_kit,
+    project_type_kits,
 };
+
+/// `shelf` of a built-in project type.
+const SHELF_BUILTIN: &str = "builtin";
 
 /// What the routes need: account-management, and the hub for the task
 /// queue and the connectors, resolved per request.
@@ -144,7 +148,10 @@ pub struct ProjectNextStepDto {
     /// The portal route of the screen where it is done (`/projects/sources`).
     pub route: String,
     /// The step of the project's path (`GET project-status` `path[].step`)
-    /// whose being done makes this one done; absent: done when dismissed.
+    /// whose being done makes this one done, or `field:<name>`, a field of the
+    /// type's own that is done once the project's object in the domain model
+    /// has it set (`type: project`, its `tenant_id` the project); absent:
+    /// done when dismissed.
     pub done_when: Option<String>,
 }
 
@@ -155,7 +162,7 @@ pub struct ProjectTypeKitDto {
     /// The kit, sent back as `project_type_kit`.
     pub slug: String,
     /// The type's GTS id, derived from Project's
-    /// (`gts.cf.studio.domain.project.v1~cf.studio.kit.<kit>.project.v1~`);
+    /// (`gts.cf.studio.domain.project.v1~cf.studio.kit_<kit>.project.v1~`);
     /// what `project.config` `project_type_id` records.
     pub type_id: String,
     /// The type's name and description.
@@ -170,6 +177,18 @@ pub struct ProjectTypeKitDto {
     pub steps: Vec<String>,
     /// What the person does next, in order.
     pub next_steps: Vec<ProjectNextStepDto>,
+    /// Where the kit comes from: `builtin` (Studio's) or `organization`
+    /// (one the organization installed from its own shelf).
+    pub shelf: String,
+    /// The kit's version a project of this type gets: the one the
+    /// organization installed; absent for a built-in kit at Studio's own.
+    pub version: Option<String>,
+}
+
+/// `?organization_id=`: whose project types.
+#[derive(Debug, serde::Deserialize)]
+pub struct ProjectTypesQuery {
+    pub organization_id: Option<Uuid>,
 }
 
 #[derive(Debug)]
@@ -181,7 +200,11 @@ pub struct ProjectTypeKitsDto {
 }
 
 /// What a project type is, as the wizard and the Overview read it.
-fn type_dto(kit: crate::kit_registry::port::KitManifest) -> Option<ProjectTypeKitDto> {
+fn type_dto(
+    kit: crate::kit_registry::port::KitManifest,
+    version: Option<String>,
+    shelf: &str,
+) -> Option<ProjectTypeKitDto> {
     let subtype = kit.project_subtype()?;
     let steps = PROJECT_CREATION_STEPS
         .iter()
@@ -213,12 +236,58 @@ fn type_dto(kit: crate::kit_registry::port::KitManifest) -> Option<ProjectTypeKi
         kit_name: kit.name,
         steps,
         next_steps,
+        shelf: shelf.to_owned(),
+        version,
     })
 }
 
-async fn list_project_type_kits() -> ApiResult<JsonBody<ProjectTypeKitsDto>> {
-    // The library's order, not the names': Gears, the usual type, first.
-    let items: Vec<_> = project_type_kits().filter_map(type_dto).collect();
+/// The project types `organization` offers (ADR-0073 Amendment 2): the
+/// built-in ones, then the kits it installed whose model derives a subtype
+/// of Project. Read through studio-kits; the caller has been shown to reach
+/// the organization.
+async fn organization_types(c: &Creations, organization: Uuid) -> ApiResult<Vec<OrgProjectType>> {
+    let kits = c
+        .hub
+        .get::<dyn ProjectKitRequests>()
+        .map_err(|_| unavailable("studio-kits is unavailable"))?;
+    kits.project_types(organization).await.map_err(|e| {
+        unavailable(&format!(
+            "the organization's project types could not be read: {e:#}"
+        ))
+    })
+}
+
+async fn list_project_type_kits(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(c): Extension<Option<Creations>>,
+    Query(q): Query<ProjectTypesQuery>,
+) -> ApiResult<JsonBody<ProjectTypeKitsDto>> {
+    // The library's order, not the names': Gears, the usual type, first;
+    // then the organization's own, by slug.
+    let items: Vec<_> = match q.organization_id {
+        None => project_type_kits()
+            .filter_map(|kit| type_dto(kit, None, SHELF_BUILTIN))
+            .collect(),
+        Some(org) => {
+            let c = c.ok_or_else(|| unavailable("account-management is not available here"))?;
+            let not_found = || {
+                OrganizationError::not_found(format!(
+                    "there is no organization {org} for this caller"
+                ))
+                .with_resource(org.to_string())
+                .create()
+            };
+            let tenant = c.am.get_tenant(&ctx, org).await.map_err(|_| not_found())?;
+            if tenant.tenant_type.as_deref() != Some(ORGANIZATION_TENANT_TYPE) {
+                return Err(not_found());
+            }
+            organization_types(&c, org)
+                .await?
+                .into_iter()
+                .filter_map(|t| type_dto(t.manifest, t.version, t.shelf))
+                .collect()
+        }
+    };
     let total = u32::try_from(items.len()).unwrap_or(u32::MAX);
     Ok(Json(ProjectTypeKitsDto { items, total }))
 }
@@ -391,18 +460,24 @@ async fn approve(
         ));
     }
     let organization_id = workspace_and_org(c.am.as_ref(), ctx, body.workspace_id).await?;
-    let type_kit = body
-        .project_type_kit
-        .as_deref()
-        .map(|slug| {
-            project_type_kit(slug).ok_or_else(|| {
-                invalid(
-                    "project_type_kit",
-                    "Choose a kit that defines a project type",
-                )
-            })
-        })
-        .transpose()?;
+    // A built-in project type, or one the organization installed (ADR-0073
+    // Amendment 2).
+    let type_kit = match body.project_type_kit.as_deref() {
+        None => None,
+        Some(slug) => Some(
+            organization_types(c, organization_id)
+                .await?
+                .into_iter()
+                .find(|t| t.manifest.slug == slug)
+                .map(|t| t.manifest)
+                .ok_or_else(|| {
+                    invalid(
+                        "project_type_kit",
+                        "Choose a kit that defines a project type this organization offers",
+                    )
+                })?,
+        ),
+    };
     if let Some(kit) = &type_kit {
         let presence = c
             .hub
@@ -826,15 +901,23 @@ pub fn register(
         .description(
             "The project types: each built-in kit whose model derives a type of its own from \
              the core Project type (ADR-0073; Gears, then Constructor Research), in the \
-             library's order, with that type's id, name and description, the `mode` and the \
-             optional creation steps it takes, and the next steps a project of it shows on its \
-             Overview. The New project wizard offers one of them as the project's type, and \
-             `POST project-creations` records the type and installs its kit in the new project. \
-             The list is compiled in, the same for every organization, and never paged.",
+             library's order, and with `organization_id` then the kits that organization \
+             installed from its own shelf whose model does (ADR-0073 Amendment 2), by slug, \
+             each with that type's id, name and description, the `mode` and the optional \
+             creation steps it takes, the next steps a project of it shows on its Overview, \
+             its `shelf` and the `version` a project of it gets. The New project wizard offers \
+             one of them as the project's type, and `POST project-creations` records the type \
+             and installs its kit in the new project at that version. Read by whoever reaches \
+             the organization; never paged.",
         )
         .tag("StudioOrganizations")
         .authenticated()
         .require_license_features::<super::rest::License>([])
+        .query_param(
+            "organization_id",
+            false,
+            "Whose project types: without it, the built-in ones only",
+        )
         .handler(list_project_type_kits)
         .json_response_with_schema::<ProjectTypeKitsDto>(
             openapi,
@@ -842,7 +925,9 @@ pub fn register(
             "Project type kits",
         )
         .error_401(openapi)
+        .error_404(openapi)
         .error_500(openapi)
+        .error_503(openapi)
         .register(router, openapi);
     let router = OperationBuilder::post("/studio-organizations/v1/project-creations")
         .operation_id("studio_organizations.create_project")
@@ -922,13 +1007,15 @@ mod tests {
 
     #[test]
     fn a_project_type_answers_its_subtype_its_steps_and_what_comes_next() {
-        let items: Vec<ProjectTypeKitDto> = project_type_kits().filter_map(type_dto).collect();
+        let items: Vec<ProjectTypeKitDto> = project_type_kits()
+            .filter_map(|kit| type_dto(kit, None, SHELF_BUILTIN))
+            .collect();
         let slugs: Vec<&str> = items.iter().map(|t| t.slug.as_str()).collect();
-        assert_eq!(slugs, ["gears-project", "constructor-research"]);
+        assert_eq!(slugs, ["gears-project", "constructor-research", "mna"]);
         let gears = &items[0];
         assert_eq!(
             gears.type_id,
-            "gts.cf.studio.domain.project.v1~cf.studio.kit.gears_project.project.v1~"
+            "gts.cf.studio.domain.project.v1~cf.studio.kit_gears_project.project.v1~"
         );
         assert_eq!(gears.mode, "greenfield");
         assert_eq!(gears.steps, ["repository", "sources", "scaffold", "prd"]);
@@ -946,6 +1033,26 @@ mod tests {
         assert_eq!(research.next_steps[0].route, "/constructor-research");
         assert_eq!(research.next_steps[0].done_when, None);
         assert_eq!(research.next_steps[1].route, "/releases");
+        let mna = &items[2];
+        assert_eq!(
+            mna.type_id,
+            "gts.cf.studio.domain.project.v1~cf.studio.kit_mna.project.v1~"
+        );
+        assert_eq!(mna.mode, "modernize");
+        assert_eq!(mna.steps, ["sources"]);
+        let next: Vec<(&str, &str)> = mna
+            .next_steps
+            .iter()
+            .map(|n| (n.route.as_str(), n.done_when.as_deref().unwrap_or("")))
+            .collect();
+        assert_eq!(
+            next,
+            [
+                ("/projects/sources", "repos"),
+                ("/deal", "field:thesis"),
+                ("/deal", "")
+            ]
+        );
     }
 
     #[test]

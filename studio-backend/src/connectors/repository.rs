@@ -16,8 +16,8 @@ use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
 use super::driver::{
-    ConnectionAuth, ConnectorDriver, CreatedIssue, CreatedRepository, DownloadTarget, FileToWrite,
-    OpenedPullRequest, RemoteCommit, RemoteFileList, RemoteFileText,
+    ConnectionAuth, ConnectorDriver, Contributor, CreatedIssue, CreatedRepository, DownloadTarget,
+    FileToWrite, OpenedPullRequest, RemoteCommit, RemoteFileList, RemoteFileText,
 };
 use super::service::ConnectorService;
 
@@ -69,6 +69,12 @@ impl Repository {
 
     pub fn connection_id(&self) -> Uuid {
         self.connection_id
+    }
+
+    /// The repository's top contributors (up to `max`), each with the commits
+    /// the provider attributes to them, over the repository's whole history.
+    pub async fn contributors(&self, max: u32) -> Result<Vec<Contributor>> {
+        self.driver.contributors(&self.auth, &self.repo, max).await
     }
 
     /// The repository's default branch.

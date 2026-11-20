@@ -258,6 +258,16 @@ fn project_tab(label: &str, route: Option<&str>) -> KitScreen {
     tab("project", label, route)
 }
 
+/// The routes of every built-in kit's screens: what a project type's next
+/// step may open besides the shell's own sections (ADR-0073 Amendment 2).
+pub(super) fn builtin_screen_routes() -> Vec<String> {
+    super::service::builtin_catalogue()
+        .iter()
+        .filter_map(|k| builtin_contents(&k.slug))
+        .flat_map(|c| c.screens.into_iter().filter_map(|s| s.route))
+        .collect()
+}
+
 /// A built-in kit's screens: what Studio has for it today, nothing planned.
 /// `None` for a slug that is not a built-in kit.
 ///
@@ -389,6 +399,14 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
             ..KitContents::default()
         },
         "gears-project" => KitContents::default(),
+        // Technical due diligence of an acquisition target (studio-web#1024,
+        // docs/design/mna-kit.md): a project type. `mna-mfe`'s Project ›
+        // Deal: the deal's attributes, its recommendation and sign-off, the
+        // evidence summary, findings, risks and open questions (`mna.rs`).
+        "mna" => KitContents {
+            screens: vec![project_tab("Deal", Some("/deal"))],
+            ..KitContents::default()
+        },
         // Building and running a product in Constructor Research (ADR-0049,
         // docs/design/studio-kits.md §3.13). Not a base kit by default
         // (`OPT_IN_BUILTIN`); installed for an organization or one project.

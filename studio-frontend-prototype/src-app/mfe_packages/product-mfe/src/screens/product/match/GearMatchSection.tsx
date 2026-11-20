@@ -20,7 +20,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Button, Input, Skeleton, Textarea } from '@gears-frontx/ui-kit';
+import { Button, Input, NativeSelect, NativeSelectOption, Skeleton, Textarea } from '@gears-frontx/ui-kit';
 import { isNotFound, readListState, responseStatus, writeListState } from '@constructor-studio/mfe-shared';
 import { productApi } from '../../../api/client';
 import {
@@ -38,6 +38,7 @@ import {
   type GearMatchRequirement,
 } from '../../../model/gear-match';
 import { MATCH_VIEWS, viewOf, type MatchView } from '../../../model/gear-match-grid';
+import { offeredStrategies, SHIPPED_SERVICE, type StrategyKit } from '../../../model/assembly';
 import { useMatchTranslations } from '../../../i18n';
 import { EmptyState, errText, Segmented, StatusChip, useScope } from '../../common';
 import { ScaffoldDialog } from '../../components/ScaffoldDialog';
@@ -81,7 +82,13 @@ type T = (key: string, params?: Record<string, string>) => string;
 
 export function GearMatchSection() {
   const { projectId } = useScope();
+  return <ProjectGearMatch key={projectId} projectId={projectId} />;
+}
+
+function ProjectGearMatch({ projectId }: { projectId: string }) {
   const { t } = useMatchTranslations();
+  const [strategies, setStrategies] = useState<StrategyKit[]>([]);
+  const [strategy, setStrategy] = useState(SHIPPED_SERVICE);
   const [history, setHistory] = useState<GearMatchItem[] | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [match, setMatch] = useState<GearMatch | null>(null);
@@ -103,11 +110,24 @@ export function GearMatchSection() {
   const knownNames = useMemo(() => (index ? catalogueNames(index) : null), [index]);
   // The product's picks under every spelling the catalogue has (id or crate).
   const pickedNames = useMemo(() => pickNames(picks, index), [picks, index]);
+  // Omitting the shipped strategy preserves older servers' default route.
+  const strategyParam = strategy === SHIPPED_SERVICE ? undefined : strategy;
+
+  useEffect(() => {
+    let live = true;
+    productApi.assemblyStrategy(projectId).then(
+      (settings) => live && setStrategies(offeredStrategies(settings).filter((kit) => kit.service)),
+      () => undefined
+    );
+    return () => {
+      live = false;
+    };
+  }, [projectId]);
 
   // The history and the product's picks; the spec plan, to say where the two agree.
   useEffect(() => {
     let live = true;
-    productApi.gearMatches(projectId).then(
+    productApi.gearMatches(projectId, strategyParam).then(
       (r) => {
         if (!live) return;
         setHistory(r.items);
@@ -127,7 +147,7 @@ export function GearMatchSection() {
     return () => {
       live = false;
     };
-  }, [projectId, round]);
+  }, [projectId, round, strategyParam]);
 
   useEffect(() => {
     let live = true;
@@ -148,7 +168,7 @@ export function GearMatchSection() {
     let live = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const read = () =>
-      productApi.gearMatch(projectId, shown).then(
+      productApi.gearMatch(projectId, shown, strategyParam).then(
         (m) => {
           if (!live) return;
           setMatch(m);
@@ -164,7 +184,7 @@ export function GearMatchSection() {
       live = false;
       if (timer) clearTimeout(timer);
     };
-  }, [projectId, shown, history]);
+  }, [projectId, shown, history, strategyParam]);
 
   const start = async () => {
     setStarting(true);
@@ -177,10 +197,11 @@ export function GearMatchSection() {
         .split(',')
         .map((p) => p.trim())
         .filter(Boolean);
-      const r = await productApi.startGearMatch(projectId, {
-        paths: list.length ? list : undefined,
-        idempotency_key: crypto.randomUUID(),
-      });
+      const r = await productApi.startGearMatch(
+        projectId,
+        { paths: list.length ? list : undefined, idempotency_key: crypto.randomUUID() },
+        strategyParam
+      );
       setSelected(r.match_id);
       setDiff(null);
       setRound((n) => n + 1);
@@ -293,10 +314,43 @@ export function GearMatchSection() {
   const general = (match?.questions ?? []).filter((q) => !q.requirement_id);
   const question = answering ? byRequirement.get(answering) : undefined;
   const report = match && !running && match.requirements.length > 0;
+  const otherStrategies = strategies.filter((kit) => kit.id !== SHIPPED_SERVICE);
+  const activeStrategy = strategies.find((kit) => kit.id === strategy);
 
   return (
     <div className={styles.section} data-gear-match>
       <p className={page.muted}>{t('lead')}</p>
+      {otherStrategies.length > 0 && (
+        <label className={styles.paths}>
+          <span className={page.small}>{t('strategy_label')}</span>
+          <NativeSelect
+            value={strategy}
+            onChange={(e) => {
+              setStrategy(e.target.value);
+              setHistory(null);
+              setSelected(null);
+              setMatch(null);
+              setUnavailable(null);
+              setError(null);
+              setStatus(null);
+              setDiff(null);
+              setAnswering(null);
+              setScaffold(null);
+            }}
+            disabled={starting || busy !== null}
+          >
+            <NativeSelectOption value={SHIPPED_SERVICE}>{t('strategy_shipped')}</NativeSelectOption>
+            {otherStrategies.map((kit) => (
+              <NativeSelectOption key={kit.id} value={kit.id} disabled={!kit.offered}>
+                {kit.name}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+        </label>
+      )}
+      {activeStrategy?.offered === false && activeStrategy.reason && (
+        <p className={page.muted}>{activeStrategy.reason}</p>
+      )}
       {unavailable ? (
         <p className={page.error} data-gear-match-unavailable>
           {t('unavailable', { reason: unavailable })}
@@ -307,7 +361,12 @@ export function GearMatchSection() {
             <span className={page.small}>{t('paths_label')}</span>
             <Input value={paths} onChange={(e) => setPaths(e.target.value)} placeholder={t('paths_hint')} />
           </label>
-          <Button type="button" onClick={() => void start()} disabled={starting || running} data-gear-match-start>
+          <Button
+            type="button"
+            onClick={() => void start()}
+            disabled={starting || running || activeStrategy?.offered === false}
+            data-gear-match-start
+          >
             {starting ? t('starting') : history.length ? t('rerun') : t('start')}
           </Button>
           {running && match && (

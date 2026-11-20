@@ -18,6 +18,7 @@ import type { MirrorSummary, Plan, PlanPeople, PlanSection } from '../model/plan
 import { sectionBody } from '../model/plan-model';
 import type { Report, ReportSchedule, ReportSource, ReportSourceInput } from '../model/reports-model';
 import type { RoadmapReport } from '../model/roadmap-report';
+import type { MetricPeriod, StudioMetrics } from '../model/metrics';
 
 export const REPORTS_PATH = '/studio-reports/v1/reports';
 
@@ -89,6 +90,14 @@ export class ReportsApiService extends BaseApiService {
   private get rest() {
     return this.protocol(RestEndpointProtocol);
   }
+
+  readonly metrics = this.protocol(RestEndpointProtocol).queryWith<
+    StudioMetrics, { organizationId: string; projectId?: string; range: MetricPeriod }
+  >(({ organizationId, projectId, range }) => {
+    const params = new URLSearchParams({ organization_id: organizationId, range });
+    if (projectId) params.set('project_id', projectId);
+    return `/studio-organizations/v1/metrics?${params}`;
+  });
 
   /** Every report this deployment draws, with this organization's source. */
   readonly reports = this.protocol(RestEndpointProtocol).queryWith<{ items: Report[]; total: number }, { organizationId: string }>(

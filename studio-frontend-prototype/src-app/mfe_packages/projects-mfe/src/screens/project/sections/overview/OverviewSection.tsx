@@ -31,6 +31,7 @@ import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Skeleton } fro
 import {
   errorMessage,
   isRunEnding,
+  KitContentSlot,
   openScreen,
   responseStatus,
   useScreenAvailability,
@@ -63,7 +64,11 @@ const STATUS_FRESH_MS = 60_000;
 /** The route an action opens here, or null: not in this portal, or its kit not installed. */
 type Reach = (target: string, key?: string, kit?: string | null) => string | null;
 
-export const OverviewSection: React.FC<{ projectId: string }> = ({ projectId }) => {
+export const OverviewSection: React.FC<{
+  projectId: string;
+  /** The organization on screen: whose domain model a next step's `field:` is read from. */
+  orgId?: string | null;
+}> = ({ projectId, orgId = null }) => {
   const { t, loading } = useOverviewSectionTranslations();
   const bridge = useMfeBridge();
   const availability = useScreenAvailability();
@@ -121,6 +126,7 @@ export const OverviewSection: React.FC<{ projectId: string }> = ({ projectId }) 
       {/* What the project's type says to do next, until done or dismissed. */}
       <NextSteps
         projectId={projectId}
+        orgId={orgId}
         path={read.data.path}
         t={t}
         reachRoute={(route) => (availability.route(route) ? route : null)}
@@ -204,6 +210,8 @@ function StatusView({
       <p className={styles.about}>{t('about')}</p>
 
       <PathStrip steps={status.path} t={t} open={open} reach={reach} />
+
+      <KitContentSlot name="project.overview.content" />
 
       <Card data-project-needs>
         <CardHeader>

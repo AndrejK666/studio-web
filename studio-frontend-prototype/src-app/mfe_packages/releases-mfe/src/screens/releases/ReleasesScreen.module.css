@@ -30,6 +30,32 @@
   min-width: 0;
 }
 
+.releaseFacts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4) var(--space-8, 2rem);
+  margin: 0;
+}
+
+.releaseFacts dt {
+  color: var(--muted-foreground);
+}
+
+.releaseFacts dd {
+  margin: var(--space-1) 0 0;
+  font-weight: 600;
+}
+
+.releaseLink {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--primary);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 .header {
   display: flex;
   flex-wrap: wrap;

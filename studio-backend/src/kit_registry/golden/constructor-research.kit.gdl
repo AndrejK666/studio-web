@@ -12,7 +12,7 @@ kit(
     icon = "lucide:atom",
     levels = ["organization", "project"],
     types = [
-        kit_type(gts = "gts.cf.studio.domain.project.v1~cf.studio.kit.constructor_research.project.v1~", id = "constructor-research-project", name = "Constructor Research project", description = "A project whose product is built and run in Constructor Research, as one of its applications.", fields = [kit_field(name = "research_project", type = "string?", description = "The Research project the product runs in"), kit_field(name = "research_hardware", type = "string?", description = "The hardware its services run on in that Research project")]),
+        kit_type(gts = "gts.cf.studio.domain.project.v1~cf.studio.kit_constructor_research.project.v1~", id = "constructor-research-project", name = "Constructor Research project", description = "A project whose product is built and run in Constructor Research, as one of its applications.", fields = [kit_field(name = "research_project", type = "string?", description = "The Research project the product runs in"), kit_field(name = "research_hardware", type = "string?", description = "The hardware its services run on in that Research project")]),
     ],
     model = path("model/overlay.json"),
     tabs = [

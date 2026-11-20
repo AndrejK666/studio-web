@@ -2,7 +2,8 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectStatus } from '../../../../model/projectStatus';
 
-const { query, openScreen, phaseRead, phaseSet, available, live } = vi.hoisted(() => ({
+const { query, openScreen, phaseRead, phaseSet, available, live, nextSteps } = vi.hoisted(() => ({
+  nextSteps: vi.fn((_props: Record<string, unknown>) => null),
   available: { value: null as unknown },
   live: { value: null as unknown },
   query: vi.fn(),
@@ -37,7 +38,7 @@ vi.mock('@gears-frontx/react', async (importOriginal) => ({
 }));
 
 // The type's next steps read their own data; NextSteps.test.tsx covers them.
-vi.mock('./NextSteps', () => ({ NextSteps: () => null }));
+vi.mock('./NextSteps', () => ({ NextSteps: nextSteps }));
 
 import { OverviewSection } from './OverviewSection';
 
@@ -83,6 +84,12 @@ describe('OverviewSection', () => {
     phaseSet.mockReset();
     // Project lifecycle not installed: no phase anywhere.
     phaseRead.mockResolvedValue({ project_id: 'p1', installed: false, phase: null, phase_owner: null, phase_since: null, states: [], next: [] });
+  });
+
+  it("hands the next steps the organization whose model a project field is read from", () => {
+    render(<OverviewSection projectId="p1" orgId="o1" />);
+    expect(nextSteps).toHaveBeenCalled();
+    expect(nextSteps.mock.lastCall?.[0]).toMatchObject({ projectId: 'p1', orgId: 'o1', path: blocked.path });
   });
 
   it('shows no phase where Project lifecycle does not apply', async () => {

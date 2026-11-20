@@ -16,11 +16,13 @@ import { KitAbsentScreen } from '@/app/layout/KitAbsentScreen';
 import { KitSlot } from '@/app/layout/KitSlot';
 import { SHELL_SLOTS } from './slots';
 import { EditorBar } from './EditorBar';
+import { MfeContentSlots } from './MfeContentSlots';
 import type { MfeBootstrapStatus } from '@/app/slices/mfeBootstrapSlice';
 
 export function MfeScreenContainer() {
   const app = useFrontX();
   const bootstrappedRef = useRef(false);
+  const screens = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<MfeBootstrapStatus>('pending');
 
   useEffect(() => {
@@ -44,7 +46,8 @@ export function MfeScreenContainer() {
   }, [app.mfeRegistry]);
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col overflow-auto" data-mfe-screen-container>
+    <div ref={screens} className="relative flex min-h-0 flex-1 flex-col overflow-auto" data-mfe-screen-container>
+      <MfeContentSlots screens={screens} />
       {status === 'failed' ? (
         <div className="p-6 text-label text-muted-foreground" role="alert" data-mfe-bootstrap-failed>
           Screens could not be loaded. Check the console for the manifest error.

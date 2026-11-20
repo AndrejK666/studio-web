@@ -460,6 +460,10 @@ describe('generated MFE manifest', () => {
       const tabs = resolveLevelMenu(screens as StudioScreenExtension[], 'project');
       expect(tabs.map((ext) => ext.presentation.label)).toEqual([
         'Overview',
+        // The M&A kit's Deal (mna-mfe, order 12, ADR-0073): right after
+        // Overview — a deal project is about its recommendation first. Shown
+        // only where the mna kit is installed.
+        'Deal',
         // The Project model's open questions (issues-mfe, order 15; the
         // prototype's Issues, renamed with its move to project-domain-model,
         // ADR-0071 step 4): right after Overview, where the prototype put it —

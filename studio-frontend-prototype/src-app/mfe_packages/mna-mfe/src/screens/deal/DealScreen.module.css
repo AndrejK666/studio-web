@@ -1,0 +1,318 @@
+/*
+ * Project › Deal over ui-kit semantic tokens (see theme.css in
+ * @gears-frontx/ui-kit). No Tailwind and no colour of our own: inside the
+ * shadow root the re-anchored kit tokens follow the portal's theme, dark too.
+ */
+
+.screen {
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5, 1.25rem);
+  min-height: 100%;
+  padding: var(--space-6);
+  color: var(--foreground);
+}
+
+/* The kit's theme.css paints `[data-theme]`; the shell's screen keeps its own. */
+.screen[data-theme] {
+  background: transparent;
+}
+
+.loading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.headline {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-heading-1-size);
+  line-height: var(--text-heading-1-line-height);
+  font-weight: var(--text-heading-1-weight);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.about {
+  margin: 0;
+  max-width: 60rem;
+  color: var(--muted-foreground);
+  font-size: 0.875rem;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
+  gap: var(--space-4);
+}
+
+.cardHead {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.cardBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.start {
+  align-self: flex-start;
+}
+
+.push {
+  margin-inline-start: auto;
+}
+
+.conditions {
+  margin: 0;
+  padding-inline-start: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.signOff {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+.muted {
+  color: var(--muted-foreground);
+  font-size: 0.875rem;
+}
+
+.label {
+  color: var(--muted-foreground);
+  font-size: 0.875rem;
+}
+
+.error {
+  margin: 0;
+  color: var(--destructive);
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.sectionHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.sectionTitle {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 1.125rem;
+  font-weight: 600;
+}
+
+.count {
+  padding: 0 var(--space-2);
+  border-radius: 999px;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+/* Evidence */
+
+.factGroup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.groupTitle {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+  gap: var(--space-3);
+}
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 0.375rem);
+  background: var(--card);
+  color: var(--card-foreground);
+}
+
+.tileLabel {
+  color: var(--muted-foreground);
+  font-size: 0.8125rem;
+}
+
+.tileValue {
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.unavailable {
+  color: var(--muted-foreground);
+  font-size: 0.9375rem;
+  font-weight: 500;
+}
+
+.tileDetail {
+  font-size: 0.8125rem;
+}
+
+.tileSource {
+  margin-top: auto;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+}
+
+.tableWrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 0.375rem);
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.table th,
+.table td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+  text-align: start;
+}
+
+.table th {
+  color: var(--muted-foreground);
+  font-weight: 500;
+}
+
+.table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.num {
+  text-align: end;
+}
+
+.table .num {
+  text-align: end;
+}
+
+/* Ledgers */
+
+.cellText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 14rem;
+  display: inline-block;
+}
+
+.cellWide {
+  min-width: 14rem;
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+/* Dialogs */
+
+.form {
+  display: grid;
+  grid-template-columns: minmax(7.5rem, 10rem) 1fr;
+  gap: var(--space-2) var(--space-3);
+  align-items: start;
+}
+
+.form .label {
+  padding-top: var(--space-2);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.footerStart {
+  margin-inline-end: auto;
+}
+
+.confirm {
+  align-items: center;
+}
+
+.confirmText {
+  margin-inline-end: auto;
+  font-size: 0.875rem;
+}
+
+/* Skeletons */
+
+.skeleton {
+  height: 2rem;
+  width: 16rem;
+}
+
+.cardSkeleton {
+  height: 10rem;
+  width: 100%;
+}
+
+.tileSkeleton {
+  height: 5rem;
+}
+
+.gridSkeleton {
+  height: 8rem;
+  width: 100%;
+}

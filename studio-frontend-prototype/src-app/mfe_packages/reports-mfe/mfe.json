@@ -15,9 +15,34 @@
       "domainActions": [],
       "manifest": "gts.frontx.mfes.mfe.mf_manifest.v1~constructor_studio.reports.mfe.manifest.v1",
       "exposedModule": "./lifecycle"
+    },
+    {
+      "id": "gts.frontx.mfes.mfe.entry.v1~frontx.mfes.mfe.entry_mf.v1~constructor_studio.reports.mfe.metrics.v1",
+      "requiredProperties": [
+        "gts.frontx.mfes.comm.shared_property.v1~frontx.mfes.comm.theme.v1~",
+        "gts.frontx.mfes.comm.shared_property.v1~frontx.mfes.comm.language.v1~",
+        "gts.frontx.mfes.comm.shared_property.v1~constructor_studio.context.organization.selected.v1~",
+        "gts.frontx.mfes.comm.shared_property.v1~constructor_studio.context.project.selected.v1~"
+      ],
+      "actions": [],
+      "domainActions": [],
+      "manifest": "gts.frontx.mfes.mfe.mf_manifest.v1~constructor_studio.reports.mfe.manifest.v1",
+      "exposedModule": "./metrics"
     }
   ],
   "extensions": [
+    {
+      "id": "gts.frontx.mfes.ext.extension.v1~constructor_studio.shell.slots.contribution.v1~constructor_studio.reports.slots.org_metrics.v1",
+      "domain": "gts.frontx.mfes.ext.domain.v1~constructor_studio.shell.slots.organization_overview_content.v1",
+      "entry": "gts.frontx.mfes.mfe.entry.v1~frontx.mfes.mfe.entry_mf.v1~constructor_studio.reports.mfe.metrics.v1",
+      "presentation": { "label": "Metrics", "kit": "org-reports", "level": "organization", "order": 40 }
+    },
+    {
+      "id": "gts.frontx.mfes.ext.extension.v1~constructor_studio.shell.slots.contribution.v1~constructor_studio.reports.slots.project_metrics.v1",
+      "domain": "gts.frontx.mfes.ext.domain.v1~constructor_studio.shell.slots.project_overview_content.v1",
+      "entry": "gts.frontx.mfes.mfe.entry.v1~frontx.mfes.mfe.entry_mf.v1~constructor_studio.reports.mfe.metrics.v1",
+      "presentation": { "label": "Metrics", "kit": "org-reports", "level": "project", "order": 40 }
+    },
     {
       "id": "gts.frontx.mfes.ext.extension.v1~frontx.screensets.layout.screen.v1~constructor_studio.screensets.layout.leveled_screen.v1~constructor_studio.reports.screens.main.v1",
       "domain": "gts.frontx.mfes.ext.domain.v1~frontx.screensets.layout.screen.v1",

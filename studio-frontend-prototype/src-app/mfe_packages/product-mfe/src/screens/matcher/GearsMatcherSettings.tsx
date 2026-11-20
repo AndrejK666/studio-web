@@ -14,10 +14,10 @@
 
 import { useEffect, useState } from 'react';
 import type { ChildMfeBridge } from '@gears-frontx/react';
-import { Skeleton } from '@gears-frontx/ui-kit';
+import { Button, Input, Skeleton } from '@gears-frontx/ui-kit';
 import { productApi } from '../../api/client';
-import { offeredStrategies, type AssemblyStrategy, type StrategyId, type StrategyUsed } from '../../model/assembly';
-import { serviceState, type GearMatchUsage, type MatcherService } from '../../model/gear-match-usage';
+import { offeredStrategies, strategyName, type AssemblyStrategy, type StrategyId } from '../../model/assembly';
+import { serviceState, servicesOf, type GearMatchUsage, type MatcherService } from '../../model/gear-match-usage';
 import { useAssemblyTranslations } from '../../i18n';
 import { errText, PageHeader, Segmented, StatusChip } from '../common';
 import { PeriodSwitch, UsageGrid, UsageTiles, useAddressPeriod } from './GearsMatcherUsage';
@@ -26,8 +26,71 @@ import styles from './matcher.module.css';
 
 type T = (key: string, params?: Record<string, string>) => string;
 
-/** The service block: configured, answering, and what it said. */
-function ServiceCard({ service, fallback, t, language }: { service: MatcherService | null; fallback: AssemblyStrategy['gears_matcher'] | null; t: T; language: string }) {
+/** Connect a strategy's service for the organization: its address and secret, kept as a connection, never in the kit. */
+function ConnectService({ orgId, strategy, name, t, onDone }: { orgId: string; strategy: string; name: string; t: T; onDone: () => void }) {
+  const [url, setUrl] = useState('');
+  const [secret, setSecret] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const connect = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await productApi.connectStrategyService(orgId, strategy, url.trim(), secret, name);
+      setSecret('');
+      onDone();
+    } catch (e) {
+      setErr(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className={page.stack} data-gears-matcher-connect={strategy}>
+      <span className={`${page.small} ${page.muted}`}>{t('service_connect_lead')}</span>
+      <span className={page.row}>
+        <Input
+          aria-label={t('service_connect_url')}
+          placeholder={t('service_connect_url')}
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          data-gears-matcher-connect-url
+        />
+        <Input
+          type="password"
+          aria-label={t('service_connect_secret')}
+          placeholder={t('service_connect_secret')}
+          value={secret}
+          onChange={(e) => setSecret(e.target.value)}
+          data-gears-matcher-connect-secret
+        />
+        <Button type="button" size="sm" disabled={busy || !url.trim() || !secret} onClick={() => void connect()} data-gears-matcher-connect-submit>
+          {busy ? t('saving') : t('service_connect')}
+        </Button>
+      </span>
+      {err && <span className={`${page.small} ${page.error}`}>{t('error', { error: err })}</span>}
+    </div>
+  );
+}
+
+/** One strategy's service block: configured or connected, answering, and what it said. */
+function ServiceCard({
+  service,
+  fallback,
+  t,
+  language,
+  orgId,
+  mayConnect,
+  onConnected,
+}: {
+  service: MatcherService | null;
+  fallback: AssemblyStrategy['gears_matcher'] | null;
+  t: T;
+  language: string;
+  orgId: string;
+  mayConnect: boolean;
+  onConnected: () => void;
+}) {
   // Before the usage is read (or where it cannot be), the configuration alone.
   const s: MatcherService | null =
     service ?? (fallback ? { configured: fallback.configured, missing: fallback.missing, models: [] } : null);
@@ -35,7 +98,9 @@ function ServiceCard({ service, fallback, t, language }: { service: MatcherServi
   const state = serviceState(s);
   const tone = state === 'answers' ? 'ok' : state === 'unknown' ? 'neutral' : state === 'silent' ? 'danger' : 'warn';
   const label =
-    state === 'missing' ? t('org_service_missing', { reason: s.missing ?? '' }) : t(`org_service_${state}`);
+    state === 'missing'
+      ? t('org_service_missing', { reason: s.missing ?? '' })
+      : t(`org_service_${state}`);
   const facts = [
     s.service_version ? t('org_service_version', { version: s.service_version }) : null,
     s.catalogue_commit
@@ -51,10 +116,12 @@ function ServiceCard({ service, fallback, t, language }: { service: MatcherServi
       : null,
     s.checked_at ? t('org_service_checked', { time: new Date(s.checked_at).toLocaleTimeString(language) }) : null,
   ].filter((f): f is string => !!f);
+  const strategy = s.strategy ?? 'gears_matcher';
+  const name = s.name ?? t('strategy_gears_matcher');
   return (
-    <div className={page.card} data-gears-matcher-service-card>
+    <div className={page.card} data-gears-matcher-service-card={strategy}>
       <span className={page.row}>
-        <b>{t('org_service')}</b>
+        <b>{t('org_service_of', { name })}</b>
         <StatusChip tone={tone} data-gears-matcher-service={state === 'answers' || state === 'unknown' ? 'ready' : state}>
           {label}
         </StatusChip>
@@ -71,6 +138,17 @@ function ServiceCard({ service, fallback, t, language }: { service: MatcherServi
           {t('org_service_error', { error: s.error })}
         </span>
       )}
+      {typeof s.runs === 'number' && s.runs > 0 && (
+        <span className={`${page.small} ${page.muted}`} data-gears-matcher-service-runs>
+          {t('org_service_runs', { runs: String(s.runs), calls: String(s.usage?.calls ?? 0) })}
+        </span>
+      )}
+      {state === 'unconnected' &&
+        (mayConnect ? (
+          <ConnectService orgId={orgId} strategy={strategy} name={name} t={t} onDone={onConnected} />
+        ) : (
+          <span className={`${page.small} ${page.muted}`}>{t('service_connect_admin')}</span>
+        ))}
     </div>
   );
 }
@@ -91,6 +169,8 @@ export function GearsMatcherSettings({
   const [period, setPeriod] = useAddressPeriod();
   const [usage, setUsage] = useState<GearMatchUsage | null>(null);
   const [usageErr, setUsageErr] = useState<string | null>(null);
+  /** Bumped to read the usage (and the services) again, after a service is connected. */
+  const [round, setRound] = useState(0);
 
   useEffect(() => {
     let live = true;
@@ -120,7 +200,7 @@ export function GearsMatcherSettings({
     return () => {
       live = false;
     };
-  }, [orgId, period]);
+  }, [orgId, period, round]);
 
   const choose = async (c: StrategyId) => {
     setBusy(true);
@@ -134,8 +214,8 @@ export function GearsMatcherSettings({
     }
   };
 
-  const label = (s: StrategyUsed) => t(`strategy_${s}`);
   const kits = a ? offeredStrategies(a) : [];
+  const label = (s: string) => strategyName(s, t, kits);
   // The default the picker shows: the organization's own, else what the kits make it.
   const current = (a?.organization_default ?? (a?.chosen !== 'manual' ? a?.chosen : null)) as StrategyId | null;
 
@@ -146,7 +226,18 @@ export function GearsMatcherSettings({
       {err && <p className={page.error}>{t('error', { error: err })}</p>}
       {a && (
         <>
-          <ServiceCard service={usage?.service ?? null} fallback={a.gears_matcher} t={t} language={language} />
+          {(usage ? servicesOf(usage) : [null]).map((service) => (
+            <ServiceCard
+              key={service?.strategy ?? 'gears_matcher'}
+              service={service}
+              fallback={a.gears_matcher}
+              t={t}
+              language={language}
+              orgId={orgId}
+              mayConnect={a.may_set_default}
+              onConnected={() => setRound((r) => r + 1)}
+            />
+          ))}
           <div className={page.card} data-gears-matcher-default={a.organization_default ?? 'kits'}>
             <b>{t('org_default')}</b>
             {!a.settable ? (
@@ -168,7 +259,7 @@ export function GearsMatcherSettings({
                 items={kits.map((k) => ({
                   id: k.id,
                   label: label(k.id),
-                  title: k.offered ? t(`hint_${k.id}`) : (k.reason ?? t(`hint_${k.id}`)),
+                  title: k.offered ? (k.description || t(`hint_${k.id}`)) : (k.reason ?? k.description),
                   disabled: busy || !a.may_set_default,
                 }))}
               />

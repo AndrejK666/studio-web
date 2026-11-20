@@ -58,9 +58,31 @@
 }
 
 /* The library: one card per kit. */
+.tileSections {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.categoryTitle {
+  margin: 0 0 0.625rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.categoryCell {
+  display: inline-block;
+  padding: 0.125rem 0.5rem;
+  border-radius: var(--radius-md, 0.375rem);
+  background: var(--muted);
+  color: var(--foreground);
+  font-size: 0.75rem;
+  white-space: normal;
+}
+
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 16rem), 1fr));
   gap: var(--space-4);
   margin: 0;
   padding: 0;
@@ -135,6 +157,14 @@
   white-space: normal;
 }
 
+.rowNote,
+.tileDescription {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
 .statusCell {
   display: flex;
   flex-direction: column;
@@ -182,8 +212,7 @@
 }
 
 /* The card's way into the kit. */
-.cardLink,
-.inside {
+.cardLink {
   padding: 0;
   border: 0;
   background: none;
@@ -197,10 +226,22 @@
   text-decoration: underline;
 }
 
-.inside {
-  align-self: flex-start;
-  color: var(--primary);
-  font-size: 0.875rem;
+.tileDescription {
+  margin: 0;
+  color: var(--muted-foreground);
+}
+
+.tileContents {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--muted-foreground);
+  font-size: var(--text-meta-size, 0.8125rem);
+}
+
+.tileControls {
+  margin-top: auto;
 }
 
 .summary {
@@ -309,12 +350,25 @@
   background: var(--muted);
 }
 
-/* Project › Kits › In the IDE: the official kits `cfs` writes into checkouts. */
+.ideDisclosure {
+  margin-block-end: var(--space-4);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 0.375rem);
+}
+
+.ideDisclosure > summary {
+  width: fit-content;
+  font-weight: var(--text-label-weight, 500);
+  cursor: pointer;
+}
+
+/* Project › Kits › In the IDE: the material kits `cfs` writes into checkouts. */
 .ide {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
-  margin-top: var(--space-6);
+  margin-top: var(--space-3);
   padding-top: var(--space-4);
   border-top: 1px solid var(--border);
 }

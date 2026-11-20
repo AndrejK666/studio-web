@@ -61,6 +61,9 @@ pub const REGISTRY_INSTANCE_ID: &str = "gts.cf.toolkit.plugins.plugin.v1~cf.stud
 /// Constructor Research, where a member's products are built and run
 /// (ADR-0049).
 pub const RESEARCH_INSTANCE_ID: &str = "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.research_connector.v1";
+/// An assembly strategy's service, bound by an organization (ADR-0074,
+/// amendment).
+pub const ASSEMBLY_SERVICE_INSTANCE_ID: &str = "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.assembly_service_connector.v1";
 
 /// A repository of gears a tier's corpus is read from (ADR-0046).
 pub const GEAR_REPOSITORY_INSTANCE_ID: &str = "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.gear_repository_connector.v1";

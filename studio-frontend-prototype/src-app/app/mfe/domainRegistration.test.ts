@@ -440,16 +440,16 @@ describe('named slots and the runtime kit lifecycle on a real registry', () => {
     const kits = new RuntimeKits(registry);
     await kits.sync([helloKitManifest()], ORIGIN);
     expect(kits.failures()).toEqual([]);
-    expect(inSlot(SHELL_SLOTS.screenPanels)).toEqual([
+    expect(inSlot(SHELL_SLOTS.projectOverviewContent)).toEqual([
       'gts.frontx.mfes.ext.extension.v1~constructor_studio.shell.slots.contribution.v1~example.hello_kit.slots.overview_panel.v1',
     ]);
     expect(inSlot(SHELL_SLOTS.projectHeaderStatus)).toHaveLength(1);
-    const [panel] = registry.getExtensionsForDomain(SHELL_SLOTS.screenPanels.domainId) as unknown as Array<{ presentation: { kit: string } }>;
+    const [panel] = registry.getExtensionsForDomain(SHELL_SLOTS.projectOverviewContent.domainId) as unknown as Array<{ presentation: { kit: string } }>;
     expect(panel.presentation.kit).toBe('hello-kit');
 
     // Uninstalled: the scope's list no longer names it.
     await kits.sync([], ORIGIN);
-    expect(inSlot(SHELL_SLOTS.screenPanels)).toEqual([]);
+    expect(inSlot(SHELL_SLOTS.projectOverviewContent)).toEqual([]);
     expect(inSlot(SHELL_SLOTS.projectHeaderStatus)).toEqual([]);
     expect(registry.getExtensionsForDomain(screenDomain.id).some((ext) => ext.id.includes('hello_kit'))).toBe(false);
   });

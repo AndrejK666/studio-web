@@ -64,6 +64,16 @@ export interface UsageItem {
 }
 
 export interface MatcherService {
+  /** The strategy it runs (`gears_matcher`, or an organization kit's); absent from an older server. */
+  strategy?: string;
+  /** The strategy's name, as its kit says it. */
+  name?: string;
+  kit?: string;
+  /** `MATCHER_NOT_CONFIGURED` or `STRATEGY_NOT_CONNECTED`; null when it can run. */
+  code?: string | null;
+  /** Runs it started in the period, and what they spent. */
+  runs?: number;
+  usage?: ModelUsage;
   configured: boolean;
   missing?: string | null;
   /** Null when nothing was asked (not configured). */
@@ -96,7 +106,10 @@ export interface GearMatchUsage {
     questions_answered: number;
     median_run_ms?: number | null;
   };
+  /** The shipped strategy's service. */
   service: MatcherService;
+  /** Service stats by strategy. Earlier builds returned the same stats as an array. */
+  services?: Record<string, MatcherService> | MatcherService[];
   items: UsageItem[];
   total: number;
 }
@@ -113,9 +126,22 @@ export function periodOf(value: unknown): Period {
 }
 
 /** How the service stands: answering, configured but silent, or not configured. */
-export type ServiceState = 'answers' | 'silent' | 'unknown' | 'missing';
+export type ServiceState = 'answers' | 'silent' | 'unknown' | 'missing' | 'unconnected';
+
+/** The service blocks to show: every service strategy's, else (an older server) the shipped one's. */
+export function servicesOf(u: GearMatchUsage): MatcherService[] {
+  if (Array.isArray(u.services)) return u.services.length ? u.services : [u.service];
+  const { gears_matcher: shipped = u.service, ...services } = u.services ?? {};
+  return [shipped, ...Object.values(services)];
+}
+
+/** Projects assembled by a service strategy (every strategy but `spec_mapping` and `manual`). */
+export function serviceProjects(list: readonly UsageCount[]): number {
+  return list.filter((c) => c.key !== 'spec_mapping' && c.key !== 'manual').reduce((n, c) => n + c.projects, 0);
+}
 
 export function serviceState(s: MatcherService): ServiceState {
+  if (s.code === 'STRATEGY_NOT_CONNECTED') return 'unconnected';
   if (!s.configured) return 'missing';
   if (s.answers === true) return 'answers';
   if (s.answers === false) return 'silent';

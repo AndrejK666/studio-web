@@ -1,0 +1,23 @@
+# This micro-frontend's passport (see tests-mfe/frontx.gdl for what each field is).
+#
+# The M&A due diligence kit (`mna`): a built-in kit whose project type is a
+# deal (ADR-0073). Its one screen is a project-level tab, shown only where the
+# kit is installed.
+gdl_version = "1.5"
+
+mfe(
+    name = "@constructor-studio/mna-mfe",
+    version = "0.2.0-alpha.0",
+
+    # The backend gears its screen calls, by gear id.
+    requires = ["studio-kits"],
+
+    screens = ["Deal"],
+    mounts = ["/deal"],
+
+    frontx = "0.2.0-alpha.15",
+
+    roles = [],
+
+    preview = ["/deal"],
+)

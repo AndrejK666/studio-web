@@ -20,6 +20,10 @@ Status: **proposed** · Date: 2026-11-19 · **Amends** ADR-0072 (§3, §4: the s
   - [2. A base kit an organization may uninstall](#2-a-base-kit-an-organization-may-uninstall)
   - [3. A kit provides a strategy](#3-a-kit-provides-a-strategy)
   - [4. Which strategy a product is assembled by](#4-which-strategy-a-product-is-assembled-by)
+- [Amendment (2026-11-19): the open questions answered, and plug-in strategies](#amendment-2026-11-19-the-open-questions-answered-and-plug-in-strategies)
+  - [A. The capabilities and requirements tools go back to the Project model](#a-the-capabilities-and-requirements-tools-go-back-to-the-project-model)
+  - [B. The mapping decisions are Spec mapping's](#b-the-mapping-decisions-are-spec-mappings)
+  - [C. An organization's kit may provide a strategy a service runs](#c-an-organizations-kit-may-provide-a-strategy-a-service-runs)
 - [Consequences](#consequences)
 - [Confirmation](#confirmation)
 - [Open questions](#open-questions)
@@ -43,14 +47,15 @@ and how does a product learn which strategies it may use without a list in code?
 ### 1. The Spec mapping kit
 
 A fifteenth built-in kit, `spec-mapping` ("Spec mapping"), levels organization and
-project, no `requires`, no model (it claims no type; `mapping-decision` stays the
-Product kit's type, so an install or uninstall changes no organization's model).
+project, no `requires`, no model overlay (as first decided it claimed no type; the
+amendment, §B, gives it `mapping-decision`).
 As with ADR-0072 only ownership moves; studio-spec-mapping's code stays where it is.
 
 - **Claims** (ADR-0071 §1) on `studio-spec-mapping`: the MCP tools
-  `project_capabilities`, `project_findings`, `project_plan`,
-  `project_requirements` (until now `project-domain-model`'s) and the write route
-  `POST /studio-spec-mapping/v1/decisions` (until now `project-product`'s).
+  `project_findings` and `project_plan` (until now `project-domain-model`'s; the
+  amendment, §A, leaves `project_capabilities` and `project_requirements` with it)
+  and the write route `POST /studio-spec-mapping/v1/decisions` (until now
+  `project-product`'s).
 - **Reads** that are the plan answer `KIT_NOT_INSTALLED` naming the kit where it
   does not apply to the project: `GET plan`, `GET findings`, `GET decisions`. Not
   a claim (claims are writes, ADR-0071 §2): studio-spec-mapping asks the shared
@@ -112,6 +117,75 @@ kit cannot bring a strategy studio-product does not run.
 The usage statistics on Organization › Gears matcher count projects by these
 strategies, `manual` included (design §9).
 
+## Amendment (2026-11-19): the open questions answered, and plug-in strategies
+
+The owner answered yes to the three open questions this record had.
+
+### A. The capabilities and requirements tools go back to the Project model
+
+`project_capabilities` and `project_requirements` read what a project's documents
+say, not the plan, so they are the Project model's (`project-domain-model`) again,
+which also names `GET /studio-spec-mapping/v1/capabilities` and `GET .../requirements`
+among its reads. The routes stay open, as §1 has them: Tests reads them.
+Spec mapping keeps `project_plan` and `project_findings`.
+
+### B. The mapping decisions are Spec mapping's
+
+The gear type `mapping-decision` (studio-artifact-ingest's) moves from the Product
+kit's claims to Spec mapping's. Nothing is renamed, so no alias is involved: the
+`kit-rename` sweep (ADR-0071 §8) moves a stored `meta.kit = project-product` on the
+type to `spec-mapping`, because the built-in kits' owners table now says so
+(`owners.rs`), on its first pass after start or at the organization's next
+reconciliation. Where Spec mapping does not apply the type is **dormant**, left by
+it: a person's write is refused (and `POST decisions` answers `KIT_NOT_INSTALLED`
+already), the gear keeps writing through its own path, and **every decision row
+stays, readable**: nothing is deleted, and installing the kit again wakes the type
+with the same rows. Uninstalling Product no longer touches them, and no Product read
+depends on them (the plan that ranks by them is Spec mapping's own read). Spec
+mapping now has a model in the ADR-0070 §5 sense (one claimed type, no overlay);
+its install and uninstall reconcile it as any claiming kit's do.
+
+### C. An organization's kit may provide a strategy a service runs
+
+A kit's `assembly_strategy` may declare `service: {contract: "gears-matcher/v1"}`:
+a plug-in service runs the strategy, with no code of it inside Studio. The contract
+is the gears-matcher's API (`gears-matcher/schemas/service/matcher-service.openapi.yaml`:
+`GET /v1/info`, `POST /v1/runs` with an `Idempotency-Key`, `GET /v1/runs/{id}`,
+`GET /v1/runs/{id}/report`, `POST /v1/runs/{id}/cancel`, a bearer).
+
+- **The manifest section is checked** when a kit is put on an organization's shelf
+  (and for every built-in kit): the contract is one Studio speaks
+  (`STRATEGY_CONTRACTS`); a strategy without `service` is only Spec mapping's
+  `spec_mapping`; `spec_mapping` and `gears_matcher` stay their kits' ids; and a
+  service strategy's kit **requires `gears-matcher`**, whose gear-match routes,
+  screens and Inbox run and read every service strategy (its claimed writes answer
+  `KIT_NOT_INSTALLED` without it). Built-in Gears matcher declares
+  `service: {contract: "gears-matcher/v1"}` too: `gears_matcher` is the first
+  instance, not a special case.
+- **The organization binds the endpoint and the secret as a connection**, never in
+  the manifest: a new connection kind `assembly-service` (driver
+  `assembly-service-connector-plugin`, in `KNOWN_DRIVERS`, category `service`) with
+  one option, `strategy`, the id it serves. Verifying it asks `GET /v1/info` with
+  the secret. Organization › Gears matcher offers the connect form per strategy;
+  the secret goes to credstore like any connection's. Like every connection's
+  address it must be public HTTPS (`url_guard`). A person's own connection never
+  serves a strategy: a match runs for everybody in the project.
+- **studio-product runs it through the same pipeline** (client, task, report,
+  decisions), keyed by the strategy id: matches carry their `strategy`
+  (`m0005`; earlier rows are `gears_matcher`), `POST/GET gear-matches` take
+  `?strategy=` (default `gears_matcher`), and the run asks for the strategy's
+  service: the organization's connection, else, for `gears_matcher` only, the
+  deployment's `config.gears_matcher` as before. The members' decisions and
+  answers stay per project, shared across strategies (a decision is about a gear
+  for a requirement, whoever proposed it).
+- **Offered** where the kit applies (`KitPresence::strategies` reads an
+  organization's own kit's manifest at its pin). Without a connection the strategy
+  falls back with `STRATEGY_NOT_CONNECTED` and its sentence, as `gears_matcher` does
+  with `MATCHER_NOT_CONFIGURED`.
+- **The Organization page** shows one service block per service strategy (live
+  `/v1/info`, cached 30 s per organization and strategy; its runs and model use in
+  the period), and the usage statistics count runs and tokens per strategy.
+
 ## Consequences
 
 - Good, because an organization decides which ways of assembling it uses, and the
@@ -138,7 +212,10 @@ strategies, `manual` included (design §9).
 
 ## Open questions
 
-- Whether `project_capabilities` and `project_requirements` belong to the Project
-  model kit rather than to Spec mapping: they read what the documents say, not
-  the plan.
-- Whether `mapping-decision` should become the Spec mapping kit's type.
+- Answered by the amendment: `project_capabilities` and `project_requirements` are
+  the Project model's (§A); `mapping-decision` is Spec mapping's (§B).
+- Whether the Gear match tab should offer a strategy picker where an organization
+  has more than one service strategy (today it shows `gears_matcher`'s matches;
+  another strategy's are run and proposed from Project › Product).
+- Whether a second contract (a strategy speaking something other than the
+  gears-matcher's API) is worth a second client.

@@ -7,7 +7,7 @@ import { HelloPanel } from './HelloPanel';
 
 const KIT_THEME_ON_HOST = anchorKitThemeOnShadowHost(kitTheme);
 
-/** `./panel`: the panel on Project › Overview (the shell's slot `screen.panels`). */
+/** `./panel`: the delivery estimate inside Project › Overview. */
 class PanelLifecycle extends StudioMfeLifecycle {
   constructor() {
     super(mfeApp, KIT_THEME_ON_HOST);

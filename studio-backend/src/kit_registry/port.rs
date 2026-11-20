@@ -23,10 +23,12 @@ pub use super::gate::{
     KIT_NOT_INSTALLED, KitRefusal, require_kit, sync_wanted, tool_refusal, with_claimed_routes,
 };
 use super::installed::{KitInstaller, Refusal};
+pub use super::manifest::STRATEGY_CONTRACTS;
 pub(crate) use super::manifest::{
     KitManifest, PROJECT_CREATION_STEPS, project_type_kit, project_type_kits,
 };
 pub use super::owners::{KitOwners, MarkOn, Rehome};
+pub(crate) use super::project_types::OrgProjectType;
 use super::service::KitRegistryService;
 pub use super::service::{CONSTRUCTOR_RESEARCH_KIT, GEARS_MATCHER_KIT, SPEC_MAPPING_KIT};
 
@@ -39,25 +41,38 @@ pub struct ProvidedStrategy {
     pub id: String,
     pub name: String,
     pub description: String,
+    /// The contract of the service that runs it (`gears-matcher/v1`); `None`
+    /// for the strategy studio-product runs itself (`spec_mapping`).
+    pub service: Option<String>,
 }
 
-/// The assembly strategies the kits `slugs` provide, in the order given; a
-/// slug that is not a built-in kit, or a kit that declares none, provides
-/// none. Built-in kits only: an organization's own kit cannot bring a
-/// strategy studio-product does not know how to run.
+impl ProvidedStrategy {
+    fn of(m: super::manifest::KitManifest) -> Option<Self> {
+        let s = m.assembly_strategy?;
+        Some(Self {
+            kit: m.slug,
+            id: s.id,
+            name: s.name,
+            description: s.description,
+            service: s.service.map(|v| v.contract),
+        })
+    }
+}
+
+/// The strategy a kit's `kit.json` provides, read and checked as the shelf
+/// reads an organization's kit: what a test of another gear starts from.
+#[cfg(test)]
+pub fn strategy_of_kit_json(body: &str) -> Result<Option<ProvidedStrategy>, String> {
+    Ok(ProvidedStrategy::of(super::manifest::read_kit_json(body)?))
+}
+
+/// The assembly strategies the built-in kits `slugs` provide, in the order
+/// given; a slug that is not a built-in kit, or a kit that declares none,
+/// provides none. [`KitPresence::strategies`] adds an organization's own.
 pub fn assembly_strategies(slugs: &[String]) -> Vec<ProvidedStrategy> {
     slugs
         .iter()
-        .filter_map(|slug| {
-            let m = super::manifest::builtin_manifest(slug)?;
-            let s = m.assembly_strategy?;
-            Some(ProvidedStrategy {
-                kit: m.slug,
-                id: s.id,
-                name: s.name,
-                description: s.description,
-            })
-        })
+        .filter_map(|slug| ProvidedStrategy::of(super::manifest::builtin_manifest(slug)?))
         .collect()
 }
 
@@ -81,7 +96,9 @@ pub trait ProjectKitRequests: Send + Sync + 'static {
         version: Option<&str>,
     ) -> anyhow::Result<()>;
 
-    /// Activate the chosen built-in type on the project a creation run just made.
+    /// Activate the chosen type on the project a creation run just made: a
+    /// built-in project type, or one `organization` installed, at the
+    /// version the organization has (ADR-0073 Amendment 2).
     async fn install_project_type(
         &self,
         ctx: &SecurityContext,
@@ -89,6 +106,20 @@ pub trait ProjectKitRequests: Send + Sync + 'static {
         organization: Uuid,
         slug: &str,
     ) -> anyhow::Result<()>;
+
+    /// The project types `organization` offers: the built-in ones, then the
+    /// kits it installed whose model derives a subtype of Project, each at
+    /// the version it comes at. Read as this gear: the caller has been shown
+    /// to reach the organization.
+    async fn project_types(&self, _organization: Uuid) -> anyhow::Result<Vec<OrgProjectType>> {
+        Ok(project_type_kits()
+            .map(|manifest| OrgProjectType {
+                manifest,
+                version: None,
+                shelf: super::service::SHELF_BUILTIN,
+            })
+            .collect())
+    }
 }
 
 /// studio-kits' [`ProjectKitRequests`].
@@ -129,6 +160,13 @@ impl ProjectKitRequests for KitRequests {
                 }
                 other => anyhow::anyhow!("{other:?}"),
             })
+    }
+
+    async fn project_types(&self, organization: Uuid) -> anyhow::Result<Vec<OrgProjectType>> {
+        self.installer
+            .project_types(organization)
+            .await
+            .map_err(|failure| anyhow::anyhow!("{failure:?}"))
     }
 
     async fn requested(
@@ -192,6 +230,17 @@ pub trait KitPresence: Send + Sync + 'static {
     /// [`Self::applies`] reads them: what a reader of several kits' signals
     /// asks once (studio-organizations' project status and Overview).
     async fn effective(&self, ctx: &SecurityContext, tenant: Uuid) -> anyhow::Result<Vec<String>>;
+
+    /// The assembly strategies the kits that apply where `tenant` is provide
+    /// (ADR-0074): the built-in kits' and, for an organization's own kit, its
+    /// manifest at the version installed.
+    async fn strategies(
+        &self,
+        ctx: &SecurityContext,
+        tenant: Uuid,
+    ) -> anyhow::Result<Vec<ProvidedStrategy>> {
+        Ok(assembly_strategies(&self.effective(ctx, tenant).await?))
+    }
 }
 
 /// studio-kits' [`KitPresence`]: the same answer `GET /installed-kits` gives.
@@ -233,5 +282,38 @@ impl KitPresence for InstalledKits {
             .into_iter()
             .map(|k| k.kit_slug)
             .collect())
+    }
+
+    async fn strategies(
+        &self,
+        ctx: &SecurityContext,
+        tenant: Uuid,
+    ) -> anyhow::Result<Vec<ProvidedStrategy>> {
+        let installed = if self.installer.store().is_project(ctx, tenant).await {
+            self.installer.installed_in_project(ctx, tenant).await
+        } else {
+            self.installer.installed(ctx, tenant).await
+        }
+        .map_err(|refusal| anyhow::anyhow!("the installed kits could not be read: {refusal:?}"))?;
+        let mut out = Vec::new();
+        for k in &installed.effective {
+            let manifest = if k.shelf == super::service::SHELF_ORGANIZATION {
+                // The organization's own kit, as pinned at its installation;
+                // its manifest was checked when it was put on the shelf.
+                self.installer
+                    .pinned_manifest(installed.organization_id, &k.kit_slug, &k.version)
+                    .await
+                    .ok()
+                    .flatten()
+            } else {
+                super::manifest::builtin_manifest(&k.kit_slug)
+            };
+            if let Some(p) = manifest.and_then(ProvidedStrategy::of)
+                && !out.iter().any(|o: &ProvidedStrategy| o.id == p.id)
+            {
+                out.push(p);
+            }
+        }
+        Ok(out)
     }
 }

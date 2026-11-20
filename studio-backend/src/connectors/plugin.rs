@@ -156,3 +156,7 @@ mod registry_plugin;
 /// its identity provider client is configured.
 #[path = "plugins/research/mod.rs"]
 mod research_plugin;
+
+/// An assembly strategy's service (ADR-0074, amendment).
+#[path = "plugins/assembly_service/mod.rs"]
+mod assembly_service_plugin;

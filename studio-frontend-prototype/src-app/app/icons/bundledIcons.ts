@@ -37,6 +37,7 @@ import {
   Frame,
   GitPullRequest,
   Globe,
+  Handshake,
   History,
   House,
   Inbox,
@@ -95,6 +96,7 @@ export const BUNDLED_ICONS: Readonly<Record<string, LucideIcon>> = {
   frame: Frame,
   'git-pull-request': GitPullRequest,
   globe: Globe,
+  handshake: Handshake,
   history: History,
   // lucide renamed it; the catalogue still says `home`.
   home: House,

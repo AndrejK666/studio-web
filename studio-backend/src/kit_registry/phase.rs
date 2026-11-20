@@ -105,7 +105,7 @@ fn text(v: &Value, key: &str) -> Option<String> {
 
 impl KitInstaller {
     /// The caller, acting in `project`'s organization: where the model is.
-    async fn org_ctx(
+    pub(super) async fn org_ctx(
         &self,
         ctx: &SecurityContext,
         project: Uuid,
@@ -116,8 +116,27 @@ impl KitInstaller {
         Ok((org, at))
     }
 
+    /// Write the project's own object whole, as `ctx`. With
+    /// [`Self::project_object`], the one place a kit function names the type a
+    /// project's object is stored as (ADR-0073 §6; studio-web#1118 stores it as
+    /// its kit's subtype of Project): a kit's fields go through these two,
+    /// never through a query or a write of their own.
+    pub(super) async fn put_project_object(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+        payload: Value,
+    ) -> anyhow::Result<()> {
+        let port = self
+            .models()
+            .ok_or_else(|| anyhow::anyhow!("the domain model is not running"))?;
+        port.upsert_in(ctx, "project", "self", &project.to_string(), payload)
+            .await
+            .map(|_| ())
+    }
+
     /// The project's own object, whole: its instance id and payload.
-    async fn project_object(
+    pub(super) async fn project_object(
         &self,
         ctx: &SecurityContext,
         project: Uuid,
@@ -226,10 +245,7 @@ impl KitInstaller {
         for key in ["_scope", "id"] {
             obj.remove(key);
         }
-        let port = self
-            .models()
-            .ok_or_else(|| Refusal::Internal(anyhow::anyhow!("the domain model is not running")))?;
-        port.upsert_in(&at, "project", "self", &project.to_string(), payload)
+        self.put_project_object(&at, project, payload)
             .await
             .map_err(|e| {
                 if is_refusal(&e) {

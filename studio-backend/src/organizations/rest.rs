@@ -1854,7 +1854,7 @@ pub fn register_routes(
         .register(router, openapi);
 
     let router = OperationBuilder::put("/studio-organizations/v1/access-config")
-        .operation_id("studio_organizations.save_access_config")
+        .operation_id("studio_organizations.update_access_config")
         .summary("Save an organization's access settings at a known version")
         .description("Saves roles and grants for an access administrator. A concurrent change returns a conflict. Ownership grants follow membership.")
         .tag("StudioOrganizations")

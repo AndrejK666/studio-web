@@ -280,7 +280,7 @@ export interface ConnectorProvider {
   default_base_url: string;
   /** GTS instance id of the driver plugin. */
   instance_id: string;
-  /** `source_code` | `ai` | `notification` | `cluster` | `registry` | `compute`. */
+  /** `source_code` | `ai` | `notification` | `cluster` | `registry` | `compute` | `service`. */
   category: string;
   /** Label for the credential field, e.g. "API Key" vs "Personal Access Token (PAT)". */
   credential_label: string;

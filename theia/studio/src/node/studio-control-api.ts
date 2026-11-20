@@ -166,7 +166,8 @@ export function mountStudioControlApi(app: express.Application, context: StudioC
     handle(router, '/installKit', async req => context.installKit({
         kitSlug: asString(req.body?.kitSlug),
         version: asString(req.body?.version),
-        repositoryId: optionalString(req.body?.repositoryId)
+        repositoryId: optionalString(req.body?.repositoryId),
+        shelfFiles: req.body?.shelfFiles
     }));
 
     app.use(STUDIO_CONTROL_BASE_PATH, router);

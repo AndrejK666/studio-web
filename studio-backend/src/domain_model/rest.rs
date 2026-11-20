@@ -700,9 +700,11 @@ async fn list_types(
     } else {
         super::ontology::Ontology::without_dormant(&ontology)
     };
+    let ontology = super::ontology::Ontology::from_value(ontology)
+        .map_err(|error| CanonicalError::internal(error.to_string()).create())?;
     let gts = super::gts::catalog_of(&ontology);
     Ok(Json(TypesResponse {
-        ontology: with_origins(ontology),
+        ontology: with_origins(ontology.into_document()),
         can_edit_model,
         gts,
     }))

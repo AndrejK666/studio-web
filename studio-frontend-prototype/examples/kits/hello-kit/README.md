@@ -3,11 +3,13 @@
 A kit from outside the portal's build (ADR-0068 phase 5): one project tab,
 **Hello**, whose screen the portal loads at run time from the kit's own
 bundle, and two contributions into screens the kit does not own — a panel on
-Project › Overview (slot `screen.panels`) and a chip beside the open project
+Project › Overview (slot `project.overview.content`) and a chip beside the open project
 in the path bar (slot `project.header.status`). Installing the kit shows them,
 uninstalling takes them out (and a page showing the tab says it is not
 available here), installing a new version swaps them in without a reload, and
-the portal is not rebuilt for any of it.
+the portal is not rebuilt for any of it. The Overview panel calculates an
+estimate from the remaining item count and the daily throughput. Its own
+browser code runs the calculation without an API or a gear.
 
 It is deliberately not under `src-app/mfe_packages/`: nothing in the portal's
 `npm run build` sees it. It builds with the portal's `node_modules` (it sits
@@ -21,6 +23,7 @@ inside the bundle, as in every portal MFE.
 | File | What |
 |---|---|
 | `kit.gdl` | The kit's passport: `name` (its slug), `version`, `levels`, and `mfe = [path("mfe/hello")]`, the bundle |
+| `kit.json` | The manifest for an organization that reads the kit from its Git connection |
 | `mfe.json` | The FrontX manifest: three Module Federation entries; one screen extension (level `project`, route `/hello-kit`, kit `hello-kit`) and two slot contributions (type `…shell.slots.contribution.v1~`: the panel with `screen: "/projects/overview"`, the status chip) |
 | `vite.config.ts` | The same Module Federation build as a portal MFE, written into `mfe/hello/`; exposes `./lifecycle`, `./panel`, `./status` |
 | `src/` | The screen, the panel and the chip |
@@ -32,6 +35,11 @@ The slots a kit can contribute into, and what a contribution's
 `mfe/hello/` (git-ignored) is the built bundle: `mfe-manifest.json`,
 `remoteEntry.js`, `assets/`, `shared/`. That directory is what the backend
 serves.
+
+For a repository-backed installation, publish `kit.json`, `README.md` and
+the built `mfe/hello/` together in the repository or directory registered
+under Organization › Kits. Studio resolves the manifest and bundle from the
+same commit.
 
 ## Build it
 
@@ -67,8 +75,9 @@ example `-v $PWD/studio-frontend-prototype/examples/kits:/kits:ro` and
    `PUT /cf/studio-kits/v1/project-kits/hello-kit?project_id=<project>` with `{}`.
 3. `GET /cf/studio-kits/v1/mfe-manifests?project_id=<project>` lists the
    package `hello` with its `base_path`.
-4. Open the project in the portal: a **Hello** tab is there. The portal was
-   not rebuilt.
+4. Open the project in the portal. Open **Hello**, then **Overview**. In
+   **Delivery estimate**, enter 13 items and 3 items per workday. The kit
+   reports 5 workdays.
 5. `DELETE /cf/studio-kits/v1/project-kits/hello-kit?project_id=<project>`:
    the tab is gone.
 

@@ -61,6 +61,7 @@ export {
   type ChainOutcomes,
 } from './host/chainOutcome';
 export { useNotify } from './host/useNotify';
+export { KitContentSlot, KIT_CONTENT_SLOT_EVENT, type KitContentSlotName } from './host/KitContentSlot';
 export {
   BUILT_PREVIEWS_DIR,
   BUILT_PREVIEWS_INDEX,

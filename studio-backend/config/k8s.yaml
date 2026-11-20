@@ -1128,6 +1128,10 @@ gears:
       # /embeddings endpoint with the key from the `embed_api_key` app secret.
       # Switching over a populated graph blocks vector search until re-embedded.
       embedding_dimension: 384
+      # A kit's Project subtype is stored under a GTS id chained onto
+      # Project's: node / owned_node / project / subtype, four segments
+      # (ADR-0073 amendment). The gear's default admits three.
+      ontology_max_chain_depth: 4
       embedding_provider: "${STUDIO_EMBEDDING_PROVIDER:-fake}"
       embedding_model_path: "/app/models/minilm/model.onnx"
       embedding_tokenizer_path: "/app/models/minilm/tokenizer.json"

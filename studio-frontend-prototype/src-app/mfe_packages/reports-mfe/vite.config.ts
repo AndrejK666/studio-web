@@ -32,6 +32,7 @@ export default defineConfig({
       dts: false,
       exposes: {
         './lifecycle': './src/lifecycle.tsx',
+        './metrics': './src/metrics.tsx',
       },
       // Empty shared config — MF 2.0's shared dep mechanism is bypassed.
       // Shared deps are externalized via rollupOptions.external and provided

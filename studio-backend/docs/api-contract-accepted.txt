@@ -168,6 +168,12 @@ request	PATCH /studio-domain-model/v1/types/{}/fields/{}	migrate	bool	optional
 request	PATCH /studio-domain-model/v1/types/{}/fields/{}	rename_to	String	optional
 request	PATCH /studio-domain-model/v1/types/{}/fields/{}	required	bool	optional
 request	PATCH /studio-domain-model/v1/types/{}/fields/{}	type	String	optional
+request	PATCH /studio-kits/v1/mna/deal	conditions	Vec<String>	optional
+request	PATCH /studio-kits/v1/mna/deal	deal_phase	String	optional
+request	PATCH /studio-kits/v1/mna/deal	ic_date	String	optional
+request	PATCH /studio-kits/v1/mna/deal	recommendation	String	optional
+request	PATCH /studio-kits/v1/mna/deal	target	String	optional
+request	PATCH /studio-kits/v1/mna/deal	thesis	String	optional
 request	PATCH /studio-scheduler/v1/schedules/{}	concurrency	String	optional
 request	PATCH /studio-scheduler/v1/schedules/{}	enabled	bool	optional
 request	PATCH /studio-scheduler/v1/schedules/{}	expression	String	optional
@@ -824,6 +830,23 @@ request	POST /studio-insight/v1/pull	resource	String	required
 request	POST /studio-insight/v1/push	payload	Value	required
 request	POST /studio-insight/v1/push	resource	String	required
 request	POST /studio-insight/v1/query	sql	String	required
+request	POST /studio-kits/v1/mna/findings	evidence	String	optional
+request	POST /studio-kits/v1/mna/findings	origin	String	optional
+request	POST /studio-kits/v1/mna/findings	severity	String	required
+request	POST /studio-kits/v1/mna/findings	source	String	optional
+request	POST /studio-kits/v1/mna/findings	status	String	optional
+request	POST /studio-kits/v1/mna/findings	title	String	required
+request	POST /studio-kits/v1/mna/open-questions	answer	String	optional
+request	POST /studio-kits/v1/mna/open-questions	status	String	optional
+request	POST /studio-kits/v1/mna/open-questions	what	String	required
+request	POST /studio-kits/v1/mna/open-questions	who	String	optional
+request	POST /studio-kits/v1/mna/risks	finding_id	String	optional
+request	POST /studio-kits/v1/mna/risks	impact	String	required
+request	POST /studio-kits/v1/mna/risks	likelihood	String	required
+request	POST /studio-kits/v1/mna/risks	mitigation	String	optional
+request	POST /studio-kits/v1/mna/risks	owner	String	optional
+request	POST /studio-kits/v1/mna/risks	status	String	optional
+request	POST /studio-kits/v1/mna/risks	title	String	required
 request	POST /studio-kits/v1/organization-shelf	connection_id	Uuid	required
 request	POST /studio-kits/v1/organization-shelf	path	String	optional
 request	POST /studio-kits/v1/organization-shelf	ref	String	optional
@@ -1237,10 +1260,29 @@ request	PUT /studio-environments/v1/project-environments/{}	research_hardware	St
 request	PUT /studio-environments/v1/project-environments/{}	research_project	String	optional
 request	PUT /studio-environments/v1/project-environments/{}	strictness	String	optional
 request	PUT /studio-kits/v1/base-kits/{}	version	String	optional
+request	PUT /studio-kits/v1/mna/findings/{}	evidence	String	optional
+request	PUT /studio-kits/v1/mna/findings/{}	origin	String	optional
+request	PUT /studio-kits/v1/mna/findings/{}	severity	String	required
+request	PUT /studio-kits/v1/mna/findings/{}	source	String	optional
+request	PUT /studio-kits/v1/mna/findings/{}	status	String	optional
+request	PUT /studio-kits/v1/mna/findings/{}	title	String	required
+request	PUT /studio-kits/v1/mna/open-questions/{}	answer	String	optional
+request	PUT /studio-kits/v1/mna/open-questions/{}	status	String	optional
+request	PUT /studio-kits/v1/mna/open-questions/{}	what	String	required
+request	PUT /studio-kits/v1/mna/open-questions/{}	who	String	optional
+request	PUT /studio-kits/v1/mna/risks/{}	finding_id	String	optional
+request	PUT /studio-kits/v1/mna/risks/{}	impact	String	required
+request	PUT /studio-kits/v1/mna/risks/{}	likelihood	String	required
+request	PUT /studio-kits/v1/mna/risks/{}	mitigation	String	optional
+request	PUT /studio-kits/v1/mna/risks/{}	owner	String	optional
+request	PUT /studio-kits/v1/mna/risks/{}	status	String	optional
+request	PUT /studio-kits/v1/mna/risks/{}	title	String	required
 request	PUT /studio-kits/v1/organization-kits/{}	version	String	optional
 request	PUT /studio-kits/v1/project-kits/{}	version	String	optional
 request	PUT /studio-kits/v1/project-phase	owner	String	optional
 request	PUT /studio-kits/v1/project-phase	phase	String	required
+request	PUT /studio-organizations/v1/access-config	document	Value	required
+request	PUT /studio-organizations/v1/access-config	expected_version	i64	required
 request	PUT /studio-organizations/v1/access-grants	role_key	String	required
 request	PUT /studio-organizations/v1/access-grants	scope_id	String	optional
 request	PUT /studio-organizations/v1/access-grants	scope_name	String	optional
@@ -4587,6 +4629,70 @@ response	GET /studio-kits/v1/mfe-manifests	items.version	String	always
 response	GET /studio-kits/v1/mfe-manifests	organization_id	String	always
 response	GET /studio-kits/v1/mfe-manifests	project_id	String	optional
 response	GET /studio-kits/v1/mfe-manifests	total	u32	always
+response	GET /studio-kits/v1/mna/deal	conditions	Vec<String>	always
+response	GET /studio-kits/v1/mna/deal	deal_lead	String	optional
+response	GET /studio-kits/v1/mna/deal	deal_phase	String	optional
+response	GET /studio-kits/v1/mna/deal	ic_date	String	optional
+response	GET /studio-kits/v1/mna/deal	installed	bool	always
+response	GET /studio-kits/v1/mna/deal	may_sign_off	bool	always
+response	GET /studio-kits/v1/mna/deal	phases	Vec<String>	always
+response	GET /studio-kits/v1/mna/deal	project_id	String	always
+response	GET /studio-kits/v1/mna/deal	recommendation	String	optional
+response	GET /studio-kits/v1/mna/deal	recommendations	Vec<String>	always
+response	GET /studio-kits/v1/mna/deal	signed_off_at	String	optional
+response	GET /studio-kits/v1/mna/deal	signed_off_by	String	optional
+response	GET /studio-kits/v1/mna/deal	target	String	optional
+response	GET /studio-kits/v1/mna/deal	thesis	String	optional
+response	GET /studio-kits/v1/mna/evidence	facts	Vec<{}>	always
+response	GET /studio-kits/v1/mna/evidence	facts.available	bool	always
+response	GET /studio-kits/v1/mna/evidence	facts.detail	String	optional
+response	GET /studio-kits/v1/mna/evidence	facts.key	String	always
+response	GET /studio-kits/v1/mna/evidence	facts.source	String	always
+response	GET /studio-kits/v1/mna/evidence	facts.total	f64	optional
+response	GET /studio-kits/v1/mna/evidence	facts.value	f64	optional
+response	GET /studio-kits/v1/mna/evidence	project_id	String	always
+response	GET /studio-kits/v1/mna/evidence	read_at	String	always
+response	GET /studio-kits/v1/mna/evidence	repositories	Vec<{}>	always
+response	GET /studio-kits/v1/mna/evidence	repositories.branch	String	optional
+response	GET /studio-kits/v1/mna/evidence	repositories.contributors	u32	optional
+response	GET /studio-kits/v1/mna/evidence	repositories.full_path	String	always
+response	GET /studio-kits/v1/mna/evidence	repositories.synced_at	String	optional
+response	GET /studio-kits/v1/mna/evidence	repositories.truck_factor	u32	optional
+response	GET /studio-kits/v1/mna/findings	items	Vec<{}>	always
+response	GET /studio-kits/v1/mna/findings	items.created_at	String	optional
+response	GET /studio-kits/v1/mna/findings	items.created_by	String	optional
+response	GET /studio-kits/v1/mna/findings	items.evidence	String	optional
+response	GET /studio-kits/v1/mna/findings	items.id	String	always
+response	GET /studio-kits/v1/mna/findings	items.origin	String	always
+response	GET /studio-kits/v1/mna/findings	items.severity	String	always
+response	GET /studio-kits/v1/mna/findings	items.source	String	optional
+response	GET /studio-kits/v1/mna/findings	items.status	String	always
+response	GET /studio-kits/v1/mna/findings	items.title	String	always
+response	GET /studio-kits/v1/mna/findings	items.updated_at	String	optional
+response	GET /studio-kits/v1/mna/findings	total	u32	always
+response	GET /studio-kits/v1/mna/open-questions	items	Vec<{}>	always
+response	GET /studio-kits/v1/mna/open-questions	items.answer	String	optional
+response	GET /studio-kits/v1/mna/open-questions	items.created_at	String	optional
+response	GET /studio-kits/v1/mna/open-questions	items.created_by	String	optional
+response	GET /studio-kits/v1/mna/open-questions	items.id	String	always
+response	GET /studio-kits/v1/mna/open-questions	items.status	String	always
+response	GET /studio-kits/v1/mna/open-questions	items.updated_at	String	optional
+response	GET /studio-kits/v1/mna/open-questions	items.what	String	always
+response	GET /studio-kits/v1/mna/open-questions	items.who	String	optional
+response	GET /studio-kits/v1/mna/open-questions	total	u32	always
+response	GET /studio-kits/v1/mna/risks	items	Vec<{}>	always
+response	GET /studio-kits/v1/mna/risks	items.created_at	String	optional
+response	GET /studio-kits/v1/mna/risks	items.created_by	String	optional
+response	GET /studio-kits/v1/mna/risks	items.finding_id	String	optional
+response	GET /studio-kits/v1/mna/risks	items.id	String	always
+response	GET /studio-kits/v1/mna/risks	items.impact	String	always
+response	GET /studio-kits/v1/mna/risks	items.likelihood	String	always
+response	GET /studio-kits/v1/mna/risks	items.mitigation	String	optional
+response	GET /studio-kits/v1/mna/risks	items.owner	String	optional
+response	GET /studio-kits/v1/mna/risks	items.status	String	always
+response	GET /studio-kits/v1/mna/risks	items.title	String	always
+response	GET /studio-kits/v1/mna/risks	items.updated_at	String	optional
+response	GET /studio-kits/v1/mna/risks	total	u32	always
 response	GET /studio-kits/v1/organization-shelf	items	Vec<{}>	always
 response	GET /studio-kits/v1/organization-shelf	items.contents	{}	always
 response	GET /studio-kits/v1/organization-shelf	items.contents.docs	Vec<String>	always
@@ -4755,6 +4861,8 @@ response	GET /studio-mcp/v1/oauth-protected-resource	resource_name	String	always
 response	GET /studio-mcp/v1/oauth-protected-resource	scopes_supported	Vec<String>	always
 response	GET /studio-organizations/v1/access-catalogue	default_roles	Value	always
 response	GET /studio-organizations/v1/access-catalogue	privileges	Vec<String>	always
+response	GET /studio-organizations/v1/access-config	document	Value	always
+response	GET /studio-organizations/v1/access-config	version	i64	always
 response	GET /studio-organizations/v1/capabilities	decides_requests	bool	always
 response	GET /studio-organizations/v1/capabilities	organization_creation	String	always
 response	GET /studio-organizations/v1/capabilities	self_service	bool	always
@@ -4893,9 +5001,11 @@ response	GET /studio-organizations/v1/project-creation-types	items.next_steps.do
 response	GET /studio-organizations/v1/project-creation-types	items.next_steps.id	String	always
 response	GET /studio-organizations/v1/project-creation-types	items.next_steps.label	String	always
 response	GET /studio-organizations/v1/project-creation-types	items.next_steps.route	String	always
+response	GET /studio-organizations/v1/project-creation-types	items.shelf	String	always
 response	GET /studio-organizations/v1/project-creation-types	items.slug	String	always
 response	GET /studio-organizations/v1/project-creation-types	items.steps	Vec<String>	always
 response	GET /studio-organizations/v1/project-creation-types	items.type_id	String	always
+response	GET /studio-organizations/v1/project-creation-types	items.version	String	optional
 response	GET /studio-organizations/v1/project-creation-types	total	u32	always
 response	GET /studio-organizations/v1/project-creations/{}	error	String	optional
 response	GET /studio-organizations/v1/project-creations/{}	name	String	always
@@ -5005,6 +5115,7 @@ response	GET /studio-product/v1/assembly-strategy	strategy_kits.kit	String	alway
 response	GET /studio-product/v1/assembly-strategy	strategy_kits.name	String	always
 response	GET /studio-product/v1/assembly-strategy	strategy_kits.offered	bool	always
 response	GET /studio-product/v1/assembly-strategy	strategy_kits.reason	String	optional
+response	GET /studio-product/v1/assembly-strategy	strategy_kits.service	String	optional
 response	GET /studio-product/v1/gdl-file	path	String	always
 response	GET /studio-product/v1/gdl-file	source	String	always
 response	GET /studio-product/v1/gdl-file	text	String	always
@@ -5061,8 +5172,10 @@ response	GET /studio-product/v1/gear-match-usage	service.answers	bool	optional
 response	GET /studio-product/v1/gear-match-usage	service.catalogue_commit	String	optional
 response	GET /studio-product/v1/gear-match-usage	service.catalogue_source	String	optional
 response	GET /studio-product/v1/gear-match-usage	service.checked_at	String	optional
+response	GET /studio-product/v1/gear-match-usage	service.code	String	optional
 response	GET /studio-product/v1/gear-match-usage	service.configured	bool	always
 response	GET /studio-product/v1/gear-match-usage	service.error	String	optional
+response	GET /studio-product/v1/gear-match-usage	service.kit	String	always
 response	GET /studio-product/v1/gear-match-usage	service.limits	{}	optional
 response	GET /studio-product/v1/gear-match-usage	service.limits.max_document_bytes	u64	optional
 response	GET /studio-product/v1/gear-match-usage	service.limits.max_documents	u64	optional
@@ -5070,7 +5183,40 @@ response	GET /studio-product/v1/gear-match-usage	service.limits.max_request_byte
 response	GET /studio-product/v1/gear-match-usage	service.matcher_version	String	optional
 response	GET /studio-product/v1/gear-match-usage	service.missing	String	optional
 response	GET /studio-product/v1/gear-match-usage	service.models	Vec<String>	always
+response	GET /studio-product/v1/gear-match-usage	service.name	String	always
+response	GET /studio-product/v1/gear-match-usage	service.runs	u64	always
 response	GET /studio-product/v1/gear-match-usage	service.service_version	String	optional
+response	GET /studio-product/v1/gear-match-usage	service.strategy	String	always
+response	GET /studio-product/v1/gear-match-usage	service.usage	{}	always
+response	GET /studio-product/v1/gear-match-usage	service.usage.cache_hits	u64	always
+response	GET /studio-product/v1/gear-match-usage	service.usage.calls	u64	always
+response	GET /studio-product/v1/gear-match-usage	service.usage.input_tokens	u64	always
+response	GET /studio-product/v1/gear-match-usage	service.usage.output_tokens	u64	always
+response	GET /studio-product/v1/gear-match-usage	services	BTreeMap<String,{}>	always
+response	GET /studio-product/v1/gear-match-usage	services.answers	bool	optional
+response	GET /studio-product/v1/gear-match-usage	services.catalogue_commit	String	optional
+response	GET /studio-product/v1/gear-match-usage	services.catalogue_source	String	optional
+response	GET /studio-product/v1/gear-match-usage	services.checked_at	String	optional
+response	GET /studio-product/v1/gear-match-usage	services.code	String	optional
+response	GET /studio-product/v1/gear-match-usage	services.configured	bool	always
+response	GET /studio-product/v1/gear-match-usage	services.error	String	optional
+response	GET /studio-product/v1/gear-match-usage	services.kit	String	always
+response	GET /studio-product/v1/gear-match-usage	services.limits	{}	optional
+response	GET /studio-product/v1/gear-match-usage	services.limits.max_document_bytes	u64	optional
+response	GET /studio-product/v1/gear-match-usage	services.limits.max_documents	u64	optional
+response	GET /studio-product/v1/gear-match-usage	services.limits.max_request_bytes	u64	optional
+response	GET /studio-product/v1/gear-match-usage	services.matcher_version	String	optional
+response	GET /studio-product/v1/gear-match-usage	services.missing	String	optional
+response	GET /studio-product/v1/gear-match-usage	services.models	Vec<String>	always
+response	GET /studio-product/v1/gear-match-usage	services.name	String	always
+response	GET /studio-product/v1/gear-match-usage	services.runs	u64	always
+response	GET /studio-product/v1/gear-match-usage	services.service_version	String	optional
+response	GET /studio-product/v1/gear-match-usage	services.strategy	String	always
+response	GET /studio-product/v1/gear-match-usage	services.usage	{}	always
+response	GET /studio-product/v1/gear-match-usage	services.usage.cache_hits	u64	always
+response	GET /studio-product/v1/gear-match-usage	services.usage.calls	u64	always
+response	GET /studio-product/v1/gear-match-usage	services.usage.input_tokens	u64	always
+response	GET /studio-product/v1/gear-match-usage	services.usage.output_tokens	u64	always
 response	GET /studio-product/v1/gear-match-usage	since	String	always
 response	GET /studio-product/v1/gear-match-usage	summary	{}	always
 response	GET /studio-product/v1/gear-match-usage	summary.accepted	u64	always
@@ -5112,6 +5258,7 @@ response	GET /studio-product/v1/gear-matches	items.progress	Value	optional
 response	GET /studio-product/v1/gear-matches	items.requested_by	String	always
 response	GET /studio-product/v1/gear-matches	items.run_id	String	optional
 response	GET /studio-product/v1/gear-matches	items.state	String	always
+response	GET /studio-product/v1/gear-matches	items.strategy	String	always
 response	GET /studio-product/v1/gear-matches	items.totals	{}	optional
 response	GET /studio-product/v1/gear-matches	items.totals.clarification_needed	u32	optional
 response	GET /studio-product/v1/gear-matches	items.totals.covered	u32	optional
@@ -5184,6 +5331,7 @@ response	GET /studio-product/v1/gear-matches/{}	summary.progress	Value	optional
 response	GET /studio-product/v1/gear-matches/{}	summary.requested_by	String	always
 response	GET /studio-product/v1/gear-matches/{}	summary.run_id	String	optional
 response	GET /studio-product/v1/gear-matches/{}	summary.state	String	always
+response	GET /studio-product/v1/gear-matches/{}	summary.strategy	String	always
 response	GET /studio-product/v1/gear-matches/{}	summary.totals	{}	optional
 response	GET /studio-product/v1/gear-matches/{}	summary.totals.clarification_needed	u32	optional
 response	GET /studio-product/v1/gear-matches/{}	summary.totals.covered	u32	optional
@@ -5371,6 +5519,7 @@ response	GET /studio-product/v1/project-assembly-strategy	strategy_kits.kit	Stri
 response	GET /studio-product/v1/project-assembly-strategy	strategy_kits.name	String	always
 response	GET /studio-product/v1/project-assembly-strategy	strategy_kits.offered	bool	always
 response	GET /studio-product/v1/project-assembly-strategy	strategy_kits.reason	String	optional
+response	GET /studio-product/v1/project-assembly-strategy	strategy_kits.service	String	optional
 response	GET /studio-product/v1/projects/{}/gear-repo	nodes	Vec<{}>	always
 response	GET /studio-product/v1/projects/{}/gear-repo	nodes.instance_id	String	always
 response	GET /studio-product/v1/projects/{}/gear-repo	nodes.type_id	String	always
@@ -6115,6 +6264,20 @@ response	PATCH /studio-documents/v1/delivery-scopes/{}/limits/{}	text	String	alw
 response	PATCH /studio-domain-model/v1/types/{}/fields/{}	entity	Value	always
 response	PATCH /studio-domain-model/v1/types/{}/fields/{}	migrated	u64	optional
 response	PATCH /studio-domain-model/v1/types/{}/fields/{}	version	u64	always
+response	PATCH /studio-kits/v1/mna/deal	conditions	Vec<String>	always
+response	PATCH /studio-kits/v1/mna/deal	deal_lead	String	optional
+response	PATCH /studio-kits/v1/mna/deal	deal_phase	String	optional
+response	PATCH /studio-kits/v1/mna/deal	ic_date	String	optional
+response	PATCH /studio-kits/v1/mna/deal	installed	bool	always
+response	PATCH /studio-kits/v1/mna/deal	may_sign_off	bool	always
+response	PATCH /studio-kits/v1/mna/deal	phases	Vec<String>	always
+response	PATCH /studio-kits/v1/mna/deal	project_id	String	always
+response	PATCH /studio-kits/v1/mna/deal	recommendation	String	optional
+response	PATCH /studio-kits/v1/mna/deal	recommendations	Vec<String>	always
+response	PATCH /studio-kits/v1/mna/deal	signed_off_at	String	optional
+response	PATCH /studio-kits/v1/mna/deal	signed_off_by	String	optional
+response	PATCH /studio-kits/v1/mna/deal	target	String	optional
+response	PATCH /studio-kits/v1/mna/deal	thesis	String	optional
 response	PATCH /studio-scheduler/v1/schedules/{}	concurrency	String	always
 response	PATCH /studio-scheduler/v1/schedules/{}	created_at	String	always
 response	PATCH /studio-scheduler/v1/schedules/{}	enabled	bool	always
@@ -7397,6 +7560,49 @@ response	POST /studio-insight/v1/query	columns.type	String	always
 response	POST /studio-insight/v1/query	row_count	u64	always
 response	POST /studio-insight/v1/query	rows	Vec<Value>	always
 response	POST /studio-insight/v1/query	truncated	bool	always
+response	POST /studio-kits/v1/mna/deal/sign-off	conditions	Vec<String>	always
+response	POST /studio-kits/v1/mna/deal/sign-off	deal_lead	String	optional
+response	POST /studio-kits/v1/mna/deal/sign-off	deal_phase	String	optional
+response	POST /studio-kits/v1/mna/deal/sign-off	ic_date	String	optional
+response	POST /studio-kits/v1/mna/deal/sign-off	installed	bool	always
+response	POST /studio-kits/v1/mna/deal/sign-off	may_sign_off	bool	always
+response	POST /studio-kits/v1/mna/deal/sign-off	phases	Vec<String>	always
+response	POST /studio-kits/v1/mna/deal/sign-off	project_id	String	always
+response	POST /studio-kits/v1/mna/deal/sign-off	recommendation	String	optional
+response	POST /studio-kits/v1/mna/deal/sign-off	recommendations	Vec<String>	always
+response	POST /studio-kits/v1/mna/deal/sign-off	signed_off_at	String	optional
+response	POST /studio-kits/v1/mna/deal/sign-off	signed_off_by	String	optional
+response	POST /studio-kits/v1/mna/deal/sign-off	target	String	optional
+response	POST /studio-kits/v1/mna/deal/sign-off	thesis	String	optional
+response	POST /studio-kits/v1/mna/findings	created_at	String	optional
+response	POST /studio-kits/v1/mna/findings	created_by	String	optional
+response	POST /studio-kits/v1/mna/findings	evidence	String	optional
+response	POST /studio-kits/v1/mna/findings	id	String	always
+response	POST /studio-kits/v1/mna/findings	origin	String	always
+response	POST /studio-kits/v1/mna/findings	severity	String	always
+response	POST /studio-kits/v1/mna/findings	source	String	optional
+response	POST /studio-kits/v1/mna/findings	status	String	always
+response	POST /studio-kits/v1/mna/findings	title	String	always
+response	POST /studio-kits/v1/mna/findings	updated_at	String	optional
+response	POST /studio-kits/v1/mna/open-questions	answer	String	optional
+response	POST /studio-kits/v1/mna/open-questions	created_at	String	optional
+response	POST /studio-kits/v1/mna/open-questions	created_by	String	optional
+response	POST /studio-kits/v1/mna/open-questions	id	String	always
+response	POST /studio-kits/v1/mna/open-questions	status	String	always
+response	POST /studio-kits/v1/mna/open-questions	updated_at	String	optional
+response	POST /studio-kits/v1/mna/open-questions	what	String	always
+response	POST /studio-kits/v1/mna/open-questions	who	String	optional
+response	POST /studio-kits/v1/mna/risks	created_at	String	optional
+response	POST /studio-kits/v1/mna/risks	created_by	String	optional
+response	POST /studio-kits/v1/mna/risks	finding_id	String	optional
+response	POST /studio-kits/v1/mna/risks	id	String	always
+response	POST /studio-kits/v1/mna/risks	impact	String	always
+response	POST /studio-kits/v1/mna/risks	likelihood	String	always
+response	POST /studio-kits/v1/mna/risks	mitigation	String	optional
+response	POST /studio-kits/v1/mna/risks	owner	String	optional
+response	POST /studio-kits/v1/mna/risks	status	String	always
+response	POST /studio-kits/v1/mna/risks	title	String	always
+response	POST /studio-kits/v1/mna/risks	updated_at	String	optional
 response	POST /studio-kits/v1/organization-shelf	contents	{}	always
 response	POST /studio-kits/v1/organization-shelf	contents.docs	Vec<String>	always
 response	POST /studio-kits/v1/organization-shelf	contents.functions	Vec<{}>	always
@@ -7882,6 +8088,7 @@ response	POST /studio-product/v1/gear-matches/{}/cancel	progress	Value	optional
 response	POST /studio-product/v1/gear-matches/{}/cancel	requested_by	String	always
 response	POST /studio-product/v1/gear-matches/{}/cancel	run_id	String	optional
 response	POST /studio-product/v1/gear-matches/{}/cancel	state	String	always
+response	POST /studio-product/v1/gear-matches/{}/cancel	strategy	String	always
 response	POST /studio-product/v1/gear-matches/{}/cancel	totals	{}	optional
 response	POST /studio-product/v1/gear-matches/{}/cancel	totals.clarification_needed	u32	optional
 response	POST /studio-product/v1/gear-matches/{}/cancel	totals.covered	u32	optional
@@ -8589,6 +8796,35 @@ response	PUT /studio-kits/v1/base-kits/{}	removable_by_organization	bool	always
 response	PUT /studio-kits/v1/base-kits/{}	retired	bool	always
 response	PUT /studio-kits/v1/base-kits/{}	shelf	String	always
 response	PUT /studio-kits/v1/base-kits/{}	version	String	always
+response	PUT /studio-kits/v1/mna/findings/{}	created_at	String	optional
+response	PUT /studio-kits/v1/mna/findings/{}	created_by	String	optional
+response	PUT /studio-kits/v1/mna/findings/{}	evidence	String	optional
+response	PUT /studio-kits/v1/mna/findings/{}	id	String	always
+response	PUT /studio-kits/v1/mna/findings/{}	origin	String	always
+response	PUT /studio-kits/v1/mna/findings/{}	severity	String	always
+response	PUT /studio-kits/v1/mna/findings/{}	source	String	optional
+response	PUT /studio-kits/v1/mna/findings/{}	status	String	always
+response	PUT /studio-kits/v1/mna/findings/{}	title	String	always
+response	PUT /studio-kits/v1/mna/findings/{}	updated_at	String	optional
+response	PUT /studio-kits/v1/mna/open-questions/{}	answer	String	optional
+response	PUT /studio-kits/v1/mna/open-questions/{}	created_at	String	optional
+response	PUT /studio-kits/v1/mna/open-questions/{}	created_by	String	optional
+response	PUT /studio-kits/v1/mna/open-questions/{}	id	String	always
+response	PUT /studio-kits/v1/mna/open-questions/{}	status	String	always
+response	PUT /studio-kits/v1/mna/open-questions/{}	updated_at	String	optional
+response	PUT /studio-kits/v1/mna/open-questions/{}	what	String	always
+response	PUT /studio-kits/v1/mna/open-questions/{}	who	String	optional
+response	PUT /studio-kits/v1/mna/risks/{}	created_at	String	optional
+response	PUT /studio-kits/v1/mna/risks/{}	created_by	String	optional
+response	PUT /studio-kits/v1/mna/risks/{}	finding_id	String	optional
+response	PUT /studio-kits/v1/mna/risks/{}	id	String	always
+response	PUT /studio-kits/v1/mna/risks/{}	impact	String	always
+response	PUT /studio-kits/v1/mna/risks/{}	likelihood	String	always
+response	PUT /studio-kits/v1/mna/risks/{}	mitigation	String	optional
+response	PUT /studio-kits/v1/mna/risks/{}	owner	String	optional
+response	PUT /studio-kits/v1/mna/risks/{}	status	String	always
+response	PUT /studio-kits/v1/mna/risks/{}	title	String	always
+response	PUT /studio-kits/v1/mna/risks/{}	updated_at	String	optional
 response	PUT /studio-kits/v1/organization-kits/{}	by_default	bool	always
 response	PUT /studio-kits/v1/organization-kits/{}	icon	String	optional
 response	PUT /studio-kits/v1/organization-kits/{}	icon_url	String	optional
@@ -8620,6 +8856,8 @@ response	PUT /studio-kits/v1/project-phase	phase_owner	String	optional
 response	PUT /studio-kits/v1/project-phase	phase_since	String	optional
 response	PUT /studio-kits/v1/project-phase	project_id	String	always
 response	PUT /studio-kits/v1/project-phase	states	Vec<String>	always
+response	PUT /studio-organizations/v1/access-config	document	Value	always
+response	PUT /studio-organizations/v1/access-config	version	i64	always
 response	PUT /studio-organizations/v1/access-grants	id	String	always
 response	PUT /studio-organizations/v1/access-grants	role_key	String	always
 response	PUT /studio-organizations/v1/access-grants	scope_id	String	always
@@ -8659,6 +8897,7 @@ response	PUT /studio-product/v1/assembly-strategy	strategy_kits.kit	String	alway
 response	PUT /studio-product/v1/assembly-strategy	strategy_kits.name	String	always
 response	PUT /studio-product/v1/assembly-strategy	strategy_kits.offered	bool	always
 response	PUT /studio-product/v1/assembly-strategy	strategy_kits.reason	String	optional
+response	PUT /studio-product/v1/assembly-strategy	strategy_kits.service	String	optional
 response	PUT /studio-product/v1/gear-explanations/{}	gear_id	String	always
 response	PUT /studio-product/v1/gear-explanations/{}	source	String	always
 response	PUT /studio-product/v1/gear-explanations/{}	text	String	always
@@ -8726,6 +8965,7 @@ response	PUT /studio-product/v1/project-assembly-strategy	strategy_kits.kit	Stri
 response	PUT /studio-product/v1/project-assembly-strategy	strategy_kits.name	String	always
 response	PUT /studio-product/v1/project-assembly-strategy	strategy_kits.offered	bool	always
 response	PUT /studio-product/v1/project-assembly-strategy	strategy_kits.reason	String	optional
+response	PUT /studio-product/v1/project-assembly-strategy	strategy_kits.service	String	optional
 response	PUT /studio-product/v1/projects/{}/product	instance_id	String	always
 response	PUT /studio-product/v1/projects/{}/product	type_id	String	always
 response	PUT /studio-product/v1/projects/{}/product	value	Value	always
@@ -9029,6 +9269,9 @@ route	DELETE /studio-environments/v1/previews/{}
 route	DELETE /studio-environments/v1/project-environments/{}
 route	DELETE /studio-environments/v1/registries/{}/repositories/{}/versions/{}
 route	DELETE /studio-kits/v1/base-kits/{}
+route	DELETE /studio-kits/v1/mna/findings/{}
+route	DELETE /studio-kits/v1/mna/open-questions/{}
+route	DELETE /studio-kits/v1/mna/risks/{}
 route	DELETE /studio-kits/v1/organization-kits/{}
 route	DELETE /studio-kits/v1/organization-shelf/{}
 route	DELETE /studio-kits/v1/project-kits/{}
@@ -9210,6 +9453,11 @@ route	GET /studio-kits/v1/inbox-sources
 route	GET /studio-kits/v1/installed-kits
 route	GET /studio-kits/v1/kits/{}/{}/mfe/{}/{}/{}
 route	GET /studio-kits/v1/mfe-manifests
+route	GET /studio-kits/v1/mna/deal
+route	GET /studio-kits/v1/mna/evidence
+route	GET /studio-kits/v1/mna/findings
+route	GET /studio-kits/v1/mna/open-questions
+route	GET /studio-kits/v1/mna/risks
 route	GET /studio-kits/v1/organization-shelf
 route	GET /studio-kits/v1/project-phase
 route	GET /studio-kits/v1/project-phases
@@ -9223,6 +9471,7 @@ route	GET /studio-llm/v1/workspaces/{}/models
 route	GET /studio-llm/v1/workspaces/{}/providers/{}/{}
 route	GET /studio-mcp/v1/oauth-protected-resource
 route	GET /studio-organizations/v1/access-catalogue
+route	GET /studio-organizations/v1/access-config
 route	GET /studio-organizations/v1/capabilities
 route	GET /studio-organizations/v1/logo
 route	GET /studio-organizations/v1/metrics
@@ -9313,6 +9562,7 @@ route	PATCH /studio-connector/v1/connections/{}
 route	PATCH /studio-documents/v1/delivery-scopes/{}
 route	PATCH /studio-documents/v1/delivery-scopes/{}/limits/{}
 route	PATCH /studio-domain-model/v1/types/{}/fields/{}
+route	PATCH /studio-kits/v1/mna/deal
 route	PATCH /studio-scheduler/v1/schedules/{}
 route	POST /studio-artifact-ingest/v1/builds
 route	POST /studio-artifact-ingest/v1/builds/dispatch
@@ -9422,6 +9672,10 @@ route	POST /studio-insight/v1/components/pull-requests
 route	POST /studio-insight/v1/pull
 route	POST /studio-insight/v1/push
 route	POST /studio-insight/v1/query
+route	POST /studio-kits/v1/mna/deal/sign-off
+route	POST /studio-kits/v1/mna/findings
+route	POST /studio-kits/v1/mna/open-questions
+route	POST /studio-kits/v1/mna/risks
 route	POST /studio-kits/v1/organization-shelf
 route	POST /studio-kits/v1/organization-shelf/preview
 route	POST /studio-kits/v1/organization-shelf/{}/refresh
@@ -9517,9 +9771,13 @@ route	PUT /studio-environments/v1/open-clusters
 route	PUT /studio-environments/v1/project-build
 route	PUT /studio-environments/v1/project-environments/{}
 route	PUT /studio-kits/v1/base-kits/{}
+route	PUT /studio-kits/v1/mna/findings/{}
+route	PUT /studio-kits/v1/mna/open-questions/{}
+route	PUT /studio-kits/v1/mna/risks/{}
 route	PUT /studio-kits/v1/organization-kits/{}
 route	PUT /studio-kits/v1/project-kits/{}
 route	PUT /studio-kits/v1/project-phase
+route	PUT /studio-organizations/v1/access-config
 route	PUT /studio-organizations/v1/access-grants
 route	PUT /studio-organizations/v1/logo
 route	PUT /studio-organizations/v1/name

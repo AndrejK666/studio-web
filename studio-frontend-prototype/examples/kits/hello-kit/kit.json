@@ -1,0 +1,11 @@
+{
+  "manifest_version": "1",
+  "slug": "hello-kit",
+  "name": "Hello kit",
+  "description": "A standalone kit with a delivery estimate inside Project Overview.",
+  "publisher": "Constructor Fabric (example)",
+  "version": "0.1.0",
+  "levels": ["organization", "project"],
+  "mfe": ["mfe/hello"],
+  "docs": ["README.md"]
+}

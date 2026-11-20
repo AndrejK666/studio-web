@@ -85,6 +85,9 @@ pub mod matches {
         pub error: Option<String>,
         /// Asked to stop through this gear's cancel.
         pub cancel_requested: bool,
+        /// The assembly strategy whose service ran it (`gears_matcher`, or an
+        /// organization's kit's, ADR-0074).
+        pub strategy: String,
     }
 
     #[derive(Copy, Clone, Debug, EnumIter)]
@@ -204,6 +207,7 @@ impl MatchStore {
             usage: Set(row.usage),
             error: Set(row.error),
             cancel_requested: Set(row.cancel_requested),
+            strategy: Set(row.strategy),
         };
         let conn = self.db.conn()?;
         matches::Entity::insert(active)
@@ -235,18 +239,24 @@ impl MatchStore {
             .await?)
     }
 
-    /// The project's matches, newest first, at most `limit`.
+    /// The project's matches of `strategy` (every strategy's with `None`),
+    /// newest first, at most `limit`.
     pub async fn list(
         &self,
         tenant: Uuid,
         project: Uuid,
+        strategy: Option<&str>,
         limit: u64,
     ) -> anyhow::Result<Vec<Match>> {
         let conn = self.db.conn()?;
+        let mut cond = Condition::all().add(matches::Column::ProjectId.eq(project));
+        if let Some(s) = strategy {
+            cond = cond.add(matches::Column::Strategy.eq(s));
+        }
         Ok(matches::Entity::find()
             .secure()
             .scope_with(&AccessScope::for_tenant(tenant))
-            .filter(Condition::all().add(matches::Column::ProjectId.eq(project)))
+            .filter(cond)
             .order_by(matches::Column::CreatedAtMs, Order::Desc)
             .limit(limit)
             .all(&conn)

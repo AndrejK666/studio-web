@@ -372,7 +372,15 @@ export class AdminApiService extends BaseApiService {
   /** Verifies, then stores ("Test & save"). The token never comes back out. */
   readonly createConnection = this.protocol(RestEndpointProtocol).mutation<
     ConnectionTest,
-    { provider: string; label: string; base_url?: string; token: string; scope: string; owner_tenant_id: string }
+    {
+      provider: string;
+      label: string;
+      base_url?: string;
+      token: string;
+      scope: string;
+      owner_tenant_id: string;
+      options?: Record<string, string>;
+    }
   >('POST', '/studio-connector/v1/connections');
 
   /** Relabel, move to another installation, or rotate the credential; the id survives. */

@@ -151,6 +151,22 @@ pub const NEXT_STEP_DONE_WHEN: [&str; 7] = [
     "repos", "types", "model", "findings", "kind", "product", "build",
 ];
 
+/// The other form of a next step's `done_when`: `field:<name>`, a field of
+/// the kit's project type, done once the project's object in the model has
+/// it set (the portal reads the object; the path knows nothing of a kit's
+/// fields).
+pub const DONE_WHEN_FIELD: &str = "field:";
+
+/// The fields the kit's project type declares of its own.
+fn subtype_fields(m: &KitManifest) -> Vec<String> {
+    overlay_of(m)
+        .ok()
+        .flatten()
+        .and_then(|o| o.project_subtype().map(|t| t.fields.clone()))
+        .map(|fs| fs.into_iter().map(|f| f.name).collect())
+        .unwrap_or_default()
+}
+
 /// The most next steps a project type names: a short list, not a plan.
 pub const MAX_NEXT_STEPS: usize = 8;
 
@@ -201,7 +217,7 @@ pub struct ProjectSubtype {
     /// The model entity, `<slug>-<name>` (`gears-project-project`).
     pub entity: String,
     /// Its GTS id, derived from Project's
-    /// (`gts.cf.studio.domain.project.v1~cf.studio.kit.gears_project.project.v1~`).
+    /// (`gts.cf.studio.domain.project.v1~cf.studio.kit_gears_project.project.v1~`).
     pub gts: String,
     /// Its label, else the kit's name.
     pub name: String,
@@ -328,14 +344,22 @@ fn check_project_creation(m: &KitManifest, project_type: bool) -> Result<(), Str
                 n.id
             )));
         }
-        if let Some(done) = n.done_when.as_deref()
-            && !NEXT_STEP_DONE_WHEN.contains(&done)
-        {
-            return Err(at(format!(
-                "next step `{}`: `done_when` `{done}` is none of the project path's steps ({})",
-                n.id,
-                NEXT_STEP_DONE_WHEN.join(", ")
-            )));
+        if let Some(done) = n.done_when.as_deref() {
+            if let Some(field) = done.strip_prefix(DONE_WHEN_FIELD) {
+                if !subtype_fields(m).iter().any(|f| f == field) {
+                    return Err(at(format!(
+                        "next step `{}`: `done_when` `{done}` names no field of the kit's project type",
+                        n.id
+                    )));
+                }
+            } else if !NEXT_STEP_DONE_WHEN.contains(&done) {
+                return Err(at(format!(
+                    "next step `{}`: `done_when` `{done}` is none of the project path's steps ({}), \
+                     nor `{DONE_WHEN_FIELD}<a field of the kit's project type>`",
+                    n.id,
+                    NEXT_STEP_DONE_WHEN.join(", ")
+                )));
+            }
         }
     }
     Ok(())
@@ -343,17 +367,45 @@ fn check_project_creation(m: &KitManifest, project_type: bool) -> Result<(), Str
 
 /// `assembly_strategy`: the strategy's id (the value studio-product keeps
 /// and answers, `snake_case`), its name and what it does, for the person
-/// choosing.
+/// choosing; and, for a strategy a service runs, the contract it speaks.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ManifestAssemblyStrategy {
     pub id: String,
     pub name: String,
     #[serde(default)]
     pub description: String,
+    /// A plug-in service runs it (ADR-0074, amendment): studio-product calls
+    /// the service the organization connected for this strategy (an
+    /// `assembly-service` connection), through the gear-match pipeline. The
+    /// address and the secret are the connection's, never the manifest's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service: Option<ManifestStrategyService>,
 }
 
+/// `assembly_strategy.service`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ManifestStrategyService {
+    /// The API the service speaks: one of [`STRATEGY_CONTRACTS`].
+    pub contract: String,
+}
+
+/// The service contracts a strategy may speak: `gears-matcher/v1` is the
+/// gears-matcher's API (`gears-matcher/schemas/service/matcher-service.openapi.yaml`:
+/// `GET /v1/info`, `POST /v1/runs`, `GET /v1/runs/{id}`, `GET
+/// /v1/runs/{id}/report`, `POST /v1/runs/{id}/cancel`, a bearer).
+pub const STRATEGY_CONTRACTS: &[&str] = &["gears-matcher/v1"];
+
+/// The strategy studio-product runs itself, and the kit that brings it.
+const CODE_STRATEGY: (&str, &str) = ("spec_mapping", "spec-mapping");
+/// The service strategy Studio ships, and the kit that brings it; the kit
+/// whose routes, screens and Inbox run and read every service strategy.
+const SHIPPED_SERVICE_STRATEGY: (&str, &str) = ("gears_matcher", "gears-matcher");
+
 /// `assembly_strategy` as written: a `snake_case` id of at most 40
-/// characters, a name, a description of at most 400.
+/// characters, a name, a description of at most 400. Only Spec mapping
+/// brings a strategy without a service, and only it `spec_mapping`; only
+/// Gears matcher `gears_matcher`. A service strategy speaks a known contract,
+/// and its kit requires `gears-matcher`, whose pipeline runs it.
 fn check_assembly_strategy(m: &KitManifest) -> Result<(), String> {
     let Some(s) = &m.assembly_strategy else {
         return Ok(());
@@ -378,6 +430,38 @@ fn check_assembly_strategy(m: &KitManifest) -> Result<(), String> {
     if s.description.len() > 400 {
         return Err(format!(
             "{KIT_JSON}: assembly_strategy.description: at most 400 characters"
+        ));
+    }
+    for (id, slug) in [CODE_STRATEGY, SHIPPED_SERVICE_STRATEGY] {
+        if s.id == id && m.slug != slug {
+            return Err(format!(
+                "{KIT_JSON}: assembly_strategy.id: `{id}` is the `{slug}` kit's; name your \
+                 strategy otherwise"
+            ));
+        }
+    }
+    let Some(service) = &s.service else {
+        if s.id != CODE_STRATEGY.0 {
+            return Err(format!(
+                "{KIT_JSON}: assembly_strategy.service: a kit's strategy is run by a service; \
+                 declare `service: {{\"contract\": \"{}\"}}`",
+                STRATEGY_CONTRACTS[0]
+            ));
+        }
+        return Ok(());
+    };
+    if !STRATEGY_CONTRACTS.contains(&service.contract.as_str()) {
+        return Err(format!(
+            "{KIT_JSON}: assembly_strategy.service.contract: `{}` is not one Studio speaks: {}",
+            service.contract,
+            STRATEGY_CONTRACTS.join(", ")
+        ));
+    }
+    let pipeline = SHIPPED_SERVICE_STRATEGY.1;
+    if m.slug != pipeline && !m.requires.iter().any(|r| r == pipeline) {
+        return Err(format!(
+            "{KIT_JSON}: assembly_strategy.service: a service strategy runs through the \
+             `{pipeline}` kit's gear matches; add `{pipeline}` to `requires`"
         ));
     }
     Ok(())
@@ -736,8 +820,8 @@ const BUILTIN_MANIFESTS: &[(&str, &str)] = &[
         "project-tests",
         include_str!("builtin/project-tests.kit.json"),
     ),
-    // The two project types, in the order the New project wizard offers
-    // them (`project_type_kits`): Gears, then Constructor Research.
+    // The project types, in the order the New project wizard offers them
+    // (`project_type_kits`): Gears, Constructor Research, M&A due diligence.
     (
         "gears-project",
         include_str!("builtin/gears-project.kit.json"),
@@ -746,6 +830,9 @@ const BUILTIN_MANIFESTS: &[(&str, &str)] = &[
         "constructor-research",
         include_str!("builtin/constructor-research.kit.json"),
     ),
+    // Technical due diligence of an acquisition target (studio-web#1024):
+    // a deal is a project of this type; its function is `mna.rs`.
+    ("mna", include_str!("builtin/mna.kit.json")),
     // What the gears-matcher service reads in a project's specifications
     // (ADR-0072): the gear-match screens, routes, tools and Inbox source,
     // out of project-product; opt-in.
@@ -1441,3 +1528,7 @@ fn property(on: &str, p: &Value, origin: &'static str, model: &mut KitModel) -> 
 #[cfg(test)]
 #[path = "manifest_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "strategy_manifest_tests.rs"]
+mod strategy_tests;

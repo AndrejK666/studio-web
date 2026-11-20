@@ -32,6 +32,7 @@ import {
 import { Badge, Card, CardContent, CardHeader, CardTitle, Skeleton } from '@gears-frontx/ui-kit';
 import {
   isRunEnding,
+  KitContentSlot,
   openPlace,
   openScreen,
   useOrganization,
@@ -229,6 +230,7 @@ function OrganizationOverview({
             </Tile>
           </div>
 
+          <KitContentSlot name="organization.overview.content" />
           <div className={styles.columns}>
             <Card data-org-needs>
               <CardHeader>

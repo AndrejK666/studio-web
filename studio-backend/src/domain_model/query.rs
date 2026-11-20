@@ -644,7 +644,7 @@ fn plan(
             edge_type_id: gts::edge_type_id(&d.verb),
             relation: d.name.clone(),
             reverse,
-            node_type_ids: targets.iter().map(|t| gts::node_type_id(t)).collect(),
+            node_type_ids: targets.iter().map(|t| ontology.type_id_of(t)).collect(),
             plan: plan(ontology, &targets, &target, child, depth + 1)?,
         });
     }
@@ -813,8 +813,9 @@ impl Cursor {
 }
 
 fn row(ontology: &Ontology, node: ObjectNode, plan: &Plan) -> Row {
+    // A Project subtype's row says the subtype: its chained id names it.
     let entity = ontology
-        .resolve_entity_id(&node.type_id)
+        .entity_of_type(&node.type_id)
         .unwrap_or_else(|| gts::type_leaf(&node.type_id).to_string());
     let value = match &plan.fields {
         None => node.value,
@@ -1119,7 +1120,9 @@ async fn run_with(
         }
         (None, None) => None,
     };
-    let type_ids = vec![gts::node_type_id(&entity)];
+    // What is the type: `project` reads its kits' subtypes too (ADR-0073
+    // amendment), by their GTS ids chained onto Project's.
+    let type_ids = ontology.type_ids_of(&entity);
     if q.cursor.is_some() && q.offset.is_some_and(|o| o > 0) {
         return Err(invalid(
             "send `cursor` or `offset`, not both: they page differently",

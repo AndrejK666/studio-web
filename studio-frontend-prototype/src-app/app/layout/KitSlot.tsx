@@ -22,9 +22,10 @@ export interface KitSlotProps {
   /** A row of chips or buttons, or a column of panels. */
   direction?: 'row' | 'column';
   className?: string;
+  insideScreen?: boolean;
 }
 
-function KitSlotIn({ slot, direction = 'row', className, registry }: KitSlotProps & { registry: MfeRegistry }) {
+function KitSlotIn({ slot, direction = 'row', className, insideScreen, registry }: KitSlotProps & { registry: MfeRegistry }) {
   const t = useShellText();
   const registered = useDomainExtensions(slot.domainId) as SlotContribution[];
   const installed = useInstalledKits();
@@ -52,6 +53,7 @@ function KitSlotIn({ slot, direction = 'row', className, registry }: KitSlotProp
 
   return (
     <div
+      style={insideScreen ? { display: wanted.length ? 'block' : 'none' } : undefined}
       className={cn(
         'flex min-w-0',
         column ? 'flex-col items-stretch gap-3' : 'items-center gap-2',

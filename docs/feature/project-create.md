@@ -277,18 +277,23 @@ those requests itself.
 The project type is a kit's subtype of Project
 ([ADR-0073](../adr/0073-a-project-type-is-a-kits-subtype-of-project.md)): a
 kit whose model derives a type of its own from the core Project type.
-`GET /cf/studio-organizations/v1/project-creation-types` lists the built-in
-ones (Gears, then Constructor Research) with the type's id, name and
-description, the `mode` and optional creation steps it takes, and its next
-steps. The wizard offers them as one choice and the request names the pick as
+`GET /cf/studio-organizations/v1/project-creation-types?organization_id=`
+lists the organization's types: the built-in ones (Gears, then Constructor
+Research), then the kits the organization installed from its own shelf whose
+model derives a subtype of Project (ADR-0073 Amendment 2), with the type's id,
+name and description, the `mode` and optional creation steps it takes, its next
+steps, its `shelf` and the kit `version` a project of it gets. Without
+`organization_id` it lists the built-in ones only. The wizard offers them as one choice and the request names the pick as
 `project_type_kit`, with no `mode` and no sources: the type decides. The run
 records `project_type_kit` and the type's id (`project_type_id`) in the
 configuration, takes the type's `mode`, writes a PRD from the brief only when
 the type takes `prd`, refuses a step the type does not take, and its `kits`
 step installs that kit in the new project, as studio-organizations' service,
 after checking the project sits in the organization the request was approved
-for; its last step, `model`, gives the project's object in the domain model the
-type. The organization need not have the kit itself; what the kit `requires`
+for, at the version the organization installed (an organization's own kit is
+never taken at its shelf's newer commit); its last step, `model`, stores the
+project's object in the domain model as the type's subtype of Project
+(ADR-0073 Amendment 1). The organization need not have the kit itself; what the kit `requires`
 must already apply to the organization, or the request is refused. Gears takes
 the repository, sources, starter gear and PRD steps; Constructor Research takes
 sources and the PRD.
@@ -550,8 +555,11 @@ row.
 - [ ] A created project opens on its Overview, which lists its type's next steps: Gears — connect the repositories (Sources), compose the product (Product); Constructor Research — connect a Research project (Constructor Research), build and run it there (Releases).
 - [ ] A next step leaves the Overview once its path step is done (a Gears project with a repository no longer lists Connect your repositories) or once anybody dismisses it; a dismissal survives a reload and is the same for the whole team.
 - [ ] A project created before project types, or of a type with nothing left, shows no Next steps card.
-- [ ] A created project's `project.config` carries `project_type_kit`, `project_type_id` (`gts.cf.studio.domain.project.v1~cf.studio.kit.<kit>.project.v1~`) and the type's `mode`; its object in the domain model carries `project_type_id` and `project_type`.
+- [ ] A created project's `project.config` carries `project_type_kit`, `project_type_id` (`gts.cf.studio.domain.project.v1~cf.studio.kit_<kit>.project.v1~`) and the type's `mode`; its object in the domain model is stored as the type's subtype of Project and carries `project_type_id` and `project_type`.
 - [ ] A request that names a type and asks for a step the type does not take (sources on a type without `sources`) is refused; one that sends `mode` and `sources` without a type still works.
+- [ ] An organization that installed its own kit deriving a subtype of Project from its shelf sees it in the wizard after the built-in types; another organization does not, and neither does it while the kit is only on its shelf.
+- [ ] A project created with an organization's own type gets the kit at the version the organization installed even after the shelf kit was refreshed, and its object in the domain model is that kit's subtype.
+- [ ] Installing an organization kit whose next step opens no screen Studio or the kit has is refused with the route and the screens it may open.
 - *(Connect source and the FrontX portal's wizard)* The criteria below about picking repositories.
 - [ ] Picking a second repository keeps the first; picking a selected one removes it; the footer counts what is selected.
 - [ ] The selection survives switching providers and connection tabs, and a created project records every picked repository.

@@ -270,7 +270,7 @@ impl OverlayType {
     /// The GTS id it is catalogued under: a declared type keeps Studio's,
     /// a kit's own is under the kit's namespace, and a kit's own type that
     /// `extends` another is derived from it, its id chained onto the base's
-    /// (`gts.cf.studio.domain.project.v1~cf.studio.kit.gears_project.project.v1~`).
+    /// (`gts.cf.studio.domain.project.v1~cf.studio.kit_gears_project.project.v1~`).
     /// `extends` names one of `siblings` (the overlay's types) by its
     /// `name`, or a model type by its id.
     pub fn gts_in(&self, slug: &str, siblings: &[OverlayType]) -> String {
@@ -290,9 +290,15 @@ impl OverlayType {
 
 /// The GTS id of kit `slug`'s type `name` derived from the type `base` (a
 /// GTS type id ending in `~`): the kit's segment chained onto the base's.
-fn derived_type_gts(base: &str, slug: &str, name: &str) -> String {
-    let own = kit_type_gts(slug, name);
-    format!("{base}{}", own.trim_start_matches("gts."))
+///
+/// The segment is a valid GTS segment, `vendor.package.namespace.type.vN`
+/// (`cf.studio.kit_<slug>.<name>.v1`): a derived type is the one kind of
+/// kit type graph-storage registers (a Project subtype's objects are stored
+/// under it, ADR-0073 amendment), and a segment of six tokens, like
+/// [`kit_type_gts`]'s, is refused by the GTS parser.
+pub fn derived_type_gts(base: &str, slug: &str, name: &str) -> String {
+    let token = |s: &str| s.replace(['-', '.', ' '], "_");
+    format!("{base}cf.studio.kit_{}.{}.v1~", token(slug), token(name))
 }
 
 /// The core type a project is (ADR-0010: a project is a tenant, and its

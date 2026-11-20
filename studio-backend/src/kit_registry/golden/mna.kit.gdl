@@ -1,0 +1,66 @@
+# kit.gdl rendered by Studio from the built-in kit.json and Studio's screens: not an authored kit.gdl.
+# mna at 0.0.0-golden, on the builtin shelf. The shape is ADR-0068 §3 (GDL 1.7).
+# Kit type: gears (brings gears, model).
+gdl_version = "1.7"
+
+kit(
+    slug = "mna",
+    name = "M&A due diligence",
+    version = "0.0.0-golden",
+    description = "Technical due diligence of an acquisition target: the deal as a project, the target's repositories as its sources, findings, risks and open questions, the evidence Studio already holds, and a recommendation the deal lead signs off.",
+    publisher = "Constructor Fabric",
+    icon = "lucide:handshake",
+    levels = ["project"],
+    types = [
+        kit_type(gts = "gts.cf.studio.domain.project.v1~cf.studio.kit_mna.project.v1~", id = "mna-project", name = "M&A deal", description = "A project that evaluates a target company's software before an acquisition: whether to proceed, on what conditions.", fields = [kit_field(name = "target", type = "string?", description = "The company being evaluated"), kit_field(name = "thesis", type = "string?", description = "The strategic thesis: why the acquisition, and what the technology must hold up"), kit_field(name = "deal_phase", type = "screening | confirmatory_dd | signing | integration", description = "Where the deal stands"), kit_field(name = "ic_date", type = "date?", description = "When the investment committee decides"), kit_field(name = "recommendation", type = "proceed | proceed_with_conditions | stop", description = "The technical recommendation to the committee"), kit_field(name = "conditions", type = "string[]", description = "The conditions the recommendation sets"), kit_field(name = "signed_off_by", type = "string?", description = "The deal lead who signed the recommendation off (a subject id)"), kit_field(name = "signed_off_at", type = "timestamp?", description = "When the recommendation was signed off")]),
+        kit_type(gts = "gts.cf.studio.kit.mna.finding.v1~", id = "mna-finding", name = "Finding", description = "Something the due diligence found in the target's software, with its severity, what it is about and its evidence.", fields = [kit_field(name = "title", type = "string", required = True, description = "What was found"), kit_field(name = "severity", type = "critical | high | medium | low | info", required = True, description = "How much it weighs on the deal"), kit_field(name = "source", type = "string?", description = "The repository or part of the target it is about"), kit_field(name = "evidence", type = "string?", description = "What shows it: a link, a measurement, a quote"), kit_field(name = "origin", type = "string", description = "Where it came from: manual, spec_check, ci, git, interview"), kit_field(name = "status", type = "open | accepted | resolved", description = "Whether it is still open")]),
+        kit_type(gts = "gts.cf.studio.kit.mna.risk.v1~", id = "mna-risk", name = "Deal risk", description = "An entry of the deal's risk ledger: likelihood, impact, owner and mitigation, and the finding it comes from.", fields = [kit_field(name = "title", type = "string", required = True, description = "The risk"), kit_field(name = "likelihood", type = "low | medium | high", required = True, description = "How likely it is"), kit_field(name = "impact", type = "low | medium | high | critical", required = True, description = "How badly it would hit"), kit_field(name = "owner", type = "string?", description = "Who owns it"), kit_field(name = "mitigation", type = "string?", description = "What is done about it"), kit_field(name = "finding_id", type = "string?", description = "The finding it comes from"), kit_field(name = "status", type = "open | mitigating | accepted | closed", description = "Where it stands")]),
+        kit_type(gts = "gts.cf.studio.kit.mna.open_question.v1~", id = "mna-open-question", name = "Open question", description = "A question the deal team asks the target: who answers it, what it is, and the answer.", fields = [kit_field(name = "what", type = "string", required = True, description = "The question"), kit_field(name = "who", type = "string?", description = "Who is asked"), kit_field(name = "answer", type = "string?", description = "The answer"), kit_field(name = "status", type = "open | answered | closed", description = "Whether it is answered")]),
+    ],
+    model = path("model/overlay.json"),
+    # Fields and relations its model adds on types it does not bring.
+    extends = [
+        kit_relation(on = "mna-finding", name = "about", target = "mna-project", verb = "references", label = "about the deal"),
+        kit_relation(on = "mna-risk", name = "about", target = "mna-project", verb = "references", label = "in the deal's ledger"),
+        kit_relation(on = "mna-risk", name = "from_finding", target = "mna-finding", verb = "references", label = "comes from"),
+        kit_relation(on = "mna-open-question", name = "about", target = "mna-project", verb = "references", label = "asked in the deal"),
+    ],
+    tabs = [
+        kit_tab(level = "project", label = "Deal", route = "/deal"),
+    ],
+    mcp_tools = [
+        "mna_deal",
+        "mna_deal_update",
+        "mna_findings",
+        "mna_finding_upsert",
+        "mna_risks",
+        "mna_risk_upsert",
+    ],
+    gears = [
+        kit_gear_claim(gear = "studio-kits", mcp_tools = ["mna_deal", "mna_deal_update", "mna_findings", "mna_finding_upsert", "mna_risks", "mna_risk_upsert"], routes = ["PATCH /studio-kits/v1/mna/deal", "POST /studio-kits/v1/mna/deal/sign-off", "POST /studio-kits/v1/mna/findings", "PUT /studio-kits/v1/mna/findings/{finding_id}", "DELETE /studio-kits/v1/mna/findings/{finding_id}", "POST /studio-kits/v1/mna/risks", "PUT /studio-kits/v1/mna/risks/{risk_id}", "DELETE /studio-kits/v1/mna/risks/{risk_id}", "POST /studio-kits/v1/mna/open-questions", "PUT /studio-kits/v1/mna/open-questions/{question_id}", "DELETE /studio-kits/v1/mna/open-questions/{question_id}"]),
+    ],
+    permissions = permissions(
+        reads = [
+            "GET /studio-kits/v1/mna/deal",
+            "GET /studio-kits/v1/mna/evidence",
+            "GET /studio-kits/v1/mna/findings",
+            "GET /studio-kits/v1/mna/risks",
+            "GET /studio-kits/v1/mna/open-questions",
+        ],
+        writes = [
+            "PATCH /studio-kits/v1/mna/deal",
+            "POST /studio-kits/v1/mna/deal/sign-off",
+            "POST /studio-kits/v1/mna/findings",
+            "PUT /studio-kits/v1/mna/findings/{finding_id}",
+            "DELETE /studio-kits/v1/mna/findings/{finding_id}",
+            "POST /studio-kits/v1/mna/risks",
+            "PUT /studio-kits/v1/mna/risks/{risk_id}",
+            "DELETE /studio-kits/v1/mna/risks/{risk_id}",
+            "POST /studio-kits/v1/mna/open-questions",
+            "PUT /studio-kits/v1/mna/open-questions/{question_id}",
+            "DELETE /studio-kits/v1/mna/open-questions/{question_id}",
+        ],
+        listens = [],
+    ),
+    material = [],
+)

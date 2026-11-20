@@ -105,6 +105,10 @@ pub struct NodeType {
     pub type_id: String,
     pub title: String,
     pub description: String,
+    /// A Project subtype's own fields as JSON schemas (`{name: schema}`),
+    /// which its registered schema carries so graph-storage validates them
+    /// (ADR-0073 amendment); empty for every other type.
+    pub payload: serde_json::Map<String, Value>,
 }
 
 /// One payload field a type has — its own, or inherited from a base.
@@ -150,6 +154,9 @@ mod kit_property_layers;
 
 #[path = "core_layer.rs"]
 mod core_layer;
+
+#[path = "project_types.rs"]
+pub(crate) mod project_types;
 pub use core_layer::CoreLayerChange;
 
 impl Ontology {
@@ -411,6 +418,10 @@ impl Ontology {
         &self.doc
     }
 
+    pub fn into_document(self) -> Value {
+        self.doc
+    }
+
     /// The document's non-entity part (`model`, `source`, `buckets`, and any
     /// other top-level key a model carries). Stored as the single
     /// [`gts::META_MODEL`] node so the entities are not the only thing that
@@ -508,7 +519,8 @@ impl Ontology {
                     .unwrap_or("")
                     .to_string();
                 Some(NodeType {
-                    type_id: gts::node_type_id(&entity_id),
+                    type_id: self.type_id_of(&entity_id),
+                    payload: self.own_payload_schema(&entity_id),
                     title,
                     description,
                 })
@@ -536,7 +548,7 @@ impl Ontology {
             let Some(src_entity) = e.get("id").and_then(Value::as_str) else {
                 continue;
             };
-            let src_type = gts::node_type_id(src_entity);
+            let src_type = self.type_id_of(src_entity);
             for p in relation_properties(e) {
                 let Some(kind) = p.get("relationType").and_then(Value::as_str) else {
                     continue;
@@ -553,7 +565,7 @@ impl Ontology {
                 {
                     push_unique(
                         dst.entry(kind.to_string()).or_default(),
-                        gts::node_type_id(&target_id),
+                        self.type_id_of(&target_id),
                     );
                 }
             }
@@ -1193,6 +1205,16 @@ impl Ontology {
         // Direct ontology id.
         if self.has_entity(reference) {
             return Some(reference.to_string());
+        }
+        // A chained GTS id (a Project subtype's) names its entity exactly;
+        // its leaf would name the base.
+        if reference.trim_end_matches('~').contains('~') {
+            if let Some(entity) = self.entity_by_chained_gts(reference) {
+                return Some(entity);
+            }
+            if project_types::is_project_type_id(reference) {
+                return None;
+            }
         }
         // Full node type id or bare leaf: match on the sanitized leaf, so
         // `role-assignment` and `role_assignment` both resolve.

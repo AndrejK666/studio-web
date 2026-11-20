@@ -7,7 +7,7 @@ import type { ProjectSource } from '@constructor-studio/mfe-shared';
 import type { ConnectorProvider, EnvironmentUse, RemoteRepo, StoredConnection } from '../api/types';
 
 /** Provider groups in the picker, in its order. Keys match `ConnectorDriver::category()`. */
-export const CATEGORY_KEYS = ['source_code', 'ai', 'notification', 'cluster', 'registry', 'compute'] as const;
+export const CATEGORY_KEYS = ['source_code', 'ai', 'notification', 'cluster', 'registry', 'compute', 'service'] as const;
 
 /** The kinds whose absence the "Not connected yet" line explains (the prototype's MISSING_MEANS). */
 export const MISSING_EXPLAINED: readonly string[] = ['source_code', 'ai', 'notification', 'cluster'];
@@ -17,10 +17,11 @@ export const HEALTH_TTL_MS = 5 * 60_000;
 
 /** The id of a gear-repository connection (ADR-0046). */
 export const GEAR_REPOSITORY = 'gear-repository';
+export const ASSEMBLY_SERVICE = 'assembly-service';
 
 /** A provider whose connections only the organization holds: a cluster or a registry, which only the server uses. */
 export const orgOnlyProvider = (p: { provider: string; category?: string }): boolean =>
-  p.category === 'cluster' || p.category === 'registry' || p.provider === 'kubernetes' || p.provider === 'registry';
+  p.category === 'cluster' || p.category === 'registry' || [ASSEMBLY_SERVICE, 'kubernetes', 'registry'].includes(p.provider);
 
 /** Where a connection is attached, and how widely its token is readable. */
 export type Reach = 'organization' | 'workspace' | 'personal';
@@ -30,7 +31,7 @@ export function reachFor(provider: Pick<ConnectorProvider, 'provider' | 'sign_in
   // A signed-in account is the person's own (ADR-0049 §5).
   if (provider.sign_in) return 'personal';
   // An environment takes only a cluster the organization holds.
-  if (provider.provider === 'kubernetes' || provider.provider === 'registry') return 'organization';
+  if (orgOnlyProvider(provider)) return 'organization';
   return current;
 }
 

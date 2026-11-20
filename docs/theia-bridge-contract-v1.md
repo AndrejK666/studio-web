@@ -85,6 +85,13 @@ The project repository is where `.cf-studio-kit.toml` lives and is what
 offers a repository picker uses `kind` to preselect the same target the node
 would have chosen on its own.
 
+For a repository-backed organization kit, the Studio backend sends
+`shelfFiles` with the CFS manifest and that kit's declared resources from the
+pinned commit. Entries carry a checkout-independent relative `path` and
+base64 `content`. The node stages the files in a temporary directory and
+invokes the same CFS installer in copy mode. Official kits use the existing
+slug and version request.
+
 The delta methods matter for reliability: they are already sequence-cursored, so
 the push events in §3 are an optimization and `getOperationDeltas`/`getAuditDeltas`
 are the **authoritative backfill** studio-theia calls on (re)connect to close any
