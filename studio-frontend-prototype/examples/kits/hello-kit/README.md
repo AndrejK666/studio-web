@@ -23,6 +23,7 @@ inside the bundle, as in every portal MFE.
 | File | What |
 |---|---|
 | `kit.gdl` | The kit's passport: `name` (its slug), `version`, `levels`, and `mfe = [path("mfe/hello")]`, the bundle |
+| `kit.json` | The manifest for an organization that reads the kit from its Git connection |
 | `mfe.json` | The FrontX manifest: three Module Federation entries; one screen extension (level `project`, route `/hello-kit`, kit `hello-kit`) and two slot contributions (type `…shell.slots.contribution.v1~`: the panel with `screen: "/projects/overview"`, the status chip) |
 | `vite.config.ts` | The same Module Federation build as a portal MFE, written into `mfe/hello/`; exposes `./lifecycle`, `./panel`, `./status` |
 | `src/` | The screen, the panel and the chip |
@@ -34,6 +35,11 @@ The slots a kit can contribute into, and what a contribution's
 `mfe/hello/` (git-ignored) is the built bundle: `mfe-manifest.json`,
 `remoteEntry.js`, `assets/`, `shared/`. That directory is what the backend
 serves.
+
+For a repository-backed installation, publish `kit.json`, `README.md` and
+the built `mfe/hello/` together in the repository or directory registered
+under Organization › Kits. Studio resolves the manifest and bundle from the
+same commit.
 
 ## Build it
 
