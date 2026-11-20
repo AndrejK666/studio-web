@@ -170,46 +170,12 @@ const KitTile: React.FC<{ kit: KitRow }> = ({ kit }) => {
           {kit.name}
         </button>
       </h4>
-      <p className={styles.cardText}>{kit.description}</p>
-      <dl className={styles.facts}>
-        <dt>{t('publisher')}</dt>
-        <dd>{kit.publisher}</dd>
-        <dt>{t('version')}</dt>
-        <dd>{kit.default_version}</dd>
-        {kit.kind && (
-          <>
-            <dt>{t('col_kind')}</dt>
-            <dd>
-              <KindBadge kit={kit} t={t} />
-            </dd>
-          </>
-        )}
-        {kit.repository_url && (
-          <>
-            <dt>{t('repository')}</dt>
-            <dd>
-              <a href={kit.repository_url} target="_blank" rel="noreferrer">
-                {kit.repository_url.replace('https://', '')}
-              </a>
-            </dd>
-          </>
-        )}
-        {kit.levels && kit.levels.length > 0 && (
-          <>
-            <dt>{t('levels')}</dt>
-            <dd>{kit.levels.join(', ')}</dd>
-          </>
-        )}
-      </dl>
-      {said !== null && (
-        <p className={styles.summary} data-kit-summary>
-          {said}
-        </p>
-      )}
-      <button type="button" className={styles.inside} onClick={() => open(kit.slug)}>
-        {t('inside')}
-      </button>
-      {controls(kit)}
+      <p className={styles.tileDescription}>{kit.description}</p>
+      <div className={styles.tileContents}>
+        {kit.kind && <KindBadge kit={kit} t={t} />}
+        {said !== null && <span data-kit-summary>{said}</span>}
+      </div>
+      <div className={styles.tileControls}>{controls(kit)}</div>
     </li>
   );
 };

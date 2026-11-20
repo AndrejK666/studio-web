@@ -33,9 +33,11 @@ export class ActivityApiService extends BaseApiService {
   );
 
   readonly openPulls = this.protocol(RestEndpointProtocol).queryWith<
-    { items: OpenPullRequest[]; total: number },
-    { projectId: string }
-  >(({ projectId }) => `/studio-artifact-ingest/v1/open-pull-requests?${q({ project_id: projectId, limit: '5' })}`);
+    { items: OpenPullRequest[]; total: number; members_known?: boolean },
+    { projectId: string; offset: number }
+  >(({ projectId, offset }) => `/studio-artifact-ingest/v1/open-pull-requests?${q({
+    project_id: projectId, limit: '200', offset: String(offset),
+  })}`);
 
   /** The installed model: without `include=dormant`, so a dormant `milestone` is absent (ADR-0070 §4). */
   readonly domainTypes = this.protocol(RestEndpointProtocol).queryWith<DomainTypesResponse, { orgId: string }>(

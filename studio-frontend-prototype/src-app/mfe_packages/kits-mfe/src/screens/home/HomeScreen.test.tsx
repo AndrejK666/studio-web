@@ -150,14 +150,12 @@ describe('HomeScreen', () => {
       },
     });
     render(<HomeScreen bridge={fixture.bridge} />);
-    // Today's card: the repository and the bundled SVG as an image.
+    // The card carries the kit's type and bundled SVG.
     const tile = await waitFor(() => {
       const found = document.querySelector('[data-kit-tiles] [data-kit="sdlc"]');
       expect(found).toBeTruthy();
       return found as HTMLElement;
     });
-    expect(within(tile).getByText('github.com/example/sdlc')).toBeTruthy();
-    // The tile says the kit's type too.
     expect(tile.querySelector('[data-kit-kind="material"]')).toBeTruthy();
     expect(tile.querySelector('img')?.getAttribute('src')).toBe(
       '/cf/studio-kits/v1/kits/sdlc/v1.2.0/mfe/grant/sdlc/icon.svg'
@@ -385,10 +383,13 @@ describe('HomeScreen', () => {
     render(<HomeScreen bridge={bridge} />);
     // The card's one line, from the kit's contents.
     expect(await screen.findByText(/sum_screens/)).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'inside' }));
+    fireEvent.click(screen.getByRole('button', { name: 'SDLC' }));
     // The page: one block per manifest section, an empty one says so.
     expect(await screen.findByText('sec_screens')).toBeTruthy();
-    // "Inside the kit" carries the kit's icon beside its name.
+    expect(screen.getByRole('link', { name: 'github.com/example/sdlc' }).getAttribute('href')).toBe(
+      'https://github.com/example/sdlc'
+    );
+    // The kit page carries the icon beside its name.
     expect(document.querySelector('[data-kit-detail="sdlc"] [data-kit-icon="lucide:workflow"]')).toBeTruthy();
     expect(screen.getByText('sec_permissions')).toBeTruthy();
     // The tool, among the agent's items and again in Contents with its description.
@@ -400,7 +401,7 @@ describe('HomeScreen', () => {
     expect(screen.getByText('PRD')).toBeTruthy();
     expect(screen.getByText('.cf-studio-kit.toml')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /back/ }));
-    expect(await screen.findByRole('button', { name: 'inside' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'SDLC' })).toBeTruthy();
   });
 });
 
