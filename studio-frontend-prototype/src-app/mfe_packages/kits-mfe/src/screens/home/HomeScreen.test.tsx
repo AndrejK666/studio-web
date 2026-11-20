@@ -201,6 +201,39 @@ describe('HomeScreen', () => {
     expect(screen.getByRole('button', { name: 'Competitive Analysis' })).toBeTruthy();
   });
 
+  it('groups visible tiles and keeps the category filter when switching to the table', async () => {
+    const kits = [
+      SDLC,
+      { ...SDLC, slug: 'compete', name: 'Competitive Analysis' },
+      { ...SDLC, slug: 'team-notes', name: 'Team Notes', shelf: 'organization' },
+    ];
+    useApiQueryMock.mockReturnValue({ isLoading: false, isError: false, data: { items: kits, total: kits.length } });
+    const { bridge } = createMfeBridgeFixture({
+      domainId: TEST_DOMAIN_ID,
+      instanceId: TEST_INSTANCE_ID,
+      initialProperties: {
+        [STUDIO_SHARED_PROPERTY_UI_PREFERENCES]: { 'mfe.kits.view': 'tiles' } as never,
+      },
+    });
+    render(<HomeScreen bridge={bridge} />);
+
+    const other = await screen.findByRole('region', { name: 'category_other' });
+    expect(within(other).getByRole('button', { name: 'Team Notes' })).toBeTruthy();
+    expect(screen.getAllByRole('region').map((section) => section.getAttribute('aria-label'))).toEqual([
+      'category_planning', 'category_research', 'category_other',
+    ]);
+
+    fireEvent.click(screen.getByText('filter_category'));
+    fireEvent.click(await screen.findByText('category_research', { selector: 'button, [role="option"], label, span' }));
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'category_other' })).toBeNull());
+    expect(screen.queryByRole('region', { name: 'category_planning' })).toBeNull();
+
+    fireEvent.click(screen.getByLabelText('Table view'));
+    await waitFor(() => expect(document.querySelector('[data-kit-tiles]')).toBeNull());
+    expect(screen.getByRole('button', { name: 'Competitive Analysis' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'SDLC' })).toBeNull();
+  });
+
   it.each(['dark', 'dracula', 'dracula-large'])(
     'bridges the %s host theme to the kit dark scope',
     (hostTheme) => {

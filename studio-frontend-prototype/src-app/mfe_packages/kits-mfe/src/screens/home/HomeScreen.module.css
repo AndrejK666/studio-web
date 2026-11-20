@@ -58,6 +58,18 @@
 }
 
 /* The library: one card per kit. */
+.tileSections {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.categoryTitle {
+  margin: 0 0 0.625rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));

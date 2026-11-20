@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { CatalogKit, KitContents, KitDetail } from '../../../api/KitsApiService';
-import { keepsKit, type KitRow } from '../KitsGrid';
+import { keepsKit, kitRows, type KitRow } from '../KitsGrid';
 import { KindBadge, kindHint } from '../KindBadge';
 import { KitContentsSection, type KitFileIo } from './KitContentsSection';
 
@@ -172,7 +172,7 @@ describe('the kit type', () => {
   });
 
   it('filters the rows by kind', () => {
-    const row = (kind: KitRow['kind']): KitRow => ({ ...KIT, kind, id: String(kind), status: 'unknown' });
+    const row = (kind: KitRow['kind']): KitRow => kitRows([{ ...KIT, kind }], null)[0]!;
     const filters = { kind: { value: ['runtime', 'material'] } };
     expect(keepsKit(row('runtime'), filters)).toBe(true);
     expect(keepsKit(row('material'), filters)).toBe(true);

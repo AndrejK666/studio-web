@@ -28,6 +28,7 @@ import {
 import type { ChildMfeBridge } from '@gears-frontx/react';
 import { KIT_KINDS, type CatalogKit, type InstalledKits } from '../../api/KitsApiService';
 import type { useHomeTranslations } from '../../i18n';
+import { KIT_CATEGORIES, kitCategory, type KitCategory } from '../../model/kitCategories';
 import { KitIcon } from './KitIcon';
 import { KindBadge } from './KindBadge';
 import styles from './HomeScreen.module.css';
@@ -45,10 +46,12 @@ export type KitStatus = 'base' | 'installed' | 'not_installed' | 'unknown';
 export interface KitRow extends CatalogKit {
   id: string;
   status: KitStatus;
+  category: KitCategory;
 }
 
 /** The filter keys the grid hands `load`. */
 export const KIT_FILTERS = {
+  category: 'category',
   level: 'level',
   kind: 'kind',
   shelf: 'shelf',
@@ -67,12 +70,14 @@ export function statusOf(kit: CatalogKit, installed: InstalledKits | null): KitS
 }
 
 export function kitRows(kits: readonly CatalogKit[], installed: InstalledKits | null): KitRow[] {
-  return kits.map((kit) => ({ ...kit, id: kit.slug, status: statusOf(kit, installed) }));
+  return kits.map((kit) => ({ ...kit, id: kit.slug, status: statusOf(kit, installed), category: kitCategory(kit.slug) }));
 }
 
 /** Whether `row` passes the grid's filters: within a filter any choice, across filters every one. */
 export function keepsKit(row: KitRow, filters: Record<string, unknown>): boolean {
   const chosen = (key: string) => listChoices(filters[key] as { value?: unknown } | undefined);
+  const categories = chosen(KIT_FILTERS.category);
+  if (categories.length > 0 && !categories.includes(row.category)) return false;
   const levels = chosen(KIT_FILTERS.level);
   if (levels.length > 0 && !levels.some((level) => row.levels?.includes(level))) return false;
   const kinds = chosen(KIT_FILTERS.kind);
@@ -153,12 +158,12 @@ const KitTile: React.FC<{ kit: KitRow }> = ({ kit }) => {
   const said = summary(kit.slug);
   return (
     <li className={styles.card} data-kit={kit.slug}>
-      <h3 className={styles.cardTitle}>
+      <h4 className={styles.cardTitle}>
         <KitIcon kit={kit} />
         <button type="button" className={styles.cardLink} onClick={() => open(kit.slug)}>
           {kit.name}
         </button>
-      </h3>
+      </h4>
       <p className={styles.cardText}>{kit.description}</p>
       <dl className={styles.facts}>
         <dt>{t('publisher')}</dt>
@@ -205,12 +210,28 @@ const KitTile: React.FC<{ kit: KitRow }> = ({ kit }) => {
 
 const KitTiles: React.FC = () => {
   const records = useDataGrid<KitRow>().useStore((state) => state.visibleRecords);
+  const { t } = useKitCells();
+  const sections = new Map<KitCategory, KitRow[]>();
+  for (const { item } of records) {
+    const kits = sections.get(item.category);
+    if (kits) kits.push(item);
+    else sections.set(item.category, [item]);
+  }
   return (
-    <ul className={styles.grid} data-kit-tiles>
-      {records.map((record) => (
-        <KitTile key={record.id} kit={record.item} />
-      ))}
-    </ul>
+    <div className={styles.tileSections} data-kit-tiles>
+      {KIT_CATEGORIES.map((category) => {
+        const kits = sections.get(category);
+        if (!kits) return null;
+        return (
+          <section key={category} aria-label={t(`category_${category}`)}>
+            <h3 className={styles.categoryTitle}>{t(`category_${category}`)}</h3>
+            <ul className={styles.grid}>
+              {kits.map((kit) => <KitTile key={kit.id} kit={kit} />)}
+            </ul>
+          </section>
+        );
+      })}
+    </div>
   );
 };
 
@@ -278,6 +299,7 @@ export const KitsGrid: React.FC<{
     [t]
   );
   // The options a filter offers are the ones the rows have: one entity list per set of them.
+  const categories = KIT_CATEGORIES.filter((category) => rows.some((row) => row.category === category)).join(',');
   const levels = distinct(rows.flatMap((row) => row.levels ?? [])).join(',');
   const shelves = distinct(rows.map((row) => row.shelf)).join(',');
   // The tiers in their order, strongest first, as far as the rows have them.
@@ -287,6 +309,10 @@ export const KitsGrid: React.FC<{
   const filters = useMemo(() => {
     const split = (joined: string) => (joined ? joined.split(',') : []);
     const entities = [
+      tagGroup(KIT_FILTERS.category, t('filter_category'), split(categories).map((value) => ({
+        value,
+        label: t(`category_${value}`),
+      }))),
       tagGroup(KIT_FILTERS.level, t('filter_level'), split(levels).map((value) => ({ value, label: value }))),
     ];
     if (kinds) {
@@ -318,7 +344,7 @@ export const KitsGrid: React.FC<{
       tagGroup(KIT_FILTERS.publisher, t('filter_publisher'), split(publishers).map((value) => ({ value, label: value })))
     );
     return entities;
-  }, [t, levels, kinds, shelves, publishers, known]);
+  }, [t, categories, levels, kinds, shelves, publishers, known]);
   return (
     <KitCellsProvider value={cells}>
       <ListGrid<KitRow>
