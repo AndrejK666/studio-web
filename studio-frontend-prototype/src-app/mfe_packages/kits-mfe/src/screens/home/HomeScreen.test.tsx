@@ -232,6 +232,7 @@ describe('HomeScreen', () => {
     await waitFor(() => expect(document.querySelector('[data-kit-tiles]')).toBeNull());
     expect(screen.getByRole('button', { name: 'Competitive Analysis' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'SDLC' })).toBeNull();
+    expect(within(screen.getByRole('row', { name: /Competitive Analysis/ })).getByText('category_research')).toBeTruthy();
   });
 
   it.each(['dark', 'dracula', 'dracula-large'])(

@@ -104,6 +104,7 @@ const LOCAL_OPTIONS = {
   filter: keepsKit,
   compare: {
     name: byText((row) => row.name),
+    category: (a: KitRow, b: KitRow) => KIT_CATEGORIES.indexOf(a.category) - KIT_CATEGORIES.indexOf(b.category),
     publisher: byText((row) => row.publisher),
     version: byText((row) => row.default_version),
     // Strongest first, as the server orders the tiers.
@@ -139,6 +140,11 @@ const NameCell: React.FC<{ item: KitRow }> = ({ item }) => {
 };
 
 const VersionCell: React.FC<{ item: KitRow }> = ({ item }) => <code>{item.default_version}</code>;
+
+const CategoryCell: React.FC<{ item: KitRow }> = ({ item }) => {
+  const { t } = useKitCells();
+  return <span className={styles.categoryCell}>{t(`category_${item.category}`)}</span>;
+};
 
 const KindCell: React.FC<{ item: KitRow }> = ({ item }) => {
   const { t } = useKitCells();
@@ -290,6 +296,7 @@ export const KitsGrid: React.FC<{
   const columns = useMemo<DataGridTableColumn<KitRow>[]>(
     () => [
       { id: 'name', label: t('col_name'), component: NameCell },
+      { id: 'category', label: t('filter_category'), component: CategoryCell, width: 200 },
       { id: 'publisher', label: t('publisher'), width: 160 },
       { id: 'version', label: t('version'), component: VersionCell, width: 140 },
       { id: 'kind', label: t('col_kind'), component: KindCell, width: 130 },
@@ -356,7 +363,7 @@ export const KitsGrid: React.FC<{
         empty={KitsEmpty}
         unsortable={['levels', 'status']}
         defaultOrder={{ id: 'name', direction: 'asc' }}
-        minWidth="64rem"
+        minWidth="76rem"
       >
         <KitTilesPlugin />
         <ViewFromPreference bridge={bridge} />
