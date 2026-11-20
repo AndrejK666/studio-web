@@ -106,6 +106,7 @@ tokio-postgres = "0.7"
 inventory = "0.3"
 tracing = "0.1"
 tokio-util = "0.7"
+toml_edit = "0.25"
 utoipa = "5"
 uuid = { version = "1", features = ["serde", "v4", "v5"] }
 # Invitation tokens are stored as digests, never as themselves: a read of the

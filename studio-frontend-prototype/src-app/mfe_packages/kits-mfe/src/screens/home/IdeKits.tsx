@@ -1,6 +1,6 @@
 /**
  * Project › Kits › In the IDE: the old prototype's project Kits tab
- * (`kits.tsx`, `section="kits"`). The official kits `cfs` installs into the
+ * (`kits.tsx`, `section="kits"`). The material kits `cfs` installs into the
  * project's checkouts, what the project asked for, and where each one was
  * actually written (`model/ideKits.ts`).
  *
@@ -17,7 +17,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { apiRegistry } from '@gears-frontx/react';
 import { Badge, Button } from '@gears-frontx/ui-kit';
 import { errorMessage, refusalText, responseStatus } from '@constructor-studio/mfe-shared';
-import { KitsApiService, type CatalogKit } from '../../api/KitsApiService';
+import { KitsApiService, type CatalogKit, type KitDetail } from '../../api/KitsApiService';
 import {
   reconcileKey,
   repositoryLabel,
@@ -44,9 +44,14 @@ interface Loaded {
   note: string | null;
 }
 
-export const IdeKits: React.FC<{ projectId: string; t: Text }> = ({ projectId, t }) => {
+export const IdeKits: React.FC<{ projectId: string; shelf?: KitDetail[]; t: Text }> = ({ projectId, shelf, t }) => {
   const api = apiRegistry.getService(KitsApiService);
-  const [catalog, setCatalog] = useState<CatalogKit[] | null>(null);
+  const [official, setCatalog] = useState<CatalogKit[] | null>(null);
+  const catalog = useMemo(() => {
+    if (!official) return null;
+    const organizationKits = shelf?.filter((kit) => kit.origin?.manifest_file === '.cf-studio-kit.toml');
+    return [...official, ...(organizationKits ?? []).map((detail) => detail.kit)];
+  }, [official, shelf]);
   const [installed, setInstalled] = useState<KitInstallation[]>([]);
   const [repositories, setRepositories] = useState<ProjectRepository[] | null>(null);
   /** Why the repositories are unknown: no session (503), or another failure. */
@@ -246,11 +251,23 @@ export const IdeKits: React.FC<{ projectId: string; t: Text }> = ({ projectId, t
                 <div className={styles.addFields}>
                   <label>
                     {t('ide_version')}
-                    <input
-                      className={styles.input}
-                      value={versionOf(kit)}
-                      onChange={(e) => setVersions((current) => ({ ...current, [kit.slug]: e.target.value }))}
-                    />
+                    {kit.shelf === 'organization' ? (
+                      <select
+                        value={versionOf(kit)}
+                        onChange={(e) => setVersions((current) => ({ ...current, [kit.slug]: e.target.value }))}
+                      >
+                        <option value={kit.default_version}>{kit.default_version}</option>
+                        {installation && installation.version !== kit.default_version && (
+                          <option value={installation.version}>{installation.version}</option>
+                        )}
+                      </select>
+                    ) : (
+                      <input
+                        className={styles.input}
+                        value={versionOf(kit)}
+                        onChange={(e) => setVersions((current) => ({ ...current, [kit.slug]: e.target.value }))}
+                      />
+                    )}
                   </label>
                   {several && (
                     <label className={styles.check}>

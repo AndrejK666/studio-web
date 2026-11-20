@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import * as childProcess from 'child_process';
 import { promises as fs } from 'fs';
+import * as path from 'path';
 import { KitInstallerImpl } from './kit-installer';
 import type { RepositoryRegistry } from './repository-registry';
 
@@ -8,6 +9,49 @@ type ExecFileCallback = (error: Error | null, stdout: string, stderr: string) =>
 
 describe('kit installer', () => {
     afterEach(() => jest.restoreAllMocks());
+
+    it('stages a registry-pinned shelf kit for CFS and removes the staging directory', async () => {
+        jest.spyOn(fs, 'access').mockResolvedValue(undefined);
+        const manifest = '[[kits]]\nslug = "review-guide"\n';
+        const version = 'b'.repeat(40);
+        let staging: string | undefined;
+        jest.spyOn(childProcess, 'execFile').mockImplementation(((executable, args, options, callback) => {
+            const argv = (args ?? []).map(String);
+            if (argv[0] === 'kit') {
+                staging = argv[3];
+                expect(argv).toEqual(['kit', 'install', '--path', staging, '--kit', 'review-guide', '--install-mode', 'copy', '--force']);
+                void fs.readFile(path.join(staging, '.cf-studio-kit.toml'), 'utf8').then((body) => {
+                    expect(body).toBe(manifest);
+                    (callback as ExecFileCallback)(null, 'ok', '');
+                }, (error) => (callback as ExecFileCallback)(error, '', ''));
+            } else {
+                (callback as ExecFileCallback)(null, 'ok', '');
+            }
+            return {} as childProcess.ChildProcess;
+        }) as typeof childProcess.execFile);
+        const result = await new KitInstallerImpl().install({
+            kitSlug: 'review-guide', version,
+            shelfFiles: [{ path: '.cf-studio-kit.toml', content: Buffer.from(manifest).toString('base64') }]
+        }, registry([{ id: 'repo-1', label: 'app', root: '/workspace/app' }]));
+        expect(result.version).toBe(version);
+        expect(staging).toBeDefined();
+        await expect(fs.stat(staging!)).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+
+    it('rejects a shelf path that escapes staging before running CFS', async () => {
+        const run = jest.spyOn(childProcess, 'execFile');
+        const request = {
+            kitSlug: 'review-guide', version: 'b'.repeat(40),
+            shelfFiles: [
+                { path: '.cf-studio-kit.toml', content: '' },
+                { path: '../outside', content: '' },
+            ]
+        };
+        await expect(new KitInstallerImpl().install(request,
+            registry([{ id: 'repo-1', label: 'app', root: '/workspace/app' }])
+        )).rejects.toThrow('Invalid shelf kit file path');
+        expect(run).not.toHaveBeenCalled();
+    });
 
     it('runs only the allow-listed kit and regenerates agent integrations', async () => {
         const calls: Array<{ executable: string; args: string[]; cwd: string | undefined }> = [];

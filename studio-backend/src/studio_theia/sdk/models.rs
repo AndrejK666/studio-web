@@ -185,6 +185,15 @@ pub struct InstallKit {
     pub version: String,
     #[serde(default)]
     pub repository_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shelf_files: Option<Vec<KitSourceFile>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KitSourceFile {
+    pub path: String,
+    /// Base64 keeps the exact bytes of text and binary files.
+    pub content: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

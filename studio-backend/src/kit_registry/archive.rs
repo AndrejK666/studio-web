@@ -647,6 +647,92 @@ pub async fn fetch_into(
     }
 }
 
+/// Prepare the exact inputs CFS expects, at the recorded commit. A missing
+/// resource aborts the install instead of producing a partial checkout.
+#[cfg(feature = "theia-bridge")]
+pub(super) async fn ide_source(
+    reader: &dyn KitSourceReader,
+    org: Uuid,
+    slug: &str,
+    origin: &super::shelf::KitOrigin,
+) -> anyhow::Result<Vec<crate::studio_theia::sdk::models::KitSourceFile>> {
+    use crate::studio_theia::sdk::models::KitSourceFile;
+    use anyhow::Context;
+    use base64::Engine;
+
+    anyhow::ensure!(
+        origin.manifest_file == CF_STUDIO_KIT_TOML,
+        "invalid IDE kit manifest"
+    );
+    let ctx = super::installed::service_context(org)?;
+    let manifest_path = join(&origin.path, CF_STUDIO_KIT_TOML);
+    let manifest = reader
+        .read_file(&ctx, org, origin, &manifest_path)
+        .await
+        .map_err(|error| anyhow::anyhow!("{}", refusal_text(&error)))?
+        .context("the IDE kit manifest is unavailable at the selected commit")?;
+    let mut document: toml_edit::DocumentMut = std::str::from_utf8(&manifest)?.parse()?;
+    let kit = document
+        .get("kits")
+        .and_then(toml_edit::Item::as_array_of_tables)
+        .and_then(|kits| {
+            kits.iter()
+                .find(|kit| kit.get("slug").and_then(toml_edit::Item::as_str) == Some(slug))
+        })
+        .context("the IDE kit manifest has no matching kit")?;
+    let resource_tables = kit
+        .get("resources")
+        .map(|item| {
+            item.as_array_of_tables()
+                .context("IDE kit resources must be manifest tables")
+        })
+        .transpose()?;
+    let mut wanted = Vec::new();
+    for resource in resource_tables.into_iter().flat_map(|tables| tables.iter()) {
+        let source = resource
+            .get("source")
+            .and_then(toml_edit::Item::as_str)
+            .and_then(safe_path)
+            .context("invalid IDE kit resource source")?;
+        wanted.push(Wanted {
+            from: join(&origin.path, &source),
+            into: source,
+            directory: resource.get("type").and_then(toml_edit::Item::as_str) == Some("directory"),
+        });
+    }
+    // CFS validates the whole manifest before selecting a kit. Stage a
+    // manifest for just this kit, together with only its resources.
+    let mut selected = toml_edit::ArrayOfTables::new();
+    selected.push(kit.clone());
+    document["kits"] = toml_edit::Item::ArrayOfTables(selected);
+    let mut archive = Archive::new(slug);
+    archive.add(CF_STUDIO_KIT_TOML, document.to_string().into_bytes());
+    fetch_into(&mut archive, reader, org, &RepoAt::from(origin), &wanted).await;
+    anyhow::ensure!(
+        archive.notes.is_empty(),
+        "kit source is incomplete: {}",
+        archive.notes.join("; ")
+    );
+    anyhow::ensure!(
+        archive.bytes < 1_425_000,
+        "IDE kit source exceeds the 1.9 MB transfer limit"
+    );
+    let files: Vec<_> = archive
+        .entries
+        .into_iter()
+        .map(|(path, bytes)| KitSourceFile {
+            path,
+            content: base64::engine::general_purpose::STANDARD.encode(bytes),
+        })
+        .collect();
+    // The control route's JSON limit is 2 MiB. Leave room for the envelope.
+    anyhow::ensure!(
+        serde_json::to_vec(&files)?.len() < 1_900_000,
+        "IDE kit source exceeds the 1.9 MB transfer limit"
+    );
+    Ok(files)
+}
+
 /// The first few of `items`, and how many more.
 fn listed(items: &[String]) -> String {
     let shown: Vec<String> = items.iter().take(8).map(|s| format!("`{s}`")).collect();

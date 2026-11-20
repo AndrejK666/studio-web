@@ -1,11 +1,12 @@
 import { execFile } from 'child_process';
 import { promises as fs } from 'fs';
+import { tmpdir } from 'os';
 import * as path from 'path';
 import { injectable } from '@theia/core/shared/inversify';
 
 import { CfsCommand, cfsCommand, cfsEnvironment } from './cfs-command';
 import { RepositoryRegistry } from './repository-registry';
-import type { StudioKitInstallRequest, StudioKitInstallResult } from '../common/studio-protocol';
+import type { StudioKitInstallRequest, StudioKitInstallResult, StudioKitSourceFile } from '../common/studio-protocol';
 
 const INSTALL_TIMEOUT_MS = 10 * 60 * 1000;
 const MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
@@ -71,13 +72,24 @@ export class KitInstallerImpl {
      * project, which the repository registry does not hold.
      */
     async installInto(request: StudioKitInstallRequest, repository: KitTargetRepository): Promise<StudioKitInstallResult> {
-        const { official, version } = checkRequest(request);
+        const kit = checkRequest(request);
+        const { version } = kit;
         if (this.activeRepositories.has(repository.repositoryId)) {
             throw new Error(`A kit operation is already running for ${repository.label}`);
         }
 
         this.activeRepositories.add(repository.repositoryId);
+        let staging: string | undefined;
         try {
+            let source: string[];
+            if ('official' in kit) {
+                const { official } = kit;
+                source = [official.repo, ...(official.kit ? ['--kit', official.kit] : []), '--version', version];
+            } else {
+                staging = await fs.mkdtemp(path.join(tmpdir(), 'studio-shelf-kit-'));
+                await stageShelfFiles(staging, kit.files);
+                source = ['--path', staging, '--kit', request.kitSlug, '--install-mode', 'copy'];
+            }
             // One command for the whole operation, so init, install and
             // generation run the same cfs.
             const command = cfsCommand();
@@ -89,10 +101,7 @@ export class KitInstallerImpl {
                 [
                     'kit',
                     'install',
-                    official.repo,
-                    ...(official.kit ? ['--kit', official.kit] : []),
-                    '--version',
-                    version,
+                    ...source,
                     '--force'
                 ],
                 repository.canonicalRoot,
@@ -108,6 +117,9 @@ export class KitInstallerImpl {
             };
         } finally {
             this.activeRepositories.delete(repository.repositoryId);
+            if (staging) {
+                await fs.rm(staging, { recursive: true, force: true });
+            }
         }
     }
 
@@ -227,17 +239,54 @@ function lastLines(text: string, limit = 800): string {
     return text.length <= limit ? text : `...${text.slice(-limit)}`;
 }
 
-/** The allow-listed kit and a safe Git ref, or the reason there is none. */
-function checkRequest(request: StudioKitInstallRequest): { official: OfficialKit; version: string } {
-    const official = OFFICIAL_KITS[request.kitSlug];
+/** Validate the official ref or the pinned source supplied by the registry. */
+function checkRequest(request: StudioKitInstallRequest): {
+    official: OfficialKit; version: string;
+} | {
+    files: readonly StudioKitSourceFile[]; version: string;
+} {
+    const version = request.version.trim();
+    const official = Object.prototype.hasOwnProperty.call(OFFICIAL_KITS, request.kitSlug)
+        ? OFFICIAL_KITS[request.kitSlug]
+        : undefined;
+    if (request.shelfFiles !== undefined) {
+        if (official || !/^[a-z0-9][a-z0-9-]{0,79}$/u.test(request.kitSlug) ||
+            !/^[0-9a-f]{40}$/u.test(version) || !Array.isArray(request.shelfFiles)) {
+            throw new Error('The shelf kit requires a valid slug, commit and file list');
+        }
+        return { files: request.shelfFiles, version };
+    }
     if (!official) {
         throw new Error(`Kit is not allow-listed: ${request.kitSlug}`);
     }
-    const version = request.version.trim();
     if (!isSafeGitRef(version)) {
         throw new Error('Kit version is not a safe Git ref');
     }
     return { official, version };
+}
+
+async function stageShelfFiles(directory: string, files: readonly StudioKitSourceFile[]): Promise<void> {
+    if (!files.some((file) => file?.path === '.cf-studio-kit.toml')) {
+        throw new Error('The shelf kit has no source manifest');
+    }
+    for (const file of files) {
+        if (typeof file?.path !== 'string' || typeof file.content !== 'string') {
+            throw new Error('Invalid shelf kit file');
+        }
+        const segments = file.path.split('/');
+        if (segments.some((segment) => !segment || segment === '.' || segment === '..' ||
+            /[\\:*?"<>|\u0000-\u001f]|[. ]$/u.test(segment) ||
+            /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/iu.test(segment))) {
+            throw new Error('Invalid shelf kit file path');
+        }
+        const target = path.join(directory, ...segments);
+        const bytes = Buffer.from(file.content, 'base64');
+        if (bytes.toString('base64') !== file.content) {
+            throw new Error('Invalid shelf kit file encoding');
+        }
+        await fs.mkdir(path.dirname(target), { recursive: true });
+        await fs.writeFile(target, bytes, { flag: 'wx' });
+    }
 }
 
 function isSafeGitRef(value: string): boolean {

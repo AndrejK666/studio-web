@@ -64,14 +64,14 @@ pub struct StudioKitsGear {
 impl Gear for StudioKitsGear {
     async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
         let account_management = ctx.client_hub().get::<dyn AccountManagementClient>()?;
-        let service = Arc::new(KitRegistryService::new(
+        let service = KitRegistryService::new(
             crate::model_metadata::client_for(
                 ctx,
                 account_management.clone(),
                 service::MODEL_KINDS,
             ),
             ctx.client_hub(),
-        )?);
+        )?;
         // Which kits apply to an organization (ADR-0069 §4): plain tenant
         // metadata, written as the gear after it has checked who asks.
         let installer = Arc::new(
@@ -90,6 +90,7 @@ impl Gear for StudioKitsGear {
             // again when somebody else changes them.
             .with_events(Arc::new(events::HubEvents(ctx.client_hub()))),
         );
+        let service = Arc::new(service.with_ide_shelf(Arc::clone(&installer)));
         // An organization's own kits' screens, read from its repository at the
         // pinned commit (ADR-0068 phases 5 and 7).
         service

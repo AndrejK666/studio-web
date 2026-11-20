@@ -251,6 +251,13 @@ export interface StudioKitInstallRequest {
     readonly kitSlug: string;
     readonly version: string;
     readonly repositoryId?: string;
+    /** Files the Studio backend read from the organization's pinned shelf kit. */
+    readonly shelfFiles?: readonly StudioKitSourceFile[];
+}
+
+export interface StudioKitSourceFile {
+    readonly path: string;
+    readonly content: string;
 }
 
 export interface StudioKitInstallResult {

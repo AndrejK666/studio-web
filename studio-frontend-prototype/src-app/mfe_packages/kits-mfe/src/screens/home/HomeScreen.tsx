@@ -337,7 +337,9 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
         <KitsGrid rows={rows} cells={cells} bridge={bridge} />
       )}
       {/* What the project's IDE has: the official kits `cfs` writes into its checkouts. */}
-      {scope === 'project' && projectId && !open && <IdeKits projectId={projectId} t={t} />}
+      {scope === 'project' && projectId && !open && (
+        <IdeKits key={projectId} projectId={projectId} shelf={shelf} t={t} />
+      )}
     </div>
   );
 };

@@ -16,6 +16,68 @@ use crate::kit_registry::shelf::{Fetched, KitOrigin, SourceInput};
 
 const ORG: Uuid = Uuid::from_u128(0xc31d);
 
+#[cfg(feature = "theia-bridge")]
+#[tokio::test]
+async fn ide_source_stages_only_the_selected_kits_resources_and_refuses_missing_files() {
+    let manifest = br#"
+[[kits]]
+slug = "guide"
+[[kits.resources]]
+source = "rules/check"
+type = "directory"
+[[kits]]
+slug = "other"
+[[kits.resources]]
+source = "unrelated.md"
+type = "file"
+"#;
+    let origin = KitOrigin {
+        connection_id: ORG,
+        provider: "github".into(),
+        repository: "tests/kits".into(),
+        path: "package".into(),
+        git_ref: None,
+        commit: "a".repeat(40),
+        manifest_file: CF_STUDIO_KIT_TOML.into(),
+        added_by: "tester".into(),
+        added_at: String::new(),
+        refreshed_at: None,
+    };
+    let mut reader = Files {
+        files: BTreeMap::from([
+            (format!("package/{CF_STUDIO_KIT_TOML}"), manifest.to_vec()),
+            ("package/rules/check/check.md".into(), vec![0xff]),
+            ("package/unrelated.md".into(), b"private".to_vec()),
+        ]),
+        ..Default::default()
+    };
+    let files = ide_source(&reader, ORG, "guide", &origin).await.unwrap();
+    assert_eq!(
+        files
+            .iter()
+            .map(|file| file.path.as_str())
+            .collect::<Vec<_>>(),
+        vec![CF_STUDIO_KIT_TOML, "rules/check/check.md"],
+    );
+    assert_eq!(files[1].content, "/w==");
+    use base64::Engine;
+    let manifest = base64::engine::general_purpose::STANDARD
+        .decode(&files[0].content)
+        .unwrap();
+    let manifest = std::str::from_utf8(&manifest).unwrap();
+    assert!(
+        manifest.contains("guide") && !manifest.contains("other"),
+        "{manifest}"
+    );
+
+    reader.files.remove("package/rules/check/check.md");
+    let error = ide_source(&reader, ORG, "guide", &origin)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("kit source is incomplete"), "{error}");
+}
+
 /// Every entry of a `.tar.gz`, checking each header's checksum.
 fn entries(gz: &[u8]) -> Vec<(String, Vec<u8>)> {
     let mut tar = Vec::new();
