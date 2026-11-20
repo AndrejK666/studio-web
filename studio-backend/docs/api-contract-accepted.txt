@@ -1281,6 +1281,8 @@ request	PUT /studio-kits/v1/organization-kits/{}	version	String	optional
 request	PUT /studio-kits/v1/project-kits/{}	version	String	optional
 request	PUT /studio-kits/v1/project-phase	owner	String	optional
 request	PUT /studio-kits/v1/project-phase	phase	String	required
+request	PUT /studio-organizations/v1/access-config	document	Value	required
+request	PUT /studio-organizations/v1/access-config	expected_version	i64	required
 request	PUT /studio-organizations/v1/access-grants	role_key	String	required
 request	PUT /studio-organizations/v1/access-grants	scope_id	String	optional
 request	PUT /studio-organizations/v1/access-grants	scope_name	String	optional
@@ -4859,6 +4861,8 @@ response	GET /studio-mcp/v1/oauth-protected-resource	resource_name	String	always
 response	GET /studio-mcp/v1/oauth-protected-resource	scopes_supported	Vec<String>	always
 response	GET /studio-organizations/v1/access-catalogue	default_roles	Value	always
 response	GET /studio-organizations/v1/access-catalogue	privileges	Vec<String>	always
+response	GET /studio-organizations/v1/access-config	document	Value	always
+response	GET /studio-organizations/v1/access-config	version	i64	always
 response	GET /studio-organizations/v1/capabilities	decides_requests	bool	always
 response	GET /studio-organizations/v1/capabilities	organization_creation	String	always
 response	GET /studio-organizations/v1/capabilities	self_service	bool	always
@@ -4997,9 +5001,11 @@ response	GET /studio-organizations/v1/project-creation-types	items.next_steps.do
 response	GET /studio-organizations/v1/project-creation-types	items.next_steps.id	String	always
 response	GET /studio-organizations/v1/project-creation-types	items.next_steps.label	String	always
 response	GET /studio-organizations/v1/project-creation-types	items.next_steps.route	String	always
+response	GET /studio-organizations/v1/project-creation-types	items.shelf	String	always
 response	GET /studio-organizations/v1/project-creation-types	items.slug	String	always
 response	GET /studio-organizations/v1/project-creation-types	items.steps	Vec<String>	always
 response	GET /studio-organizations/v1/project-creation-types	items.type_id	String	always
+response	GET /studio-organizations/v1/project-creation-types	items.version	String	optional
 response	GET /studio-organizations/v1/project-creation-types	total	u32	always
 response	GET /studio-organizations/v1/project-creations/{}	error	String	optional
 response	GET /studio-organizations/v1/project-creations/{}	name	String	always
@@ -8850,6 +8856,8 @@ response	PUT /studio-kits/v1/project-phase	phase_owner	String	optional
 response	PUT /studio-kits/v1/project-phase	phase_since	String	optional
 response	PUT /studio-kits/v1/project-phase	project_id	String	always
 response	PUT /studio-kits/v1/project-phase	states	Vec<String>	always
+response	PUT /studio-organizations/v1/access-config	document	Value	always
+response	PUT /studio-organizations/v1/access-config	version	i64	always
 response	PUT /studio-organizations/v1/access-grants	id	String	always
 response	PUT /studio-organizations/v1/access-grants	role_key	String	always
 response	PUT /studio-organizations/v1/access-grants	scope_id	String	always
@@ -9463,6 +9471,7 @@ route	GET /studio-llm/v1/workspaces/{}/models
 route	GET /studio-llm/v1/workspaces/{}/providers/{}/{}
 route	GET /studio-mcp/v1/oauth-protected-resource
 route	GET /studio-organizations/v1/access-catalogue
+route	GET /studio-organizations/v1/access-config
 route	GET /studio-organizations/v1/capabilities
 route	GET /studio-organizations/v1/logo
 route	GET /studio-organizations/v1/metrics
@@ -9768,6 +9777,7 @@ route	PUT /studio-kits/v1/mna/risks/{}
 route	PUT /studio-kits/v1/organization-kits/{}
 route	PUT /studio-kits/v1/project-kits/{}
 route	PUT /studio-kits/v1/project-phase
+route	PUT /studio-organizations/v1/access-config
 route	PUT /studio-organizations/v1/access-grants
 route	PUT /studio-organizations/v1/logo
 route	PUT /studio-organizations/v1/name

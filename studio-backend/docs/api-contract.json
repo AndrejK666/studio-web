@@ -1,6 +1,6 @@
 {
   "note": "The API surface studio-backend declares. Generated from source by `cargo run --quiet -- api-contract`; the rules it must follow are docs/api-conventions.md.",
-  "open_violations": 256,
+  "open_violations": 257,
   "operations": [
     {
       "method": "DELETE",
@@ -3545,6 +3545,23 @@
     },
     {
       "method": "GET",
+      "path": "/studio-organizations/v1/access-config",
+      "operation_id": "studio_organizations.get_access_config",
+      "tag": "StudioOrganizations",
+      "summary": "Read an organization's access settings and version",
+      "authenticated": true,
+      "responses": [
+        "AccessConfigDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-organizations/v1/capabilities",
       "operation_id": "studio_organizations.capabilities",
       "tag": "StudioOrganizations",
@@ -3637,6 +3654,7 @@
       ],
       "errors": [
         "401",
+        "404",
         "500"
       ]
     },
@@ -8664,6 +8682,25 @@
       "request": "SetProjectPhaseDto",
       "responses": [
         "ProjectPhaseDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-organizations/v1/access-config",
+      "operation_id": "studio_organizations.save_access_config",
+      "tag": "StudioOrganizations",
+      "summary": "Save an organization's access settings at a known version",
+      "authenticated": true,
+      "request": "SaveAccessConfigRequest",
+      "responses": [
+        "AccessConfigDto"
       ],
       "errors": [
         "400",

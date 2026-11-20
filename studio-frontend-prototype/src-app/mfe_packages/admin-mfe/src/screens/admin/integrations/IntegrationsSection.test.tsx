@@ -220,6 +220,38 @@ describe('Integrations: the list', () => {
 });
 
 describe('Integrations: adding', () => {
+  it('saves an assembly service against the strategy declared by its organization kit', async () => {
+    serve({
+      connectorProviders: read('connectorProviders', {
+        items: [...PROVIDERS, provider({
+          provider: 'assembly-service',
+          display_name: 'Assembly strategy service',
+          category: 'service',
+          default_base_url: '',
+          credential_label: 'Shared secret',
+        })],
+      }),
+    });
+    render(<IntegrationsSection />);
+    await row('Acme GitHub');
+    click(document, '[data-connection-add]');
+    click(document, '[data-connection-picker] [data-provider="assembly-service"]');
+    const form = document.querySelector('[data-connection-form="assembly-service"]') as HTMLElement;
+    expect(form.querySelector('[data-connection-reach]')).toBeNull();
+    fireEvent.change(within(form).getByPlaceholderText('int_label_placeholder'), { target: { value: 'Acme' } });
+    fireEvent.change(within(form).getByPlaceholderText('int_url_required'), { target: { value: 'https://matcher.example' } });
+    fireEvent.change(within(form).getByLabelText('Shared secret'), { target: { value: 'test-secret' } });
+    fireEvent.change(within(form).getByLabelText(/int_assembly_strategy/), { target: { value: 'acme_matcher' } });
+    click(form, '[data-connection-create]');
+    await waitFor(() => expect(calls.find((c) => c.what === 'createConnection')?.body).toMatchObject({
+      provider: 'assembly-service',
+      base_url: 'https://matcher.example',
+      scope: 'organization',
+      owner_tenant_id: 'o1',
+      options: { strategy: 'acme_matcher' },
+    }));
+  });
+
   it('tests a credential without saving, then saves it for the organization', async () => {
     render(<IntegrationsSection />);
     await row('Acme GitHub');

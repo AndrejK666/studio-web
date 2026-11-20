@@ -142,6 +142,7 @@ describe('GearMatchSection', () => {
     vi.spyOn(api, 'gearMatch').mockResolvedValue(MATCH);
     vi.spyOn(api, 'projectProduct').mockResolvedValue({ product_id: 'todo-app', gears: ['api-gateway'] });
     vi.spyOn(api, 'projectPlan').mockResolvedValue({ items: [], total: 0 });
+    vi.spyOn(api, 'assemblyStrategy').mockRejectedValue(new Error('No project strategy'));
   });
   afterEach(() => {
     cleanup();
@@ -268,5 +269,29 @@ describe('GearMatchSection', () => {
     vi.spyOn(api, 'gearMatches').mockRejectedValue(Object.assign(new Error('off'), { response: { status: 503 } }));
     draw();
     await waitFor(() => expect(document.querySelector('[data-gear-match-unavailable]')).toBeTruthy());
+  });
+
+  it('loads the chosen service strategy’s history and starts a match through that service', async () => {
+    vi.mocked(api.assemblyStrategy).mockResolvedValue({
+      organization_id: 'o1',
+      strategy: 'gears_matcher',
+      chosen: 'gears_matcher',
+      source: 'studio',
+      gears_matcher: { configured: true, offered: true },
+      strategies: ['gears_matcher', 'acme_matcher'],
+      strategy_kits: [
+        { id: 'acme_matcher', name: 'Acme Matcher', description: '', kit: 'acme', service: 'gears-matcher/v1', offered: true },
+      ],
+      settable: false,
+      may_set_default: false,
+    });
+    const start = vi.spyOn(api, 'startGearMatch').mockResolvedValue({ run_id: 'r', match_id: 'm2', state: 'queued' });
+    draw();
+    fireEvent.change(await screen.findByLabelText('strategy_label'), { target: { value: 'acme_matcher' } });
+    await waitFor(() => expect(api.gearMatches).toHaveBeenCalledWith('', 'p1', 'acme_matcher'));
+    fireEvent.click(await found('[data-gear-match-start]'));
+    await waitFor(() =>
+      expect(start).toHaveBeenCalledWith('', 'p1', expect.objectContaining({ idempotency_key: expect.any(String) }), 'acme_matcher')
+    );
   });
 });

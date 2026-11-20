@@ -6,6 +6,8 @@
   "starting": "Запуск…",
   "rerun": "Запустить снова",
   "paths_label": "Какие документы читать",
+  "strategy_label": "Стратегия подбора",
+  "strategy_shipped": "Gears matcher",
   "paths_hint": "Пути документов проекта через запятую (docs/…, upload:…). Пусто — его PRD.",
   "cancel": "Остановить",
   "cancelling": "Останавливаем…",

@@ -6,6 +6,8 @@
   "starting": "Starting…",
   "rerun": "Run again",
   "paths_label": "Documents to read",
+  "strategy_label": "Match strategy",
+  "strategy_shipped": "Gears matcher",
   "paths_hint": "Paths of the project's documents, comma-separated (docs/…, upload:…). Empty: its PRDs.",
   "cancel": "Stop",
   "cancelling": "Stopping…",
