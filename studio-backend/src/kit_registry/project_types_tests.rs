@@ -211,7 +211,7 @@ async fn an_organizations_kit_from_its_shelf_becomes_a_project_type_and_types_th
     let types = installer.project_types(ORG).await.unwrap();
     assert_eq!(
         slugs(&types),
-        ["gears-project", "constructor-research", "deals"],
+        ["gears-project", "constructor-research", "mna", "deals"],
         "the built-in types, then the organization's own"
     );
     let own = types.iter().find(|t| t.manifest.slug == "deals").unwrap();

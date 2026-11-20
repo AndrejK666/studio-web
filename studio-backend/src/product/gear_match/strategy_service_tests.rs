@@ -306,6 +306,12 @@ async fn an_organization_kit_s_service_strategy_runs_a_match_and_proposes_gears(
         .expect("no service is connected");
     assert_eq!(why.0, NOT_CONNECTED);
     available.services.insert("acme_matcher".into(), why);
+    let shipped = super::services::SHIPPED_STRATEGY;
+    let refusal = bare
+        .service_refusal(&ctx(org), org, shipped)
+        .await
+        .expect("the shipped matcher is not configured");
+    available.services.insert(shipped.into(), refusal);
     let e = assembly::resolve(None, Some(acme.clone()), available);
     assert_eq!(
         e.fallback.as_ref().map(|f| f.0),

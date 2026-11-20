@@ -5192,7 +5192,7 @@ response	GET /studio-product/v1/gear-match-usage	service.usage.cache_hits	u64	al
 response	GET /studio-product/v1/gear-match-usage	service.usage.calls	u64	always
 response	GET /studio-product/v1/gear-match-usage	service.usage.input_tokens	u64	always
 response	GET /studio-product/v1/gear-match-usage	service.usage.output_tokens	u64	always
-response	GET /studio-product/v1/gear-match-usage	services	Vec<{}>	always
+response	GET /studio-product/v1/gear-match-usage	services	BTreeMap<String,{}>	always
 response	GET /studio-product/v1/gear-match-usage	services.answers	bool	optional
 response	GET /studio-product/v1/gear-match-usage	services.catalogue_commit	String	optional
 response	GET /studio-product/v1/gear-match-usage	services.catalogue_source	String	optional

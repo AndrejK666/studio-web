@@ -200,10 +200,8 @@ pub struct GearMatchUsageDto {
     pub summary: GearMatchUsageSummaryDto,
     /// The shipped `gears_matcher` strategy's service (as `services` has it).
     pub service: GearMatcherServiceDto,
-    /// Every service strategy the organization's kits provide, the shipped
-    /// one first: whether its service is connected and answers now, and its
-    /// runs in the period.
-    pub services: Vec<GearMatcherServiceDto>,
+    /// Service availability and run statistics keyed by assembly strategy.
+    pub services: BTreeMap<String, GearMatcherServiceDto>,
     /// A page of the projects, by workspace then name.
     pub items: Vec<GearMatchUsageItemDto>,
     pub total: u32,
@@ -544,9 +542,9 @@ async fn get_gear_match_usage(
             service_dto((id.as_str(), name, kit), refusal, live, &spent)
         }
     };
-    let mut services_all = Vec::with_capacity(service_ids.len());
+    let mut services_all = BTreeMap::new();
     for id in &service_ids {
-        services_all.push(block(id.clone()).await);
+        services_all.insert(id.clone(), block(id.clone()).await);
     }
     let service = block(shipped.to_owned()).await;
     Ok(Json(GearMatchUsageDto {

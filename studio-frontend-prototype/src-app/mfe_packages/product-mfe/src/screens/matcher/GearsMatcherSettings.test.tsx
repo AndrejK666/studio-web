@@ -173,9 +173,9 @@ describe('GearsMatcherSettings', () => {
     const shipped = usage().service;
     vi.spyOn(api, 'gearMatchUsage').mockResolvedValue(
       usage({
-        services: [
-          { ...shipped, strategy: 'gears_matcher', name: 'Gears matcher', kit: 'gears-matcher', code: null },
-          {
+        services: {
+          gears_matcher: { ...shipped, strategy: 'gears_matcher', name: 'Gears matcher', kit: 'gears-matcher', code: null },
+          acme_matcher: {
             strategy: 'acme_matcher',
             name: 'Acme matcher',
             kit: 'acme-matcher',
@@ -184,7 +184,7 @@ describe('GearsMatcherSettings', () => {
             missing: 'no service is connected',
             models: [],
           },
-        ],
+        },
       })
     );
     const connect = vi.spyOn(api, 'connectStrategyService').mockResolvedValue({ id: 'c1' });

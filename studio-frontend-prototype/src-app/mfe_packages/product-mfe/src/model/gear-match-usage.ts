@@ -108,8 +108,8 @@ export interface GearMatchUsage {
   };
   /** The shipped strategy's service. */
   service: MatcherService;
-  /** Every service strategy the organization's kits provide, the shipped one first. */
-  services?: MatcherService[];
+  /** Service stats by strategy. Earlier builds returned the same stats as an array. */
+  services?: Record<string, MatcherService> | MatcherService[];
   items: UsageItem[];
   total: number;
 }
@@ -130,7 +130,9 @@ export type ServiceState = 'answers' | 'silent' | 'unknown' | 'missing' | 'uncon
 
 /** The service blocks to show: every service strategy's, else (an older server) the shipped one's. */
 export function servicesOf(u: GearMatchUsage): MatcherService[] {
-  return u.services?.length ? u.services : [u.service];
+  if (Array.isArray(u.services)) return u.services.length ? u.services : [u.service];
+  const { gears_matcher: shipped = u.service, ...services } = u.services ?? {};
+  return [shipped, ...Object.values(services)];
 }
 
 /** Projects assembled by a service strategy (every strategy but `spec_mapping` and `manual`). */
