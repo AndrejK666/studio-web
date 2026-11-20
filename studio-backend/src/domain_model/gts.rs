@@ -388,17 +388,16 @@ pub fn edge_key(type_id: &str, from: &str, to: &str) -> String {
 /// under, so a screen shows the ids without deriving them a second time:
 /// `{types: {entity id: {type, stored_as}}, relations: {kind: {type, stored_as}}}`.
 /// `type` is our id; `stored_as` the one graph-storage keeps, with its family.
-pub fn catalog_of(ontology: &serde_json::Value) -> serde_json::Value {
+pub fn catalog_of(ontology: &super::ontology::Ontology) -> serde_json::Value {
     use serde_json::{Map, Value, json};
     let ids = |type_id: String| json!({ "stored_as": graph_type_id(&type_id), "type": type_id });
     let mut types = Map::new();
     let mut relations = Map::new();
-    let entities = ontology.get("entities").and_then(Value::as_array);
-    for e in entities.into_iter().flatten() {
+    for e in ontology.entities() {
         let Some(id) = e.get("id").and_then(Value::as_str) else {
             continue;
         };
-        types.insert(id.to_owned(), ids(node_type_id(id)));
+        types.insert(id.to_owned(), ids(ontology.type_id_of(id)));
         let properties = e.get("properties").and_then(Value::as_array);
         for p in properties.into_iter().flatten() {
             let is_relation = matches!(
@@ -431,7 +430,7 @@ mod tests {
             ] },
             { "id": "team" }
         ] });
-        let c = catalog_of(&doc);
+        let c = catalog_of(&super::super::ontology::Ontology::from_value(doc).unwrap());
         assert_eq!(
             c["types"]["role-assignment"]["type"],
             "gts.cf.studio.domain.role_assignment.v1~"
@@ -449,6 +448,23 @@ mod tests {
             "gts.cf.core.graph.edge.v1~cf.core.graph.static_edge.v1~cf.studio.domainrel.owns.v1~"
         );
         assert_eq!(c["relations"].as_object().map(|r| r.len()), Some(1));
+    }
+
+    #[test]
+    fn the_catalog_reports_the_registered_chain_of_project_subtypes() {
+        let project = node_type_id("project");
+        let subtype = format!("{project}cf.studio.kit_mna.project.v1~");
+        let doc = serde_json::json!({ "entities": [
+            { "id": "project" },
+            { "id": "deal-project", "extends": "project", "meta": { "gts": subtype } },
+        ] });
+        let model = super::super::ontology::Ontology::from_value(doc).unwrap();
+        let catalog = catalog_of(&model);
+        assert_eq!(catalog["types"]["deal-project"]["type"], subtype);
+        assert_eq!(
+            catalog["types"]["deal-project"]["stored_as"],
+            graph_type_id(&subtype)
+        );
     }
 
     #[test]

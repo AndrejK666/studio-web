@@ -418,6 +418,10 @@ impl Ontology {
         &self.doc
     }
 
+    pub fn into_document(self) -> Value {
+        self.doc
+    }
+
     /// The document's non-entity part (`model`, `source`, `buckets`, and any
     /// other top-level key a model carries). Stored as the single
     /// [`gts::META_MODEL`] node so the entities are not the only thing that
