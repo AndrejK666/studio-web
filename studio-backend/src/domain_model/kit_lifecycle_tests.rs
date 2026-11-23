@@ -1083,3 +1083,59 @@ async fn removing_every_base_kit_writes_only_nodes_that_fit_graph_storage() {
         );
     }
 }
+
+// ── 8. A tab a kit stops bringing ──────────────────────────────────────────
+
+/// Project lifecycle brought a project tab `phases` over its `phase` type,
+/// whose objects nothing writes: every project showed an empty "Phases" tab
+/// while the phase itself is a field of the project. The kit no longer brings
+/// the tab; an organization whose model carries it from before loses it at
+/// its next reconciliation, at the same kit version, and keeps the type.
+#[tokio::test]
+async fn a_tab_the_kit_no_longer_brings_leaves_an_organization_that_carries_it() {
+    const SLUG: &str = "project-lifecycle";
+    let org = Org::with_base_kits().await;
+    let doc = org.doc().await;
+    assert!(
+        field(&doc, "project", "phases").is_none(),
+        "a new organization never gets the tab"
+    );
+    let version = field(&doc, "project", "phase").expect("the kit's field")["kit_version"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    // The model as the kit left it before: the same version, with the tab.
+    let manifest: Value = serde_json::from_str(include_str!(
+        "../kit_registry/builtin/project-lifecycle.kit.json"
+    ))
+    .unwrap();
+    let mut before = manifest["model"].clone();
+    before["tabs"] =
+        json!([{"level": "project", "name": "phases", "label": "Phases", "target": "phase"}]);
+    let before: crate::domain_model::port::KitOverlay = serde_json::from_value(before).unwrap();
+    org.service
+        .sync_kit_model(&person(ADMIN), SLUG, &version, Some(&before))
+        .await
+        .unwrap();
+    let carried = org.doc().await;
+    assert_eq!(
+        field(&carried, "project", "phases").expect("the old tab")["relation"],
+        "project-lifecycle-phase"
+    );
+
+    org.restart().reconcile().await;
+    let doc = org.restart().doc().await;
+    assert!(
+        field(&doc, "project", "phases").is_none(),
+        "the sweep takes the tab"
+    );
+    assert!(
+        field(&doc, "project", "phase").is_some(),
+        "the phase stays a field"
+    );
+    assert!(
+        entity(&doc, "project-lifecycle-phase").is_some(),
+        "Admin › Studio domain model still shows the type"
+    );
+}

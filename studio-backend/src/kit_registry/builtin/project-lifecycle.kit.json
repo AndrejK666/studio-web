@@ -565,14 +565,6 @@
         "description": "When the project entered its phase"
       }
     ],
-    "tabs": [
-      {
-        "level": "project",
-        "name": "phases",
-        "label": "Phases",
-        "target": "phase"
-      }
-    ],
     "lifecycles": [
       {
         "on": "project",
