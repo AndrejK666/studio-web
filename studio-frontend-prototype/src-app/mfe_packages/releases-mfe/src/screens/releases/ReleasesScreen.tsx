@@ -280,6 +280,7 @@ function Releases({ projectId, onOrganization }: { projectId: string; onOrganiza
         <DeployDialog
           environments={targets.environments.map((x) => x.environment)}
           builds={builds}
+          deployments={deployments}
           path={path}
           focus={dialog}
           onClose={() => setDialog(null)}

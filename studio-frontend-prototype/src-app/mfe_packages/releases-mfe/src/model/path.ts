@@ -104,36 +104,43 @@ export function deploymentFromSearch(search: string): string | null {
   }
 }
 
-/** The project's own Research environment that runs in `researchProject`
- *  on `hardware`, if it has one: the dialog reuses it rather than adding
- *  another. */
+/** The Research environment that runs in `researchProject`, if the project
+ *  has one: the dialog reuses it rather than adding another, whatever its
+ *  name, hardware or sign-in -- one environment per Research project (#1053).
+ *  The project's own comes before one of the organization's. */
 export function researchEnvironmentFor(
   environments: readonly DeployEnvironment[],
   researchProject: string,
-  hardware: string | null,
 ): DeployEnvironment | undefined {
-  return environments.find(
-    (e) =>
-      e.kind === "research" &&
-      e.research_project === researchProject &&
-      (e.research_hardware ?? null) === (hardware || null),
-  );
+  const mine = environments.filter((e) => e.kind === "research" && e.research_project === researchProject);
+  return mine.find((e) => !!e.project_id) ?? mine[0];
 }
+
+/** Whether `env` must be changed to run on `hardware` with `connection`: the
+ *  dialog asks the server to add the environment again, which changes the
+ *  one it has for that Research project instead (#1053). An organization's
+ *  environment is not the project's to change. */
+export function researchEnvironmentStale(env: DeployEnvironment, connection: string, hardware: string | null): boolean {
+  return !!env.project_id && (env.connection_id !== connection || (env.research_hardware ?? null) !== (hardware || null));
+}
+
+const slug = (s: string) =>
+  s
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 
 /** An environment's name for a Research project: the server takes only a DNS
  *  label (lowercase letters, digits and '-', at most 63), so "Example project"
- *  becomes `research-example-project`; a hardware choice adds its id's start,
- *  so the same project on two hardware choices is two environments. */
-export function researchEnvironmentName(researchProject: { id: string; name: string }, hardware: string | null): string {
-  const slug = (s: string) =>
-    s
-      .toLowerCase()
-      .normalize("NFKD")
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "");
-  const base = `research-${slug(researchProject.name) || slug(researchProject.id) || "project"}`;
-  const hw = hardware ? `-${slug(hardware).slice(0, 6)}` : "";
-  return `${base.slice(0, 63 - hw.length).replace(/-+$/, "")}${hw}`;
+ *  becomes `research-example-project`. The hardware is not in it: it is a
+ *  setting of the one environment. Two Research projects of one name get the
+ *  second's id start: `research-example-project-8fae83`. */
+export function researchEnvironmentName(researchProject: { id: string; name: string }, taken: readonly string[] = []): string {
+  const base = `research-${slug(researchProject.name) || slug(researchProject.id) || "project"}`.slice(0, 63).replace(/-+$/, "");
+  if (!taken.includes(base)) return base;
+  const tail = `-${slug(researchProject.id).slice(0, 6) || "2"}`;
+  return `${base.slice(0, 63 - tail.length).replace(/-+$/, "")}${tail}`;
 }
 
 /** A project's own Research environment, on the caller's own sign-in. */
@@ -141,9 +148,10 @@ export function researchEnvironmentInput(
   connectionId: string,
   researchProject: { id: string; name: string },
   hardware: string | null,
+  taken: readonly string[] = [],
 ): DeployEnvironmentInput {
   return {
-    name: researchEnvironmentName(researchProject, hardware),
+    name: researchEnvironmentName(researchProject, taken),
     description: "",
     kind: "research",
     connection_id: connectionId,
@@ -153,6 +161,13 @@ export function researchEnvironmentInput(
     database: "none",
     protected: false,
   };
+}
+
+/** The caller's Research projects as the picker lists them: those whose
+ *  Deployment is on (or not known) first, the others after, in Research's
+ *  order within each. */
+export function pickableResearchProjects<P extends { deployment_enabled?: boolean | null }>(projects: readonly P[]): P[] {
+  return [...projects.filter((p) => p.deployment_enabled !== false), ...projects.filter((p) => p.deployment_enabled === false)];
 }
 
 /** A build or a deploy that has ended. */

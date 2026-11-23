@@ -38,6 +38,7 @@ import {
   duration,
   finished,
   headline,
+  runProgress,
   stateTone,
   type ShownRun,
   type Tone,
@@ -142,7 +143,19 @@ const StateCell: React.FC<{ item: ShownRun }> = ({ item }) => {
   );
 };
 
-const WhatCell: React.FC<{ item: ShownRun }> = ({ item }) => <span className={styles.muted}>{headline(item)}</span>;
+const WhatCell: React.FC<{ item: ShownRun }> = ({ item }) => {
+  const progress = runProgress(item);
+  if (!progress) return <span className={styles.muted}>{headline(item)}</span>;
+  const pct = Math.round(progress.share * 100);
+  return (
+    <span className={styles.what} data-run-progress={progress.step}>
+      <span className={styles.muted}>{headline(item)}</span>
+      <span className={styles.runBar} role="progressbar" aria-label={progress.step} aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct}>
+        <span className={styles.runBarFill} style={{ width: `${pct}%` }} />
+      </span>
+    </span>
+  );
+};
 
 const TriesCell: React.FC<{ item: ShownRun }> = ({ item }) => <span>{item.attempts}</span>;
 
