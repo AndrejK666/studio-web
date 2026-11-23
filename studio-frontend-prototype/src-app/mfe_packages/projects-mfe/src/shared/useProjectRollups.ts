@@ -1,14 +1,17 @@
 /**
  * The workspace's projects as the portfolio rollup counts them
  * (`GET /studio-organizations/v1/rollups?workspace_id=`, one request for the
- * whole list): open findings and pull requests over the last days, by project
- * id. Empty while it is read or when it cannot be: the list then shows its
+ * whole list): open findings, pull requests over the last days and the
+ * project's phase, by project id. Empty while it is read or when it cannot be: the list then shows its
  * "no data" mark, never a zero it did not read.
  */
 
 import { useEffect, useState } from 'react';
 import { apiRegistry } from '@gears-frontx/react';
 import { ProjectStatusApiService, type ProjectRollup } from '../api/ProjectStatusApiService';
+
+/** One empty answer, so a list keyed on it does not see a new one every render. */
+const NONE: Record<string, ProjectRollup> = {};
 
 export function useProjectRollups(workspaceId: string | null | undefined): Record<string, ProjectRollup> {
   const [result, setResult] = useState<{ workspaceId: string; rows: Record<string, ProjectRollup> } | null>(null);
@@ -34,5 +37,5 @@ export function useProjectRollups(workspaceId: string | null | undefined): Recor
       alive = false;
     };
   }, [workspaceId]);
-  return result && result.workspaceId === workspaceId ? result.rows : {};
+  return result && result.workspaceId === workspaceId ? result.rows : NONE;
 }

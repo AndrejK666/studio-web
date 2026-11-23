@@ -101,6 +101,8 @@ export interface OrgProjectHealth {
   broken: boolean;
   score: number;
   reasons: OrgReason[];
+  /** The phase Project lifecycle has it in (`idea`, `discovery`, `build`, `run`); null or absent for none. */
+  phase?: string | null;
 }
 
 export interface OrgWorkspace {

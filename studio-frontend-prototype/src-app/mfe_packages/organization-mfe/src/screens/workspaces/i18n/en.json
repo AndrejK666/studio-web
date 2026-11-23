@@ -52,5 +52,9 @@
   "range_one": "{from}–{to} of {total} workspace",
   "range_many": "{from}–{to} of {total} workspaces",
   "resolving_org": "Resolving the organization…",
-  "no_org": "No organization is in scope."
+  "no_org": "No organization is in scope.",
+  "phase_idea": "Idea",
+  "phase_discovery": "Discovery",
+  "phase_build": "Build",
+  "phase_run": "Run"
 }

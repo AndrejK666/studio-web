@@ -36,7 +36,6 @@ vi.mock('../../shared/workspaceProjects', () => ({
   WorkspaceProjectsProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   useWorkspaceProjects: () => ({ ...scope.current, retry }),
 }));
-vi.mock('../../shared/useProjectPhases', () => ({ useProjectPhases: () => ({}) }));
 vi.mock('../../actions/wizardActions', () => ({ openProjectWizard }));
 vi.mock('./components/ProjectsGrid', () => ({
   ProjectsGrid: () => <div data-testid="grid" />,

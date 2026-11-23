@@ -12,6 +12,7 @@ import { apiRegistry } from '@gears-frontx/react';
 import { Badge, Button } from '@gears-frontx/ui-kit';
 import { errorMessage } from '@constructor-studio/mfe-shared';
 import { ProjectPhaseApiService, type ProjectPhase } from '../../../../api/ProjectStatusApiService';
+import { phaseVariant } from '../../../../shared/projectPhase';
 import type { useOverviewSectionTranslations } from '../../../../i18n';
 import styles from './OverviewSection.module.css';
 
@@ -54,7 +55,7 @@ export function PhaseChip({ projectId, t }: { projectId: string; t: Text }) {
   return (
     <div className={styles.phase} data-project-phase={phase.phase ?? 'none'}>
       <span className={styles.muted}>{t('phase_label')}</span>{' '}
-      <Badge variant={phase.phase ? 'info' : 'outline'}>{phase.phase ? t(`phase_${phase.phase}`) : t('phase_none')}</Badge>
+      <Badge variant={phase.phase ? phaseVariant(phase.phase) : 'outline'}>{phase.phase ? t(`phase_${phase.phase}`) : t('phase_none')}</Badge>
       {phase.phase_since && (
         <span className={styles.muted}> {t('phase_since', { date: phase.phase_since.slice(0, 10) })}</span>
       )}{' '}
