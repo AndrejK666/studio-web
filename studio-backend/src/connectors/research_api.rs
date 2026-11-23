@@ -79,7 +79,7 @@ impl DavRetry {
         for_: Duration::from_secs(3 * 60),
         first: Duration::from_secs(1),
         cap: Duration::from_secs(15),
-        start_for: Duration::from_secs(10 * 60),
+        start_for: Duration::from_secs(30 * 60),
         poll: Duration::from_secs(5),
     };
 }
@@ -339,7 +339,8 @@ pub struct Built {
 #[derive(Debug, Clone, Copy)]
 pub struct Pace {
     pub poll: Duration,
-    /// A desk's start: about half a minute.
+    /// A desk's start: about half a minute when Research is quiet; Research
+    /// DEV has kept a trial desk `starting` for over ten minutes (2026-11-23).
     pub desk_for: Duration,
     /// An image build: minutes for a small one, 20-40 for a large one.
     pub build_for: Duration,
@@ -355,7 +356,7 @@ pub struct Pace {
 impl Pace {
     pub const RESEARCH: Pace = Pace {
         poll: Duration::from_secs(10),
-        desk_for: Duration::from_secs(10 * 60),
+        desk_for: Duration::from_secs(30 * 60),
         build_for: Duration::from_secs(90 * 60),
         start_for: Duration::from_secs(15 * 60),
         settle: Duration::from_secs(30),
