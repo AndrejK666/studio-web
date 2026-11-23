@@ -34,6 +34,9 @@ export function ReleaseLadder({
   onOpen,
   onChanged,
   panel,
+  head,
+  targetOf,
+  blocked = null,
 }: {
   steps: LadderStep[];
   bindings: ProjectTargets['bindings'];
@@ -43,6 +46,12 @@ export function ReleaseLadder({
   onChanged: (message: string) => void;
   /** What Deploy… opens under an environment's row. */
   panel: (step: LadderStep) => React.ReactNode;
+  /** What the card says above its rows; absent: the newest published build. */
+  head?: React.ReactNode;
+  /** Where a row's environment runs: adds the column when given. */
+  targetOf?: (step: LadderStep) => React.ReactNode;
+  /** Why nothing can be deployed here yet: Deploy… and Promote wait, saying so. */
+  blocked?: string | null;
 }) {
   const { t, language, projectId } = useReleases();
   const api = useApi();
@@ -61,123 +70,131 @@ export function ReleaseLadder({
     };
   }, [api, projectId]);
   const newest = newestRelease(steps);
+  const columns = targetOf ? 7 : 6;
   return (
     <section className={styles.card} data-release-ladder>
-      <div className={styles.muted} data-ladder-build>
-        {t('newest_build')}{' '}
-        {newest ? (
-          <>
-            <b>{newest.chartVersion ?? newest.buildId}</b> · {newest.where} ·{' '}
-            {relTime(newest.finishedAt ?? newest.startedAt ?? '', language)}
-          </>
-        ) : (
-          t('nothing_published')
-        )}
-      </div>
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>{t('col_environment')}</TableHead>
-            <TableHead>{t('col_status')}</TableHead>
-            <TableHead>{t('col_runs')}</TableHead>
-            <TableHead>{t('col_takes_from')}</TableHead>
-            <TableHead>{t('col_last_deploy')}</TableHead>
-            <TableHead />
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {steps.map((s) => {
-            const id = s.environment.id;
-            const status = stepStatus(s);
-            return (
-              <Fragment key={id}>
-                <TableRow
-                  className={styles.clickable}
-                  onClick={() => setExpanded(expanded === id ? null : id)}
-                  aria-expanded={expanded === id}
-                  data-ladder-row={s.environment.name}
-                >
-                  <TableCell>
-                    <span className={styles.chips} data-ladder-step={s.environment.name} data-ladder-state={s.state}>
-                      <b>{s.environment.name}</b>
-                      {s.environment.protected && <Badge variant="info">{t('needs_approval')}</Badge>}
-                      {s.environment.project_id && (
-                        <Badge variant="secondary" data-own-environment>
-                          {t('projects_own')}
-                        </Badge>
-                      )}
-                    </span>
-                  </TableCell>
-                  <TableCell>
-                    <Badge
-                      variant={TONE_BADGE[s.state === 'deploying' ? 'running' : LADDER_TONE[status.tone]]}
-                      data-ladder-status
-                    >
-                      {status.text}
-                    </Badge>
-                    {s.state === 'deploying' && s.latest && (
-                      <DeployProgress deployment={s.latest} onEnded={onChanged} />
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    {s.runs ? (
-                      <>
-                        <code>{versionOf(s.runs) ?? s.runs.product}</code>
-                        {productUrls(s.runs.outcome).map((u) => (
-                          <div key={u}>
-                            <a
-                              href={u}
-                              target="_blank"
-                              rel="noreferrer"
-                              onClick={(e) => e.stopPropagation()}
-                              data-product-url
-                            >
-                              {t('open_product')}
-                            </a>
-                          </div>
-                        ))}
-                      </>
-                    ) : (
-                      <span className={styles.muted}>{t('nothing')}</span>
-                    )}
-                  </TableCell>
-                  <TableCell>{s.from ?? <span className={styles.muted}>{t('a_build')}</span>}</TableCell>
-                  <TableCell>
-                    <When iso={s.latest?.requested_at} />
-                  </TableCell>
-                  <TableCell onClick={(e) => e.stopPropagation()}>
-                    <span className={styles.ladderActions}>
-                      {s.promote && <PromoteBuild step={s} build={s.promote} onChanged={onChanged} />}
-                      <Button
-                        size="sm"
-                        variant={s.promote ? 'ghost' : 'default'}
-                        aria-expanded={open === id}
-                        title={t('deploy_open_title')}
-                        onClick={() => onOpen(id)}
-                        data-ladder-deploy
+      {head ?? (
+        <div className={styles.muted} data-ladder-build>
+          {t('newest_build')}{' '}
+          {newest ? (
+            <>
+              <b>{newest.chartVersion ?? newest.buildId}</b> · {newest.where} ·{' '}
+              {relTime(newest.finishedAt ?? newest.startedAt ?? '', language)}
+            </>
+          ) : (
+            t('nothing_published')
+          )}
+        </div>
+      )}
+      {steps.length > 0 && (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>{t('col_environment')}</TableHead>
+              {targetOf && <TableHead>{t('col_target')}</TableHead>}
+              <TableHead>{t('col_status')}</TableHead>
+              <TableHead>{t('col_runs')}</TableHead>
+              <TableHead>{t('col_takes_from')}</TableHead>
+              <TableHead>{t('col_last_deploy')}</TableHead>
+              <TableHead />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {steps.map((s) => {
+              const id = s.environment.id;
+              const status = stepStatus(s);
+              return (
+                <Fragment key={id}>
+                  <TableRow
+                    className={styles.clickable}
+                    onClick={() => setExpanded(expanded === id ? null : id)}
+                    aria-expanded={expanded === id}
+                    data-ladder-row={s.environment.name}
+                  >
+                    <TableCell>
+                      <span className={styles.chips} data-ladder-step={s.environment.name} data-ladder-state={s.state}>
+                        <b>{s.environment.name}</b>
+                        {s.environment.protected && <Badge variant="info">{t('needs_approval')}</Badge>}
+                        {s.environment.project_id && (
+                          <Badge variant="secondary" data-own-environment>
+                            {t('projects_own')}
+                          </Badge>
+                        )}
+                      </span>
+                    </TableCell>
+                    {targetOf && <TableCell>{targetOf(s)}</TableCell>}
+                    <TableCell>
+                      <Badge
+                        variant={TONE_BADGE[s.state === 'deploying' ? 'running' : LADDER_TONE[status.tone]]}
+                        data-ladder-status
                       >
-                        {t('deploy_open')}
-                      </Button>
-                    </span>
-                  </TableCell>
-                </TableRow>
-                {expanded === id && (
-                  <TableRow data-ladder-expanded={s.environment.name}>
-                    <TableCell colSpan={6}>
-                      <StepDetail step={s} bindings={bindings} connections={connections} />
+                        {status.text}
+                      </Badge>
+                      {s.state === 'deploying' && s.latest && (
+                        <DeployProgress deployment={s.latest} onEnded={onChanged} />
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {s.runs ? (
+                        <>
+                          <code>{versionOf(s.runs) ?? s.runs.product}</code>
+                          {productUrls(s.runs.outcome).map((u) => (
+                            <div key={u}>
+                              <a
+                                href={u}
+                                target="_blank"
+                                rel="noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                data-product-url
+                              >
+                                {t('open_product')}
+                              </a>
+                            </div>
+                          ))}
+                        </>
+                      ) : (
+                        <span className={styles.muted}>{t('nothing')}</span>
+                      )}
+                    </TableCell>
+                    <TableCell>{s.from ?? <span className={styles.muted}>{t('a_build')}</span>}</TableCell>
+                    <TableCell>
+                      <When iso={s.latest?.requested_at} />
+                    </TableCell>
+                    <TableCell onClick={(e) => e.stopPropagation()}>
+                      <span className={styles.ladderActions}>
+                        {s.promote && !blocked && <PromoteBuild step={s} build={s.promote} onChanged={onChanged} />}
+                        <Button
+                          size="sm"
+                          variant={s.promote ? 'ghost' : 'default'}
+                          aria-expanded={open === id}
+                          disabled={!!blocked && open !== id}
+                          title={blocked ?? t('deploy_open_title')}
+                          onClick={() => onOpen(id)}
+                          data-ladder-deploy
+                        >
+                          {t('deploy_open')}
+                        </Button>
+                      </span>
                     </TableCell>
                   </TableRow>
-                )}
-                {open === id && (
-                  <TableRow data-ladder-panel={s.environment.name}>
-                    <TableCell colSpan={6}>{panel(s)}</TableCell>
-                  </TableRow>
-                )}
-              </Fragment>
-            );
-          })}
-        </TableBody>
-      </Table>
+                  {expanded === id && (
+                    <TableRow data-ladder-expanded={s.environment.name}>
+                      <TableCell colSpan={columns}>
+                        <StepDetail step={s} bindings={bindings} connections={connections} />
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  {open === id && (
+                    <TableRow data-ladder-panel={s.environment.name}>
+                      <TableCell colSpan={columns}>{panel(s)}</TableCell>
+                    </TableRow>
+                  )}
+                </Fragment>
+              );
+            })}
+          </TableBody>
+        </Table>
+      )}
     </section>
   );
 }

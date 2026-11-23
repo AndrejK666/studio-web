@@ -1,6 +1,6 @@
 /** The project release overview, with builds, deploy history and diagnostics on demand. */
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChildMfeBridge } from '@gears-frontx/react';
 import { useSharedProperty } from '@gears-frontx/react';
 import { Badge, Button, Skeleton } from '@gears-frontx/ui-kit';
@@ -18,7 +18,8 @@ import { ProjectBindings } from './Bindings';
 import { ProjectBuilds } from './Builds';
 import { EnvironmentActions, EnvironmentConfig, EnvironmentPreviews } from './DeployActions';
 import { DeployHistory } from './History';
-import { ReleaseLadder } from './Ladder';
+import { noProduct } from '../../model/environment-targets';
+import { EnvironmentGroups, NoProductLine, ResearchBuilds, useTargetNames } from './Targets';
 import {
   ErrorLine,
   ReleasesProvider,
@@ -174,6 +175,13 @@ function Releases({ projectId, onOrganization }: { projectId: string; onOrganiza
     };
   }, [api, projectId, round, onOrganization]);
 
+  const environments = useMemo(() => targets?.environments.map((x) => x.environment) ?? [], [targets]);
+  const names = useTargetNames(environments, path);
+  // No product yet: nothing to build or deploy, and the screen says so.
+  const productMissing = noProduct(path);
+  const blocked = productMissing ? t('no_product_short') : null;
+  const productAction = path?.steps.find((step) => step.id === 'product')?.action;
+
   const envName = (id: string) => targets?.environments.find((x) => x.environment.id === id)?.environment.name ?? id;
   const steps = targets ? ladderSteps(targets.environments, deployments, builds) : [];
   const noEnvironment = !!targets && targets.environments.length === 0;
@@ -299,17 +307,28 @@ function Releases({ projectId, onOrganization }: { projectId: string; onOrganiza
         <>
           <section ref={environmentsSection} className={styles.stack} data-step="deploy">
             <h2 className={styles.subTitle}>{t('release_environments')}</h2>
+            {productMissing && targets && <NoProductLine action={productAction} onIntent={onIntent} />}
             {unavailable ? (
               <p className={styles.muted}>{t('no_environments_backend')}</p>
-            ) : targets && !deploymentError && (noEnvironment ? (
-              <section className={styles.card}>
-                <p className={styles.muted}>{t(noEnvironmentKey)}</p>
-                {noEnvironmentKey === 'no_environment' && <Button size="sm" variant="outline"
-                  onClick={() => openScreen(bridge, ROUTES.infrastructure)}>{t('open_build_infrastructure')}</Button>}
-              </section>
-            ) : (
-              <ReleaseLadder
+            ) : targets && !deploymentError && (
+              <EnvironmentGroups
                 steps={steps}
+                path={path}
+                names={names}
+                blocked={blocked}
+                onResearch={() => setDialog({ environmentId: null, research: true })}
+                noEnvironment={
+                  <div className={styles.stack}>
+                    <p className={styles.muted}>{t(noEnvironmentKey)}</p>
+                    {noEnvironmentKey === 'no_environment' && (
+                      <div className={styles.row}>
+                        <Button size="sm" variant="outline" onClick={() => openScreen(bridge, ROUTES.infrastructure)}>
+                          {t('open_build_infrastructure')}
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                }
                 bindings={targets.bindings}
                 open={open}
                 onOpen={(id) => setOpen(open === id ? null : id)}
@@ -341,7 +360,7 @@ function Releases({ projectId, onOrganization }: { projectId: string; onOrganiza
                   </section>
                 )}
               />
-            ))}
+            )}
             {targets && !noEnvironment && (
               // Folded: the exception, not the way a release goes (ADR-0056 §1).
               <details className={styles.card} data-project-own-environments>
@@ -352,9 +371,28 @@ function Releases({ projectId, onOrganization }: { projectId: string; onOrganiza
               </details>
             )}
           </section>
-          <section ref={buildsSection} className={styles.card}>
-            <Button size="sm" variant="ghost" aria-expanded={showBuilds} data-release-tab="build"
-              onClick={() => setShowBuilds(!showBuilds)}>{t('builds_title')}</Button>
+          <section ref={buildsSection} className={styles.card} data-releases-builds>
+            <div className={styles.sectionHead}>
+              <span className={styles.groupText}>
+                <h2 className={styles.subTitle}>{t('builds_title')}</h2>
+                <span className={styles.muted}>{t('builds_about')}</span>
+              </span>
+              <Button size="sm" variant="outline" aria-expanded={showBuilds} data-release-tab="build"
+                onClick={() => setShowBuilds(!showBuilds)}>{t(showBuilds ? 'builds_hide' : 'builds_show')}</Button>
+            </div>
+            {buildRead === 'ready' && builds.length === 0 && !showBuilds && (
+              <div className={styles.emptyState} data-releases-empty="builds">
+                <p className={styles.muted}>{t('builds_empty')}</p>
+                {!productMissing && path?.research_kit && (
+                  <div className={styles.row}>
+                    <Button size="sm" variant="outline" onClick={() => setDialog({ environmentId: null, research: true })}>
+                      {t('research_run')}
+                    </Button>
+                  </div>
+                )}
+              </div>
+            )}
+            {!showBuilds && targets && <ResearchBuilds builds={builds} environments={targets.environments} names={names} />}
             {showBuilds && (
               <ProjectBuilds
                 ideBuilds={builds}
@@ -369,9 +407,24 @@ function Releases({ projectId, onOrganization }: { projectId: string; onOrganiza
               />
             )}
           </section>
-          <section className={styles.card}>
-            <Button size="sm" variant="ghost" aria-expanded={showHistory} data-release-tab="history"
-              onClick={() => setShowHistory(!showHistory)}>{t('release_history')}</Button>
+          <section className={styles.card} data-releases-history>
+            <div className={styles.sectionHead}>
+              <span className={styles.groupText}>
+                <h2 className={styles.subTitle}>{t('release_history')}</h2>
+                <span className={styles.muted}>{t('history_about')}</span>
+              </span>
+              {deployments.length > 0 && (
+                <Button size="sm" variant="outline" aria-expanded={showHistory} data-release-tab="history"
+                  onClick={() => setShowHistory(!showHistory)}>
+                  {showHistory ? t('history_hide') : t.count('history_show', deployments.length)}
+                </Button>
+              )}
+            </div>
+            {deployments.length === 0 && deploymentError === null && (
+              <div className={styles.emptyState} data-releases-empty="history">
+                <p className={styles.muted}>{t('history_empty')}</p>
+              </div>
+            )}
             {showHistory && <DeployHistory deployments={deployments} />}
           </section>
         </>
