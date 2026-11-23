@@ -196,7 +196,12 @@ preparing, uploading or building anything again. A run the queue still gives
 up on (or a cancelled one) tells the build, whose record turns `failed` (or
 `cancelled`) with the reason; a record read while it says `running` over a
 run that has ended is put right then. A call that does not reach Research
-is asked again a few times and fails as `RESEARCH_UNAVAILABLE`.
+is asked again a few times and fails as `RESEARCH_UNAVAILABLE`. A deploy
+hands over the same way: once its services are put and started, it keeps
+the application's and each service's Research id on its run, each attempt
+follows their start for at most eleven minutes, and the next goes on
+without preparing or putting them again; the deployment reads `running`
+between attempts.
 
 Each image is keyed by what it is made of: the Research project, the
 Dockerfile Studio laid out (with what it bakes in), its ignore file and the

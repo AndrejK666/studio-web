@@ -41,8 +41,8 @@ use super::research_app::{self, Application, Inputs};
 use super::research_keys::{self, Laid};
 use super::research_progress::Reporter;
 use crate::connectors::sdk::research::{
-    Built, DeskBuild, Followed, HandOver, ImageBuild, Measured, Pace, Renew, ResearchApi, Service,
-    Watched,
+    AppDeploy, Built, DeskBuild, Followed, HandOver, ImageBuild, Measured, Pace, Renew,
+    ResearchApi, Service, Watched,
 };
 use crate::tasks::sdk::{TaskContext, TaskHandler, TaskOutcome};
 
@@ -1312,13 +1312,50 @@ fn service_bodies(
     Ok((bodies, notes))
 }
 
+/// What a deploy keeps on its run between attempts, under `resume`: once
+/// its services are put, a later attempt only follows them.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeployResume {
+    #[serde(default)]
+    pub app: AppDeploy,
+    /// What the person should know beside, said when it ends.
+    #[serde(default)]
+    pub notes: Vec<String>,
+}
+
+/// How one attempt of a deploy ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Deployed {
+    /// Where the product opens, in words.
+    Done(String),
+    /// The services are not all running yet (or the run was stopped): the
+    /// next attempt follows them from what this one kept.
+    Later,
+}
+
+/// How long one attempt of a deploy follows its services before it hands
+/// them to the next, inside the queue's lease (with the minute the
+/// readiness watch takes after).
+const DEPLOY_FOLLOW_FOR: Duration = Duration::from_secs(11 * 60);
+
 /// Install `p` into its Research environment; where the product opens.
 pub async fn deploy(
     hub: &Arc<ClientHub>,
     ctx: &TaskContext,
     p: &super::deploy::DeployPayload,
     r: &ResearchDeploy,
-) -> anyhow::Result<String> {
+) -> anyhow::Result<Deployed> {
+    let follow_until = tokio::time::Instant::now() + DEPLOY_FOLLOW_FOR;
+    deploy_until(hub, ctx, p, r, follow_until).await
+}
+
+async fn deploy_until(
+    hub: &Arc<ClientHub>,
+    ctx: &TaskContext,
+    p: &super::deploy::DeployPayload,
+    r: &ResearchDeploy,
+    follow_until: tokio::time::Instant,
+) -> anyhow::Result<Deployed> {
     let sign_in = r.sign_in.unwrap_or(SignIn {
         tenant: p.organization_id,
         connection_id: p.connection_id,
@@ -1341,16 +1378,115 @@ pub async fn deploy(
         {
             Some(app) => {
                 api.delete_application(&app.id).await?;
-                Ok(format!("{} removed from Constructor Research", p.namespace))
+                Ok(Deployed::Done(format!(
+                    "{} removed from Constructor Research",
+                    p.namespace
+                )))
             }
-            None => Ok(format!(
+            None => Ok(Deployed::Done(format!(
                 "{} was not in Constructor Research: nothing to remove",
                 p.namespace
-            )),
+            ))),
         };
     }
 
     let report = Reporter::new(ctx);
+    let mut resume: DeployResume = super::research_progress::resumed(ctx)
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default();
+    if resume.app.application.is_none() {
+        resume = put(hub, ctx, p, r, &api, &report).await?;
+        report
+            .checkpoint(serde_json::to_value(&resume).unwrap_or_default())
+            .await;
+    } else {
+        report
+            .say("following the services an earlier attempt started".to_owned())
+            .await;
+        report.step("deploy").await;
+    }
+    // A stop (a person's, or a shutdown) ends the attempt here; the run
+    // says which.
+    let followed = tokio::select! {
+        f = api.follow_start(&resume.app, Pace::RESEARCH, follow_until, &progress) => f?,
+        () = ctx.cancel.cancelled() => None,
+    };
+    let Some(running) = followed else {
+        return Ok(Deployed::Later);
+    };
+    let notes = resume.notes;
+    let links = running.links();
+    let at = if links.is_empty() {
+        "no public address".to_owned()
+    } else {
+        links.join(", ")
+    };
+    let noted = if notes.is_empty() {
+        String::new()
+    } else {
+        format!(" (note: {})", notes.join("; "))
+    };
+    // Running is not ready, and a container that crashes is replaced with
+    // its log: for a minute, ask the public links and follow every log.
+    report
+        .say(
+            "watching the services for a minute: whether their public addresses answer and \
+             whether they restart"
+                .to_owned(),
+        )
+        .await;
+    report.step("ready").await;
+    let until = tokio::time::Instant::now() + Pace::RESEARCH.ready_for;
+    let (silent, watched) = tokio::join!(
+        api.unanswered(&running, Pace::RESEARCH),
+        futures_util::future::join_all(running.services.iter().map(|s| api.watch_log(
+            &s.id,
+            until,
+            std::time::Duration::from_secs(2)
+        ))),
+    );
+    let watched: BTreeMap<&str, Watched> = running
+        .services
+        .iter()
+        .map(|s| s.id.as_str())
+        .zip(watched)
+        .collect();
+    let mut seen = Vec::new();
+    for s in &running.services {
+        if let Some(w) = watched.get(s.id.as_str())
+            && w.restarts > 0
+        {
+            seen.push(restarted(&s.name, w));
+        }
+    }
+    for s in &silent {
+        let log = watched
+            .get(s.id.as_str())
+            .and_then(|w| last_lines(&w.lines));
+        seen.push(not_answering(s, log));
+    }
+    let watch = if seen.is_empty() {
+        String::new()
+    } else {
+        format!(". After it started: {}", seen.join("; "))
+    };
+    Ok(Deployed::Done(format!(
+        "{} runs in Constructor Research: {at}{noted}{watch}",
+        p.namespace
+    )))
+}
+
+/// The first half of a deploy: the product prepared at the build's commit,
+/// its chart rendered, and the application's services put and started.
+async fn put(
+    hub: &Arc<ClientHub>,
+    ctx: &TaskContext,
+    p: &super::deploy::DeployPayload,
+    r: &ResearchDeploy,
+    api: &ResearchApi,
+    report: &Reporter<'_>,
+) -> anyhow::Result<DeployResume> {
+    let progress = |m: String| -> BoxFuture<'_, ()> { Box::pin(ctx.progress(m)) };
     report
         .say(format!(
             "preparing {} at {}",
@@ -1439,8 +1575,8 @@ pub async fn deploy(
     for note in &notes {
         ctx.progress(note.clone()).await;
     }
-    let running = api
-        .put_application(
+    let app = api
+        .put_services(
             &r.research_project,
             &p.namespace,
             &bodies,
@@ -1448,65 +1584,7 @@ pub async fn deploy(
             &progress,
         )
         .await?;
-    let links = running.links();
-    let at = if links.is_empty() {
-        "no public address".to_owned()
-    } else {
-        links.join(", ")
-    };
-    let noted = if notes.is_empty() {
-        String::new()
-    } else {
-        format!(" (note: {})", notes.join("; "))
-    };
-    // Running is not ready, and a container that crashes is replaced with
-    // its log: for a minute, ask the public links and follow every log.
-    report
-        .say(
-            "watching the services for a minute: whether their public addresses answer and \
-             whether they restart"
-                .to_owned(),
-        )
-        .await;
-    report.step("ready").await;
-    let until = tokio::time::Instant::now() + Pace::RESEARCH.ready_for;
-    let (silent, watched) = tokio::join!(
-        api.unanswered(&running, Pace::RESEARCH),
-        futures_util::future::join_all(running.services.iter().map(|s| api.watch_log(
-            &s.id,
-            until,
-            std::time::Duration::from_secs(2)
-        ))),
-    );
-    let watched: BTreeMap<&str, Watched> = running
-        .services
-        .iter()
-        .map(|s| s.id.as_str())
-        .zip(watched)
-        .collect();
-    let mut seen = Vec::new();
-    for s in &running.services {
-        if let Some(w) = watched.get(s.id.as_str())
-            && w.restarts > 0
-        {
-            seen.push(restarted(&s.name, w));
-        }
-    }
-    for s in &silent {
-        let log = watched
-            .get(s.id.as_str())
-            .and_then(|w| last_lines(&w.lines));
-        seen.push(not_answering(s, log));
-    }
-    let watch = if seen.is_empty() {
-        String::new()
-    } else {
-        format!(". After it started: {}", seen.join("; "))
-    };
-    Ok(format!(
-        "{} runs in Constructor Research: {at}{noted}{watch}",
-        p.namespace
-    ))
+    Ok(DeployResume { app, notes })
 }
 
 /// The last twenty of `lines`, one string; `None` for none.

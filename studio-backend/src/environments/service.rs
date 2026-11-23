@@ -3657,6 +3657,11 @@ impl EnvironmentService {
                 && let Ok(Some(view)) = queue.run(org, run).await
             {
                 let state = match view.state {
+                    // Between two attempts (a Research deploy hands its
+                    // services' start over): still running, not back in line.
+                    crate::tasks::RunState::Queued if d.state == DeploymentState::Running => {
+                        DeploymentState::Running
+                    }
                     crate::tasks::RunState::Queued => DeploymentState::Queued,
                     crate::tasks::RunState::Running => DeploymentState::Running,
                     crate::tasks::RunState::Succeeded => DeploymentState::Succeeded,

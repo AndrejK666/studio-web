@@ -783,3 +783,67 @@ async fn a_call_that_never_reaches_research_is_asked_again_then_says_so() {
         "{e}"
     );
 }
+
+#[tokio::test]
+async fn a_service_start_longer_than_an_attempt_goes_on_in_the_next_and_says_where_it_runs_on_the_emulator()
+ {
+    // The deploy's half of research-faa4fdf8107a: Research starts services
+    // for up to fifteen minutes, longer than the run queue's lease. Here an
+    // attempt follows the start for 100 ms and the start takes 600 ms.
+    let (url, emu) = spawn_for_tests(Timings {
+        desk: Duration::ZERO,
+        build: Duration::ZERO,
+        start: Duration::from_millis(600),
+    })
+    .await;
+    let api = signed_in(&url).await;
+    let p = api.projects().await.unwrap()[0].id.clone();
+    let work = tree("FROM rust:1.97\nCMD [\"api\"]\n");
+    let built = api
+        .build_in_desk(&p, &work, "research-d1", &api_image(), FAST, &quiet, &never)
+        .await
+        .unwrap();
+    let _ = std::fs::remove_dir_all(&work);
+    let small = smallest(&api.hardware(&p).await.unwrap()).unwrap().clone();
+    let body = ServiceBody {
+        name: "api".into(),
+        image_id: built[0].id.clone(),
+        hardware_configuration_id: small.id,
+        volumes: vec![],
+        ports: vec![PortBody {
+            number: 8080,
+            expose_to_internet: true,
+        }],
+        environment_variables: vec![],
+    };
+
+    let put = api
+        .put_services(&p, "env-dev", &[body], FAST, &quiet)
+        .await
+        .unwrap();
+    let mut state: AppDeploy = put;
+    let mut attempts = 0;
+    let app = loop {
+        attempts += 1;
+        assert!(attempts < 50, "it never started");
+        // What one attempt keeps on the run, read back by the next.
+        state = serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+        let until = tokio::time::Instant::now() + Duration::from_millis(100);
+        if let Some(app) = api.follow_start(&state, FAST, until, &quiet).await.unwrap() {
+            break app;
+        }
+    };
+    assert!(
+        attempts >= 3,
+        "the start outlasted its attempts: {attempts}"
+    );
+    assert_eq!(
+        emu.state_for_tests().services.len(),
+        1,
+        "the service was put once"
+    );
+    assert_eq!(app.services[0].status, "running");
+    let links = app.links();
+    assert_eq!(links.len(), 1);
+    assert!(links[0].starts_with(&format!("{url}/_apps/")), "{links:?}");
+}

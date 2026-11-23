@@ -504,6 +504,22 @@ impl HandOver {
     }
 }
 
+/// Where a deploy's services have got to: what one attempt of the deploy's
+/// run hands the next, so a slow start outlasts the lease without the
+/// services being put again.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppDeploy {
+    /// The application's Research id, once its services are put.
+    #[serde(default)]
+    pub application: Option<String>,
+    /// Each service put, `(name, Research id)`.
+    #[serde(default)]
+    pub services: Vec<(String, String)>,
+    /// When every service must run (Unix seconds).
+    #[serde(default)]
+    pub start_until: Option<u64>,
+}
+
 /// Where a desk build hands what the next attempt needs, each time it
 /// changes.
 pub type Checkpoint<'a> = &'a (dyn Fn(&DeskBuild) -> BoxFuture<'a, ()> + Send + Sync);
@@ -2365,6 +2381,7 @@ impl ResearchApi {
     /// Make application `name` of `project` run exactly `services`: create
     /// it if need be, create or change each service and (re)start it, remove
     /// the services it no longer has, and wait for all to run.
+    #[cfg(test)]
     pub async fn put_application(
         &self,
         project: &str,
@@ -2373,6 +2390,29 @@ impl ResearchApi {
         pace: Pace,
         progress: Progress<'_>,
     ) -> anyhow::Result<Application> {
+        let state = self
+            .put_services(project, name, services, pace, progress)
+            .await?;
+        match self
+            .follow_start(&state, pace, HandOver::never().follow_until, progress)
+            .await?
+        {
+            Some(app) => Ok(app),
+            None => bail!("the services were never followed to the end"),
+        }
+    }
+
+    /// The first half of a deploy: application `name` of `project` made to
+    /// have exactly `services`, each created or changed and (re)started.
+    /// What [`Self::follow_start`] follows, in this attempt or a later one.
+    pub async fn put_services(
+        &self,
+        project: &str,
+        name: &str,
+        services: &[ServiceBody],
+        pace: Pace,
+        progress: Progress<'_>,
+    ) -> anyhow::Result<AppDeploy> {
         self.enable_deployment(project).await?;
         let app = match self.application_named(project, name).await? {
             Some(app) => app,
@@ -2417,45 +2457,69 @@ impl ResearchApi {
             .await;
             self.delete_service(&s.id).await?;
         }
+        Ok(AppDeploy {
+            application: Some(app.id),
+            services: ids,
+            start_until: Some(unix_now() + pace.start_for.as_secs()),
+        })
+    }
 
+    /// Wait for the services `state` put to run: the application once they
+    /// all do, `None` when `follow_until` came first (a later attempt goes on
+    /// from the same `state`).
+    pub async fn follow_start(
+        &self,
+        state: &AppDeploy,
+        pace: Pace,
+        follow_until: tokio::time::Instant,
+        progress: Progress<'_>,
+    ) -> anyhow::Result<Option<Application>> {
+        let Some(app) = state.application.as_deref() else {
+            bail!("the deploy has no application to follow (an internal error)");
+        };
+        let ids = &state.services;
         progress(format!("waiting for {} service(s) to run", ids.len())).await;
-        let until = tokio::time::Instant::now() + pace.start_for;
-        let mut running = std::collections::BTreeSet::new();
+        let until = state
+            .start_until
+            .unwrap_or_else(|| unix_now() + pace.start_for.as_secs());
         loop {
-            for (svc, id) in &ids {
-                if running.contains(id) {
-                    continue;
-                }
+            let mut running = 0;
+            for (svc, id) in ids {
                 let s = self.service(id).await?;
                 match s.status.as_str() {
-                    "running" => {
-                        running.insert(id.clone());
-                    }
+                    "running" => running += 1,
                     "failed" => {
                         let tail = self.service_log_tail(id, 20).await.ok().flatten();
                         bail!(
                             "service {svc} did not start in Constructor Research{}",
-                            tail.map(|t| format!("; its last log lines:\n{t}"))
-                                .unwrap_or_default()
+                            tail.map(|t| format!(
+                                "; its last log lines:
+{t}"
+                            ))
+                            .unwrap_or_default()
                         )
                     }
                     _ => {}
                 }
             }
-            if running.len() == ids.len() {
-                return self.application(&app.id).await;
+            if running == ids.len() {
+                return self.application(app).await.map(Some);
             }
-            if tokio::time::Instant::now() >= until {
-                let waiting: Vec<&str> = ids
-                    .iter()
-                    .filter(|(_, id)| !running.contains(id))
-                    .map(|(n, _)| n.as_str())
-                    .collect();
+            if unix_now() >= until {
+                let mut waiting = Vec::new();
+                for (n, id) in ids {
+                    if !matches!(self.service(id).await, Ok(s) if s.status == "running") {
+                        waiting.push(n.as_str());
+                    }
+                }
                 bail!(
                     "{} did not start in Constructor Research within {} minutes",
                     waiting.join(", "),
                     pace.start_for.as_secs() / 60
                 );
+            }
+            if tokio::time::Instant::now() >= follow_until {
+                return Ok(None);
             }
             tokio::time::sleep(pace.poll).await;
         }
