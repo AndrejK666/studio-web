@@ -170,6 +170,11 @@ impl Emulator {
         self.state.lock().unwrap_or_else(|p| p.into_inner())
     }
 
+    #[cfg(test)]
+    pub(crate) fn state_for_tests(&self) -> std::sync::MutexGuard<'_, State> {
+        self.lock()
+    }
+
     fn save(&self) {
         if let Some(p) = &self.cfg.state_file
             && let Err(e) = self.lock().save(p)

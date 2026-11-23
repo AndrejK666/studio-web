@@ -155,7 +155,10 @@ pub fn dashboard(cfg: &Config, st: &State, now: u64) -> String {
             "Make the next build fail"
         },
         hiccups = if st.dav_hiccups > 0 {
-            format!("{} desk file calls answer 502 — click to undo", st.dav_hiccups)
+            format!(
+                "{} desk file calls answer 502 — click to undo",
+                st.dav_hiccups
+            )
         } else {
             "Make the next desk file calls answer 502".to_owned()
         },

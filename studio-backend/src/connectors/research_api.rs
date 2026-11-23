@@ -1260,7 +1260,11 @@ impl ResearchApi {
                 bail!(
                     "the desk did not start within {} minutes (Research reports it {})",
                     pace.desk_for.as_secs() / 60,
-                    if last.is_empty() { "without a status" } else { last.as_str() }
+                    if last.is_empty() {
+                        "without a status"
+                    } else {
+                        last.as_str()
+                    }
                 );
             }
             tokio::time::sleep(pace.poll).await;
@@ -1310,18 +1314,21 @@ impl ResearchApi {
             self.make_folder(desk, &at).await?;
         }
         // A folder after its parent: level by level, each level at once.
-        let mut levels: BTreeMap<usize, Vec<&String>> = BTreeMap::new();
-        for dir in &dirs {
-            levels.entry(dir.matches('/').count()).or_default().push(dir);
+        let mut levels: BTreeMap<usize, Vec<String>> = BTreeMap::new();
+        for dir in dirs {
+            levels
+                .entry(dir.matches('/').count())
+                .or_default()
+                .push(format!("{remote}/{dir}"));
         }
-        for level in levels.values() {
-            let mut made = futures_util::stream::iter(
-                level
-                    .iter()
-                    .map(|dir| self.make_folder(desk, &format!("{remote}/{dir}")))
-                    .collect::<Vec<_>>(),
-            )
-            .buffer_unordered(UPLOAD_CONCURRENCY);
+        for level in levels.into_values() {
+            let folders: Vec<BoxFuture<'_, anyhow::Result<()>>> = level
+                .into_iter()
+                .map(|path| {
+                    Box::pin(async move { self.make_folder(desk, &path).await }) as BoxFuture<'_, _>
+                })
+                .collect();
+            let mut made = futures_util::stream::iter(folders).buffer_unordered(UPLOAD_CONCURRENCY);
             while let Some(done) = made.next().await {
                 done?;
             }
@@ -1372,7 +1379,9 @@ impl ResearchApi {
             .await?;
         let folder = format!("{BUILD_FOLDER}/{name}");
         let built = self
-            .build_in(&desk.id, local, &folder, images, pace, progress, cancelled, name)
+            .build_in(
+                &desk.id, local, &folder, images, pace, progress, cancelled, name,
+            )
             .await;
         if let Err(e) = self.remove_path(&desk.id, &folder).await {
             tracing::warn!(error = %e, "research: the build folder could not be removed");
@@ -1456,7 +1465,10 @@ impl ResearchApi {
             return Ok(None);
         };
         let lock: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or_default();
-        let at = lock.get("at").and_then(serde_json::Value::as_u64).unwrap_or(0);
+        let at = lock
+            .get("at")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0);
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())

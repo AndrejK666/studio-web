@@ -911,7 +911,10 @@ async fn a_desk_call_is_asked_again_while_the_gateway_answers_5xx() {
         .put_file("d1", "a.txt", b"a")
         .await
         .unwrap_err();
-    assert!(format!("{e:#}").contains("502 Bad Gateway: no healthy upstream"), "{e:#}");
+    assert!(
+        format!("{e:#}").contains("502 Bad Gateway: no healthy upstream"),
+        "{e:#}"
+    );
 }
 
 #[tokio::test]
@@ -951,9 +954,10 @@ async fn a_second_build_waits_for_the_desk_and_says_so() {
     let (url, seen) = serve(Fake::default()).await;
     let (one, two) = (tree(20), tree(20));
     let (first, second) = (api(&url), api(&url));
+    let images = api_image();
     let (a, b) = tokio::join!(
-        first.build_in_desk("p1", &one, "b1", &api_image(), FAST, &say, &never),
-        second.build_in_desk("p1", &two, "b2", &api_image(), FAST, &say, &never),
+        first.build_in_desk("p1", &one, "b1", &images, FAST, &say, &never),
+        second.build_in_desk("p1", &two, "b2", &images, FAST, &say, &never),
     );
     let _ = (std::fs::remove_dir_all(&one), std::fs::remove_dir_all(&two));
     a.unwrap();
@@ -973,7 +977,10 @@ async fn a_second_build_waits_for_the_desk_and_says_so() {
         .map(|(_, dockerfile, _)| dockerfile.as_str())
         .collect();
     assert_eq!(order.len(), 2, "{order:?}");
-    assert!(!f.files.contains_key("studio-build/.studio-desk-lock"), "the desk is let go");
+    assert!(
+        !f.files.contains_key("studio-build/.studio-desk-lock"),
+        "the desk is let go"
+    );
 }
 
 #[tokio::test]
@@ -992,7 +999,11 @@ async fn a_desk_another_build_stopped_is_started_again() {
     let _ = std::fs::remove_dir_all(&work);
     built.unwrap();
     let f = seen.lock().unwrap();
-    assert!(f.calls.iter().any(|c| c == &format!("POST {ACCOUNT}/desks/d1/filesystem")));
+    assert!(
+        f.calls
+            .iter()
+            .any(|c| c == &format!("POST {ACCOUNT}/desks/d1/filesystem"))
+    );
 }
 
 #[test]

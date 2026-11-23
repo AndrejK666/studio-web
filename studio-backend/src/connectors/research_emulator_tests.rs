@@ -213,7 +213,7 @@ async fn an_upload_goes_through_the_gateways_502s_on_the_emulator() {
     let (url, emu) = spawn_for_tests(instant()).await;
     let api = signed_in(&url).await.with_dav_retry(FAST_RETRY);
     let p = api.projects().await.unwrap()[0].id.clone();
-    emu.lock().dav_hiccups = crate::research_emulator::DAV_HICCUPS;
+    emu.state_for_tests().dav_hiccups = crate::research_emulator::DAV_HICCUPS;
 
     let work = tree("FROM rust:1.97\nRUN cargo build\n");
     let built = api
@@ -221,7 +221,11 @@ async fn an_upload_goes_through_the_gateways_502s_on_the_emulator() {
         .await;
     let _ = std::fs::remove_dir_all(&work);
     assert_eq!(built.unwrap().len(), 1);
-    assert_eq!(emu.lock().dav_hiccups, 0, "every hiccup was met and gone through");
+    assert_eq!(
+        emu.state_for_tests().dav_hiccups,
+        0,
+        "every hiccup was met and gone through"
+    );
 }
 
 /// What the concurrent builds below said.
@@ -241,19 +245,21 @@ async fn two_builds_into_one_research_project_take_its_desk_in_turn_on_the_emula
         tree("FROM rust:1.97\nRUN cargo build\n"),
         tree("FROM rust:1.97\nRUN cargo build\n"),
     );
+    let images = api_image();
     let (a, b) = tokio::join!(
-        api.build_in_desk(&p, &one, "research-c1", &api_image(), FAST, &say, &never),
-        api.build_in_desk(&p, &two, "research-c2", &api_image(), FAST, &say, &never),
+        api.build_in_desk(&p, &one, "research-c1", &images, FAST, &say, &never),
+        api.build_in_desk(&p, &two, "research-c2", &images, FAST, &say, &never),
     );
     let _ = (std::fs::remove_dir_all(&one), std::fs::remove_dir_all(&two));
     assert_eq!(a.unwrap().len(), 1);
     assert_eq!(b.unwrap().len(), 1);
     let said = SAID.lock().unwrap();
     assert!(
-        said.iter().any(|m| m.starts_with("waiting for build research-c")),
+        said.iter()
+            .any(|m| m.starts_with("waiting for build research-c")),
         "the second says what it waits for: {said:?}"
     );
-    let st = emu.lock();
+    let st = emu.state_for_tests();
     assert_eq!(st.images.len(), 2);
     assert!(
         st.desks.values().all(|d| d.status != "running"),
