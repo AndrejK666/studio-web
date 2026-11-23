@@ -6731,6 +6731,25 @@
     },
     {
       "method": "POST",
+      "path": "/studio-environments/v1/builds/{build_id}/deploy",
+      "operation_id": "studio_environments.run_built_images",
+      "tag": "",
+      "summary": "Deploy the images a Research build made, building nothing",
+      "authenticated": true,
+      "request": "DeployBuiltImagesRequest",
+      "responses": [
+        "EnvironmentDeploymentDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-environments/v1/deployments",
       "operation_id": "studio_environments.create_deployment",
       "tag": "",

@@ -57,6 +57,7 @@ mod records; // the gear's own tables (ADR-0062)
 mod research; // building and running on Constructor Research (ADR-0049 §3, §4)
 mod research_app; // a rendered chart as a Constructor Research application (ADR-0049 §4)
 mod research_envs; // one Research environment per Research project (#1053)
+mod research_keys; // what a Research image is made of, so an unchanged one is reused
 mod research_progress; // how far a Research build and deploy are, counted (#1053)
 mod rest;
 mod secret_needs; // the configuration secrets a product needs in an environment
@@ -225,4 +226,11 @@ impl RestApiCapability for StudioEnvironmentsGear {
         // caller's home tenant.
         Ok(router.layer(axum::Extension(access)))
     }
+}
+
+/// The code of the cause a Research build's failure `text` in `step` reads
+/// as: for a test elsewhere that makes a failure for real.
+#[cfg(test)]
+pub(crate) fn failure_code_for_tests(text: &str, step: &str) -> &'static str {
+    failure::explain(failure::Of::Build, text, Some(step), true).code
 }

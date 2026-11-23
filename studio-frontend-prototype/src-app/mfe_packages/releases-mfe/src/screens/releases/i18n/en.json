@@ -320,5 +320,6 @@
   "progress_files": "{done} / {total} files",
   "progress_images": "{done} / {total} images",
   "progress_waiting": "Waiting for Research…",
-  "progress_working": "Working…"
+  "progress_working": "Working…",
+  "research_deploy_built": "Deploy these images"
 }

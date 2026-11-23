@@ -327,5 +327,6 @@
   "progress_files": "{done} / {total} файлов",
   "progress_images": "{done} / {total} образов",
   "progress_waiting": "Ждём Research…",
-  "progress_working": "Работаем…"
+  "progress_working": "Работаем…",
+  "research_deploy_built": "Развернуть эти образы"
 }

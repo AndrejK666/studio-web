@@ -560,6 +560,8 @@ export interface EnvironmentBuild {
   failure?: string | null;
   failure_step?: string | null;
   cause?: FailureCause | null;
+  /** What it built or asked Research to build, `(app, image)`. */
+  images?: { app: string; image: string }[];
 }
 
 /** The end of each container's log of a deployed release. */

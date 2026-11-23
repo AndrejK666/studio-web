@@ -256,7 +256,13 @@ type Run =
       lines: string[];
     }
   | { at: 'done'; deployment: Deployment }
-  | { at: 'failed'; deployment: Deployment | null; message: string };
+  | {
+      at: 'failed';
+      deployment: Deployment | null;
+      message: string;
+      /** A build that asked Research for its images before it failed: they may be deployed. */
+      built?: { buildId: string; environmentId: string };
+    };
 
 /** What the bar says in each state of a run. */
 function progressOf(run: Run): Progress | null {
@@ -361,6 +367,7 @@ function ResearchTarget({
               at: 'failed',
               deployment: null,
               message: b.cause?.summary ?? b.failure ?? t('research_build_failed'),
+              built: b.images?.length ? { buildId: run.buildId, environmentId: run.environmentId } : undefined,
             });
           } else {
             setRun({ ...run, lines, progress });
@@ -419,6 +426,19 @@ function ResearchTarget({
         lines: [],
         progress: null,
       });
+    } catch (e) {
+      setError(errText(e));
+    }
+  };
+
+  // Deploy what the failed build had Research make: nothing is built again.
+  const deployBuilt = async () => {
+    if (run.at !== 'failed' || !run.built) return;
+    const { buildId, environmentId } = run.built;
+    setError(null);
+    try {
+      const d = await api.deployBuiltImages(projectId, buildId).fetch({ environment_id: environmentId });
+      setRun({ at: 'deploying', buildId, deployment: d, lines: [] });
     } catch (e) {
       setError(errText(e));
     }
@@ -530,6 +550,11 @@ function ResearchTarget({
         ) : (
           <ErrorLine>{run.message}</ErrorLine>
         ))}
+      {run.at === 'failed' && run.built && (
+        <Button size="sm" variant="outline" onClick={() => void deployBuilt()} data-research-deploy-built>
+          {t('research_deploy_built')}
+        </Button>
+      )}
     </section>
   );
 }

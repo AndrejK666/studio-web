@@ -145,6 +145,15 @@ export class ReleasesApiService extends BaseApiService {
     return this.rest.mutation<Deployment, DeploymentRequest>('POST', `${ENV}/deployments?${project(projectId)}`);
   }
 
+  /** Deploy the images a Research build made, building nothing: continues a build that
+   *  failed after its images were asked for, or redeploys an earlier one. */
+  deployBuiltImages(projectId: string, buildId: string) {
+    return this.rest.mutation<Deployment, { environment_id: string }>(
+      'POST',
+      `${ENV}/builds/${enc(buildId)}/deploy?${project(projectId)}`
+    );
+  }
+
   /** The organization's environments: read here only for `may_manage`, whether the caller decides deploys. */
   readonly environments = this.protocol(RestEndpointProtocol).queryWith<EnvironmentList, { organizationId: string }>(
     ({ organizationId }) => `${ENV}/environments?${org(organizationId)}`

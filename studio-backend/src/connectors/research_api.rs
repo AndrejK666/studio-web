@@ -15,7 +15,7 @@
 //! stream: a build is a desk's files and an image per Dockerfile, a deploy is
 //! one call per service, and both are polled.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -159,6 +159,40 @@ pub struct ResearchApi {
     token: Mutex<String>,
     renew: Option<Renew>,
     dav_retry: DavRetry,
+    net_retry: NetRetry,
+}
+
+/// How a call that did not reach Research is asked again: `tries` more
+/// times, `first` apart and doubling.
+#[derive(Debug, Clone, Copy)]
+pub struct NetRetry {
+    pub tries: u32,
+    pub first: Duration,
+}
+
+impl NetRetry {
+    pub const RESEARCH: NetRetry = NetRetry {
+        tries: 3,
+        first: Duration::from_secs(2),
+    };
+}
+
+/// What a call that never reached Research says, whatever the network did:
+/// the cause a person reads is `RESEARCH_UNAVAILABLE` (`failure.rs` knows
+/// this sentence).
+pub const NOT_REACHED: &str = "Constructor Research could not be reached";
+
+fn unreachable(what: &str, url: &str, e: &reqwest::Error) -> anyhow::Error {
+    let host = reqwest::Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_owned))
+        .unwrap_or_else(|| url.to_owned());
+    anyhow!("{NOT_REACHED} at {host} ({what}), asked again and again; try again in a while: {e}")
+}
+
+/// Whether sending `method` twice changes nothing more than sending it once.
+fn idempotent(method: &reqwest::Method) -> bool {
+    !matches!(*method, reqwest::Method::POST | reqwest::Method::PATCH)
 }
 
 /// A Research project the member owns or collaborates on.
@@ -366,6 +400,122 @@ pub struct Built {
     pub id: String,
 }
 
+/// Where a desk build has got to: what one attempt of the build's run
+/// hands the next, so a build longer than the run queue's lease goes on
+/// where it was instead of starting over (and nothing is uploaded or built
+/// twice).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeskBuild {
+    /// The desk's id, once found.
+    #[serde(default)]
+    pub desk: Option<String>,
+    /// Whether Studio started the desk, and so stops it at the end.
+    #[serde(default)]
+    pub started_desk: bool,
+    /// When the build began waiting for the desk (Unix seconds).
+    #[serde(default)]
+    pub waiting_since: Option<u64>,
+    /// Whether every image is asked for: the tree is no longer needed.
+    #[serde(default)]
+    pub submitted: bool,
+    /// Each image: building, built, or reused from an earlier build.
+    #[serde(default)]
+    pub images: Vec<Building>,
+    /// When the image builds must have ended (Unix seconds).
+    #[serde(default)]
+    pub build_until: Option<u64>,
+}
+
+impl DeskBuild {
+    /// A build some of whose images an earlier build made already: those
+    /// are not built again.
+    pub fn reusing(reused: Vec<Built>) -> Self {
+        Self {
+            images: reused
+                .into_iter()
+                .map(|b| Building {
+                    key: b.key,
+                    name: b.name,
+                    id: b.id,
+                    dockerfile: String::new(),
+                    first_name: None,
+                    erred: false,
+                    done: true,
+                    reused: true,
+                })
+                .collect(),
+            ..Self::default()
+        }
+    }
+}
+
+/// One image of a [`DeskBuild`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Building {
+    pub key: String,
+    /// The name Research builds it under now (`…-r2` once built again).
+    pub name: String,
+    /// Research's id of the image.
+    pub id: String,
+    /// The Dockerfile, relative to the uploaded folder.
+    pub dockerfile: String,
+    /// The name it failed under first, once it was built again.
+    #[serde(default)]
+    pub first_name: Option<String>,
+    /// Research said `error` once for this id.
+    #[serde(default)]
+    pub erred: bool,
+    #[serde(default)]
+    pub done: bool,
+    /// Made by an earlier build: not uploaded nor built by this one.
+    #[serde(default)]
+    pub reused: bool,
+}
+
+/// What one attempt at a desk build came to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Followed {
+    /// Every image built.
+    Built(Vec<Built>),
+    /// Not yet: the attempt is over (or the run was stopped), and this is
+    /// where the next one goes on from.
+    Later(DeskBuild),
+}
+
+/// When one attempt hands a desk build over to the next.
+#[derive(Debug, Clone, Copy)]
+pub struct HandOver {
+    /// Past this the tree is not uploaded: waiting for the desk is handed
+    /// over instead, so an upload is never cut short by the lease.
+    pub upload_by: tokio::time::Instant,
+    /// Past this, following the image builds is handed over.
+    pub follow_until: tokio::time::Instant,
+}
+
+impl HandOver {
+    /// An attempt that is never over: the whole build in one call.
+    #[cfg(test)]
+    pub fn never() -> Self {
+        let far = tokio::time::Instant::now() + Duration::from_secs(30 * 24 * 60 * 60);
+        Self {
+            upload_by: far,
+            follow_until: far,
+        }
+    }
+}
+
+/// Where a desk build hands what the next attempt needs, each time it
+/// changes.
+pub type Checkpoint<'a> = &'a (dyn Fn(&DeskBuild) -> BoxFuture<'a, ()> + Send + Sync);
+
+/// Seconds since the Unix epoch: a deadline that outlives one process.
+pub fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
 /// How often Research is asked, and for how long.
 #[derive(Debug, Clone, Copy)]
 pub struct Pace {
@@ -558,6 +708,7 @@ impl ResearchApi {
             token: Mutex::new(token),
             renew: None,
             dav_retry: DavRetry::RESEARCH,
+            net_retry: NetRetry::RESEARCH,
         }
     }
 
@@ -565,6 +716,12 @@ impl ResearchApi {
     #[cfg(test)]
     pub fn with_dav_retry(mut self, retry: DavRetry) -> Self {
         self.dav_retry = retry;
+        self
+    }
+
+    #[cfg(test)]
+    pub fn with_net_retry(mut self, retry: NetRetry) -> Self {
+        self.net_retry = retry;
         self
     }
 
@@ -698,6 +855,7 @@ impl ResearchApi {
         what: &str,
     ) -> anyhow::Result<reqwest::Response> {
         let mut renewed = false;
+        let mut tries = 0u32;
         loop {
             let mut req = self.authorized(self.http.request(method.clone(), url));
             for (name, value) in headers {
@@ -708,9 +866,23 @@ impl ResearchApi {
                 Body::Json(v) => req.json(v),
                 Body::Bytes(b) => req.body(b.to_vec()),
             };
-            let res = req.send().await.map_err(|e| {
-                super::oauth::not_reached(&format!("Constructor Research ({what})"), url, &e)
-            })?;
+            let res = match req.send().await {
+                Ok(res) => res,
+                // The network between Studio and Research blinked: ask again
+                // a few times. A request that never got through (a refused or
+                // failed connection) is safe to send again whatever it does;
+                // one that may have got through only when sending it twice
+                // changes nothing (not a POST that starts an image build).
+                Err(e)
+                    if tries < self.net_retry.tries && (e.is_connect() || idempotent(&method)) =>
+                {
+                    tries += 1;
+                    tracing::warn!(error = %e, what, try_no = tries, "research: not reached, asking again");
+                    tokio::time::sleep(self.net_retry.first * 2u32.pow(tries - 1)).await;
+                    continue;
+                }
+                Err(e) => return Err(unreachable(what, url, &e)),
+            };
             if res.status() != reqwest::StatusCode::UNAUTHORIZED {
                 return Ok(res);
             }
@@ -1496,13 +1668,16 @@ impl ResearchApi {
         }
     }
 
-    /// Wait for the desk's files to be reachable; whether Studio started it.
+    /// Wait for the desk's files to be reachable: whether they are (`false`
+    /// when the run was stopped or `stop_at` came first), and whether Studio
+    /// started the desk.
     async fn desk_running(
         &self,
         desk: &str,
         pace: Pace,
         cancelled: Cancelled<'_>,
-    ) -> anyhow::Result<bool> {
+        stop_at: tokio::time::Instant,
+    ) -> anyhow::Result<(bool, bool)> {
         let until = tokio::time::Instant::now() + pace.desk_for;
         let mut started = false;
         let mut last = String::new();
@@ -1510,7 +1685,7 @@ impl ResearchApi {
             let state = self.desk(desk).await?;
             last.clone_from(&state.filesystem.status);
             match state.filesystem.status.as_str() {
-                "running" => return Ok(started),
+                "running" => return Ok((true, started)),
                 // On its way: wait for it.
                 "starting" | "stopping" | "pending" => {}
                 // Not running, whatever Research calls it (`not_started`,
@@ -1522,8 +1697,8 @@ impl ResearchApi {
                     started = true;
                 }
             }
-            if cancelled() {
-                bail!("the build was cancelled");
+            if cancelled() || tokio::time::Instant::now() >= stop_at {
+                return Ok((false, started));
             }
             if tokio::time::Instant::now() >= until {
                 bail!(
@@ -1707,9 +1882,9 @@ impl ResearchApi {
         .await
     }
 
-    /// Build the tree at `local` in a desk of `project`, saying how far it is
-    /// as it goes: the desk, then the files and bytes uploaded, then the
-    /// images built.
+    /// [`Self::desk_build`] in one go, never handed over: the whole build in
+    /// one call, as a test drives it.
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     pub async fn build_in_desk_measured(
         &self,
@@ -1722,37 +1897,189 @@ impl ResearchApi {
         measure: Measure<'_>,
         cancelled: Cancelled<'_>,
     ) -> anyhow::Result<Vec<Built>> {
-        let desk = self.build_desk(project).await?;
-        measure(Measured::Desk).await;
-        let started = self
-            .take_desk(&desk, name, pace, progress, cancelled)
-            .await?;
+        let nowhere = |_: &DeskBuild| -> BoxFuture<'_, ()> { Box::pin(async {}) };
+        match self
+            .desk_build(
+                project,
+                Some(local),
+                name,
+                images,
+                DeskBuild::default(),
+                pace,
+                HandOver::never(),
+                progress,
+                measure,
+                &nowhere,
+                cancelled,
+            )
+            .await?
+        {
+            Followed::Built(built) => Ok(built),
+            Followed::Later(state) => {
+                self.end_desk_build(&state, name, pace).await;
+                bail!("the build was cancelled")
+            }
+        }
+    }
+
+    /// One attempt at a desk build: take up `state` where the last attempt
+    /// left it, and go on until the images are built, the run is stopped,
+    /// or `hand_over` says this attempt is over.
+    ///
+    /// Before the images are asked for, the build needs the prepared tree
+    /// (`local`): it takes the desk (waiting while another build holds it),
+    /// uploads the tree and asks Research for each image. From then on it
+    /// needs only `state`, which `checkpoint` is given whenever it changes:
+    /// a later attempt follows the same images without uploading or building
+    /// anything again.
+    ///
+    /// Ends with [`Followed::Built`] once every image is built (the folder
+    /// removed and the desk let go), or [`Followed::Later`] with what the
+    /// next attempt continues from -- nothing is cleaned then; a run that
+    /// will not continue calls [`Self::end_desk_build`]. An error has
+    /// cleaned up already.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn desk_build(
+        &self,
+        project: &str,
+        local: Option<&Path>,
+        name: &str,
+        images: &[ImageBuild],
+        state: DeskBuild,
+        pace: Pace,
+        hand_over: HandOver,
+        progress: Progress<'_>,
+        measure: Measure<'_>,
+        checkpoint: Checkpoint<'_>,
+        cancelled: Cancelled<'_>,
+    ) -> anyhow::Result<Followed> {
+        let mut state = state;
+        // Every image made by an earlier build: no desk, no upload.
+        if !state.submitted && images.is_empty() {
+            state.submitted = true;
+        }
+        if state.submitted && state.desk.is_none() {
+            return match self
+                .follow_images(
+                    "", "", &mut state, pace, hand_over, progress, measure, checkpoint, cancelled,
+                    name,
+                )
+                .await?
+            {
+                Some(built) => Ok(Followed::Built(built)),
+                None => Ok(Followed::Later(state)),
+            };
+        }
+        let desk = match &state.desk {
+            Some(id) => self.desk(id).await?,
+            None => self.build_desk(project).await?,
+        };
+        state.desk = Some(desk.id.clone());
         let folder = format!("{BUILD_FOLDER}/{name}");
-        let built = self
-            .build_in(
-                &desk.id, local, &folder, images, pace, progress, measure, cancelled, name,
+        let went = self
+            .desk_build_steps(
+                &desk, local, name, images, &folder, &mut state, pace, hand_over, progress,
+                measure, checkpoint, cancelled,
             )
             .await;
-        if let Err(e) = self.remove_path(&desk.id, &folder).await {
+        match went {
+            Ok(Some(built)) => {
+                self.end_desk_build(&state, name, pace).await;
+                Ok(Followed::Built(built))
+            }
+            Ok(None) => Ok(Followed::Later(state)),
+            Err(e) => {
+                self.end_desk_build(&state, name, pace).await;
+                Err(e)
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn desk_build_steps(
+        &self,
+        desk: &Desk,
+        local: Option<&Path>,
+        name: &str,
+        images: &[ImageBuild],
+        folder: &str,
+        state: &mut DeskBuild,
+        pace: Pace,
+        hand_over: HandOver,
+        progress: Progress<'_>,
+        measure: Measure<'_>,
+        checkpoint: Checkpoint<'_>,
+        cancelled: Cancelled<'_>,
+    ) -> anyhow::Result<Option<Vec<Built>>> {
+        if !state.submitted {
+            measure(Measured::Desk).await;
+            let waiting_since = *state.waiting_since.get_or_insert_with(unix_now);
+            let (taken, started) = self
+                .take_desk(
+                    desk,
+                    name,
+                    pace,
+                    progress,
+                    cancelled,
+                    hand_over.upload_by,
+                    waiting_since,
+                )
+                .await?;
+            state.started_desk |= started;
+            if !taken {
+                return Ok(None);
+            }
+            let local = local.ok_or_else(|| {
+                anyhow!("the build has no prepared tree to put on the desk (an internal error)")
+            })?;
+            let building = self
+                .submit_images(
+                    &desk.id, local, folder, images, pace, progress, measure, name,
+                )
+                .await?;
+            state.images.extend(building);
+            state.submitted = true;
+            state.build_until = Some(unix_now() + pace.build_for.as_secs());
+            checkpoint(state).await;
+        }
+        self.follow_images(
+            &desk.id, folder, state, pace, hand_over, progress, measure, checkpoint, cancelled,
+            name,
+        )
+        .await
+    }
+
+    /// Let a desk build go: its folder removed, the desk released and, if
+    /// Studio started it, stopped. What a build that ends, or will not be
+    /// continued, does; harmless where there is nothing to remove.
+    pub async fn end_desk_build(&self, state: &DeskBuild, name: &str, pace: Pace) {
+        let Some(desk) = state.desk.as_deref() else {
+            return;
+        };
+        let folder = format!("{BUILD_FOLDER}/{name}");
+        if let Err(e) = self.remove_path(desk, &folder).await {
             tracing::warn!(error = %e, "research: the build folder could not be removed");
         }
-        self.release_desk(&desk.id, name).await;
+        self.release_desk(desk, name).await;
         // A build waiting for the desk looks every three polls: give it the
         // time to take the desk, and leave the desk running for it if it did
         // (it stops it then, having waited).
-        if started {
+        if state.started_desk {
             tokio::time::sleep(pace.poll * 4).await;
-            let taken = matches!(self.desk_holder(&desk.id).await, Ok(Some(_)));
-            if !taken && let Err(e) = self.stop_desk(&desk.id).await {
+            let taken = matches!(self.desk_holder(desk).await, Ok(Some(_)));
+            if !taken && let Err(e) = self.stop_desk(desk).await {
                 tracing::warn!(error = %e, "research: the desk Studio started could not be stopped");
             }
         }
-        built
     }
 
     /// Start the desk and take it for build `name`: while another Studio
     /// build holds it (its lock written within [`DESK_LOCK_STALE`]), wait
-    /// and say so, then take it. Whether Studio started the desk.
+    /// and say so, then take it. Whether it was taken -- not when the run was
+    /// stopped, or `stop_at` came first, while it waited -- and whether
+    /// Studio started the desk. The wait began at `waiting_since` (Unix
+    /// seconds), perhaps in an earlier attempt.
+    #[allow(clippy::too_many_arguments)]
     async fn take_desk(
         &self,
         desk: &Desk,
@@ -1760,15 +2087,23 @@ impl ResearchApi {
         pace: Pace,
         progress: Progress<'_>,
         cancelled: Cancelled<'_>,
-    ) -> anyhow::Result<bool> {
-        let until = tokio::time::Instant::now() + DESK_WAIT_FOR;
+        stop_at: tokio::time::Instant,
+        waiting_since: u64,
+    ) -> anyhow::Result<(bool, bool)> {
+        let until = waiting_since + DESK_WAIT_FOR.as_secs();
         let mut said: Option<String> = None;
         let mut started = false;
         loop {
             if said.is_none() {
                 progress(format!("starting desk {}", desk.name)).await;
             }
-            started |= self.desk_running(&desk.id, pace, cancelled).await?;
+            let (running, start) = self
+                .desk_running(&desk.id, pace, cancelled, stop_at)
+                .await?;
+            started |= start;
+            if !running {
+                return Ok((false, started));
+            }
             match self.desk_holder(&desk.id).await? {
                 Some(other) if other != name => {
                     // Having waited, this build stops the desk at its end:
@@ -1783,10 +2118,10 @@ impl ResearchApi {
                         .await;
                         said = Some(other.clone());
                     }
-                    if cancelled() {
-                        bail!("the build was cancelled while it waited for the desk");
+                    if cancelled() || tokio::time::Instant::now() >= stop_at {
+                        return Ok((false, started));
                     }
-                    if tokio::time::Instant::now() >= until {
+                    if unix_now() >= until {
                         bail!(
                             "desk {} of this Research project stayed in use by build {other} \
                              for {} hours",
@@ -1802,7 +2137,7 @@ impl ResearchApi {
                     // write wins, and the other one waits.
                     match self.desk_holder(&desk.id).await? {
                         Some(holder) if holder != name => continue,
-                        _ => return Ok(started),
+                        _ => return Ok((true, started)),
                     }
                 }
             }
@@ -1855,8 +2190,10 @@ impl ResearchApi {
         }
     }
 
+    /// Put the tree at `local` into `folder` of the desk and ask Research
+    /// for each of `images` there: the images it is building.
     #[allow(clippy::too_many_arguments)]
-    async fn build_in(
+    async fn submit_images(
         &self,
         desk: &str,
         local: &Path,
@@ -1865,9 +2202,8 @@ impl ResearchApi {
         pace: Pace,
         progress: Progress<'_>,
         measure: Measure<'_>,
-        cancelled: Cancelled<'_>,
         lock: &str,
-    ) -> anyhow::Result<Vec<Built>> {
+    ) -> anyhow::Result<Vec<Building>> {
         self.exclude_from_git(desk, BUILD_FOLDER).await;
         self.remove_path(desk, folder).await?;
         progress("uploading the prepared tree to the desk".into()).await;
@@ -1887,93 +2223,134 @@ impl ResearchApi {
             .await;
             tokio::time::sleep(pace.settle).await;
         }
-
-        // Each image's build, its current name and id.
-        let mut pending = Vec::new();
+        let mut building = Vec::new();
         for i in images {
             let image = self
                 .build_image(desk, &i.name, &format!("{folder}/{}", i.dockerfile))
                 .await?;
-            pending.push((i, i.name.clone(), image.id));
+            building.push(Building {
+                key: i.key.clone(),
+                name: i.name.clone(),
+                id: image.id,
+                dockerfile: i.dockerfile.clone(),
+                first_name: None,
+                erred: false,
+                done: false,
+                reused: false,
+            });
         }
-        let total = pending.len() as u64;
-        measure(Measured::Images { done: 0, total }).await;
-        let until = tokio::time::Instant::now() + pace.build_for;
-        let mut done: BTreeMap<String, Built> = BTreeMap::new();
-        // Research reports `error` for a moment while it retries a build
-        // itself, so an error counts once seen twice for the same image. A
-        // confirmed one is built once more, under a new name, before the build
-        // gives up: the first name each image failed under.
-        let mut erred: BTreeSet<String> = BTreeSet::new();
-        let mut retried: BTreeMap<String, String> = BTreeMap::new();
-        let mut refreshed = tokio::time::Instant::now();
+        Ok(building)
+    }
+
+    /// Follow the images `state` names until all are built (`Some`), the run
+    /// is stopped or `hand_over` ends this attempt (`None`).
+    ///
+    /// Research reports `error` for a moment while it retries a build
+    /// itself, so an error counts once seen twice for the same image. A
+    /// confirmed one is built once more, under a new name, before the build
+    /// gives up.
+    #[allow(clippy::too_many_arguments)]
+    async fn follow_images(
+        &self,
+        desk: &str,
+        folder: &str,
+        state: &mut DeskBuild,
+        pace: Pace,
+        hand_over: HandOver,
+        progress: Progress<'_>,
+        measure: Measure<'_>,
+        checkpoint: Checkpoint<'_>,
+        cancelled: Cancelled<'_>,
+        lock: &str,
+    ) -> anyhow::Result<Option<Vec<Built>>> {
+        let total = state.images.len() as u64;
+        let done = |s: &DeskBuild| s.images.iter().filter(|b| b.done).count() as u64;
+        measure(Measured::Images {
+            done: done(state),
+            total,
+        })
+        .await;
+        let until = state
+            .build_until
+            .unwrap_or_else(|| unix_now() + pace.build_for.as_secs());
+        // The desk stays this build's while its images build: its lock is
+        // written at once (an earlier attempt may have written it minutes
+        // ago), then every few minutes.
+        let mut refreshed: Option<tokio::time::Instant> = None;
         loop {
-            // The desk stays this build's while its images build.
-            if refreshed.elapsed() >= DESK_LOCK_REFRESH {
+            if !desk.is_empty() && refreshed.is_none_or(|at| at.elapsed() >= DESK_LOCK_REFRESH) {
                 self.write_desk_lock(desk, lock).await?;
-                refreshed = tokio::time::Instant::now();
+                refreshed = Some(tokio::time::Instant::now());
             }
-            for n in 0..pending.len() {
-                let (i, name, id) = pending[n].clone();
-                if done.contains_key(&i.key) {
+            let mut changed = false;
+            for n in 0..state.images.len() {
+                if state.images[n].done {
                     continue;
                 }
-                let state = self.image(&id).await?;
-                match state.build_status.as_str() {
+                let id = state.images[n].id.clone();
+                let status = self.image(&id).await?.build_status;
+                let b = &mut state.images[n];
+                match status.as_str() {
                     "done" => {
-                        done.insert(
-                            i.key.clone(),
-                            Built {
-                                key: i.key.clone(),
-                                name,
-                                id,
-                            },
-                        );
+                        b.done = true;
+                        changed = true;
+                        let shown = b.first_name.clone().unwrap_or_else(|| b.name.clone());
+                        let now = done(state);
+                        progress(format!("built {shown} ({now}/{total})")).await;
+                        measure(Measured::Images { done: now, total }).await;
+                    }
+                    "error" if !b.erred => {
+                        b.erred = true;
+                        changed = true;
+                    }
+                    "error" if b.first_name.is_none() => {
+                        let again = retry_name(&b.name);
                         progress(format!(
-                            "built {} ({}/{})",
-                            i.name,
-                            done.len(),
-                            pending.len()
+                            "{} failed; building it once more as {again}",
+                            b.name
                         ))
                         .await;
-                        measure(Measured::Images {
-                            done: done.len() as u64,
-                            total,
-                        })
-                        .await;
-                    }
-                    "error" if erred.insert(id.clone()) => {}
-                    "error" if !retried.contains_key(&i.key) => {
-                        let again = retry_name(&i.name);
-                        progress(format!("{name} failed; building it once more as {again}")).await;
-                        let image = self
-                            .build_image(desk, &again, &format!("{folder}/{}", i.dockerfile))
-                            .await?;
-                        retried.insert(i.key.clone(), name);
-                        pending[n] = (i, again, image.id);
+                        let dockerfile = format!("{folder}/{}", b.dockerfile);
+                        let image = self.build_image(desk, &again, &dockerfile).await?;
+                        let b = &mut state.images[n];
+                        b.first_name = Some(std::mem::replace(&mut b.name, again));
+                        b.id = image.id;
+                        b.erred = false;
+                        changed = true;
                     }
                     "error" => {
                         let tail = self.build_log_tail(&id, 30).await.ok().flatten();
                         bail!(
-                            "Constructor Research could not build image {} ({}), nor again as {name}{}",
-                            retried[&i.key],
-                            i.dockerfile,
+                            "Constructor Research could not build image {} ({}), nor again as {}{}",
+                            b.first_name.as_deref().unwrap_or_default(),
+                            b.dockerfile,
+                            b.name,
                             tail.map(|t| format!(":\n{t}")).unwrap_or_default()
                         );
                     }
                     _ => {}
                 }
             }
-            if done.len() == pending.len() {
-                return Ok(pending
-                    .iter()
-                    .filter_map(|(i, _, _)| done.remove(&i.key))
-                    .collect());
+            if changed {
+                checkpoint(state).await;
             }
-            if cancelled() {
-                bail!("the build was cancelled");
+            if state.images.iter().all(|b| b.done) {
+                return Ok(Some(
+                    state
+                        .images
+                        .iter()
+                        .map(|b| Built {
+                            key: b.key.clone(),
+                            name: b.name.clone(),
+                            id: b.id.clone(),
+                        })
+                        .collect(),
+                ));
             }
-            if tokio::time::Instant::now() >= until {
+            if cancelled() || tokio::time::Instant::now() >= hand_over.follow_until {
+                return Ok(None);
+            }
+            if unix_now() >= until {
                 bail!(
                     "Constructor Research did not build every image within {} minutes",
                     pace.build_for.as_secs() / 60

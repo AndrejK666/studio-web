@@ -705,6 +705,7 @@ request	POST /studio-environments/v1/builds/plan	environment_id	Uuid	required
 request	POST /studio-environments/v1/builds/plan	product_file	String	optional
 request	POST /studio-environments/v1/builds/plan	profile	String	optional
 request	POST /studio-environments/v1/builds/plan	ref	String	optional
+request	POST /studio-environments/v1/builds/{}/deploy	environment_id	Uuid	required
 request	POST /studio-environments/v1/deployments	action	String	optional
 request	POST /studio-environments/v1/deployments	build	String	optional
 request	POST /studio-environments/v1/deployments	chart	String	optional
@@ -7363,6 +7364,55 @@ response	POST /studio-environments/v1/builds/plan	sources.repository	String	alwa
 response	POST /studio-environments/v1/builds/plan	strictness	String	always
 response	POST /studio-environments/v1/builds/plan	warning_codes	Vec<String>	always
 response	POST /studio-environments/v1/builds/plan	warnings	Vec<String>	always
+response	POST /studio-environments/v1/builds/{}/deploy	action	String	always
+response	POST /studio-environments/v1/builds/{}/deploy	build	String	optional
+response	POST /studio-environments/v1/builds/{}/deploy	cause	{}	optional
+response	POST /studio-environments/v1/builds/{}/deploy	cause.actions	Vec<{}>	optional
+response	POST /studio-environments/v1/builds/{}/deploy	cause.actions.gear	String	optional
+response	POST /studio-environments/v1/builds/{}/deploy	cause.actions.key	String	optional
+response	POST /studio-environments/v1/builds/{}/deploy	cause.actions.kind	String	optional
+response	POST /studio-environments/v1/builds/{}/deploy	cause.actions.label	String	optional
+response	POST /studio-environments/v1/builds/{}/deploy	cause.code	String	optional
+response	POST /studio-environments/v1/builds/{}/deploy	cause.gear	String	optional
+response	POST /studio-environments/v1/builds/{}/deploy	cause.key	String	optional
+response	POST /studio-environments/v1/builds/{}/deploy	cause.lines	Vec<String>	optional
+response	POST /studio-environments/v1/builds/{}/deploy	cause.summary	String	optional
+response	POST /studio-environments/v1/builds/{}/deploy	chart_ref	String	optional
+response	POST /studio-environments/v1/builds/{}/deploy	chart_sha256	String	always
+response	POST /studio-environments/v1/builds/{}/deploy	chart_version	String	optional
+response	POST /studio-environments/v1/builds/{}/deploy	commit	String	optional
+response	POST /studio-environments/v1/builds/{}/deploy	decided_at	String	optional
+response	POST /studio-environments/v1/builds/{}/deploy	decided_by	String	optional
+response	POST /studio-environments/v1/builds/{}/deploy	decided_by_name	String	optional
+response	POST /studio-environments/v1/builds/{}/deploy	environment_id	Uuid	always
+response	POST /studio-environments/v1/builds/{}/deploy	environment_name	String	always
+response	POST /studio-environments/v1/builds/{}/deploy	id	Uuid	always
+response	POST /studio-environments/v1/builds/{}/deploy	images	Vec<{}>	always
+response	POST /studio-environments/v1/builds/{}/deploy	images.app	String	always
+response	POST /studio-environments/v1/builds/{}/deploy	images.image	String	always
+response	POST /studio-environments/v1/builds/{}/deploy	lock_hash	String	optional
+response	POST /studio-environments/v1/builds/{}/deploy	namespace	String	always
+response	POST /studio-environments/v1/builds/{}/deploy	outcome	String	optional
+response	POST /studio-environments/v1/builds/{}/deploy	preview	{}	optional
+response	POST /studio-environments/v1/builds/{}/deploy	preview.expires_at	String	optional
+response	POST /studio-environments/v1/builds/{}/deploy	preview.host	String	optional
+response	POST /studio-environments/v1/builds/{}/deploy	preview.name	String	optional
+response	POST /studio-environments/v1/builds/{}/deploy	preview.removal_error	String	optional
+response	POST /studio-environments/v1/builds/{}/deploy	preview.removed_at	String	optional
+response	POST /studio-environments/v1/builds/{}/deploy	product	String	always
+response	POST /studio-environments/v1/builds/{}/deploy	profile	String	always
+response	POST /studio-environments/v1/builds/{}/deploy	project_id	Uuid	always
+response	POST /studio-environments/v1/builds/{}/deploy	project_name	String	always
+response	POST /studio-environments/v1/builds/{}/deploy	public_url	String	optional
+response	POST /studio-environments/v1/builds/{}/deploy	reason	String	optional
+response	POST /studio-environments/v1/builds/{}/deploy	redeploy_of	Uuid	optional
+response	POST /studio-environments/v1/builds/{}/deploy	requested_at	String	always
+response	POST /studio-environments/v1/builds/{}/deploy	requested_by	String	always
+response	POST /studio-environments/v1/builds/{}/deploy	requested_by_name	String	always
+response	POST /studio-environments/v1/builds/{}/deploy	research	bool	always
+response	POST /studio-environments/v1/builds/{}/deploy	run_id	Uuid	optional
+response	POST /studio-environments/v1/builds/{}/deploy	state	String	always
+response	POST /studio-environments/v1/builds/{}/deploy	warnings	Vec<String>	always
 response	POST /studio-environments/v1/deployments	action	String	always
 response	POST /studio-environments/v1/deployments	build	String	optional
 response	POST /studio-environments/v1/deployments	cause	{}	optional
@@ -9714,6 +9764,7 @@ route	POST /studio-domain-model/v1/types/{}/tabs
 route	POST /studio-environments/v1/build-workflows
 route	POST /studio-environments/v1/builds
 route	POST /studio-environments/v1/builds/plan
+route	POST /studio-environments/v1/builds/{}/deploy
 route	POST /studio-environments/v1/deployments
 route	POST /studio-environments/v1/deployments/{}/decisions
 route	POST /studio-environments/v1/environments

@@ -186,6 +186,30 @@ something else refuses and asks for a new build. A database server's
 Postgres is built the same way, `FROM` the environment's database image with
 the script that creates its databases.
 
+An image build can take longer than the run queue's fifteen-minute lease
+(a Rust gear's, 20-40 minutes), so the build's run hands over rather than
+holds on, as a gear match does: each attempt follows the image builds for
+at most twelve minutes, keeps what it has -- the desk, each image's Research
+id, whether Studio started the desk -- on its run (`resume` in the run's
+result), and returns `Retry`; the next attempt goes on from there without
+preparing, uploading or building anything again. A run the queue still gives
+up on (or a cancelled one) tells the build, whose record turns `failed` (or
+`cancelled`) with the reason; a record read while it says `running` over a
+run that has ended is put right then. A call that does not reach Research
+is asked again a few times and fails as `RESEARCH_UNAVAILABLE`.
+
+Each image is keyed by what it is made of: the Research project, the
+Dockerfile Studio laid out (with what it bakes in), its ignore file and the
+files of its context that ignore file lets through (the other images'
+Studio files left out). The record keeps the keys (`image_keys`); a later
+build reuses each earlier image whose key matches and that Research still
+has built, and builds only the others -- with nothing to build it uploads
+nothing and goes straight to its deploy. A failed build keeps the images it
+had asked for, and `POST /studio-environments/v1/builds/{id}/deploy`
+deploys a build's images once Research has built them all, building
+nothing: what continues such a build, redeploys an earlier one, and rolls
+back.
+
 Images built by CI or the desktop into the organization's registry
 (ADR-0048 §4, §5) may run in Research once Research accepts an image by
 reference with a pull credential. Until then, a Research environment deploys

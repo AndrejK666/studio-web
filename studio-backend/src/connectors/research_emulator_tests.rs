@@ -283,7 +283,9 @@ fn deep_tree() -> (std::path::PathBuf, Vec<u8>) {
 /// A desk of the project, its filesystem running.
 async fn running_desk(api: &ResearchApi, p: &str) -> String {
     let desk = api.build_desk(p).await.unwrap();
-    api.desk_running(&desk.id, FAST, &never).await.unwrap();
+    api.desk_running(&desk.id, FAST, &never, HandOver::never().follow_until)
+        .await
+        .unwrap();
     desk.id
 }
 
@@ -479,5 +481,305 @@ async fn a_project_whose_deployment_is_off_says_so_and_refuses_to_build_on_the_e
     assert_eq!(
         api.projects().await.unwrap()[0].deployment_enabled,
         Some(true)
+    );
+}
+
+/// How many files went up to the desk (the desk's lock, written again by
+/// every attempt, is not one), and how many images Research was asked for.
+fn uploads_and_builds(emu: &crate::research_emulator::Shared) -> (usize, usize) {
+    let st = emu.state_for_tests();
+    let puts = st
+        .calls
+        .iter()
+        .filter(|c| {
+            c.method == "PUT" && c.path.contains("/dav/") && !c.path.ends_with(".studio-desk-lock")
+        })
+        .count();
+    (puts, st.images.len())
+}
+
+fn slow_builds() -> Timings {
+    Timings {
+        desk: Duration::ZERO,
+        build: Duration::from_millis(600),
+        start: Duration::ZERO,
+    }
+}
+
+/// One attempt of the build's run: it follows the images for `follow`, then
+/// hands over what the next attempt goes on from, as the run would between
+/// its attempts -- through JSON, as it is kept on the run.
+async fn attempt(
+    api: &ResearchApi,
+    project: &str,
+    local: Option<&std::path::Path>,
+    name: &str,
+    images: &[ImageBuild],
+    state: DeskBuild,
+    follow: Duration,
+) -> Followed {
+    let kept: std::sync::Mutex<Option<DeskBuild>> = std::sync::Mutex::default();
+    let checkpoint = |d: &DeskBuild| -> BoxFuture<'_, ()> {
+        *kept.lock().unwrap() = Some(d.clone());
+        Box::pin(async {})
+    };
+    let now = tokio::time::Instant::now();
+    let went = api
+        .desk_build(
+            project,
+            local,
+            name,
+            images,
+            state,
+            FAST,
+            HandOver {
+                upload_by: now + Duration::from_secs(60),
+                follow_until: now + follow,
+            },
+            &quiet,
+            &unmeasured,
+            &checkpoint,
+            &never,
+        )
+        .await
+        .unwrap();
+    match went {
+        Followed::Later(state) => {
+            let text = serde_json::to_string(&state).unwrap();
+            Followed::Later(serde_json::from_str(&text).unwrap())
+        }
+        built => built,
+    }
+}
+
+#[tokio::test]
+async fn an_image_build_longer_than_an_attempt_goes_on_in_the_next_and_deploys_on_the_emulator() {
+    // research-faa4fdf8107a on the stand, 2026-11-23: gbx-api-gateway took
+    // longer than the run queue's lease, and the run was given up on. Here
+    // an attempt follows the builds for 100 ms -- the "lease" -- and each
+    // build takes 600 ms.
+    let (url, emu) = spawn_for_tests(slow_builds()).await;
+    let api = signed_in(&url).await;
+    let p = api.projects().await.unwrap()[0].id.clone();
+    let work = tree("FROM rust:1.97\nRUN cargo build\nCMD [\"api\"]\n");
+
+    let mut went = attempt(
+        &api,
+        &p,
+        Some(&work),
+        "research-l1",
+        &api_image(),
+        DeskBuild::default(),
+        Duration::from_millis(100),
+    )
+    .await;
+    let _ = std::fs::remove_dir_all(&work);
+    let after_first = uploads_and_builds(&emu);
+    assert_eq!(after_first.1, 1, "one image asked for");
+    let mut attempts = 1;
+    let built = loop {
+        match went {
+            Followed::Built(built) => break built,
+            Followed::Later(state) => {
+                assert!(state.submitted && state.desk.is_some(), "{state:?}");
+                attempts += 1;
+                assert!(attempts < 50, "it never finished");
+                // No tree: a later attempt needs none.
+                went = attempt(
+                    &api,
+                    &p,
+                    None,
+                    "research-l1",
+                    &api_image(),
+                    state,
+                    Duration::from_millis(100),
+                )
+                .await;
+            }
+        }
+    };
+    assert!(
+        attempts >= 3,
+        "the build outlasted its attempts: {attempts}"
+    );
+    assert_eq!(
+        uploads_and_builds(&emu),
+        after_first,
+        "nothing was uploaded or built again"
+    );
+    assert_eq!(built.len(), 1);
+
+    let small = smallest(&api.hardware(&p).await.unwrap()).unwrap().clone();
+    let app = api
+        .put_application(
+            &p,
+            "env-dev",
+            &[ServiceBody {
+                name: "api".into(),
+                image_id: built[0].id.clone(),
+                hardware_configuration_id: small.id,
+                volumes: vec![],
+                ports: vec![PortBody {
+                    number: 8080,
+                    expose_to_internet: true,
+                }],
+                environment_variables: vec![],
+            }],
+            FAST,
+            &quiet,
+        )
+        .await
+        .unwrap();
+    assert_eq!(app.services[0].status, "running");
+}
+
+fn two_images() -> [ImageBuild; 2] {
+    [
+        ImageBuild {
+            key: "api".into(),
+            name: "gbx-api".into(),
+            dockerfile: "repo/Dockerfile.studio-api".into(),
+        },
+        ImageBuild {
+            key: "ui".into(),
+            name: "gbx-ui".into(),
+            dockerfile: "repo/Dockerfile.studio-api".into(),
+        },
+    ]
+}
+
+#[tokio::test]
+async fn images_an_earlier_build_made_are_not_uploaded_nor_built_again_on_the_emulator() {
+    let (url, emu) = spawn_for_tests(instant()).await;
+    let api = signed_in(&url).await;
+    let p = api.projects().await.unwrap()[0].id.clone();
+    let work = tree("FROM rust:1.97\nCMD [\"api\"]\n");
+    let first = api
+        .build_in_desk(
+            &p,
+            &work,
+            "research-r1",
+            &two_images(),
+            FAST,
+            &quiet,
+            &never,
+        )
+        .await
+        .unwrap();
+    let before = uploads_and_builds(&emu);
+    assert_eq!(before.1, 2);
+
+    // Nothing changed: no desk, no upload, no build -- straight to deploy.
+    let went = attempt(
+        &api,
+        &p,
+        None,
+        "research-r2",
+        &[],
+        DeskBuild::reusing(first.clone()),
+        Duration::from_secs(5),
+    )
+    .await;
+    let Followed::Built(again) = went else {
+        panic!("{went:?}")
+    };
+    assert_eq!(
+        uploads_and_builds(&emu),
+        before,
+        "nothing uploaded or built"
+    );
+    assert_eq!(again, first, "the same images");
+
+    // The ui changed: only it is built.
+    let api_kept: Vec<Built> = first.iter().filter(|b| b.key == "api").cloned().collect();
+    let ui_only: Vec<ImageBuild> = two_images().into_iter().filter(|i| i.key == "ui").collect();
+    let went = attempt(
+        &api,
+        &p,
+        Some(&work),
+        "research-r3",
+        &ui_only,
+        DeskBuild::reusing(api_kept),
+        Duration::from_secs(5),
+    )
+    .await;
+    let _ = std::fs::remove_dir_all(&work);
+    let Followed::Built(third) = went else {
+        panic!("{went:?}")
+    };
+    assert_eq!(uploads_and_builds(&emu).1, 3, "one image more: the ui");
+    assert_eq!(third[0], first[0], "the api's image is the earlier one");
+    assert_ne!(third[1].id, first[1].id, "the ui's is new");
+}
+
+#[tokio::test]
+async fn the_images_of_a_build_that_stopped_following_them_deploy_once_built_on_the_emulator() {
+    // A build that failed after its images were asked for: its record keeps
+    // their ids, Research goes on building them, and "Deploy these images"
+    // checks each is built and runs them -- building nothing.
+    let (url, emu) = spawn_for_tests(slow_builds()).await;
+    let api = signed_in(&url).await;
+    let p = api.projects().await.unwrap()[0].id.clone();
+    let work = tree("FROM rust:1.97\nCMD [\"api\"]\n");
+    let went = attempt(
+        &api,
+        &p,
+        Some(&work),
+        "research-f1",
+        &api_image(),
+        DeskBuild::default(),
+        Duration::from_millis(50),
+    )
+    .await;
+    let _ = std::fs::remove_dir_all(&work);
+    let Followed::Later(state) = went else {
+        panic!("it should not have finished yet: {went:?}")
+    };
+    let id = state.images[0].id.clone();
+    assert_ne!(api.image(&id).await.unwrap().build_status, "done");
+    let builds = uploads_and_builds(&emu).1;
+
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    assert_eq!(api.image(&id).await.unwrap().build_status, "done");
+    let small = smallest(&api.hardware(&p).await.unwrap()).unwrap().clone();
+    let app = api
+        .put_application(
+            &p,
+            "env-dev",
+            &[ServiceBody {
+                name: "api".into(),
+                image_id: id,
+                hardware_configuration_id: small.id,
+                volumes: vec![],
+                ports: vec![],
+                environment_variables: vec![],
+            }],
+            FAST,
+            &quiet,
+        )
+        .await
+        .unwrap();
+    assert_eq!(app.services[0].status, "running");
+    assert_eq!(uploads_and_builds(&emu).1, builds, "nothing built again");
+}
+
+#[tokio::test]
+async fn a_call_that_never_reaches_research_is_asked_again_then_says_so() {
+    // Nothing listens on port 9 of this machine.
+    let api = ResearchApi::new(
+        reqwest::Client::new(),
+        "http://127.0.0.1:9/api/platform-account/v1",
+        "rk-x".into(),
+    )
+    .with_net_retry(NetRetry {
+        tries: 2,
+        first: Duration::from_millis(1),
+    });
+    let e = format!("{:#}", api.projects().await.unwrap_err());
+    assert!(e.contains(NOT_REACHED), "{e}");
+    assert_eq!(
+        crate::environments::failure_code_for_tests(&e, "images"),
+        "RESEARCH_UNAVAILABLE",
+        "{e}"
     );
 }
