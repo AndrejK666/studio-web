@@ -24,6 +24,58 @@ Both run non-root (backend: `studio` system user; frontend:
 nginx-unprivileged, uid 101, port 8080). Chart requires explicit immutable
 tags — no `latest`.
 
+## The gears-matcher service
+
+The gears-matcher (ADR-0075, [`gears-matcher/`](../gears-matcher/README.md)) is a Python service the
+backend calls inside the cluster. It is a Helm release of its own, `gears-matcher`, from
+[`helm/gears-matcher`](helm/gears-matcher/values.yaml), built, published and deployed by
+`.github/workflows/gears-matcher.yml`, never by Studio Delivery:
+
+```bash
+gh workflow run gears-matcher.yml -R constructorfabric/studio-web --ref <branch> -f deploy=dev
+gh workflow run gears-matcher.yml -R constructorfabric/studio-web --ref <branch> -f deploy=dev -f image_tag=sha-<40 hex>
+```
+
+The first builds the branch, publishes `gears-matcher:sha-<commit>` and deploys it; the second deploys an
+image already published. The cluster pulls without credentials, so the `gears-matcher` package must be
+public, as Studio's are (a package `GITHUB_TOKEN` creates starts private).
+
+Made by hand once per environment, before the first deploy:
+
+- **The database**, owned by the runtime role (the service creates its table at start):
+
+  ```bash
+  kubectl -n studio-dev exec studio-postgres-1 -c postgres --     psql -c 'CREATE DATABASE gears_matcher OWNER studio;'
+  ```
+
+  Its pool (3) is counted once in [the connection budget](k8s/cloudnative-pg/README.md).
+- **The Secret `studio-gears-matcher`**, one key, `config.toml`, the service's keys:
+
+  ```toml
+  shared_secret = "..."          # the bearer token the backend sends to the service
+
+  [llm]                          # the Constructor LLM connector; the key must cover every model the matcher uses
+  access_key = "..."
+  stand = "..."
+  cmodel_id = "..."
+  public_connector_id = "..."
+  ```
+
+  ```bash
+  kubectl -n studio-dev create secret generic studio-gears-matcher --from-file=config.toml
+  ```
+
+  A changed Secret is read on the next start: restart the Pod, or bump `config.revision`.
+
+The Gear catalogue is cloned by an init container onto the release's claim and read once at start. On Dev
+it is the corpus Studio shows (`backend.gearbox.corpusUrl` and `corpusRef` of the Studio release, a
+shallow clone of the branch's tip; `helm/gears-matcher/values-dev.yaml` names the same two, move them
+together); on Test, which keeps no corpus, the commits the matcher pins. One replica: a run executes in
+the Pod that accepted it, and the reply cache is on a ReadWriteOnce claim kept when the release goes.
+`/readyz` says 503 until the run store and the reply cache can be used, so a wrong database or mount
+fails the deploy, which rolls back. The per-run call bound (`limits.maxCalls`, 400) is the one cost limit
+there is.
+
 ## Configuration model
 
 One image, any environment:
