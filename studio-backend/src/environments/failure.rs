@@ -69,7 +69,8 @@ pub struct FailureCause {
     /// `GEAR_BUILD_FAILED`, `SECRET_MISSING`, `QUOTA_OR_HARDWARE_LIMIT`,
     /// `RESEARCH_SIGN_IN_EXPIRED`, `IMAGE_PULL_FAILED`,
     /// `CLUSTER_UNREACHABLE`, `CONNECTION_UNREADABLE`, `APP_CRASHED`,
-    /// `SOURCE_REF_MISSING`, `PRODUCT_NOT_COMPOSED`, `RESEARCH_UNAVAILABLE`, `UNKNOWN`.
+    /// `SOURCE_REF_MISSING`, `PRODUCT_NOT_COMPOSED`, `RESEARCH_UNAVAILABLE`,
+    /// `RESEARCH_DEPLOY_DISABLED`, `UNKNOWN`.
     pub code: &'static str,
     /// One sentence: what went wrong.
     pub summary: String,
@@ -387,6 +388,22 @@ pub fn explain(of: Of, text: &str, step: Option<&str>, research: bool) -> Failur
         );
     }
 
+    // The Research project the build went to does not allow deployments
+    // (Research DEV, 2026-11-23: "Deployment is not enabled for this
+    // project" when the desk asked to build the first image). A setting of
+    // that project, not a fault of the product or of Research's service.
+    if research && has(text, &["deployment is not enabled"]) {
+        return cause(
+            "RESEARCH_DEPLOY_DISABLED",
+            "The Research project this build went to does not allow deployments: turn on              Deployment in that project's settings in Constructor Research, or build into              another Research project."
+                .to_owned(),
+            vec![
+                FailureAction::new("retry", retry_label),
+                FailureAction::new("open_log", "Open the log"),
+            ],
+        );
+    }
+
     // Research's own services refused while running (a desk's file storage
     // with "no healthy upstream", a gateway's 502/503/504): nothing in the
     // product or in Studio is wrong, and nothing here fixes it but time or
@@ -569,6 +586,15 @@ mod tests {
             gbx.summary
         );
         assert_eq!(gbx.actions[0].kind, "open_log");
+        // Research DEV, 2026-11-23: the chosen Research project allows no deployments.
+        let off = explain(
+            Of::Build,
+            "Constructor Research refused building image gbx-api-gateway: Invalid parameters:              Deployment is not enabled for this project",
+            Some("images"),
+            true,
+        );
+        assert_eq!(off.code, "RESEARCH_DEPLOY_DISABLED");
+        assert!(off.summary.contains("turn on"));
         // Seen last: Research's desk storage was down.
         let down = explain(
             Of::Build,
