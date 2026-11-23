@@ -4994,6 +4994,7 @@ response	GET /studio-organizations/v1/overview	workspaces.projects.broken	bool	a
 response	GET /studio-organizations/v1/overview	workspaces.projects.id	String	always
 response	GET /studio-organizations/v1/overview	workspaces.projects.name	String	always
 response	GET /studio-organizations/v1/overview	workspaces.projects.open_findings	u32	optional
+response	GET /studio-organizations/v1/overview	workspaces.projects.phase	String	optional
 response	GET /studio-organizations/v1/overview	workspaces.projects.previous	f64	optional
 response	GET /studio-organizations/v1/overview	workspaces.projects.quiet_days	u32	optional
 response	GET /studio-organizations/v1/overview	workspaces.projects.reasons	Vec<{}>	always
@@ -5085,6 +5086,7 @@ response	GET /studio-organizations/v1/rollups	items.name	String	always
 response	GET /studio-organizations/v1/rollups	items.open_comments	u32	optional
 response	GET /studio-organizations/v1/rollups	items.open_findings	u32	optional
 response	GET /studio-organizations/v1/rollups	items.parent_id	String	optional
+response	GET /studio-organizations/v1/rollups	items.phase	String	optional
 response	GET /studio-organizations/v1/rollups	items.project_kind	String	optional
 response	GET /studio-organizations/v1/rollups	items.projects	u32	optional
 response	GET /studio-organizations/v1/rollups	items.pull_days	Vec<u32>	optional

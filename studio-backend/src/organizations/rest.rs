@@ -984,6 +984,11 @@ pub struct RollupDto {
     /// should not carry pictures.
     pub icon_glyph: Option<String>,
     pub icon_color: Option<String>,
+    /// Projects: the phase Project lifecycle has the project in (`idea`,
+    /// `discovery`, `build`, `run`: `project.phase` in the organization's
+    /// model). Null when it has none or the kit does not apply. Moved with
+    /// `PUT /studio-kits/v1/project-phase`.
+    pub phase: Option<String>,
 }
 
 /// A page of rollups.
@@ -1032,6 +1037,7 @@ fn rollup_dto(r: super::rollups::Rollup) -> RollupDto {
         last_at: last.and_then(|e| e.recorded.clone()),
         icon_glyph: r.icon.as_ref().map(|(glyph, _)| glyph.clone()),
         icon_color: r.icon.map(|(_, color)| color),
+        phase: r.phase,
         id: r.id.to_string(),
         name: r.name,
         kind: r.kind.as_str().to_string(),
@@ -1289,6 +1295,9 @@ pub struct OverviewProjectDto {
     pub score: u32,
     /// What is wrong, worst first; empty when nothing is.
     pub reasons: Vec<OverviewReasonDto>,
+    /// The phase Project lifecycle has it in (`idea`, `discovery`, `build`,
+    /// `run`); null when it has none or the kit does not apply.
+    pub phase: Option<String>,
 }
 
 /// One thing wrong with a project: `refused`, `specs_failing` (`value` =
@@ -2154,7 +2163,7 @@ Labels are deliberately \
              and attached repositories; its kind and brief; the short values of its \
              configuration (`attributes`), to filter by; open findings and open comments; \
              its specs, checked and failing; pull requests over the last `activity_days` days; \
-             its team; and the last event the Activity feed lists. `?project_id=` narrows it to \
+             its team; the last event the Activity feed lists; and its phase (Project              lifecycle, `phase`). `?project_id=` narrows it to \
              one project, `?workspace_id=` to one workspace and its projects.\n\n\
              Every count is NULLABLE, and the null is the point: it means that source could \
              not be asked, which is a different fact from a count of zero -- render `-` for \

@@ -521,6 +521,8 @@ pub struct ProjectHealth {
     /// What is wrong, worst first; empty when nothing is.
     pub reasons: Vec<Reason>,
     pub score: u32,
+    /// The phase Project lifecycle has it in, from its rollup row.
+    pub phase: Option<String>,
 }
 
 /// One thing wrong with a project, for the portal to word.
@@ -569,6 +571,8 @@ pub struct Row {
     pub pulls_merged: Option<u32>,
     /// The newest event the Activity feed lists, RFC 3339.
     pub last_at: Option<String>,
+    /// The phase Project lifecycle has the project in.
+    pub phase: Option<String>,
 }
 
 pub fn row_of(r: &Rollup) -> Row {
@@ -594,6 +598,7 @@ pub fn row_of(r: &Rollup) -> Row {
             .as_ref()
             .and_then(|s| s.last_event.as_ref())
             .and_then(|e| e.recorded.clone()),
+        phase: r.phase.clone(),
     }
 }
 
@@ -645,6 +650,7 @@ fn project_health(r: &Row, workspace_id: Uuid, h: &HealthInputs<'_>) -> ProjectH
             + stuck * 2
             + if grows.is_some() { 2 } else { 0 }
             + u32::from(quiet.is_some()),
+        phase: r.phase.clone(),
     }
 }
 
@@ -1035,6 +1041,7 @@ fn health_of_line(id: Uuid, workspace_id: Uuid, line: &OverviewProjectDto) -> Pr
         broken: line.broken,
         reasons,
         score: line.score,
+        phase: line.phase.clone(),
     }
 }
 
@@ -1588,6 +1595,7 @@ pub fn compose(org: Uuid, read: &Read, now: OffsetDateTime) -> OrganizationOverv
                         quiet_days: p.quiet_days,
                         broken: p.broken,
                         score: p.score,
+                        phase: p.phase,
                     })
                     .collect(),
             })

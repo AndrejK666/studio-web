@@ -1333,3 +1333,56 @@ async fn a_project_subtype_is_a_project_in_both_readers_and_the_counts() {
     assert_eq!(counts.get("deals-project"), Some(&1));
     assert_eq!(counts.get("project"), Some(&1));
 }
+
+/// Project lifecycle's read of every project's phase (what the projects
+/// list's rollups carry) answers the same from Postgres as from the graph,
+/// and finds a project stored as a kit's subtype of Project (studio-web#1118).
+#[tokio::test]
+async fn every_project_s_phase_answers_the_same_from_postgres_and_finds_subtypes() {
+    let p = Pair::new(Uuid::new_v4()).await;
+    let kit: Value = serde_json::from_str(include_str!(
+        "../kit_registry/builtin/gears-project.kit.json"
+    ))
+    .expect("gears-project kit.json");
+    let overlay: super::super::kit_overlay::KitOverlay =
+        serde_json::from_value(kit["model"].clone()).expect("its model");
+    for service in [&p.sql, &p.graph] {
+        service
+            .sync_kit_model(&p.ctx, "gears-project", "1", Some(&overlay))
+            .await
+            .expect("the subtype");
+    }
+    let (a, b, c) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+    p.write(json!([
+        {"op": "upsert", "type": "project", "key": "a", "value": {"name": "A", "tenant_id": a.to_string(), "phase": "build", "phase_since": "2026-11-01T00:00:00Z"}},
+        {"op": "upsert", "type": "gears-project-project", "key": "b", "value": {"name": "B", "tenant_id": b.to_string(), "phase": "idea", "gear_repository": "acme/gears"}},
+        {"op": "upsert", "type": "project", "key": "c", "value": {"name": "C", "tenant_id": c.to_string()}},
+    ]))
+    .await;
+    p.fill().await;
+    let mut body = crate::kit_registry::port::project_phases_query();
+    let ty = body
+        .as_object_mut()
+        .and_then(|o| o.remove("type"))
+        .and_then(|t| t.as_str().map(str::to_owned))
+        .expect("the query names its type");
+    let result = p.same(&ty, body).await;
+    let mut phases: Vec<(String, String)> = result["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| {
+            (
+                r["value"]["tenant_id"].as_str().unwrap().to_owned(),
+                r["value"]["phase"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    phases.sort();
+    let mut want = vec![
+        (a.to_string(), "build".to_owned()),
+        (b.to_string(), "idea".to_owned()),
+    ];
+    want.sort();
+    assert_eq!(phases, want, "a project without a phase is not listed");
+}
