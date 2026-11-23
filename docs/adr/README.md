@@ -87,6 +87,7 @@ later ADR that retires or amends an earlier one says so under its title.
 | [0073](0073-a-project-type-is-a-kits-subtype-of-project.md) | A project type is a kit's subtype of Project | proposed | 2026-11-19 |
 | [0074](0074-spec-mapping-is-a-kit-and-strategies-come-from-kits.md) | Spec mapping is a kit too, and the assembly strategies come from the installed kits | proposed | 2026-11-19 |
 | [0075](0075-one-platform-release-pins-gears-rust-and-gearbox.md) | One platform release pins gears-rust and Gearbox | proposed | 2026-11-23 |
+| [0076](0076-gears-are-published-packages-and-a-platform-release-is-a-bom-version.md) | Gears are published packages; a platform release is a BOM version | proposed | 2026-11-23 |
 
 ADR-0017 is not on `main`. It is "We own the settings gear for now", written on
 the unmerged branch `AndrejK666/settings-follow-the-person`, and ADR-0018 cites
