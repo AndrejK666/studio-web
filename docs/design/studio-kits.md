@@ -544,9 +544,16 @@ ADR-0070's phases:
 **Project lifecycle** is the first built-in kit that brings a model: the type
 `project-lifecycle-phase`, the fields `project.phase`
 (`idea | discovery | build | run`), `project.phase_owner` and
-`project.phase_since`, the tab `project.phases`, and the phase lifecycle
+`project.phase_since`, and the phase lifecycle
 (idea → discovery → build → run, back from discovery or build to idea and
-from run to build). Until kit functions run in Studio's function runtime
+from run to build). It brings no project tab: the phase is a field of the
+project, shown as the Phase column of the workspace's projects list (each
+rollup row carries it, `GET /studio-organizations/v1/rollups`, through
+studio-kits' `ProjectPhases` port), beside a project's name in the
+organization's Workspaces tree, and moved on the project's Overview. The
+`phases` tab it once brought listed the `phase` type's objects, which nothing
+writes; an organization's model that still carries it loses it at its next
+reconciliation. Until kit functions run in Studio's function runtime
 (ADR-0068 §9), its function is compiled into this gear (`phase.rs`):
 
 | Method | Path | Who |
