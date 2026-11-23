@@ -15,10 +15,11 @@ files and answers a verified coverage report: per requirement a verdict
 (`covered`, `partial`, `gap`, `clarification_needed`, `not_assessed`) and the
 candidate gears of the gears-rust catalogue with the evidence for each. This
 document is how Studio asks for one, keeps it, and turns it into decisions a
-person takes, how a product is assembled with it or without it (§8), and how
-an organization's projects use it (§9). The code is
-`studio-backend/src/product/gear_match/`, `gear_match_rest.rs` and
-`gear_match_usage_rest.rs`; the screens are the **Gears matcher** kit's
+person takes, how a product is assembled with it or without it (§8), how
+an organization's projects use it (§9), and who changes the provider and
+models it runs with (§10). The code is
+`studio-backend/src/product/gear_match/`, `gear_match_rest.rs`,
+`gear_match_usage_rest.rs` and `gear_match_settings_rest.rs`; the screens are the **Gears matcher** kit's
 (`gears-matcher`, ADR-0072), the second entry of `product-mfe`: Project › Gear
 match and Organization › Gears matcher.
 
@@ -181,6 +182,8 @@ home organization when absent):
 | Method | Path | |
 |---|---|---|
 | `GET` | `/studio-product/v1/gear-match-usage` | per project and summed, over `period_days` (1–365, default 30); `{items, total}` with `offset` / `limit`, `summary` and `service` |
+| `GET` | `/studio-product/v1/gears-matcher-settings` | the service's run settings (§10), `scope` and `may_change`; `?strategy=` (default `gears_matcher`) |
+| `PUT` | `/studio-product/v1/gears-matcher-settings` | replace their override, `{version, overrides}` (the Gears matcher kit's) |
 
 MCP: `project_gear_match` (start), `project_gear_match_report` (read) and
 `gear_match_usage` (the organization's usage), all the Gears matcher kit's.
@@ -325,3 +328,32 @@ state, its coverage (covered / partial / gap / to clarify), runs, tokens and
 calls, accepted / rejected, open questions. A row opens that project's Gear
 match tab (`openPlace` with the project's workspace). The period switch (7, 30,
 90 days) is kept in the address (`gmu.f.period`).
+
+## 10. Run settings
+
+Which provider a match runs on, its three models (candidates 1, candidates 2,
+checks) and its call bounds are the service's settings (`GET`/`PUT
+/v1/settings` of the contract): its configuration file sets them, an override
+it keeps replaces some of them until it is cleared. Studio passes them through
+(`gear_match/settings.rs`, `gear_match_settings_rest.rs`) and decides who may
+change them, by whose service it is:
+
+- the organization's own (an `assembly-service` connection): an administrator
+  of that organization (`kit.manage`, as for its default strategy, §8);
+- the deployment's (`config.gears_matcher`), which every organization without
+  a connection shares: a platform administrator only, since a change reaches
+  every organization. Anybody else is refused 403
+  `MATCHER_SETTINGS_ADMIN_REQUIRED`.
+
+A read is anybody's who reads the organization's usage (§9). A change sends
+`{version, overrides, updated_by}`, `updated_by` the caller's user id, never a
+client's; the service's `409 settings_conflict` is 409
+`MATCHER_SETTINGS_CONFLICT`, its `422 provider_unavailable` / `bad_settings`
+400 `MATCHER_PROVIDER_UNAVAILABLE` / `MATCHER_BAD_SETTINGS`. After a change the
+live check of §9 is asked again, so the page shows the new models at once. A
+run already submitted keeps the settings it was submitted with.
+
+Keys are never settings: they stay in the service's own configuration
+(ADR-0075 §6); a provider whose key is not there is offered disabled, with
+the variable that is missing. Organization › Gears matcher shows the settings
+under the service's status, editable only where `may_change`.

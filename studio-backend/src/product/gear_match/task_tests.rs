@@ -101,6 +101,12 @@ impl Matcher for Fake {
         self.cancels.lock().unwrap().push(id.to_owned());
         Ok(json!({"id": id, "state": "cancelling"}))
     }
+    async fn settings(&self) -> Result<Value> {
+        Ok(json!({"version": 0}))
+    }
+    async fn put_settings(&self, _body: &Value) -> Result<Value> {
+        Ok(json!({"version": 1}))
+    }
 }
 
 fn ctx_in(tenant: Uuid, payload: Value) -> TaskContext {

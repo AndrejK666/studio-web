@@ -47,7 +47,8 @@
       "GET /studio-product/v1/gear-matches/{match_id}/diff",
       "GET /studio-product/v1/inbox/gear-match-questions",
       "GET /studio-tasks/v1/runs/{id}",
-      "GET /studio-product/v1/gear-match-usage"
+      "GET /studio-product/v1/gear-match-usage",
+      "GET /studio-product/v1/gears-matcher-settings"
     ],
     "writes": [
       "PUT /studio-product/v1/projects/{project_id}/product",
@@ -55,7 +56,8 @@
       "POST /studio-product/v1/gear-matches/{match_id}/cancel",
       "PUT /studio-product/v1/gear-match-decisions",
       "PUT /studio-product/v1/gear-match-answers",
-      "PUT /studio-product/v1/assembly-strategy"
+      "PUT /studio-product/v1/assembly-strategy",
+      "PUT /studio-product/v1/gears-matcher-settings"
     ]
   },
   "gears": [
@@ -71,7 +73,8 @@
         "POST /studio-product/v1/gear-matches/{match_id}/cancel",
         "PUT /studio-product/v1/gear-match-decisions",
         "PUT /studio-product/v1/gear-match-answers",
-        "PUT /studio-product/v1/assembly-strategy"
+        "PUT /studio-product/v1/assembly-strategy",
+        "PUT /studio-product/v1/gears-matcher-settings"
       ]
     }
   ],
