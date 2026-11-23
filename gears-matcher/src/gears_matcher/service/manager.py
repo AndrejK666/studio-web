@@ -11,6 +11,7 @@ import time
 import uuid
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import UTC, datetime
 from http import HTTPStatus
 from typing import Any
@@ -18,6 +19,7 @@ from typing import Any
 from gears_matcher.service.errors import ProblemError, not_found
 from gears_matcher.service.request import Limits, RunRequest, parse_request
 from gears_matcher.service.runner import Cancelled, Outcome, RunFailed, Runner
+from gears_matcher.service.settings import Settings
 from gears_matcher.service.store import TERMINAL, Row, RunStore
 
 log = logging.getLogger("gears_matcher.service")
@@ -57,18 +59,28 @@ class _Meter:
 
 
 class RunManager:
-    def __init__(
+    def __init__(  # noqa: PLR0913 -- what the manager is made of; the last three are optional
         self,
         store: RunStore,
         runner: Runner,
         limits: Limits,
         workers: int = 4,
         clock: Callable[[], float] = time.time,
+        *,
+        settings: Settings | None = None,
     ) -> None:
-        self.store, self.runner, self.limits, self.clock = store, runner, limits, clock
+        self.store, self.runner, self.base_limits, self.clock = store, runner, limits, clock
+        self.settings = settings
         self._lock = threading.Lock()
         self._pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="run")
         self._stops: dict[str, threading.Event] = {}
+
+    @property
+    def limits(self) -> Limits:
+        """The deployment's limits, with the call bounds the settings say now."""
+        if self.settings is None:
+            return self.base_limits
+        return self.settings.limits(self.base_limits)
 
     # --- what a caller sees
 
@@ -89,6 +101,8 @@ class RunManager:
             out["outcome"] = row["outcome"]
         if row["error"]:
             out["error"] = row["error"]
+        if row.get("settings"):
+            out["settings"] = row["settings"]
         return out
 
     def get(self, run_id: str) -> dict[str, Any]:
@@ -124,6 +138,9 @@ class RunManager:
                     )
                 return self.view(existing)
             request = parse_request(body, self.limits)
+            if self.settings is not None:
+                now = self.settings.effective()
+                request = replace(request, provider=now.provider, models=now.models)
             self.runner.preflight(request)
             cap = self.limits.max_concurrent_runs
             if cap is not None and self.store.active_count() >= cap:
@@ -134,7 +151,14 @@ class RunManager:
                     {"Retry-After": _RETRY_AFTER},
                 )
             run_id = uuid.uuid4().hex[:12]
-            self.store.create(run_id, key, digest, request.to_json(), self.clock())
+            self.store.create(
+                run_id,
+                key,
+                digest,
+                request.to_json(),
+                self.clock(),
+                settings=request.settings_json(),
+            )
             accepted = self.get(run_id)  # before a worker can pick it up: it is `queued`
             self._enqueue(run_id)
             return accepted

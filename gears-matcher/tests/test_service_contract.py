@@ -54,7 +54,7 @@ def _operations() -> list[tuple[str, str, dict[str, Any]]]:
         (method, path, op)
         for path, item in SPEC["paths"].items()
         for method, op in item.items()
-        if method in {"get", "post"}
+        if method in {"get", "post", "put"}
     ]
 
 
@@ -70,6 +70,8 @@ def test_spec_declares_the_operations() -> None:
         ("get", "/v1/runs/{runId}/report"),
         ("post", "/v1/runs/{runId}/cancel"),
         ("get", "/v1/info"),
+        ("get", "/v1/settings"),
+        ("put", "/v1/settings"),
     }
 
 

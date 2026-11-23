@@ -63,10 +63,20 @@ class RunRequest:
     use_gears_bundle: bool = False
     max_calls: int = 400
     extract_max_calls: int | None = None
+    # What the service's settings said when the run was submitted (never from the caller):
+    # None runs with the provider and models the service started with.
+    provider: str | None = None
+    models: tuple[str, str, str] | None = None
+
+    def settings_json(self) -> dict[str, Any] | None:
+        if self.provider is None or self.models is None:
+            return None
+        return {"provider": self.provider, "models": list(self.models)}
 
     def to_json(self) -> dict[str, Any]:
         """What is stored while the run is not finished (so a restart can run it again)."""
         return {
+            "settings": self.settings_json(),
             "product": self.product,
             "own_gears": list(self.own_gears),
             "documents": [
@@ -82,7 +92,11 @@ class RunRequest:
     @classmethod
     def from_json(cls, data: dict[str, Any]) -> "RunRequest":
         options = data["options"]
+        chosen = data.get("settings") or {}  # absent in a run stored before settings existed
+        models = chosen.get("models")
         return cls(
+            provider=chosen.get("provider"),
+            models=(models[0], models[1], models[2]) if models else None,
             product=data["product"],
             documents=tuple(Document(**d) for d in data["documents"]),
             own_gears=tuple(data["own_gears"]),

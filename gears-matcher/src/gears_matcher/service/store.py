@@ -1,6 +1,7 @@
 """Runs, their idempotency keys and their reports, in PostgreSQL (ADR-0075 §5).
 
-A run row keeps what a caller can read (state, progress, usage, outcome, error), the report, and,
+A run row keeps what a caller can read (state, progress, usage, outcome, error, the provider and
+models it ran with), the report, and,
 only while the run is not finished, the request itself, so a restart can run it again. Document
 text is dropped the moment a run ends.
 
@@ -22,7 +23,7 @@ from psycopg_pool import ConnectionPool
 
 IN_PROGRESS = ("queued", "running", "cancelling")
 TERMINAL = ("succeeded", "partial", "failed", "cancelled")
-_JSON_COLUMNS = ("progress", "usage", "outcome", "error", "request")
+_JSON_COLUMNS = ("progress", "usage", "outcome", "error", "request", "settings")
 _COLUMNS = (
     "state",
     "started_at",
@@ -33,6 +34,7 @@ _COLUMNS = (
     "error",
     "report",
     "request",
+    "settings",
 )
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
@@ -52,6 +54,16 @@ CREATE TABLE IF NOT EXISTS runs (
 );
 CREATE INDEX IF NOT EXISTS runs_in_progress ON runs (created_at)
     WHERE state IN ('queued', 'running', 'cancelling');
+-- The provider and models a run was submitted with; kept after it ends (no document text).
+ALTER TABLE runs ADD COLUMN IF NOT EXISTS settings JSONB;
+-- The one override of the config file's run settings (service/settings.py); no row: none.
+CREATE TABLE IF NOT EXISTS settings (
+    id         INTEGER PRIMARY KEY CHECK (id = 1),
+    overrides  JSONB NOT NULL,
+    version    INTEGER NOT NULL,
+    updated_at DOUBLE PRECISION NOT NULL,
+    updated_by TEXT
+);
 """
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]{0,62}$")
 Row = dict[str, Any]
@@ -82,16 +94,31 @@ class RunStore:
         with self.pool.connection() as db:
             db.execute("SELECT 1 FROM runs LIMIT 1").fetchall()
 
-    def create(
-        self, run_id: str, key: str, digest: str, request: dict[str, Any], now: float
+    def create(  # noqa: PLR0913 -- one column each, all of the new row
+        self,
+        run_id: str,
+        key: str,
+        digest: str,
+        request: dict[str, Any],
+        now: float,
+        *,
+        settings: dict[str, Any] | None = None,
     ) -> None:
         """A new queued run. Raises `psycopg.errors.UniqueViolation` if the key is already used."""
         usage = {"calls": 0, "cache_hits": 0, "input_tokens": 0, "output_tokens": 0}
         with self.pool.connection() as db:
             db.execute(
-                "INSERT INTO runs (id, idem_key, body_digest, state, created_at, usage, request) "
-                "VALUES (%s, %s, %s, 'queued', %s, %s, %s)",
-                (run_id, key, digest, now, Jsonb(usage), Jsonb(request)),
+                "INSERT INTO runs (id, idem_key, body_digest, state, created_at, usage, request, "
+                "settings) VALUES (%s, %s, %s, 'queued', %s, %s, %s, %s)",
+                (
+                    run_id,
+                    key,
+                    digest,
+                    now,
+                    Jsonb(usage),
+                    Jsonb(request),
+                    None if settings is None else Jsonb(settings),
+                ),
             )
 
     def get(self, run_id: str) -> Row | None:
@@ -141,6 +168,31 @@ class RunStore:
     def delete(self, run_id: str) -> None:
         with self.pool.connection() as db:
             db.execute("DELETE FROM runs WHERE id = %s", (run_id,))
+
+    # --- the settings override
+
+    def read_settings(self) -> Row | None:
+        """The stored override, or None if there has never been one."""
+        with self.pool.connection() as db:
+            return db.execute("SELECT * FROM settings WHERE id = 1").fetchone()
+
+    def write_settings(
+        self, overrides: dict[str, Any], expected: int, updated_by: str | None, now: float
+    ) -> Row | None:
+        """Replace the override if its version is still `expected` (0: there is none yet); the
+        new row, or None when another write came first."""
+        with self.pool.connection() as db:
+            if expected == 0:
+                return db.execute(
+                    "INSERT INTO settings (id, overrides, version, updated_at, updated_by) "
+                    "VALUES (1, %s, 1, %s, %s) ON CONFLICT (id) DO NOTHING RETURNING *",
+                    (Jsonb(overrides), now, updated_by),
+                ).fetchone()
+            return db.execute(
+                "UPDATE settings SET overrides = %s, version = version + 1, updated_at = %s, "
+                "updated_by = %s WHERE id = 1 AND version = %s RETURNING *",
+                (Jsonb(overrides), now, updated_by, expected),
+            ).fetchone()
 
 
 def create_database(conninfo: str, name: str, owner: str | None = None) -> bool:

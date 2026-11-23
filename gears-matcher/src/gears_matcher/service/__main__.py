@@ -34,7 +34,9 @@ from psycopg_pool import PoolTimeout
 from gears_matcher.catalogue import PINNED_GDL_COMMIT, PINNED_MD_COMMIT, build_from_repo
 from gears_matcher.judge.llm import ModelClient
 from gears_matcher.judge.llm.run import (
+    PROVIDERS,
     RunError,
+    default_model,
     load_client,
     load_env_file,
     provider_module,
@@ -46,6 +48,9 @@ from gears_matcher.service.config import ConfigError, load_config
 from gears_matcher.service.manager import RunManager
 from gears_matcher.service.request import Limits
 from gears_matcher.service.runner import RealRunner
+from gears_matcher.service.settings import Settings as RunSettings
+from gears_matcher.service.settings import SettingsError as RunSettingsError
+from gears_matcher.service.settings import Values
 from gears_matcher.service.store import RunStore
 
 log = logging.getLogger("gears_matcher.service")
@@ -122,40 +127,77 @@ def _number(env: Mapping[str, str], name: str, default: int) -> int:
     return value
 
 
-def model_factory() -> ModelFactory:
-    """Clients are built once per model and shared; a missing key fails here, at start."""
-    provider = selected_provider()
-    module = provider_module(provider)
-    made: dict[str, tuple[str, ModelClient]] = {}
-    lock = threading.Lock()
+class ClientPool:
+    """Clients, built once per (provider, model) and shared. Building one sends nothing; a
+    missing key fails there, naming the variable."""
 
-    def factory(name: str) -> tuple[str, ModelClient]:
-        with lock:
-            if name not in made:
-                made[name] = (module.label(name), load_client(module, provider, name))
-            return made[name]
+    def __init__(self) -> None:
+        self._made: dict[tuple[str, str], tuple[str, ModelClient]] = {}
+        self._lock = threading.Lock()
+        self._why: dict[str, str | None] = {}
 
+    def factory(self, provider: str) -> ModelFactory:
+        module = provider_module(provider)
+
+        def make(name: str) -> tuple[str, ModelClient]:
+            with self._lock:
+                if (provider, name) not in self._made:
+                    client = load_client(module, provider, name)
+                    self._made[provider, name] = (module.label(name), client)
+                return self._made[provider, name]
+
+        return make
+
+    def unavailable(self, provider: str) -> str | None:
+        """Why a provider cannot be used (its key or a setting is missing), or None. Keys come
+        from the config file, read at start, so the answer is kept."""
+        if provider not in self._why:
+            try:
+                module = provider_module(provider)
+                load_client(module, provider, default_model(provider, module))
+                self._why[provider] = None
+            except RunError as exc:
+                self._why[provider] = str(exc)
+        return self._why[provider]
+
+
+def model_factory(pool: ClientPool | None = None) -> ModelFactory:
+    """The clients of the provider the config file chooses; a missing key fails here, at start."""
+    factory = (pool or ClientPool()).factory(selected_provider())
     for name in dict.fromkeys(verified_models()):
         factory(name)
     return factory
 
 
-def build(settings: Settings) -> tuple[RunManager, RealRunner]:
+def build(settings: Settings) -> tuple[RunManager, RealRunner, RunSettings]:
     catalogue = build_from_repo(settings.gears_rust, settings.md_ref, settings.gdl_ref)
     bundle = (
         build_from_repo(settings.gears_rust, settings.md_ref, settings.gdl_ref, settings.bundle)
         if settings.bundle
         else None
     )
+    pool = ClientPool()
     runner = RealRunner(
         catalogue,
-        model_factory(),
+        model_factory(pool),
         cache_dir=settings.data / "cache",
         work_dir=settings.data / "work",
         bundle_catalogue=bundle,
+        providers=pool.factory,
     )
     store = RunStore(settings.database, pool_size=settings.db_pool)
-    return RunManager(store, runner, settings.limits, settings.workers), runner
+    config = Values(
+        provider=selected_provider(),
+        models=verified_models(),
+        max_calls=settings.limits.max_calls,
+        max_extract_calls=settings.limits.max_extract_calls,
+    )
+    run_settings = RunSettings(config, tuple(PROVIDERS), pool.unavailable, store)
+    problem = run_settings.view().get("problem")
+    if problem:
+        log.warning("%s", problem)
+    manager = RunManager(store, runner, settings.limits, settings.workers, settings=run_settings)
+    return manager, runner, run_settings
 
 
 def main() -> int:
@@ -170,9 +212,10 @@ def main() -> int:
         if env_file:
             load_env_file(Path(env_file))
         settings = Settings.from_env(os.environ)
-        manager, runner = build(settings)
+        manager, runner, run_settings = build(settings)
     except (
         SettingsError,
+        RunSettingsError,
         ConfigError,
         RunError,
         OSError,
@@ -182,7 +225,7 @@ def main() -> int:
     ) as exc:
         print(f"gears-service: cannot start: {exc}", file=sys.stderr)
         return EXIT_CANNOT_START
-    app = create_app(manager, settings.secret, runner.info(), settings.limits)
+    app = create_app(manager, settings.secret, runner.info(), settings.limits, run_settings)
     uvicorn.run(app, host=settings.host, port=settings.port, log_level="info")
     return 0
 

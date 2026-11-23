@@ -8,6 +8,7 @@ what comes back to what the service reports. Tests use a fake runner with the sa
 import json
 import logging
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -96,20 +97,30 @@ def write_spec(request: RunRequest, root: Path) -> None:
     (root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
 
 
+# A provider's name to the factory of its clients (`service.__main__.ClientPool`).
+ProviderFactories = Callable[[str], ModelFactory]
+
+
 class RealRunner:
     """Runs the verified matcher. Catalogues are built once, at start: one from the pinned commits,
-    and one with the gears bundle when the service has one (`options.use_gears_bundle`)."""
+    and one with the gears bundle when the service has one (`options.use_gears_bundle`).
 
-    def __init__(
+    `model_factory` makes the clients of the provider the service started with. A run submitted
+    under other settings (`RunRequest.provider`, `.models`) takes its clients from `providers`."""
+
+    def __init__(  # noqa: PLR0913 -- the last two are optional
         self,
         catalogue: Catalogue,
         model_factory: ModelFactory,
         cache_dir: Path,
         work_dir: Path,
         bundle_catalogue: Catalogue | None = None,
+        *,
+        providers: ProviderFactories | None = None,
     ) -> None:
         self.catalogues = {False: catalogue, True: bundle_catalogue}
         self.model_factory = model_factory
+        self.providers = providers
         self.cache_dir = cache_dir
         self.work_dir = work_dir
         work_dir.mkdir(parents=True, exist_ok=True)
@@ -146,7 +157,8 @@ class RealRunner:
             inputs = RunInputs(
                 spec_path=Path(tmp),
                 catalogue=catalogue,
-                model_factory=self.model_factory,
+                model_factory=self._factory(request),
+                models=request.models,
                 cache_dir=self.cache_dir,
                 product=request.product,
                 own_gears=frozenset(request.own_gears),
@@ -166,6 +178,11 @@ class RealRunner:
                 raise RunFailed("input", f"{problem.code}: {problem.message}") from problem
         on_usage(result.usage)
         return Outcome(result.report.model_dump_json(), result.requirements, result.not_assessed)
+
+    def _factory(self, request: RunRequest) -> ModelFactory:
+        if request.provider is None or self.providers is None:
+            return self.model_factory
+        return self.providers(request.provider)
 
     def ready(self) -> None:
         """The reply cache can be written; a wrong mount is found here, not by the first run."""

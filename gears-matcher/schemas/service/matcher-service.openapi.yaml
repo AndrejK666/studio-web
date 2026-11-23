@@ -243,6 +243,64 @@ paths:
           $ref: '#/components/responses/Problem'
         '503':
           $ref: '#/components/responses/Problem'
+  /v1/settings:
+    get:
+      operationId: getSettings
+      summary: The run settings in use, the config file's, and the override
+      description: |
+        Which provider and models a run uses and its call bounds: `effective`, the config file's
+        `config` with the stored `overrides` on top. `providers` says which providers have their
+        key in the config file; keys are never settings and never in this answer. When a stored
+        override can no longer be used (its provider's key was removed), `problem` says why and
+        `effective` is the config file's.
+      responses:
+        '200':
+          description: The settings.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Settings'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '500':
+          $ref: '#/components/responses/Problem'
+        '503':
+          $ref: '#/components/responses/Problem'
+    put:
+      operationId: putSettings
+      summary: Replace the override of the config file's run settings
+      description: |
+        `overrides` replaces the stored override as a whole; a field that is null or absent uses
+        the config file's value. `version` is the one read from `GET /v1/settings` (0 when there
+        has never been an override): if another write came first the answer is `409
+        settings_conflict` and nothing changes. A provider without its key in the config file is
+        `422 provider_unavailable`; a bad model id or a bound over its ceiling is `422
+        bad_settings`. A run already submitted keeps the settings it was submitted with.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SettingsUpdate'
+      responses:
+        '200':
+          description: The settings after the change.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Settings'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+        '422':
+          $ref: '#/components/responses/Problem'
+        '500':
+          $ref: '#/components/responses/Problem'
+        '503':
+          $ref: '#/components/responses/Problem'
 components:
   securitySchemes:
     sharedSecret:
@@ -387,6 +445,16 @@ components:
             report_url:
               type: string
               description: Where `GET /v1/runs/{runId}/report` is.
+        settings:
+          type: object
+          description: The provider and models the run was submitted with.
+          properties:
+            provider:
+              type: string
+            models:
+              type: array
+              items:
+                type: string
         error:
           type: object
           description: Present when `state` is `failed`.
@@ -449,9 +517,12 @@ components:
               type: string
             gear_gdl_commit:
               type: string
+        provider:
+          type: string
+          description: The provider a run submitted now uses (`GET /v1/settings`).
         models:
           type: array
-          description: The models a run uses.
+          description: The models a run submitted now uses.
           items:
             type: string
         limits:
@@ -474,6 +545,104 @@ components:
               description: |
                 The longest a run may take; a caller's lease must be longer. A placeholder until it
                 is set from a measured run, and not enforced by the service yet.
+    SettingsValues:
+      type: object
+      required: [provider, models, max_calls, max_extract_calls]
+      properties:
+        provider:
+          type: string
+          enum: [constructor, anthropic, openai]
+        models:
+          type: array
+          description: Candidates 1, candidates 2, checks.
+          minItems: 3
+          maxItems: 3
+          items:
+            type: string
+        max_calls:
+          type: integer
+          description: A run's call bound, and the most `options.max_calls` may ask for.
+        max_extract_calls:
+          type: integer
+          description: The most `options.extract_max_calls` may ask for.
+    SettingsOverrides:
+      type: object
+      additionalProperties: false
+      properties:
+        provider:
+          type: [string, 'null']
+          enum: [constructor, anthropic, openai, null]
+        models:
+          type: [array, 'null']
+          description: One model id for all three roles, or three.
+          minItems: 1
+          maxItems: 3
+          items:
+            type: string
+            pattern: '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,99}$'
+        max_calls:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 2000
+        max_extract_calls:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 500
+    SettingsUpdate:
+      type: object
+      additionalProperties: false
+      required: [version, overrides]
+      properties:
+        version:
+          type: integer
+          minimum: 0
+        overrides:
+          $ref: '#/components/schemas/SettingsOverrides'
+        updated_by:
+          type: string
+          maxLength: 200
+          description: Who changed them, for the record (Studio sends its user's id).
+    Settings:
+      type: object
+      required: [version, effective, config, overrides, providers, ceilings]
+      properties:
+        version:
+          type: integer
+          description: 0 when there has never been an override.
+        updated_at:
+          type: [string, 'null']
+          format: date-time
+        updated_by:
+          type: [string, 'null']
+        effective:
+          $ref: '#/components/schemas/SettingsValues'
+        config:
+          $ref: '#/components/schemas/SettingsValues'
+        overrides:
+          $ref: '#/components/schemas/SettingsOverrides'
+        providers:
+          type: array
+          items:
+            type: object
+            required: [id, available]
+            properties:
+              id:
+                type: string
+              available:
+                type: boolean
+              reason:
+                type: string
+                description: Why not; names a variable, never a value.
+        ceilings:
+          type: object
+          properties:
+            max_calls:
+              type: integer
+            max_extract_calls:
+              type: integer
+        problem:
+          type: string
+          description: Why the stored override is set aside. Absent when it is in use.
     Problem:
       type: object
       required: [type, title, status, code]
@@ -489,7 +658,8 @@ components:
           description: |
             Stable, for programs. One of: `unauthorized`, `bad_request`, `idempotency_conflict`,
             `too_large`, `hash_mismatch`, `bad_path`, `unknown_own_gear`, `over_cap`,
-            `not_a_template`, `unreadable_spec`, `bundle_unavailable`, `not_found`, `no_report`, `busy`, `internal`, `unavailable`.
+            `not_a_template`, `unreadable_spec`, `bundle_unavailable`, `not_found`, `no_report`, `busy`, `internal`, `unavailable`,
+            `settings_conflict`, `provider_unavailable`, `bad_settings`.
         detail:
           type: string
           description: One line; never a key, header or document text.

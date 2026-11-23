@@ -22,11 +22,13 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from gears_matcher.service.errors import ProblemError, bad_request, not_found, too_large
 from gears_matcher.service.manager import RunManager
 from gears_matcher.service.request import Limits, body_digest, check_key
+from gears_matcher.service.settings import Settings
 
 log = logging.getLogger("gears_matcher.service")
 PROBLEM = "application/problem+json"
 RUN_ID = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 DRAIN_CAP = 64_000_000  # the most of a refused body that is read and thrown away
+SETTINGS_BODY_MAX = 16_000
 
 
 def _problem(error: ProblemError) -> JSONResponse:
@@ -53,8 +55,15 @@ async def _read_body(request: Request, limit: int) -> bytes:
     return b"".join(chunks)
 
 
-def create_app(manager: RunManager, secret: str, info: dict[str, Any], limits: Limits) -> FastAPI:
-    """The app for one manager. `info` is what `GET /v1/info` says apart from the limits."""
+def create_app(
+    manager: RunManager,
+    secret: str,
+    info: dict[str, Any],
+    limits: Limits,
+    settings: Settings | None = None,
+) -> FastAPI:
+    """The app for one manager. `info` is what `GET /v1/info` says apart from the limits and,
+    with `settings`, the provider and models runs use now."""
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -71,13 +80,19 @@ def create_app(manager: RunManager, secret: str, info: dict[str, Any], limits: L
         redoc_url=None,
         openapi_url=None,
     )
-    app.include_router(_v1_router(manager, secret, info, limits))
+    app.include_router(_v1_router(manager, secret, info, limits, settings))
     _add_health(app, manager)
     _add_error_handlers(app)
     return app
 
 
-def _v1_router(manager: RunManager, secret: str, info: dict[str, Any], limits: Limits) -> APIRouter:
+def _v1_router(
+    manager: RunManager,
+    secret: str,
+    info: dict[str, Any],
+    limits: Limits,
+    settings: Settings | None,
+) -> APIRouter:
     def require_secret(authorization: str | None = Header(default=None)) -> None:
         expected = f"Bearer {secret}".encode()
         if authorization is None or not hmac.compare_digest(authorization.encode(), expected):
@@ -87,7 +102,17 @@ def _v1_router(manager: RunManager, secret: str, info: dict[str, Any], limits: L
 
     @v1.get("/info")
     def get_info() -> dict[str, Any]:
-        return {**info, "limits": limits.as_json()}
+        if settings is None:
+            return {**info, "limits": limits.as_json()}
+        now = settings.effective()
+        return {
+            **info,
+            "provider": now.provider,
+            "models": list(now.models),
+            "limits": settings.limits(limits).as_json(),
+        }
+
+    _add_settings(v1, settings)
 
     @v1.post("/runs")
     async def submit(
@@ -117,6 +142,25 @@ def _v1_router(manager: RunManager, secret: str, info: dict[str, Any], limits: L
         return JSONResponse(view, status_code=202 if in_progress else 200)
 
     return v1
+
+
+def _add_settings(v1: APIRouter, settings: Settings | None) -> None:
+    """`GET`/`PUT /v1/settings`, when the service has settings (`404 not_found` otherwise)."""
+    if settings is None:
+        return
+
+    @v1.get("/settings")
+    def get_settings() -> dict[str, Any]:
+        return settings.view()
+
+    @v1.put("/settings")
+    async def put_settings(request: Request) -> dict[str, Any]:
+        raw = await _read_body(request, SETTINGS_BODY_MAX)
+        try:
+            body = json.loads(raw)
+        except ValueError as exc:
+            raise bad_request("the body is not JSON") from exc
+        return await run_in_threadpool(settings.update, body)
 
 
 def _add_health(app: FastAPI, manager: RunManager) -> None:

@@ -127,6 +127,7 @@ class RunInputs:
     max_calls: int = 400  # bounds the matching models, all together (Studio took 126)
     extract_max_calls: int | None = None  # None: free-form reading is off
     tau: float = DEFAULT_TAU
+    models: tuple[str, str, str] | None = None  # None: `verified_models()`
 
 
 @dataclass(frozen=True)
@@ -220,7 +221,7 @@ def _extract_if_needed(
     if bound is None or not loaded.handed:
         return loaded.spec, None, None
     meter.extracting.limit = bound
-    identity, client = inputs.model_factory(verified_models()[0])
+    identity, client = inputs.model_factory((inputs.models or verified_models())[0])
     try:
         extractor = Extractor(
             vr.Counted(client, meter.extracting),
@@ -255,7 +256,7 @@ def _match(
     """Step 3: the `verified` matcher (T11 note §2) on the spec as it now stands."""
     cat = inputs.catalogue
     meter.matching.limit = inputs.max_calls
-    chosen = verified_models()
+    chosen = inputs.models or verified_models()
     made = {
         role: inputs.model_factory(name)
         for role, name in zip(("first", "second", "checks"), chosen, strict=True)
