@@ -24,6 +24,7 @@ use anyhow::{Context as _, anyhow, bail};
 use futures_util::StreamExt as _;
 use futures_util::future::BoxFuture;
 use serde::{Deserialize, Serialize};
+use sha2::Digest as _;
 
 /// A fresh access token, when the one in hand is no longer accepted. The
 /// connection's refresh token is traded for it (ADR-0049 §1): a build can
@@ -51,18 +52,26 @@ pub const STUDIO_DESK: &str = "studio";
 /// out of the project's git (`.git/info/exclude`) and removed after a build.
 pub const BUILD_FOLDER: &str = "studio-build";
 
-/// How a WebDAV call to a desk's files is asked again when Research's
-/// gateway answers 502/503/504 or does not answer at all: a desk reported
-/// running serves its files a little later, and an upload of thousands of
-/// files meets a gateway hiccup now and then (Research DEV, 2026-11-18/19).
-/// Each call is asked again `first` apart, doubling up to `cap`, until `for_`
-/// has passed since its first try. Every DAV call Studio makes is idempotent
-/// (MKCOL, PUT of the same bytes, GET, DELETE), so asking again is safe.
+/// How a WebDAV call to a desk's files is asked again, by Research's rules
+/// for uploading to a desk (`studio-research-webdav-upload.md`, 2026-11):
+///
+/// - a 502 or 503 means the desk's file service is not running, which no
+///   blind retry fixes: the filesystem is started
+///   (`POST /desks/{id}/filesystem`), Studio waits up to `start_for` for
+///   `filesystem.status: running`, `poll` apart, and asks again (twice at
+///   most);
+/// - a 504 or a request that does not reach Research is asked again `first`
+///   apart, doubling up to `cap`, until `for_` has passed since the first try.
+///
+/// Every DAV call Studio makes is idempotent (MKCOL, PUT of the same bytes
+/// or of the same part at the same place, GET, DELETE).
 #[derive(Debug, Clone, Copy)]
 pub struct DavRetry {
     pub for_: Duration,
     pub first: Duration,
     pub cap: Duration,
+    pub start_for: Duration,
+    pub poll: Duration,
 }
 
 impl DavRetry {
@@ -70,16 +79,36 @@ impl DavRetry {
         for_: Duration::from_secs(3 * 60),
         first: Duration::from_secs(1),
         cap: Duration::from_secs(15),
+        start_for: Duration::from_secs(10 * 60),
+        poll: Duration::from_secs(5),
     };
 }
 
-/// A gateway's answer while the desk's file storage is not there.
-fn warming_up(status: reqwest::StatusCode) -> bool {
-    matches!(status.as_u16(), 502..=504)
+/// How many times one call starts the desk's filesystem before it gives up.
+const FILESYSTEM_RESTARTS: u32 = 2;
+
+/// The desk's file service is not running (Research's rules, §2 and §9).
+fn file_service_down(status: reqwest::StatusCode) -> bool {
+    matches!(status.as_u16(), 502 | 503)
 }
 
 /// How many files are written to a desk at once.
 const UPLOAD_CONCURRENCY: usize = 8;
+
+/// A file bigger than this goes up in parts of exactly this size, the last
+/// one shorter (Research's rules §5: an S3-backed desk refuses any other part
+/// size with `400 Invalid chunk size`).
+pub const PART_SIZE: usize = 5_242_880;
+
+/// No request body may be bigger than this: nginx answers 413 before the
+/// desk (8 MB, Research's rules §1). Parts stay well under it.
+pub const MAX_BODY: usize = 8 * 1024 * 1024;
+
+/// How many parts of one file go up at once.
+const PART_CONCURRENCY: usize = 4;
+
+/// How many times one part is sent before the file's upload fails.
+const PART_TRIES: u32 = 3;
 
 /// The file in a desk's `BUILD_FOLDER` that says which Studio build is using
 /// the desk now: one build at a time per desk, the next one waits.
@@ -506,22 +535,38 @@ impl ResearchApi {
         self
     }
 
-    /// A WebDAV call, asked again by [`DavRetry`] while the gateway answers
-    /// 502/503/504 or the request does not reach it. The last answer, or the
-    /// last error, once the time is up.
+    /// A WebDAV call to `desk`'s files, by [`DavRetry`]: on 502/503 the
+    /// desk's filesystem is started and the call asked again; on 504 or a
+    /// request that does not reach Research it is asked again with backoff.
+    /// The last answer, or the last error, once that is over.
     async fn send_dav(
         &self,
+        desk: &str,
         method: reqwest::Method,
         url: &str,
         body: Body<'_>,
+        headers: &[(&str, String)],
         what: &str,
     ) -> anyhow::Result<reqwest::Response> {
         let started = tokio::time::Instant::now();
         let mut wait = self.dav_retry.first;
+        let mut restarts = 0;
         loop {
-            let tried = self.send(method.clone(), url, body.again(), what).await;
+            let tried = self
+                .send_with(method.clone(), url, body.again(), headers, what)
+                .await;
+            if let Ok(res) = &tried
+                && file_service_down(res.status())
+            {
+                if restarts >= FILESYSTEM_RESTARTS {
+                    return tried;
+                }
+                restarts += 1;
+                self.start_filesystem(desk).await?;
+                continue;
+            }
             let again = match &tried {
-                Ok(res) => warming_up(res.status()),
+                Ok(res) => res.status() == reqwest::StatusCode::GATEWAY_TIMEOUT,
                 Err(e) => !format!("{e:#}").contains(SIGN_IN_AGAIN),
             };
             if !again || started.elapsed() + wait > self.dav_retry.for_ {
@@ -529,6 +574,33 @@ impl ResearchApi {
             }
             tokio::time::sleep(wait).await;
             wait = (wait * 2).min(self.dav_retry.cap);
+        }
+    }
+
+    /// Start `desk`'s filesystem and wait until Research says it runs.
+    async fn start_filesystem(&self, desk: &str) -> anyhow::Result<()> {
+        let until = tokio::time::Instant::now() + self.dav_retry.start_for;
+        let mut status = String::new();
+        loop {
+            match self.desk(desk).await {
+                Ok(d) if d.filesystem.status == "running" => return Ok(()),
+                Ok(d) => {
+                    if !matches!(d.filesystem.status.as_str(), "starting" | "pending") {
+                        self.start_desk(desk).await?;
+                    }
+                    status = d.filesystem.status;
+                }
+                Err(e) => status = format!("unreadable: {e:#}"),
+            }
+            if tokio::time::Instant::now() >= until {
+                bail!(
+                    "the desk's file service did not start within {} minutes after it \
+                     answered 502/503 (Research reports it {})",
+                    self.dav_retry.start_for.as_secs().div_ceil(60),
+                    if status.is_empty() { "without a status" } else { status.as_str() }
+                );
+            }
+            tokio::time::sleep(self.dav_retry.poll).await;
         }
     }
 
@@ -575,9 +647,25 @@ impl ResearchApi {
         body: Body<'_>,
         what: &str,
     ) -> anyhow::Result<reqwest::Response> {
+        self.send_with(method, url, body, &[], what).await
+    }
+
+    /// [`Self::send`] with extra headers (a part's `Content-Range`, its
+    /// `X-CheckSum`).
+    async fn send_with(
+        &self,
+        method: reqwest::Method,
+        url: &str,
+        body: Body<'_>,
+        headers: &[(&str, String)],
+        what: &str,
+    ) -> anyhow::Result<reqwest::Response> {
         let mut renewed = false;
         loop {
             let mut req = self.authorized(self.http.request(method.clone(), url));
+            for (name, value) in headers {
+                req = req.header(*name, value);
+            }
             req = match &body {
                 Body::Empty => req,
                 Body::Json(v) => req.json(v),
@@ -820,33 +908,137 @@ impl ResearchApi {
         .await
     }
 
-    /// Make a folder in the desk's project folder; one already there is fine.
+    /// Make a folder in the desk's project folder: 201 made, 405 already
+    /// there. 409 means its parent is missing, which Studio's upload never
+    /// lets happen (parents first), so it is said as Studio's bug.
     pub async fn make_folder(&self, desk: &str, path: &str) -> anyhow::Result<()> {
         let what = format!("making folder {path} in the desk");
         let mkcol = reqwest::Method::from_bytes(b"MKCOL").expect("a method name");
         let res = self
-            .send_dav(mkcol, &self.dav(desk, path), Body::Empty, &what)
+            .send_dav(desk, mkcol, &self.dav(desk, path), Body::Empty, &[], &what)
             .await?;
-        if res.status().is_success() || res.status() == reqwest::StatusCode::METHOD_NOT_ALLOWED {
-            return Ok(());
+        match res.status() {
+            s if s.is_success() || s == reqwest::StatusCode::METHOD_NOT_ALLOWED => Ok(()),
+            reqwest::StatusCode::CONFLICT => bail!(
+                "the desk has no parent folder for {path} (MKCOL answered 409): Studio makes \
+                 a folder's parents first, so this is a bug in Studio's upload"
+            ),
+            _ => Err(Self::refused(res, &what).await),
         }
-        Err(Self::refused(res, &what).await)
     }
 
+    /// Write a file to the desk: up to [`PART_SIZE`] as one PUT, a bigger
+    /// one in parts (Research's rules §4-§6). Its folder must be there.
     pub async fn put_file(&self, desk: &str, path: &str, content: &[u8]) -> anyhow::Result<()> {
+        if content.len() > PART_SIZE {
+            return self.put_parts(desk, path, content).await;
+        }
         let what = format!("writing {path} to the desk");
         let res = self
             .send_dav(
+                desk,
                 reqwest::Method::PUT,
                 &self.dav(desk, path),
                 Body::Bytes(content),
+                &[],
                 &what,
             )
             .await?;
         if res.status().is_success() {
             return Ok(());
         }
-        Err(Self::refused(res, &what).await)
+        Err(Self::dav_refused(res, &what, path).await)
+    }
+
+    /// A file over [`PART_SIZE`]: the old one deleted first (a parts upload
+    /// writes into it at the given places, and a shorter new file would keep
+    /// the old tail), then each part of exactly [`PART_SIZE`] bytes, the last
+    /// shorter, PUT to the same path with `Content-Range: bytes a-b/total` and
+    /// `X-CheckSum` (its sha256), a few at once. A part that fails (a
+    /// `409 Checksum mismatch` among others) is sent again, up to
+    /// [`PART_TRIES`] times.
+    async fn put_parts(&self, desk: &str, path: &str, content: &[u8]) -> anyhow::Result<()> {
+        self.remove_path(desk, path).await?;
+        let total = content.len();
+        let url = self.dav(desk, path);
+        let parts: Vec<(usize, &[u8])> = content
+            .chunks(PART_SIZE)
+            .enumerate()
+            .map(|(i, part)| (i * PART_SIZE, part))
+            .collect();
+        let count = parts.len();
+        let mut sent = futures_util::stream::iter(parts.into_iter().map(|(start, part)| {
+            let url = url.clone();
+            async move {
+                debug_assert!(part.len() <= MAX_BODY);
+                let end = start + part.len() - 1;
+                let headers = [
+                    ("Content-Range", format!("bytes {start}-{end}/{total}")),
+                    ("X-CheckSum", hex::encode(sha2::Sha256::digest(part))),
+                ];
+                let what = format!(
+                    "writing part {} of {count} of {path} (bytes {start}-{end}) to the desk",
+                    start / PART_SIZE + 1
+                );
+                let mut tries = 0;
+                loop {
+                    tries += 1;
+                    let res = self
+                        .send_dav(
+                            desk,
+                            reqwest::Method::PUT,
+                            &url,
+                            Body::Bytes(part),
+                            &headers,
+                            &what,
+                        )
+                        .await?;
+                    if res.status().is_success() {
+                        return anyhow::Ok(());
+                    }
+                    let status = res.status();
+                    let e = Self::dav_refused(res, &what, path).await;
+                    // A part the desk will never take as sent (its size, its
+                    // range, its length) is not sent again.
+                    if tries >= PART_TRIES || status == reqwest::StatusCode::BAD_REQUEST
+                        || status == reqwest::StatusCode::PAYLOAD_TOO_LARGE
+                    {
+                        return Err(e.context(format!("after {tries} tries")));
+                    }
+                }
+            }
+        }))
+        .buffer_unordered(PART_CONCURRENCY);
+        while let Some(done) = sent.next().await {
+            done?;
+        }
+        Ok(())
+    }
+
+    /// A refused file write in words that say whose it is: a missing folder
+    /// (404 ENOENT) or a body over the cap (413) is Studio's bug, a part of
+    /// the wrong size Studio's too; anything else in Research's own words.
+    async fn dav_refused(res: reqwest::Response, what: &str, path: &str) -> anyhow::Error {
+        let status = res.status();
+        let body = res.text().await.unwrap_or_default();
+        let said = problem(status, &body);
+        match status.as_u16() {
+            404 => anyhow!(
+                "Constructor Research refused {what}: the desk has no folder for {path} \
+                 ({said}); Studio makes the folders first, so this is a bug in Studio's upload"
+            ),
+            413 => anyhow!(
+                "Constructor Research refused {what}: the body is over the desk's 8 MB cap \
+                 ({said}); Studio sends big files in 5 MiB parts, so this is a bug in Studio's \
+                 upload"
+            ),
+            400 if body.to_lowercase().contains("invalid chunk size") => anyhow!(
+                "Constructor Research refused {what}: invalid chunk size ({said}); every part \
+                 but the last must be exactly {PART_SIZE} bytes, so this is a bug in Studio's \
+                 upload"
+            ),
+            _ => anyhow!("Constructor Research refused {what}: {said}"),
+        }
     }
 
     /// A file of the desk's project folder; `None` when there is none.
@@ -854,9 +1046,11 @@ impl ResearchApi {
         let what = format!("reading {path} in the desk");
         let res = self
             .send_dav(
+                desk,
                 reqwest::Method::GET,
                 &self.dav(desk, path),
                 Body::Empty,
+                &[],
                 &what,
             )
             .await?;
@@ -874,9 +1068,11 @@ impl ResearchApi {
         let what = format!("removing {path} from the desk");
         let res = self
             .send_dav(
+                desk,
                 reqwest::Method::DELETE,
                 &self.dav(desk, path),
                 Body::Empty,
+                &[],
                 &what,
             )
             .await?;

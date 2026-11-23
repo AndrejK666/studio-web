@@ -46,6 +46,8 @@ struct Fake {
     /// How many WebDAV calls answer 502 "no healthy upstream" first, as
     /// Research's gateway did while a desk's storage was not there.
     dav_unavailable: u32,
+    /// Each PUT's `Content-Range` and `X-CheckSum`, with its body's size.
+    parts: Vec<(String, String, usize)>,
 }
 
 impl Default for Fake {
@@ -70,6 +72,7 @@ impl Default for Fake {
             services: BTreeMap::new(),
             bodies: Vec::new(),
             dav_unavailable: 0,
+            parts: Vec::new(),
         }
     }
 }
@@ -152,6 +155,13 @@ async fn handle(
                 }
             }
             "PUT" => {
+                if let Some(range) = headers.get("content-range").and_then(|v| v.to_str().ok()) {
+                    let sum = headers
+                        .get("x-checksum")
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or_default();
+                    f.parts.push((range.to_owned(), sum.to_owned(), body.len()));
+                }
                 f.files.insert(rel, body.to_vec());
                 StatusCode::CREATED.into_response()
             }
@@ -364,7 +374,10 @@ async fn handle(
 /// A fake Research on a free port; the connection's address and its state.
 async fn serve(fake: Fake) -> (String, Shared) {
     let shared: Shared = Arc::new(Mutex::new(fake));
-    let app = Router::new().fallback(handle).with_state(shared.clone());
+    let app = Router::new()
+        .fallback(handle)
+        .layer(axum::extract::DefaultBodyLimit::disable())
+        .with_state(shared.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let origin = format!("http://{}", listener.local_addr().unwrap());
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -862,6 +875,8 @@ const FAST_RETRY: DavRetry = DavRetry {
     for_: Duration::from_millis(400),
     first: Duration::from_millis(1),
     cap: Duration::from_millis(5),
+    start_for: Duration::from_millis(400),
+    poll: Duration::from_millis(1),
 };
 
 /// A tree of `files` files under `repo/`, and its Dockerfile.
@@ -889,8 +904,9 @@ async fn a_desk_call_is_asked_again_while_the_gateway_answers_5xx() {
     // Seen on Research DEV, 2026-11-18: "503 Service Unavailable: no healthy
     // upstream" on the first DELETE after a start, and a 502 on one PUT of
     // thousands on 2026-11-19.
+    // A 502 starts the desk's filesystem and asks again, twice at most.
     let (url, fake) = serve(Fake {
-        dav_unavailable: 3,
+        dav_unavailable: 2,
         ..Fake::default()
     })
     .await;
@@ -920,8 +936,8 @@ async fn a_desk_call_is_asked_again_while_the_gateway_answers_5xx() {
 #[tokio::test]
 async fn an_upload_of_many_files_goes_through_gateway_hiccups() {
     let (url, seen) = serve(Fake {
-        // A desk that just started, and some 502s on the way.
-        dav_unavailable: 6,
+        // A desk that just started, and a 502 on the way.
+        dav_unavailable: 2,
         ..Fake::default()
     })
     .await;
@@ -1018,4 +1034,52 @@ fn a_gateway_page_is_said_in_its_own_words_not_only_its_status() {
         problem(reqwest::StatusCode::SERVICE_UNAVAILABLE, "  "),
         "503 Service Unavailable"
     );
+}
+
+#[tokio::test]
+async fn a_12_mb_file_goes_up_in_three_parts_of_exactly_5_mib_each_but_the_last() {
+    // Research's rules for a desk (2026-11), §5.2: 12,582,912 bytes are
+    // 5 MiB + 5 MiB + 2 MiB, each part to the same path with its range and
+    // the sha256 of its bytes.
+    let (url, seen) = serve(Fake::default()).await;
+    let content: Vec<u8> = (0..12_582_912u32).map(|i| (i % 251) as u8).collect();
+    api(&url)
+        .with_dav_retry(FAST_RETRY)
+        .put_file("d1", "src/model/weights.bin", &content)
+        .await
+        .unwrap();
+    let f = seen.lock().unwrap();
+    let mut parts = f.parts.clone();
+    parts.sort();
+    let sum = |a: usize, b: usize| {
+        use sha2::Digest as _;
+        hex::encode(sha2::Sha256::digest(&content[a..b]))
+    };
+    assert_eq!(
+        parts,
+        [
+            ("bytes 0-5242879/12582912".to_owned(), sum(0, 5_242_880), 5_242_880),
+            (
+                "bytes 10485760-12582911/12582912".to_owned(),
+                sum(10_485_760, 12_582_912),
+                2_097_152
+            ),
+            (
+                "bytes 5242880-10485759/12582912".to_owned(),
+                sum(5_242_880, 10_485_760),
+                5_242_880
+            ),
+        ]
+    );
+    assert!(parts.iter().all(|(_, _, size)| *size <= MAX_BODY));
+    // The old file goes first: parts write into it at their places.
+    let delete = f
+        .calls
+        .iter()
+        .position(|c| c == &format!("DELETE {DAV}src/model/weights.bin"));
+    let first_put = f
+        .calls
+        .iter()
+        .position(|c| c == &format!("PUT {DAV}src/model/weights.bin"));
+    assert!(delete.is_some() && delete < first_put, "{:?}", f.calls);
 }

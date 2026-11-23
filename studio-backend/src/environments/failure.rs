@@ -408,7 +408,13 @@ pub fn explain(of: Of, text: &str, step: Option<&str>, research: bool) -> Failur
             "504 gateway timeout",
         ],
     ) && has(text, &["constructor research refused"]);
-    let desk_down = has(text, &["the desk did not start within"]);
+    let desk_down = has(
+        text,
+        &[
+            "the desk did not start within",
+            "file service did not start within",
+        ],
+    );
     let desk_busy = has(text, &["stayed in use by build"]);
     if research && (gateway || desk_down || desk_busy) {
         let what = if desk_busy {
@@ -584,6 +590,11 @@ mod tests {
             ),
             (
                 "the desk did not start within 10 minutes (Research reports it stopped)",
+                "did not start the project's desk",
+            ),
+            (
+                "the desk's file service did not start within 10 minutes after it answered \
+                 502/503 (Research reports it starting)",
                 "did not start the project's desk",
             ),
             (

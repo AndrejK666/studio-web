@@ -226,6 +226,10 @@ pub struct State {
     /// healthy upstream", as Research DEV did now and then (2026-11-19).
     #[serde(default)]
     pub dav_hiccups: u32,
+    /// How many of the next file parts arrive damaged: answered
+    /// `409 Checksum mismatch` whatever their X-CheckSum says.
+    #[serde(default)]
+    pub corrupt_next_parts: u32,
 }
 
 impl State {

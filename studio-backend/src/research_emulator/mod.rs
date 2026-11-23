@@ -201,7 +201,27 @@ impl Emulator {
 
 /// The emulator's routes, on `cfg.base_path`.
 pub fn router(emu: Shared) -> Router {
-    Router::new().fallback(handle).with_state(emu)
+    // Bigger than the 8 MB cap, so the emulator answers 413 itself, as
+    // Research's nginx does.
+    Router::new()
+        .fallback(handle)
+        .layer(axum::extract::DefaultBodyLimit::max(4 * DAV_MAX_BODY))
+        .with_state(emu)
+}
+
+/// The largest request body Research's gateway lets through to a desk.
+pub const DAV_MAX_BODY: usize = 8 * 1024 * 1024;
+
+/// The size of every part of a file sent in parts but the last (an
+/// S3-backed desk's rule, which the emulator keeps).
+pub const DAV_PART_SIZE: usize = 5_242_880;
+
+/// `Content-Range: bytes a-b/total` as numbers.
+fn content_range(v: &str) -> Option<(usize, usize, usize)> {
+    let (range, total) = v.trim().strip_prefix("bytes ")?.split_once('/')?;
+    let (a, b) = range.split_once('-')?;
+    let (a, b, total) = (a.parse().ok()?, b.parse().ok()?, total.parse().ok()?);
+    (a <= b && b < total).then_some((a, b, total))
 }
 
 /// `studio-backend research-emulator`: serve until stopped.
@@ -1187,9 +1207,20 @@ fn dav(emu: &Shared, m: &str, desk: &str, rel: &str, headers: &HeaderMap, body: 
         st.dav_hiccups -= 1;
         return (StatusCode::BAD_GATEWAY, "no healthy upstream").into_response();
     }
+    // As on a stand: the desk's file service is not there until it runs.
     if d.status != "running" {
-        return refusal(StatusCode::CONFLICT, "The desk's filesystem is not running");
+        return (StatusCode::SERVICE_UNAVAILABLE, "the desk's file service is not running")
+            .into_response();
     }
+    if body.len() > DAV_MAX_BODY {
+        return (StatusCode::PAYLOAD_TOO_LARGE, "413 Request Entity Too Large").into_response();
+    }
+    let corrupt = if m == "PUT" && headers.contains_key("content-range") && st.corrupt_next_parts > 0 {
+        st.corrupt_next_parts -= 1;
+        true
+    } else {
+        false
+    };
     let rel = unescape(rel).trim_matches('/').to_owned();
     let files = st.files.entry(d.id).or_default();
     let parent_ok = |files: &state::DeskFiles, p: &str| match p.rsplit_once('/') {
@@ -1211,10 +1242,51 @@ fn dav(emu: &Shared, m: &str, desk: &str, rel: &str, headers: &HeaderMap, body: 
             if rel.is_empty() || files.folders.contains(&rel) {
                 return StatusCode::METHOD_NOT_ALLOWED.into_response();
             }
+            // The desk makes no folder by itself.
             if !parent_ok(files, &rel) {
-                return StatusCode::CONFLICT.into_response();
+                return (
+                    StatusCode::NOT_FOUND,
+                    format!("[FileNotFoundError] 2 ENOENT: no such file or directory: '{rel}'"),
+                )
+                    .into_response();
             }
-            let existed = files.files.insert(rel, body.to_vec()).is_some();
+            let Some(range) = headers.get("content-range") else {
+                let existed = files.files.insert(rel, body.to_vec()).is_some();
+                return if existed { StatusCode::NO_CONTENT } else { StatusCode::CREATED }
+                    .into_response();
+            };
+            let Some((a, b, total)) = range.to_str().ok().and_then(content_range) else {
+                return (StatusCode::BAD_REQUEST, "Invalid Content-Range").into_response();
+            };
+            if b - a + 1 != body.len() {
+                return (StatusCode::BAD_REQUEST, "Content-Range does not match the body")
+                    .into_response();
+            }
+            // Only the last part may be shorter.
+            if body.len() != DAV_PART_SIZE && b + 1 != total {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    format!("Invalid chunk size: required={DAV_PART_SIZE}, actual={}", body.len()),
+                )
+                    .into_response();
+            }
+            if let Some(sum) = headers.get("x-checksum").and_then(|v| v.to_str().ok()) {
+                use sha2::Digest as _;
+                let actual = hex::encode(sha2::Sha256::digest(&body));
+                if corrupt || !sum.eq_ignore_ascii_case(&actual) {
+                    return (
+                        StatusCode::CONFLICT,
+                        format!("Checksum mismatch: requested={sum}, actual={}", if corrupt { "0".repeat(64) } else { actual }),
+                    )
+                        .into_response();
+                }
+            }
+            let existed = files.files.contains_key(&rel);
+            let file = files.files.entry(rel).or_default();
+            if file.len() < total {
+                file.resize(total, 0);
+            }
+            file[a..=b].copy_from_slice(&body);
             if existed { StatusCode::NO_CONTENT } else { StatusCode::CREATED }.into_response()
         }
         "GET" => match files.files.get(&rel) {
