@@ -98,6 +98,13 @@ Option 3.
    it: it comes from the operator-managed Secret the backend uses, so a password rotation needs no edit.
    The service never writes document text to an error, and keeps the text of a document only until its
    run ends.
+
+   **Addendum (2026-11-23): the run settings are not keys.** Which provider a run uses, its three
+   models and its call bounds may change while the service runs: `GET`/`PUT /v1/settings` keep an
+   override of the config file's values in the run store, and Studio's portal sets it (Organization ›
+   Gears matcher). The keys stay where this section puts them: an override may choose only a provider
+   whose key the config file already holds, and no route takes or shows a key. Every run keeps the
+   provider and models it was submitted with.
 7. **No retention policy and no cost cap in the first build.** Reports are kept as long as the volume
    allows. A run is on request, from an administrator, so exposure is limited by who can start one.
 

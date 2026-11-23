@@ -90,6 +90,13 @@ curl -s localhost:8080/v1/runs/<id>/report -H "Authorization: Bearer $GEARS_MATC
 
 `/healthz` and `/readyz` need no secret. Everything else is in the contract.
 
+The provider, the models and the two call bounds may also be changed while the service runs, without
+touching the config file: `GET /v1/settings` shows the config file's values, the override and what a run
+uses now; `PUT /v1/settings` with `{"version": <read>, "overrides": {"provider": "openai", "models":
+["gpt-5.4"], "max_calls": 600}}` replaces the override (null or absent: the config file's value). Only
+a provider whose key is in the config file can be chosen; keys are never settings. Studio's portal sets
+them on Organization › Gears matcher.
+
 ## The image
 
 ```bash

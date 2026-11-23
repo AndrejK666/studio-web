@@ -92,6 +92,11 @@ in the Pod that accepted it, and the reply cache is on a ReadWriteOnce claim.
   counted and may be billed.
 - **Size.** A request over a limit is refused whole with `413`; the body is read and discarded first so the
   caller sees the answer, not a dropped connection.
+- **Run settings** (`GET`/`PUT /v1/settings`, ADR-0075 §6 addendum): the provider, the three models and the
+  call bounds. The config file says what they are; an override in the run store (one row, a version a
+  write must name) replaces any of them until it is cleared. A provider is offered only when its key is in
+  the config file. An override that can no longer be used is set aside at start and `problem` says why.
+  A run keeps the provider and models it was submitted with; `/v1/info` says what a run submitted now uses.
 
 ### 3.2 Deployment
 
