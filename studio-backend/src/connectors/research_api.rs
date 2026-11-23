@@ -530,6 +530,7 @@ impl ResearchApi {
     }
 
     /// Ask WebDAV calls again by `retry` (tests make it fast).
+    #[cfg(test)]
     pub fn with_dav_retry(mut self, retry: DavRetry) -> Self {
         self.dav_retry = retry;
         self
@@ -545,7 +546,7 @@ impl ResearchApi {
         method: reqwest::Method,
         url: &str,
         body: Body<'_>,
-        headers: &[(&str, String)],
+        headers: &[(&'static str, String)],
         what: &str,
     ) -> anyhow::Result<reqwest::Response> {
         let started = tokio::time::Instant::now();
@@ -580,7 +581,7 @@ impl ResearchApi {
     /// Start `desk`'s filesystem and wait until Research says it runs.
     async fn start_filesystem(&self, desk: &str) -> anyhow::Result<()> {
         let until = tokio::time::Instant::now() + self.dav_retry.start_for;
-        let mut status = String::new();
+        let mut status: String;
         loop {
             match self.desk(desk).await {
                 Ok(d) if d.filesystem.status == "running" => return Ok(()),
@@ -657,7 +658,7 @@ impl ResearchApi {
         method: reqwest::Method,
         url: &str,
         body: Body<'_>,
-        headers: &[(&str, String)],
+        headers: &[(&'static str, String)],
         what: &str,
     ) -> anyhow::Result<reqwest::Response> {
         let mut renewed = false;
@@ -967,9 +968,13 @@ impl ResearchApi {
             .map(|(i, part)| (i * PART_SIZE, part))
             .collect();
         let count = parts.len();
-        let mut sent = futures_util::stream::iter(parts.into_iter().map(|(start, part)| {
+        // Boxed: a stream of borrowing futures is otherwise not Send for
+        // every lifetime, which a task handler needs.
+        let sends: Vec<BoxFuture<'_, anyhow::Result<()>>> = parts
+            .into_iter()
+            .map(|(start, part)| {
             let url = url.clone();
-            async move {
+            Box::pin(async move {
                 debug_assert!(part.len() <= MAX_BODY);
                 let end = start + part.len() - 1;
                 let headers = [
@@ -1006,9 +1011,10 @@ impl ResearchApi {
                         return Err(e.context(format!("after {tries} tries")));
                     }
                 }
-            }
-        }))
-        .buffer_unordered(PART_CONCURRENCY);
+            }) as BoxFuture<'_, _>
+        })
+        .collect();
+        let mut sent = futures_util::stream::iter(sends).buffer_unordered(PART_CONCURRENCY);
         while let Some(done) = sent.next().await {
             done?;
         }
