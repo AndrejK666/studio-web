@@ -215,3 +215,96 @@ async fn a_keyed_request_joins_the_unkeyed_waiting_run() {
     assert_eq!(joined.id, unkeyed.id);
     handle.stop().await;
 }
+
+const GIVEN_UP_TYPE: &str = "test.outlives_its_lease";
+
+/// What the handler below was told by the queue.
+static TOLD: std::sync::Mutex<Vec<(Uuid, bool, String)>> = std::sync::Mutex::new(Vec::new());
+
+/// A handler whose every attempt outlives the lease: the queue only ever
+/// gives up on it, and tells it so.
+struct OutlivesItsLease;
+
+#[async_trait]
+impl TaskHandler for OutlivesItsLease {
+    fn task_type(&self) -> &'static str {
+        GIVEN_UP_TYPE
+    }
+    fn max_attempts(&self) -> i16 {
+        1
+    }
+    async fn run(&self, _: &TaskContext) -> TaskOutcome {
+        TaskOutcome::done("never reached")
+    }
+    async fn ended_by_queue(&self, ended: &crate::tasks::registry::EndedByQueue<'_>) {
+        TOLD.lock()
+            .unwrap()
+            .push((ended.run_id, ended.cancelled, ended.reason.to_owned()));
+    }
+}
+
+/// research-faa4fdf8107a: a run given up on after a delivery that never
+/// reported back is failed, its handler is told (so the build's record can
+/// say so), and the run is found again by its key.
+#[tokio::test]
+async fn a_run_given_up_on_tells_its_handler_and_is_found_by_its_key() {
+    let _ = registry::register(Arc::new(OutlivesItsLease));
+    let (svc, db, handle) = service("tasks_given_up").await;
+    let tenant = Uuid::new_v4();
+    let ctx = ctx(tenant);
+    let row = svc
+        .enqueue(
+            &ctx,
+            NewRun {
+                task_type: GIVEN_UP_TYPE,
+                payload: json!({ "build_id": "research-1" }),
+                coalesce_queued: false,
+                ..run(tenant, Some("research-1"))
+            },
+        )
+        .await
+        .unwrap();
+    start(&db, tenant, row.id).await;
+
+    let ready = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let dispatcher = crate::tasks::dispatch::TaskDispatcher::new(
+        db.clone(),
+        tokio_util::sync::CancellationToken::new(),
+        ready,
+        Arc::new(toolkit::client_hub::ClientHub::new()),
+    );
+    // The second delivery: the first never reported back.
+    let msg = OutboxMessage {
+        partition_id: 0,
+        seq: 1,
+        payload: crate::tasks::encode_payload(tenant, row.id),
+        payload_type: crate::tasks::PAYLOAD_TYPE.to_owned(),
+        created_at: chrono::Utc::now(),
+        attempts: 1,
+    };
+    assert!(matches!(
+        dispatcher.handle(&msg).await,
+        MessageResult::Reject(_)
+    ));
+
+    let stored = svc.get(&ctx, tenant, row.id).await.unwrap().unwrap();
+    assert_eq!(stored.state, RunState::Failed.as_str());
+    let told = TOLD.lock().unwrap().clone();
+    let (id, cancelled, reason) = told
+        .iter()
+        .find(|(id, _, _)| *id == row.id)
+        .expect("the handler was told");
+    assert_eq!(*id, row.id);
+    assert!(!cancelled);
+    assert!(reason.contains("gave up after 1 deliveries"), "{reason}");
+
+    let found =
+        <TaskService as crate::tasks::TaskQueue>::run_by_key(svc.as_ref(), tenant, "research-1")
+            .await
+            .unwrap()
+            .expect("found by its key");
+    assert_eq!(found.id, row.id);
+    assert_eq!(found.view.state, RunState::Failed);
+    assert_eq!(found.payload["build_id"], "research-1");
+    handle.stop().await;
+}

@@ -463,7 +463,7 @@ impl TaskService {
         }
     }
 
-    async fn find_by_idempotency_key(
+    pub(super) async fn find_by_idempotency_key(
         &self,
         tenant: Uuid,
         key: &str,

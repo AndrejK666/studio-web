@@ -11,6 +11,7 @@
 //! the gear.
 
 pub use super::registry::{
-    SyncReporter, TaskContext, TaskHandler, TaskOutcome, handler, known_task_types, register,
+    EndedByQueue, SyncReporter, TaskContext, TaskHandler, TaskOutcome, handler, known_task_types,
+    register,
 };
 pub use super::service::NewRun;

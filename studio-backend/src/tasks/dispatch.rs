@@ -41,7 +41,7 @@ use toolkit_security::{AccessScope, SecurityContext};
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use super::registry::{ProgressSink, TaskContext, TaskOutcome};
+use super::registry::{EndedByQueue, ProgressSink, TaskContext, TaskHandler, TaskOutcome};
 use super::{PAYLOAD_TYPE, RunState, entity, registry};
 use crate::studio_events::{StudioEvent, StudioEventPublisher};
 
@@ -189,6 +189,10 @@ impl ProgressSink for DbProgress {
             PROGRESS_KIND,
             Value::Object(event),
         );
+    }
+
+    async fn stop_requested(&self, tenant: Uuid, run_id: Uuid) -> bool {
+        cancel_requested(&self.db, tenant, run_id).await
     }
 }
 
@@ -355,6 +359,31 @@ impl TaskDispatcher {
         }
     }
 
+    /// Tell the run's handler that the queue ended it without its say: see
+    /// [`TaskHandler::ended_by_queue`]. Best-effort, like the rest of the
+    /// record.
+    async fn tell_handler(
+        handler: &dyn TaskHandler,
+        row: &entity::Model,
+        cancelled: bool,
+        reason: &str,
+    ) {
+        let Ok(security) = Self::worker_context(row.tenant_id) else {
+            return;
+        };
+        handler
+            .ended_by_queue(&EndedByQueue {
+                tenant: row.tenant_id,
+                run_id: row.id,
+                payload: &row.payload,
+                recorded: row.result.as_ref(),
+                cancelled,
+                reason,
+                security: &security,
+            })
+            .await;
+    }
+
     /// Say in the IDE that this run ended, when the run was addressed to one.
     ///
     /// Best-effort, exactly like the event above: a notice that cannot be
@@ -510,6 +539,10 @@ impl LeasedMessageHandler for TaskDispatcher {
                 Patch::state(RunState::Cancelled),
             )
             .await;
+            if let Some(handler) = registry::handler(&row.task_type) {
+                Self::tell_handler(handler.as_ref(), &row, true, "cancelled before it started")
+                    .await;
+            }
             return MessageResult::Ok;
         }
 
@@ -580,6 +613,7 @@ impl LeasedMessageHandler for TaskDispatcher {
                 },
             )
             .await;
+            Self::tell_handler(handler.as_ref(), &row, false, &reason).await;
             return MessageResult::Reject(reason);
         }
 
@@ -666,6 +700,7 @@ impl LeasedMessageHandler for TaskDispatcher {
                 Patch::state(RunState::Cancelled),
             )
             .await;
+            Self::tell_handler(handler.as_ref(), &row, true, "stopped on request").await;
             return MessageResult::Ok;
         }
 
@@ -727,6 +762,8 @@ impl LeasedMessageHandler for TaskDispatcher {
                         },
                     )
                     .await;
+                    let why = format!("out of attempts after {attempt}: {reason}");
+                    Self::tell_handler(handler.as_ref(), &row, false, &why).await;
                     MessageResult::Reject(reason)
                 } else {
                     warn!(
