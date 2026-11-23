@@ -21,6 +21,7 @@ use super::preview::{self, PreviewRoute, SweepPayload};
 use super::readiness::{self, Role};
 use super::records::Records;
 use super::research;
+use super::research_envs;
 use super::store::{Store, service_context};
 use super::workflow;
 use super::{BINDINGS_METADATA_TYPE, DEPLOYMENTS_METADATA_TYPE, ENVIRONMENTS_METADATA_TYPE};
@@ -46,6 +47,12 @@ pub use pipeline_service::{BuildView, SecretKeys};
 // (#1050, #1053).
 #[path = "service_path.rs"]
 mod path_service;
+
+// One Research environment per Research project: the duplicates made
+// before merged at start (#1053).
+#[path = "service_research_envs.rs"]
+mod research_envs_service;
+pub use research_envs_service::ResearchMerges;
 
 /// The privilege that manages an organization's environments and decides
 /// about deploys to its protected ones (ADR-0043 §1, §3).
@@ -943,13 +950,17 @@ impl EnvironmentService {
         project: Uuid,
         id: Uuid,
     ) -> Result<Environment> {
-        if let Some(own) = self
-            .own_environments(ctx, project)
-            .await?
-            .into_iter()
-            .find(|e| e.id == id)
+        let own = self.own_environments(ctx, project).await?;
+        if let Some(env) = own.iter().find(|e| e.id == id) {
+            return Ok(env.clone());
+        }
+        // One merged into another for the same Research project (#1053): a
+        // link or an open dialog that still names it goes to the one kept.
+        if let Some(records) = self.records()
+            && let Ok(Some(kept)) = records.merged_into(org, project, id).await
+            && let Some(env) = own.iter().find(|e| e.id == kept)
         {
-            return Ok(own);
+            return Ok(env.clone());
         }
         let env = self.environment(ctx, org, id).await?;
         if !env.admits(project) {
@@ -1024,12 +1035,27 @@ impl EnvironmentService {
                             format!("the project has no environment {id} of its own"),
                         ));
                     }
+                    // One Research environment per Research project (#1053):
+                    // adding one for a Research project the project has one
+                    // for changes that one -- its hardware, its sign-in --
+                    // under its own name, whatever name was asked for.
+                    let mut input = input.clone();
+                    let id = match id {
+                        Some(id) => Some(id),
+                        None => research_envs::reused(&row.environments, &input).map(|had| {
+                            input.name.clone_from(&had.name);
+                            if input.description.trim().is_empty() {
+                                input.description.clone_from(&had.description);
+                            }
+                            had.id
+                        }),
+                    };
                     let env = model::checked_for_project(
                         &admitted,
                         &row.environments,
                         project,
                         id,
-                        input.clone(),
+                        input,
                         by.clone(),
                         at.clone(),
                     )?;
@@ -3161,6 +3187,10 @@ impl EnvironmentService {
             );
             running.r#where = Some("research".into());
             running.description_revision = payload.description_revision;
+            // Which environment it was for: a merge of duplicates keeps an
+            // environment a build went to (#1053).
+            running.place.environment_id = Some(env.id.to_string());
+            running.place.environment = Some(env.name.clone());
             builds
                 .record(ctx, &project.to_string(), &running)
                 .await

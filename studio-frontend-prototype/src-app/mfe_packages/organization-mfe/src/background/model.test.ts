@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { TaskRun } from "./types";
-import { duration, foldRecurring, headline, mergePages, stateTone } from "./model";
+import { duration, foldRecurring, headline, mergePages, runProgress, stateTone } from "./model";
 
 function run(id: string, task_type: string, state: string, created_at: string): TaskRun {
   return { id, task_type, state, created_at, attempts: 1, payload: {} } as unknown as TaskRun;
@@ -57,5 +57,23 @@ describe('a run line', () => {
     expect(headline({ ...base, summary: 'did', last_error: 'x' })).toBe('did');
     expect(headline({ ...base, last_error: 'broke', progress: 'p' })).toBe('broke');
     expect(headline({ ...base, progress: 'reading' })).toBe('reading');
+  });
+});
+
+describe("a running run that counts", () => {
+  const steps = ["prepare", "desk", "upload", "images", "deploy", "ready"];
+  const counting = (state: string, progress: unknown) => ({ ...run("r", "environments.research.build", state, "2026-11-23T10:00:00Z"), result: { progress } }) as TaskRun;
+
+  it("goes the whole way by its steps, the current one by bytes, files or images", () => {
+    const upload = counting("running", { step: "upload", steps, files: { done: 1, total: 4 }, bytes: { done: 60, total: 120 } });
+    expect(runProgress(upload)).toEqual({ step: "upload", share: 2.5 / 6 });
+    expect(runProgress(counting("running", { step: "images", steps, images: { done: 3, total: 3 } }))?.share).toBeCloseTo(4 / 6);
+    expect(runProgress(counting("running", { step: "desk", steps }))?.share).toBeCloseTo(1 / 6);
+  });
+
+  it("is nothing for a run that does not count, or no longer runs", () => {
+    expect(runProgress(run("r", "a", "running", "2026-11-23T10:00:00Z"))).toBeNull();
+    expect(runProgress(counting("succeeded", { step: "upload", steps }))).toBeNull();
+    expect(runProgress(counting("running", { step: "launch", steps }))).toBeNull();
   });
 });

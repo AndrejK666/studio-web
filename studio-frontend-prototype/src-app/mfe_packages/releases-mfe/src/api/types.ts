@@ -388,6 +388,9 @@ export interface RegistryOrphan {
 export interface ResearchProject {
   id: string;
   name: string;
+  /** The project's "Deployment" setting: off, Research refuses to build
+   *  images there. Absent where Research did not say, or an older backend. */
+  deployment_enabled?: boolean | null;
 }
 
 /** A hardware configuration of a Research project; a trial one Research ends by its rules. */
@@ -766,6 +769,9 @@ export interface TaskRun {
   state: string;
   /** The phase the handler last reported; kept after it ends. */
   progress?: string | null;
+  /** What the run counted so far (a Research build's `progress`), then its
+   *  result; its shape is the task type's. */
+  result?: unknown;
   started_at?: string | null;
   finished_at?: string | null;
 }

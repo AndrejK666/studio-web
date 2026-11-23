@@ -4319,6 +4319,7 @@ response	GET /studio-environments/v1/research/inbox/sign-in	items.url	String	opt
 response	GET /studio-environments/v1/research/inbox/sign-in	total	u32	always
 response	GET /studio-environments/v1/research/my-projects	connection_id	Uuid	always
 response	GET /studio-environments/v1/research/my-projects	items	Vec<{}>	always
+response	GET /studio-environments/v1/research/my-projects	items.deployment_enabled	bool	optional
 response	GET /studio-environments/v1/research/my-projects	items.id	String	always
 response	GET /studio-environments/v1/research/my-projects	items.name	String	always
 response	GET /studio-environments/v1/research/my-projects	total	u32	always
@@ -4328,6 +4329,7 @@ response	GET /studio-environments/v1/research/my-projects/{}/hardware	items.name
 response	GET /studio-environments/v1/research/my-projects/{}/hardware	items.trial	bool	always
 response	GET /studio-environments/v1/research/my-projects/{}/hardware	total	u32	always
 response	GET /studio-environments/v1/research/projects	items	Vec<{}>	always
+response	GET /studio-environments/v1/research/projects	items.deployment_enabled	bool	optional
 response	GET /studio-environments/v1/research/projects	items.id	String	always
 response	GET /studio-environments/v1/research/projects	items.name	String	always
 response	GET /studio-environments/v1/research/projects	total	u32	always

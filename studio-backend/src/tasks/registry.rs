@@ -127,6 +127,16 @@ impl TaskContext {
             .await;
     }
 
+    /// Record what the run is doing now and what it has counted so far: the
+    /// detail lands in the run's `result` and in the `task.progress` event,
+    /// as [`SyncReporter::set_with`]'s does. One UPDATE each, so a caller
+    /// that counts per item throttles first.
+    pub async fn progress_with(&self, phase: impl Into<String>, detail: Value) {
+        self.progress
+            .set(self.tenant, self.run_id, phase.into(), Some(detail))
+            .await;
+    }
+
     /// A progress handle for code that cannot await, and the task that drains
     /// it.
     ///

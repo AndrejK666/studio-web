@@ -433,7 +433,9 @@ async fn who_projects_and_hardware_are_read_with_the_members_token() {
         api.projects().await.unwrap(),
         [Project {
             id: "p1".into(),
-            name: "ML team".into()
+            name: "ML team".into(),
+            // Not in the list: read from the project itself.
+            deployment_enabled: Some(false),
         }]
     );
     assert!(
@@ -505,9 +507,11 @@ async fn a_refused_token_is_renewed_once_and_then_the_member_signs_in_again() {
 
     let renewed = api(&url).renewing(token_is("fresh"));
     assert_eq!(renewed.projects().await.unwrap()[0].id, "p1");
+    // The list, refused then renewed; then the project itself, for its
+    // Deployment setting the list does not carry -- with the renewed token.
     assert_eq!(
         seen.lock().unwrap().auth[1..],
-        ["Bearer t0ken", "Bearer fresh"]
+        ["Bearer t0ken", "Bearer fresh", "Bearer fresh"]
     );
 
     let stale = api(&url).renewing(token_is("stale"));

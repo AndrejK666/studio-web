@@ -37,7 +37,10 @@ use uuid::Uuid;
 
 use super::build::{self, RepoRef};
 use super::research_app::{self, Application, Inputs};
-use crate::connectors::sdk::research::{ImageBuild, Pace, Renew, ResearchApi, Service, Watched};
+use super::research_progress::Reporter;
+use crate::connectors::sdk::research::{
+    ImageBuild, Measured, Pace, Renew, ResearchApi, Service, Watched,
+};
 use crate::tasks::sdk::{TaskContext, TaskHandler, TaskOutcome};
 
 pub const BUILD_TASK_TYPE: &str = "environments.research.build";
@@ -615,8 +618,15 @@ impl ResearchBuildTask {
         }
     }
 
-    async fn step(&self, ctx: &TaskContext, p: &ResearchBuildPayload, step: &str) {
-        ctx.progress(step.to_owned()).await;
+    async fn step(
+        &self,
+        ctx: &TaskContext,
+        report: &Reporter<'_>,
+        p: &ResearchBuildPayload,
+        step: &'static str,
+    ) {
+        report.say(step.to_owned()).await;
+        report.step(step).await;
         let mut running = crate::artifact_ingest::port::BuildOutcome::running(
             &p.build_id,
             &p.repo.repo,
@@ -650,7 +660,8 @@ impl ResearchBuildTask {
         .await
         .map_err(fail("start"))?;
 
-        self.step(ctx, p, "prepare").await;
+        let report = Reporter::new(ctx);
+        self.step(ctx, &report, p, "prepare").await;
         let tree = prepare(
             &self.hub,
             &ctx.security,
@@ -696,17 +707,21 @@ impl ResearchBuildTask {
         let (builds, bakes) =
             lay_out(&tree.work, &root, &images, &app, &database_image).map_err(fail("prepare"))?;
 
-        self.step(ctx, p, "images").await;
-        let progress = |m: String| -> BoxFuture<'_, ()> { Box::pin(ctx.progress(m)) };
+        // The build record's step stays `images` from here: the desk and the
+        // upload are where Research builds them. The bar counts them apart.
+        self.step(ctx, &report, p, "images").await;
+        let progress = |m: String| -> BoxFuture<'_, ()> { Box::pin(report.say(m)) };
+        let measure = |m: Measured| -> BoxFuture<'_, ()> { Box::pin(report.measured(m)) };
         let cancelled = || ctx.cancel.is_cancelled();
         let built = api
-            .build_in_desk(
+            .build_in_desk_measured(
                 &p.research_project,
                 &root,
                 &p.build_id,
                 &builds,
                 Pace::RESEARCH,
                 &progress,
+                &measure,
                 &cancelled,
             )
             .await
@@ -975,12 +990,15 @@ pub async fn deploy(
         };
     }
 
-    ctx.progress(format!(
-        "preparing {} at {}",
-        r.repo.repo,
-        &r.commit[..r.commit.len().min(12)]
-    ))
-    .await;
+    let report = Reporter::new(ctx);
+    report
+        .say(format!(
+            "preparing {} at {}",
+            r.repo.repo,
+            &r.commit[..r.commit.len().min(12)]
+        ))
+        .await;
+    report.step("deploy").await;
     let tree = prepare(
         hub,
         &ctx.security,
@@ -1083,12 +1101,14 @@ pub async fn deploy(
     };
     // Running is not ready, and a container that crashes is replaced with
     // its log: for a minute, ask the public links and follow every log.
-    ctx.progress(
-        "watching the services for a minute: whether their public addresses answer and \
-         whether they restart"
-            .to_owned(),
-    )
-    .await;
+    report
+        .say(
+            "watching the services for a minute: whether their public addresses answer and \
+             whether they restart"
+                .to_owned(),
+        )
+        .await;
+    report.step("ready").await;
     let until = tokio::time::Instant::now() + Pace::RESEARCH.ready_for;
     let (silent, watched) = tokio::join!(
         api.unanswered(&running, Pace::RESEARCH),

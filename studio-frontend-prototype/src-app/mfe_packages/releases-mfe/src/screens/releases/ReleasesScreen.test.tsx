@@ -561,6 +561,84 @@ describe('ReleasesScreen', () => {
       expect(await waitFor(() => research.querySelector('[data-research-build="research-7"]'))).toBeTruthy();
     });
 
+    it('folds the environments nothing can go to into one line that opens', async () => {
+      setUp({ path: readyPath({ research_kit: true, research: { state: 'signed_in', connection_id: 'c-research' } }) });
+      const t = (await (service.targets as (p: unknown) => { fetch: () => Promise<ProjectTargets> })({}).fetch());
+      service.targets = read('targets', {
+        ...t,
+        environments: [
+          ...t.environments,
+          { environment: env({ id: 'e-rs', name: 'research-ml-team', kind: 'research', research_project: 'rp', project_id: 'p1' }), namespace: '' },
+        ],
+      });
+      const dialog = await openDialog();
+      const folded = await waitFor(() => {
+        const f = dialog.querySelector('[data-deploy-folded]');
+        if (!f) throw new Error('not yet');
+        return f as HTMLElement;
+      });
+      expect(folded.getAttribute('data-deploy-folded')).toBe('1');
+      expect(folded.textContent).toContain('targets_nothing_to_deploy_one 1');
+      expect(dialog.querySelector('[data-deploy-target="e-rs"]')).toBeNull();
+      expect(dialog.querySelectorAll('[data-deploy-target]').length).toBe(2);
+      fireEvent.click(folded.querySelector('[data-deploy-unfold]') as HTMLElement);
+      expect(dialog.querySelector('[data-deploy-target="e-rs"]')?.getAttribute('data-deploy-target-quiet')).toBe('true');
+      // The Research target comes before the environments.
+      const order = [...dialog.querySelectorAll('[data-deploy-target-research], [data-deploy-environments]')].map((e) =>
+        e.hasAttribute('data-deploy-target-research') ? 'research' : 'environments'
+      );
+      expect(order).toEqual(['research', 'environments']);
+    });
+
+    it("reuses the project's Research environment for that Research project, and lists projects with Deployment off last, disabled", async () => {
+      setUp({ path: readyPath({ research_kit: true, research: { state: 'signed_in', connection_id: 'c-research' } }) });
+      const t = (await (service.targets as (p: unknown) => { fetch: () => Promise<ProjectTargets> })({}).fetch());
+      service.targets = read('targets', {
+        ...t,
+        environments: [
+          ...t.environments,
+          {
+            environment: env({
+              id: 'e-rs',
+              name: 'research-ml-team',
+              kind: 'research',
+              connection_id: 'c-research',
+              research_project: 'rp',
+              research_hardware: null,
+              project_id: 'p1',
+            }),
+            namespace: '',
+          },
+        ],
+      });
+      service.myResearchProjects = read('myResearchProjects', {
+        connection_id: 'c-research',
+        items: [
+          { id: 'off', name: 'Graph gear', deployment_enabled: false },
+          { id: 'rp', name: 'ML team', deployment_enabled: true },
+        ],
+        total: 2,
+      });
+      const dialog = await openDialog();
+      const research = await waitFor(() => {
+        const r = dialog.querySelector('[data-deploy-target-research]');
+        if (!r?.querySelector('[data-research-run]')) throw new Error('not yet');
+        return r;
+      });
+      const options = [...research.querySelectorAll('select[aria-label="research_project"] option')] as HTMLOptionElement[];
+      expect(options.map((o) => o.value)).toEqual(['rp', 'off']);
+      expect(options[1].disabled).toBe(true);
+      expect(options[1].textContent).toContain('research_deployment_off_short');
+      expect(research.querySelector('[data-research-deployment-off]')).toBeNull();
+      fireEvent.click(research.querySelector('[data-research-run]') as HTMLElement);
+      await waitFor(() => expect(calls.some((c) => c.name === 'startBuild')).toBe(true));
+      expect(calls.some((c) => c.name === 'createProjectEnvironment')).toBe(false);
+      expect(calls.find((c) => c.name === 'startBuild')?.body).toEqual({ environment_id: 'e-rs' });
+      // The bar starts at the first step, the log under it.
+      expect(research.querySelector('[data-research-progress]')?.getAttribute('data-research-progress')).toBe('prepare');
+      expect(research.querySelector('[data-research-build-log]')).toBeTruthy();
+    });
+
     it('asks to sign in when the Research sign-in ran out', async () => {
       setUp({ path: readyPath({ research_kit: true, research: { state: 'expired', days_left: 0 } }) });
       const dialog = await openDialog();

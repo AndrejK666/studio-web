@@ -192,7 +192,7 @@ impl EnvironmentService {
         let org = self.organization_of_project(ctx, project).await?;
         self.require_research_kit(ctx, project).await?;
         let sign_in = self.own_research(ctx, org, Some(project)).await?;
-        let projects = self
+        let mut projects = self
             .research_api(ctx, sign_in.tenant, sign_in.connection_id)
             .await?
             .projects()
@@ -200,6 +200,9 @@ impl EnvironmentService {
             .map_err(|e| {
                 Refusal::Precondition("ENVIRONMENT_RESEARCH_UNREACHABLE", format!("{e:#}"))
             })?;
+        // Where a build can go first: a project whose Deployment is off
+        // refuses to build images, and the picker shows it last, disabled.
+        projects.sort_by_key(|p| p.deployment_enabled == Some(false));
         Ok((sign_in.connection_id, projects))
     }
 
