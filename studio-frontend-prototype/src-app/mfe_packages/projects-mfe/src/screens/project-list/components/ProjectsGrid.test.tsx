@@ -73,7 +73,7 @@ function tenant(id: string, updatedAt = '2026-08-20T09:00:00Z'): Tenant {
 
 const PROJECT = tenant('proj');
 
-async function mount(phases?: Record<string, string>, rollups?: Record<string, ProjectRollup>) {
+async function mount(rollups?: Record<string, ProjectRollup>) {
   const { mfeApp } = await import('../../../init');
   const { bridge, executeActionsChain } = createMfeBridgeFixture({
     domainId: 'screen',
@@ -89,7 +89,7 @@ async function mount(phases?: Record<string, string>, rollups?: Record<string, P
   render(
     <FrontXProvider app={mfeApp} mfeBridge={mfeContextValue(bridge)}>
       <OrganizationProvider>
-        <ProjectsGrid phases={phases} rollups={rollups} />
+        <ProjectsGrid rollups={rollups} />
       </OrganizationProvider>
     </FrontXProvider>
   );
@@ -118,7 +118,7 @@ afterEach(cleanup);
 describe('ProjectsGrid rows', () => {
   it('shows the rollup open findings and pull requests, and no data where it has none', async () => {
     scope.projects = [PROJECT, tenant('other')];
-    await mount(undefined, {
+    await mount({
       proj: { id: 'proj', name: 'proj', kind: 'project', open_findings: 3, pulls_merged: 56, pulls_open: 13 },
     });
     await screen.findByText('other');
@@ -185,16 +185,20 @@ describe('ProjectsGrid rows', () => {
     expect(screen.queryByText(en.status_unset)).toBeNull();
   });
 
-  it("shows a project's phase only where Project lifecycle gives it one", async () => {
-    await mount();
-    await screen.findByText('proj');
-    expect(document.querySelector('[data-project-phase]')).toBeNull();
+  it("shows each project's phase from its rollup row in a Phase column, a dash where it has none", async () => {
+    scope.projects = [PROJECT, tenant('other')];
+    await mount({ proj: { id: 'proj', name: 'proj', kind: 'project', phase: 'build' } });
+    await screen.findByText('other');
+    expect(screen.getByRole('columnheader', { name: en.col_phase })).toBeTruthy();
+    expect(document.querySelector('[data-project-phase="build"]')?.textContent).toBe(en.phase_build);
+    expect(document.querySelector('[data-project-phase="none"]')?.textContent).toBe('—');
   });
 
-  it('shows the phase beside the name when the kit applies', async () => {
-    await mount({ proj: 'build' });
+  it('offers no phase filter while no project has a phase', async () => {
+    await mount();
     await screen.findByText('proj');
-    expect(document.querySelector('[data-project-phase]')?.textContent).toBe(en.phase_build);
+    expect(document.querySelector('[data-project-phase="none"]')).toBeTruthy();
+    expect(screen.queryByText(en.phase_none)).toBeNull();
   });
 
   it('says so when a healthy project carries no attributes yet', async () => {
@@ -248,6 +252,42 @@ describe('ProjectsGrid order and search', () => {
     fireEvent.click(screen.getByRole('button', { name: en.clear_search }));
     expect(await screen.findByText('catalog')).toBeTruthy();
     expect(shownNames()).toHaveLength(2);
+  });
+});
+
+describe('ProjectsGrid phase', () => {
+  const ROLLUPS: Record<string, ProjectRollup> = {
+    a: { id: 'a', name: 'a', kind: 'project', phase: 'run' },
+    b: { id: 'b', name: 'b', kind: 'project', phase: 'idea' },
+    c: { id: 'c', name: 'c', kind: 'project', phase: 'build' },
+  };
+
+  it("sorts by the lifecycle's order, a project with no phase last", async () => {
+    const { PROJECT_GRID_OPTIONS } = await import('./ProjectsGrid');
+    const rows = ['a', 'b', 'c', 'd'].map((id) => ({ ...tenant(id), phase: ROLLUPS[id]?.phase ?? null }));
+    expect([...rows].sort(PROJECT_GRID_OPTIONS.compare.phase).map((row) => row.id)).toEqual(['b', 'c', 'a', 'd']);
+  });
+
+  it('narrows the list to the phases chosen in its filter', async () => {
+    scope = { ...scope, projects: [tenant('a'), tenant('b'), tenant('c'), tenant('d')] };
+    await mount(ROLLUPS);
+    await screen.findByText('d');
+    expect(document.querySelectorAll('[data-project-phase="none"]')).toHaveLength(1);
+
+    fireEvent.click(screen.getAllByText(en.col_phase).find((el) => !el.closest('[role="columnheader"]'))!);
+    fireEvent.click(await screen.findByText(en.phase_none, { selector: 'button, [role="option"], label, span' }));
+    await waitFor(() => expect(shownNames()).toEqual(['d']));
+  });
+
+  it('filters by phase, "no phase" among the choices', async () => {
+    const { keepsProject, PHASE_FILTER_KEY, NO_PHASE } = await import('./ProjectsGrid');
+    const row = (phase: string | null) => ({ ...tenant('x'), phase });
+    const chose = (value: string[]) => ({ [PHASE_FILTER_KEY]: { value } });
+    expect(keepsProject(row('build'), {})).toBe(true);
+    expect(keepsProject(row('build'), chose(['build', 'run']))).toBe(true);
+    expect(keepsProject(row('idea'), chose(['build']))).toBe(false);
+    expect(keepsProject(row(null), chose([NO_PHASE]))).toBe(true);
+    expect(keepsProject(row(null), chose(['build']))).toBe(false);
   });
 });
 

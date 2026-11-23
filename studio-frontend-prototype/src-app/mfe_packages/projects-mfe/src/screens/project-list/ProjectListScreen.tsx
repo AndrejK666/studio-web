@@ -4,7 +4,6 @@ import { useMfeBridge } from '@gears-frontx/react';
 import { GridFailed } from '@constructor-studio/mfe-shared/grid';
 import { useProjectListScreenTranslations, useProjectListText } from '../../i18n';
 import { WorkspaceProjectsProvider, useWorkspaceProjects } from '../../shared/workspaceProjects';
-import { useProjectPhases } from '../../shared/useProjectPhases';
 import { useProjectRollups } from '../../shared/useProjectRollups';
 import { openProjectWizard } from '../../actions/wizardActions';
 import { SectionHeader } from '../../components/SectionHeader';
@@ -17,9 +16,8 @@ const ProjectList: React.FC = () => {
   const t = useProjectListText();
   const bridge = useMfeBridge();
 
-  const { loading, failed, org, workspace, retry } = useWorkspaceProjects();
-  // Project lifecycle's phase per project, where the kit applies.
-  const phases = useProjectPhases(org?.id);
+  const { loading, failed, workspace, retry } = useWorkspaceProjects();
+  // One read for the list: each project's counts and its phase (Project lifecycle).
   const rollups = useProjectRollups(workspace?.id);
   const busy = (!isLoaded && !translationsFailed) || loading;
 
@@ -51,7 +49,7 @@ const ProjectList: React.FC = () => {
           <GridFailed message={t('error_title')} retry={t('retry')} onRetry={retry} />
         ) : (
           // A new workspace starts the grid clean: its search, sort and page belong to the last one.
-          <ProjectsGrid key={workspace?.id ?? 'none'} phases={phases} rollups={rollups} />
+          <ProjectsGrid key={workspace?.id ?? 'none'} rollups={rollups} />
         )}
       </section>
     </div>

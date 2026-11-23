@@ -40,13 +40,6 @@ export interface ProjectPhase {
   next: PhaseMove[];
 }
 
-/** The organization's projects with a phase (`GET /studio-kits/v1/project-phases`). */
-export interface ProjectPhaseList {
-  installed: boolean;
-  items: { project_id: string; phase: string; phase_owner: string | null; phase_since: string | null }[];
-  total: number;
-}
-
 /** Project lifecycle's function, over the studio-kits gear (ADR-0068 §7). */
 export class ProjectPhaseApiService extends BaseApiService {
   constructor() {
@@ -57,10 +50,6 @@ export class ProjectPhaseApiService extends BaseApiService {
 
   readonly phase = this.protocol(RestEndpointProtocol).queryWith<ProjectPhase, { projectId: string }>(
     ({ projectId }) => `/project-phase?${new URLSearchParams({ project_id: projectId })}`
-  );
-
-  readonly phases = this.protocol(RestEndpointProtocol).queryWith<ProjectPhaseList, { organizationId: string }>(
-    ({ organizationId }) => `/project-phases?${new URLSearchParams({ organization_id: organizationId, limit: '200' })}`
   );
 
   setPhase(projectId: string) {
@@ -153,6 +142,8 @@ export interface ProjectRollup {
   pulls_open?: number | null;
   pulls_merged?: number | null;
   activity_days?: number | null;
+  /** The phase Project lifecycle has the project in (`idea`, `discovery`, `build`, `run`); null for none. */
+  phase?: string | null;
 }
 
 export class ProjectStatusApiService extends BaseApiService {
