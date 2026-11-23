@@ -17,7 +17,6 @@ from gears_matcher.catalogue.models import Catalogue
 from gears_matcher.judge.llm import CacheError, ResponseCache
 from gears_matcher.report import SCHEMA_VERSION
 from gears_matcher.run import (
-    VERIFIED_MODELS,
     Hooks,
     InputProblem,
     ModelFactory,
@@ -26,6 +25,7 @@ from gears_matcher.run import (
     Usage,
     check_spec,
     run_matching,
+    verified_models,
 )
 from gears_matcher.service.errors import ProblemError, unprocessable
 from gears_matcher.service.request import RunRequest
@@ -186,7 +186,7 @@ class RealRunner:
                 "gears_md_commit": catalogue.gears_md_commit,
                 "gear_gdl_commit": catalogue.gear_gdl_commit,
             },
-            "models": list(VERIFIED_MODELS),
+            "models": list(verified_models()),
         }
 
 

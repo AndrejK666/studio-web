@@ -12,6 +12,7 @@
 #     stand = "..."
 #     cmodel_id = "..."
 #     public_connector_id = "..."
+#     # or OpenAI: provider = "openai", openai_api_key = "...", models = "gpt-5.4,gpt-5.5,gpt-5.4"
 #     [gears_rust]
 #     token = "..."                    # optional: only for a private catalogue repository
 #

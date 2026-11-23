@@ -32,6 +32,7 @@ __all__ = [
     "load_env_file",
     "make_plan",
     "provider_module",
+    "selected_provider",
     "shortlists_for",
 ]
 
@@ -39,6 +40,7 @@ __all__ = [
 PROVIDERS = {
     "constructor": ("gears_matcher.judge.llm.constructor_client", "ConstructorClient"),
     "anthropic": ("gears_matcher.judge.llm.anthropic_client", "AnthropicClient"),
+    "openai": ("gears_matcher.judge.llm.openai_client", "OpenAIClient"),
 }
 DEFAULT_PROVIDER = "constructor"  # Constructor's LLM Connectors; the model is `claude-sonnet-4-6`
 # The only names read from `.env`, and only when the environment does not already have them.
@@ -49,7 +51,13 @@ ENV_NAMES = (
     "CONSTRUCTOR_CMODEL_ID",
     "CONSTRUCTOR_PUBLIC_CONNECTOR_ID",
     "CONSTRUCTOR_MODEL",
+    "GEARS_MATCHER_PROVIDER",
+    "OPENAI_API_KEY",
+    "OPENAI_BASE_URL",
+    "OPENAI_MODEL",
+    "GEARS_MATCHER_VERIFIED_MODELS",
 )
+PROVIDER_VARIABLE = "GEARS_MATCHER_PROVIDER"
 REPAIR_ALLOWANCE = 1.2  # a suggested bound leaves room for the one repair call per requirement
 
 
@@ -123,9 +131,19 @@ def provider_module(provider: str) -> ModuleType:
         ) from exc
 
 
+def selected_provider() -> str:
+    """`GEARS_MATCHER_PROVIDER` (`constructor` or `openai`), else the default. Read when asked, so
+    a `.env` loaded earlier counts."""
+    chosen = os.environ.get(PROVIDER_VARIABLE, "").strip().lower() or DEFAULT_PROVIDER
+    if chosen not in PROVIDERS:
+        raise RunError(f"{PROVIDER_VARIABLE} must be one of {', '.join(sorted(PROVIDERS))}")
+    return chosen
+
+
 def default_model(provider: str, module: ModuleType) -> str:
-    """The provider's own default; for Constructor, `CONSTRUCTOR_MODEL` may choose another."""
-    chosen = os.environ.get("CONSTRUCTOR_MODEL", "").strip() if provider == "constructor" else ""
+    """The provider's own default; `CONSTRUCTOR_MODEL` or `OPENAI_MODEL` may choose another."""
+    variable = {"constructor": "CONSTRUCTOR_MODEL", "openai": "OPENAI_MODEL"}.get(provider)
+    chosen = os.environ.get(variable, "").strip() if variable else ""
     return chosen or str(module.DEFAULT_MODEL)
 
 

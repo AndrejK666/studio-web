@@ -8,3 +8,7 @@ extract and report, the tests' confidential and large examples, and anything und
 From here the studio-web copy is the production line of the service: the command line and the
 evaluation stay in gears-matcher. A change made in one place that the other needs is carried over by
 hand in a pull request that names the commit it comes from; update the commit above when that happens.
+
+Carried over by hand from gears-matcher branch feat/openai-client (an OpenAI-compatible client and
+the choice of provider and of the three `verified` models: judge/llm/openai_client.py, judge/llm/run.py,
+and `verified_models()` in run.py). Not on gears-matcher's main yet; the commit above is unchanged.
