@@ -382,3 +382,102 @@ async fn a_damaged_part_is_sent_again_on_the_emulator() {
     );
     assert_eq!(puts.iter().filter(|s| **s == 409).count(), 1, "{puts:?}");
 }
+
+#[tokio::test]
+async fn a_build_counts_the_desk_the_files_the_bytes_and_the_images_on_the_emulator() {
+    let (url, _) = spawn_for_tests(instant()).await;
+    let api = signed_in(&url).await;
+    let p = api.projects().await.unwrap()[0].id.clone();
+    let work = tree("FROM rust:1.97\nCMD [\"api\"]\n");
+    let seen: std::sync::Mutex<Vec<Measured>> = std::sync::Mutex::default();
+    let measure = |m: Measured| -> BoxFuture<'_, ()> {
+        seen.lock().unwrap().push(m);
+        Box::pin(async {})
+    };
+    api.build_in_desk_measured(
+        &p,
+        &work,
+        "research-m1",
+        &api_image(),
+        FAST,
+        &quiet,
+        &measure,
+        &never,
+    )
+    .await
+    .unwrap();
+    let _ = std::fs::remove_dir_all(&work);
+    let seen = seen.into_inner().unwrap();
+    assert_eq!(seen.first(), Some(&Measured::Desk), "{seen:?}");
+    let uploads: Vec<_> = seen
+        .iter()
+        .filter_map(|m| match m {
+            Measured::Upload {
+                files_done,
+                files_total,
+                bytes_done,
+                bytes_total,
+            } => Some((*files_done, *files_total, *bytes_done, *bytes_total)),
+            _ => None,
+        })
+        .collect();
+    let first = uploads.first().copied().unwrap();
+    let last = uploads.last().copied().unwrap();
+    assert_eq!((first.0, first.2), (0, 0), "it starts at nothing");
+    assert_eq!(last.1, 2, "the Dockerfile and main.rs");
+    assert_eq!(
+        (last.0, last.2),
+        (last.1, last.3),
+        "and ends at every file and byte"
+    );
+    assert!(last.3 > 0);
+    assert_eq!(
+        seen.last(),
+        Some(&Measured::Images { done: 1, total: 1 }),
+        "{seen:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_project_whose_deployment_is_off_says_so_and_refuses_to_build_on_the_emulator() {
+    let (url, emu) = spawn_for_tests(instant()).await;
+    let api = signed_in(&url).await;
+    let p = api.projects().await.unwrap()[0].clone();
+    assert_eq!(p.deployment_enabled, Some(true), "a new project's is on");
+
+    emu.state_for_tests()
+        .projects
+        .get_mut(&p.id)
+        .unwrap()
+        .deployment_enabled = false;
+    assert_eq!(
+        api.projects().await.unwrap()[0].deployment_enabled,
+        Some(false)
+    );
+
+    let work = tree("FROM rust:1.97\nCMD [\"api\"]\n");
+    let refused = api
+        .build_in_desk(
+            &p.id,
+            &work,
+            "research-off",
+            &api_image(),
+            FAST,
+            &quiet,
+            &never,
+        )
+        .await
+        .unwrap_err();
+    let _ = std::fs::remove_dir_all(&work);
+    assert!(
+        format!("{refused:#}").contains("Deployment is not enabled for this project"),
+        "{refused:#}"
+    );
+
+    // Turned on (as a deploy does), it is on again.
+    api.enable_deployment(&p.id).await.unwrap();
+    assert_eq!(
+        api.projects().await.unwrap()[0].deployment_enabled,
+        Some(true)
+    );
+}

@@ -34,6 +34,32 @@ pub type Renew = Arc<dyn Fn() -> BoxFuture<'static, anyhow::Result<String>> + Se
 /// Where a long call says what it is doing.
 pub type Progress<'a> = &'a (dyn Fn(String) -> BoxFuture<'a, ()> + Send + Sync);
 
+/// How far a desk build is, counted: what a progress bar is drawn from
+/// (the text lines of [`Progress`] stay the log under it).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Measured {
+    /// The desk is starting, or busy with another build: no total is known.
+    Desk,
+    /// The prepared tree going up to the desk: files and bytes, done of total.
+    Upload {
+        files_done: u64,
+        files_total: u64,
+        bytes_done: u64,
+        bytes_total: u64,
+    },
+    /// The images Research builds, done of total.
+    Images { done: u64, total: u64 },
+}
+
+/// Where a long call says how far it is, counted.
+pub type Measure<'a> = &'a (dyn Fn(Measured) -> BoxFuture<'a, ()> + Send + Sync);
+
+/// A [`Measure`] nobody reads.
+#[cfg(test)]
+pub fn unmeasured(_: Measured) -> BoxFuture<'static, ()> {
+    Box::pin(async {})
+}
+
 /// Whether the person stopped the run.
 pub type Cancelled<'a> = &'a (dyn Fn() -> bool + Send + Sync);
 
@@ -141,6 +167,11 @@ pub struct Project {
     pub id: String,
     #[serde(default)]
     pub name: String,
+    /// The project's "Deployment" setting: off, Research refuses to build
+    /// images there ("Deployment is not enabled for this project"). `None`
+    /// where Research did not say.
+    #[serde(default)]
+    pub deployment_enabled: Option<bool>,
 }
 
 /// A hardware configuration a project's services may run on.
@@ -823,8 +854,10 @@ impl ResearchApi {
         .await
     }
 
+    /// The caller's projects, each with whether its Deployment is on: read
+    /// from the project itself where the list does not say.
     pub async fn projects(&self) -> anyhow::Result<Vec<Project>> {
-        Ok(self
+        let mut projects = self
             .call::<Results<Project>>(
                 reqwest::Method::GET,
                 "/projects",
@@ -832,7 +865,35 @@ impl ResearchApi {
                 "the projects",
             )
             .await?
-            .results)
+            .results;
+        // Owned paths, then boxed asks: a borrowing iterator chain here makes
+        // the handlers' futures fail the `Send` bound for every lifetime.
+        let missing: Vec<(usize, String)> = projects
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.deployment_enabled.is_none())
+            .map(|(n, p)| (n, format!("/projects/{}", seg(&p.id))))
+            .collect();
+        let asks: Vec<BoxFuture<'_, (usize, Option<bool>)>> = missing
+            .into_iter()
+            .map(|(n, path)| {
+                Box::pin(async move {
+                    let one = self
+                        .call::<Project>(reqwest::Method::GET, &path, Body::Empty, "the project")
+                        .await;
+                    // Not known stays not known: the list is still worth showing.
+                    (n, one.ok().and_then(|p| p.deployment_enabled))
+                }) as BoxFuture<'_, _>
+            })
+            .collect();
+        let answers: Vec<(usize, Option<bool>)> = futures_util::stream::iter(asks)
+            .buffer_unordered(UPLOAD_CONCURRENCY)
+            .collect()
+            .await;
+        for (n, on) in answers {
+            projects[n].deployment_enabled = on;
+        }
+        Ok(projects)
     }
 
     /// The project's hardware configurations, but those Research removed.
@@ -1502,6 +1563,7 @@ impl ResearchApi {
 
     /// Write the tree at `local` into the desk at `remote`, but for `.git`
     /// and `target` folders; how many files.
+    #[cfg(test)]
     async fn upload(
         &self,
         desk: &str,
@@ -1509,10 +1571,50 @@ impl ResearchApi {
         remote: &str,
         lock: Option<&str>,
     ) -> anyhow::Result<usize> {
+        self.upload_measured(desk, local, remote, lock, &unmeasured)
+            .await
+    }
+
+    /// Upload the tree at `local` to `remote` on the desk, counting the files
+    /// and bytes as they go up.
+    async fn upload_measured(
+        &self,
+        desk: &str,
+        local: &Path,
+        remote: &str,
+        lock: Option<&str>,
+        measure: Measure<'_>,
+    ) -> anyhow::Result<usize> {
         let root = local.to_path_buf();
         let (dirs, files) = tokio::task::spawn_blocking(move || walk(&root))
             .await
             .context("the prepared tree could not be read")??;
+        // The sizes for the byte count; a file that cannot be read now fails
+        // its upload below, with its own error.
+        let sized: Vec<(String, u64)> = {
+            let root = local.to_path_buf();
+            tokio::task::spawn_blocking(move || {
+                files
+                    .into_iter()
+                    .map(|rel| {
+                        let size = std::fs::metadata(root.join(&rel)).map_or(0, |m| m.len());
+                        (rel, size)
+                    })
+                    .collect()
+            })
+            .await
+            .context("the prepared tree could not be read")?
+        };
+        let files_total = sized.len() as u64;
+        let bytes_total: u64 = sized.iter().map(|(_, n)| n).sum();
+        let (mut files_done, mut bytes_done) = (0u64, 0u64);
+        measure(Measured::Upload {
+            files_done,
+            files_total,
+            bytes_done,
+            bytes_total,
+        })
+        .await;
         let mut at = String::new();
         for part in remote.split('/').filter(|p| !p.is_empty()) {
             if !at.is_empty() {
@@ -1541,8 +1643,8 @@ impl ResearchApi {
                 done?;
             }
         }
-        let count = files.len();
-        let mut writes = futures_util::stream::iter(files.into_iter().map(|rel| {
+        let count = sized.len();
+        let mut writes = futures_util::stream::iter(sized.into_iter().map(|(rel, _)| {
             let path = local.join(&rel);
             async move {
                 let content = tokio::fs::read(&path)
@@ -1550,12 +1652,22 @@ impl ResearchApi {
                     .with_context(|| format!("{} could not be read", path.display()))?;
                 self.put_file(desk, &format!("{remote}/{rel}"), &content)
                     .await
+                    .map(|()| content.len() as u64)
             }
         }))
         .buffer_unordered(UPLOAD_CONCURRENCY);
         let mut refreshed = tokio::time::Instant::now();
         while let Some(done) = writes.next().await {
-            done?;
+            // A file that grew since it was sized does not count past the total.
+            bytes_done = (bytes_done + done?).min(bytes_total);
+            files_done += 1;
+            measure(Measured::Upload {
+                files_done,
+                files_total,
+                bytes_done,
+                bytes_total,
+            })
+            .await;
             if let Some(lock) = lock
                 && refreshed.elapsed() >= DESK_LOCK_REFRESH
             {
@@ -1570,6 +1682,7 @@ impl ResearchApi {
     /// [`BUILD_FOLDER`]`/{name}`), build each of `images` there and wait for
     /// all of them. The desk is stopped afterwards if Studio started it, and
     /// the folder removed.
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     pub async fn build_in_desk(
         &self,
@@ -1581,14 +1694,43 @@ impl ResearchApi {
         progress: Progress<'_>,
         cancelled: Cancelled<'_>,
     ) -> anyhow::Result<Vec<Built>> {
+        self.build_in_desk_measured(
+            project,
+            local,
+            name,
+            images,
+            pace,
+            progress,
+            &unmeasured,
+            cancelled,
+        )
+        .await
+    }
+
+    /// Build the tree at `local` in a desk of `project`, saying how far it is
+    /// as it goes: the desk, then the files and bytes uploaded, then the
+    /// images built.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn build_in_desk_measured(
+        &self,
+        project: &str,
+        local: &Path,
+        name: &str,
+        images: &[ImageBuild],
+        pace: Pace,
+        progress: Progress<'_>,
+        measure: Measure<'_>,
+        cancelled: Cancelled<'_>,
+    ) -> anyhow::Result<Vec<Built>> {
         let desk = self.build_desk(project).await?;
+        measure(Measured::Desk).await;
         let started = self
             .take_desk(&desk, name, pace, progress, cancelled)
             .await?;
         let folder = format!("{BUILD_FOLDER}/{name}");
         let built = self
             .build_in(
-                &desk.id, local, &folder, images, pace, progress, cancelled, name,
+                &desk.id, local, &folder, images, pace, progress, measure, cancelled, name,
             )
             .await;
         if let Err(e) = self.remove_path(&desk.id, &folder).await {
@@ -1722,13 +1864,16 @@ impl ResearchApi {
         images: &[ImageBuild],
         pace: Pace,
         progress: Progress<'_>,
+        measure: Measure<'_>,
         cancelled: Cancelled<'_>,
         lock: &str,
     ) -> anyhow::Result<Vec<Built>> {
         self.exclude_from_git(desk, BUILD_FOLDER).await;
         self.remove_path(desk, folder).await?;
         progress("uploading the prepared tree to the desk".into()).await;
-        let files = self.upload(desk, local, folder, Some(lock)).await?;
+        let files = self
+            .upload_measured(desk, local, folder, Some(lock), measure)
+            .await?;
         progress(format!(
             "uploaded {files} files; building {} image(s)",
             images.len()
@@ -1751,6 +1896,8 @@ impl ResearchApi {
                 .await?;
             pending.push((i, i.name.clone(), image.id));
         }
+        let total = pending.len() as u64;
+        measure(Measured::Images { done: 0, total }).await;
         let until = tokio::time::Instant::now() + pace.build_for;
         let mut done: BTreeMap<String, Built> = BTreeMap::new();
         // Research reports `error` for a moment while it retries a build
@@ -1788,6 +1935,11 @@ impl ResearchApi {
                             done.len(),
                             pending.len()
                         ))
+                        .await;
+                        measure(Measured::Images {
+                            done: done.len() as u64,
+                            total,
+                        })
                         .await;
                     }
                     "error" if erred.insert(id.clone()) => {}

@@ -1242,6 +1242,9 @@ async fn test_environment(
 pub struct ResearchProjectDto {
     pub id: String,
     pub name: String,
+    /// The project's "Deployment" setting: off, Research refuses to build
+    /// images there. `None` where Research did not say.
+    pub deployment_enabled: Option<bool>,
 }
 
 #[derive(Debug)]
@@ -1290,6 +1293,7 @@ async fn list_research_projects(
         .map(|p| ResearchProjectDto {
             id: p.id,
             name: p.name,
+            deployment_enabled: p.deployment_enabled,
         })
         .collect();
     Ok(Json(ResearchProjectListDto {
