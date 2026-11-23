@@ -88,9 +88,9 @@ async function studioCliEntry(cfsJson, releases, target) {
 
 export const GEARBOX_ENGINE_ID = 'constructorfabric.gearbox-engine';
 
-/** The engine's pinned revision, as theia/Dockerfile's gearbox stage names it. */
+/** The desktop engine's pinned revision, as theia/Dockerfile's gearbox stage names it (ADR-0075). */
 export function gearboxRef(dockerfile) {
-    return /^ARG STUDIO_GEARBOX_REF=([0-9a-f]{7,40})\s*$/m.exec(dockerfile.replace(/\r/g, ''))?.[1];
+    return /^ARG STUDIO_GEARBOX_DESKTOP_REF=([0-9a-f]{7,40})\s*$/m.exec(dockerfile.replace(/\r/g, ''))?.[1];
 }
 
 /** The engine extension's version: gearbox-engine/build_vsix.py's `engine_version`. */
@@ -112,7 +112,7 @@ export function gearboxEngineUrl(releases, version, target) {
 async function gearboxEngineEntry(dockerfile, packageJson, releases, target) {
     const ref = gearboxRef(readFileSync(dockerfile, 'utf8'));
     if (!ref) {
-        throw new Error(`${dockerfile} no longer pins the gearbox engine as ARG STUDIO_GEARBOX_REF`);
+        throw new Error(`${dockerfile} no longer pins the desktop's gearbox engine as ARG STUDIO_GEARBOX_DESKTOP_REF`);
     }
     const version = gearboxEngineVersion(JSON.parse(readFileSync(packageJson, 'utf8')).version, ref);
     return releaseEntry(GEARBOX_ENGINE_ID, 'Gearbox engine', version, target, gearboxEngineUrl(releases, version, target), 'gearbox-engine');

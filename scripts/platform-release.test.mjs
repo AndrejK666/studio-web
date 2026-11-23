@@ -23,8 +23,8 @@ test("a branch is refused where a commit is pinned", () => {
 
 test("an empty desktop hash fails, naming the desktop", () => {
   const release = real();
-  release.gearbox.sha256_darwin_arm64 = "";
-  assert.match(releaseProblems(release).join("\n"), /sha256_darwin_arm64 is empty.*desktop/);
+  release.gearbox_desktop.sha256_darwin_arm64 = "";
+  assert.match(releaseProblems(release).join("\n"), /\[gearbox_desktop\] sha256_darwin_arm64 is empty.*desktop/);
 });
 
 test("a drifted pin is reported, and --write rewrites a derived one but not Cargo.lock", () => {

@@ -54,10 +54,10 @@ FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc401
 # Every STUDIO_GEARBOX_* value below is platform-release.toml's (ADR-0075),
 # written by `node scripts/platform-release.mjs --write`; do not edit them here.
 ARG STUDIO_GEARBOX_REPO=https://github.com/AndrejK666/gearbox
-ARG STUDIO_GEARBOX_RELEASE=snapshot-f2deac5
-ARG STUDIO_GEARBOX_VERSION=0.1.0-f2deac5
-ARG STUDIO_GEARBOX_REF=f2deac58fee0144ad418abdd36abbc5d378e1474
-ARG STUDIO_GEARBOX_SHA256=acc86bffdde0417c91dfad0e3358ac14cd65953599ca72ca18c056110b62b305
+ARG STUDIO_GEARBOX_RELEASE=snapshot-82b909a
+ARG STUDIO_GEARBOX_VERSION=0.1.0-82b909a
+ARG STUDIO_GEARBOX_REF=82b909a1f3f087029432edfb02eb39a0018f4bf3
+ARG STUDIO_GEARBOX_SHA256=449feec2e799e2ceb671383dbfb49ae18caa97bc7d52445342c4b24c6b0ca3cd
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
  && rm -rf /var/lib/apt/lists/* \
  && name="gearbox-${STUDIO_GEARBOX_VERSION}-x86_64-unknown-linux-gnu" \

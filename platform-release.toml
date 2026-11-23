@@ -7,8 +7,8 @@
 #   node scripts/check-platform-release.mjs      # the gate: all of them agree
 #
 # Moving the engine to a new release: set `release`, `version` and `ref`, then
-# `node scripts/platform-release.mjs --fetch-sha256 --write` fills the three
-# archive hashes from the release's SHA256SUMS.
+# `node scripts/platform-release.mjs --fetch-sha256 --write` fills the archive
+# hashes from the release's SHA256SUMS.
 #
 # Only a flat `key = "string"` per line under a `[section]` is read.
 
@@ -20,15 +20,25 @@
 repo = "https://github.com/AndrejK666/gears-rust.git"
 commit = "75f5d9eaffe1a78552e004dfed0aab14cbb266d7"
 
-# The Gearbox engine: one release for the server and builder images, the IDE
-# session image and the desktop's engine extension. A snapshot of the fork until
+# The Gearbox engine: one release for the server and builder images and the
+# IDE session image. A snapshot of the fork until
 # constructorfabric/gearbox#17 and the GDL 1.6 infra services merge.
 [gearbox]
+repo = "https://github.com/AndrejK666/gearbox"
+release = "snapshot-82b909a"
+version = "0.1.0-82b909a"
+ref = "82b909a1f3f087029432edfb02eb39a0018f4bf3"
+sha256_linux_x64 = "449feec2e799e2ceb671383dbfb49ae18caa97bc7d52445342c4b24c6b0ca3cd"
+
+# The engine the desktop's extension packs (theia/gearbox-engine), for Windows
+# and macOS. Its own release while [gearbox] is a snapshot built without
+# GitHub Actions, which has a Linux archive only; equal to [gearbox] again once
+# a release carries all three archives. `--fetch-sha256` fills both hashes.
+[gearbox_desktop]
 repo = "https://github.com/AndrejK666/gearbox"
 release = "snapshot-f2deac5"
 version = "0.1.0-f2deac5"
 ref = "f2deac58fee0144ad418abdd36abbc5d378e1474"
-sha256_linux_x64 = "acc86bffdde0417c91dfad0e3358ac14cd65953599ca72ca18c056110b62b305"
 sha256_win32_x64 = "49a3577380099f184f3a6447443451cfe680366e3e837258412a23d7c593f97b"
 sha256_darwin_arm64 = "b8ff4472a8545a14cb0bfebf4b113b32fb8f768374615783d57878d6903a1277"
 

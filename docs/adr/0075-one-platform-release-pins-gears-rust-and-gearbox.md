@@ -21,6 +21,8 @@ Status: **proposed** · Date: 2026-11-23
   - [2. Every other pin is derived](#2-every-other-pin-is-derived)
   - [3. The gate](#3-the-gate)
   - [4. Moving the platform](#4-moving-the-platform)
+  - [5. The desktop may trail the images](#5-the-desktop-may-trail-the-images)
+  - [6. A gear published under another name](#6-a-gear-published-under-another-name)
 - [Consequences](#consequences)
 - [Confirmation](#confirmation)
 
@@ -64,7 +66,9 @@ them moved ahead of another and something broke on Dev, not in review:
 - `[gears_rust]`: the repository and the **commit** the Gearbox corpus is read
   at -- never a branch;
 - `[gearbox]`: the engine's repository, release, version, commit, and the
-  SHA-256 of its Linux, Windows and macOS archives;
+  SHA-256 of its Linux archive -- the server, builder and session images;
+- `[gearbox_desktop]`: the same for the desktop's engine extension, with the
+  SHA-256 of its Windows and macOS archives (see 5);
 - `[toolkit]`: the `cf-gears-toolkit` version studio-backend links;
 - `[gears_matcher]`: the commits the matcher's catalogue is read at.
 
@@ -72,7 +76,8 @@ them moved ahead of another and something broke on Dev, not in review:
 
 `node scripts/platform-release.mjs --write` writes them: the engine `ARG`s of
 `studio-backend/Dockerfile`, `studio-backend/Dockerfile.src` and
-`theia/Dockerfile` (with the desktop's hashes, which `gearbox-engine.yml` reads),
+`theia/Dockerfile` (with the desktop's `STUDIO_GEARBOX_DESKTOP_*` and hashes,
+which `gearbox-engine.yml` and the desktop's assistants manifest read),
 the corpus of `docker-compose.yml` and `deploy/helm/values-dev.example.yaml`,
 the toolkit in `studio-backend/Cargo.toml`, and the `gears-rust` source of
 `product.gdl` (which `scripts/product-gdl.mjs` also writes from the file).
@@ -96,6 +101,30 @@ corpus and composes Studio's own product with `gearbox generate` -- no error,
 and no GBX0714 "two copies" warning, which a cluster build refuses. Real
 environment values outside the repository (Dev's Helm values) follow the
 example file in the same change.
+
+### 5. The desktop may trail the images
+
+GitHub Actions do not run on the fork, so an engine snapshot can be built only
+where Docker is: Linux. `snapshot-82b909a` (2026-11-23) has a Linux archive
+and nothing else. The desktop then keeps the last release that has Windows and
+macOS archives, as its own `[gearbox_desktop]` section, rather than an empty
+hash that ships no engine at all; the gate requires both hashes either way.
+When a release carries all three archives again, `[gearbox_desktop]` equals
+`[gearbox]`.
+
+### 6. A gear published under another name
+
+The product's `Cargo.lock` is what keeps the platform's crates single
+(GBX0714). It pins packages by name, and a gear can be on crates.io under a name
+its description does not give: `graph-storage` is described as
+`cf-gears-graph-storage` and published as `weftgraph`. Built from the corpus,
+it linked a second toolkit, and Studioweb's build refused. The engine
+(`snapshot-82b909a`) reads the product's own `Cargo.toml` beside the lock: a
+dependency that links a gear's library under another package
+(`graph_storage = { package = "weftgraph" }`) names the gear's published
+package, and when the lock pins it, the build takes it from there. Nothing is
+named for Studioweb: any product, and any gear published under another name,
+follows from its own manifest.
 
 ## Consequences
 
