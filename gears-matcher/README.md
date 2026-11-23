@@ -46,6 +46,12 @@ stand = "..."
 cmodel_id = "..."
 public_connector_id = "..."
 
+# Or OpenAI instead of the connector (the three models of `verified`: candidates, candidates, checks):
+# provider = "openai"
+# openai_api_key = "..."
+# openai_base_url = "..."       # optional, default https://api.openai.com/v1 (https only)
+# models = "gpt-5.4,gpt-5.5,gpt-5.4"   # or one id for all three; unset: Sonnet, Opus, gpt-5.4
+
 [gears_rust]                   # used by `gears-service-prepare checkout`
 url = "https://github.com/constructorfabric/gears-rust.git"
 token = "..."                  # optional: a private gears-rust

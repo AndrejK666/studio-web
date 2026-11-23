@@ -15,6 +15,7 @@ caller gives it hooks (cancel, progress, usage) and gets a result back. The comm
 evaluation stay in gears-matcher (see `SOURCE`).
 """
 
+import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -48,10 +49,31 @@ __all__ = [
     "Usage",
     "check_spec",
     "run_matching",
+    "verified_models",
 ]
 
 # T11 D10: candidates (Sonnet, Opus), then the strict and report checks (gpt-5.4); fixed, measured.
 VERIFIED_MODELS = ("claude-sonnet-4-6", "claude-opus-5", "gpt-5.4")
+VERIFIED_MODELS_VARIABLE = "GEARS_MATCHER_VERIFIED_MODELS"
+
+
+def verified_models() -> tuple[str, str, str]:
+    """The three models of `verified` (candidates 1, candidates 2, checks): the fixed ones, unless
+    `GEARS_MATCHER_VERIFIED_MODELS` names one id for all three or three ids, comma separated (the
+    service's `[llm] models`). Read when asked, so a config file loaded at start counts."""
+    raw = os.environ.get(VERIFIED_MODELS_VARIABLE, "").strip()
+    if not raw:
+        return VERIFIED_MODELS
+    names = tuple(n.strip() for n in raw.split(",") if n.strip())
+    if len(names) == 1:
+        return (names[0],) * 3
+    if len(names) != len(VERIFIED_MODELS):
+        raise ValueError(
+            f"{VERIFIED_MODELS_VARIABLE} takes one model id or three, got {len(names)}"
+        )
+    return (names[0], names[1], names[2])
+
+
 # A model id to (the cache identity of its replies, a client that is ready to send).
 ModelFactory = Callable[[str], tuple[str, ModelClient]]
 
@@ -198,7 +220,7 @@ def _extract_if_needed(
     if bound is None or not loaded.handed:
         return loaded.spec, None, None
     meter.extracting.limit = bound
-    identity, client = inputs.model_factory(VERIFIED_MODELS[0])
+    identity, client = inputs.model_factory(verified_models()[0])
     try:
         extractor = Extractor(
             vr.Counted(client, meter.extracting),
@@ -233,9 +255,10 @@ def _match(
     """Step 3: the `verified` matcher (T11 note §2) on the spec as it now stands."""
     cat = inputs.catalogue
     meter.matching.limit = inputs.max_calls
+    chosen = verified_models()
     made = {
         role: inputs.model_factory(name)
-        for role, name in zip(("first", "second", "checks"), VERIFIED_MODELS, strict=True)
+        for role, name in zip(("first", "second", "checks"), chosen, strict=True)
     }
     counted = {role: vr.Counted(client, meter.matching) for role, (_, client) in made.items()}
     big = inputs.max_calls  # each part's own bound; the shared budget is what limits the run
@@ -267,10 +290,10 @@ def _match(
     )  # fmt: skip
     settings = RunSettings(
         judge=(
-            f"verified: candidates {VERIFIED_MODELS[0]} + {VERIFIED_MODELS[1]} (prompt "
-            f"{CATALOGUE_PROMPT}); checks {VERIFIED_MODELS[0]} / {VERIFIED_MODELS[2]} (prompt "
-            f"{CHECK_PROMPT_HASH}); report check {VERIFIED_MODELS[2]} (prompt "
-            f"{REPORT_PROMPT_HASH}); main-job check {VERIFIED_MODELS[1]} (prompt "
+            f"verified: candidates {chosen[0]} + {chosen[1]} (prompt "
+            f"{CATALOGUE_PROMPT}); checks {chosen[0]} / {chosen[2]} (prompt "
+            f"{CHECK_PROMPT_HASH}); report check {chosen[2]} (prompt "
+            f"{REPORT_PROMPT_HASH}); main-job check {chosen[1]} (prompt "
             f"{MAIN_JOB_PROMPT_HASH})"
         ),
         shortlist="whole catalogue (no shortlist)",

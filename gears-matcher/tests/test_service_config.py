@@ -183,3 +183,20 @@ def test_checkout_without_a_branch_fetches_the_named_commits(tmp_path: Path) -> 
     assert prepare_checkout(env) == f"gears-rust ready at {md[:9]}, {gdl[:9]}", (
         "a fetch the second time"
     )
+
+
+def test_the_llm_section_takes_the_openai_provider_and_the_model_combo(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(
+        '[llm]\nprovider = "openai"\nopenai_api_key = "k"\nopenai_base_url = "https://x.test/v1"\n'
+        'models = "gpt-5.4,gpt-5.5,gpt-5.4"\n',
+        encoding="utf-8",
+    )
+    env: dict[str, str] = {}
+    load_config(path, env)
+    assert env == {
+        "GEARS_MATCHER_PROVIDER": "openai",
+        "OPENAI_API_KEY": "k",
+        "OPENAI_BASE_URL": "https://x.test/v1",
+        "GEARS_MATCHER_VERIFIED_MODELS": "gpt-5.4,gpt-5.5,gpt-5.4",
+    }

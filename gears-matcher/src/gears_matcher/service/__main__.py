@@ -34,13 +34,13 @@ from psycopg_pool import PoolTimeout
 from gears_matcher.catalogue import PINNED_GDL_COMMIT, PINNED_MD_COMMIT, build_from_repo
 from gears_matcher.judge.llm import ModelClient
 from gears_matcher.judge.llm.run import (
-    DEFAULT_PROVIDER,
     RunError,
     load_client,
     load_env_file,
     provider_module,
+    selected_provider,
 )
-from gears_matcher.run import VERIFIED_MODELS, ModelFactory
+from gears_matcher.run import ModelFactory, verified_models
 from gears_matcher.service.app import create_app
 from gears_matcher.service.config import ConfigError, load_config
 from gears_matcher.service.manager import RunManager
@@ -124,17 +124,18 @@ def _number(env: Mapping[str, str], name: str, default: int) -> int:
 
 def model_factory() -> ModelFactory:
     """Clients are built once per model and shared; a missing key fails here, at start."""
-    module = provider_module(DEFAULT_PROVIDER)
+    provider = selected_provider()
+    module = provider_module(provider)
     made: dict[str, tuple[str, ModelClient]] = {}
     lock = threading.Lock()
 
     def factory(name: str) -> tuple[str, ModelClient]:
         with lock:
             if name not in made:
-                made[name] = (module.label(name), load_client(module, DEFAULT_PROVIDER, name))
+                made[name] = (module.label(name), load_client(module, provider, name))
             return made[name]
 
-    for name in VERIFIED_MODELS:
+    for name in dict.fromkeys(verified_models()):
         factory(name)
     return factory
 
