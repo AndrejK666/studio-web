@@ -51,6 +51,8 @@ FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc401
 # Until constructorfabric/gearbox#17 (GDL 1.5, `frontend = frontx_product(...)`)
 # merges, the engine is the snapshot of that PR's branch on its author's fork;
 # move back to a constructorfabric/gearbox release once it does.
+# Every STUDIO_GEARBOX_* value below is platform-release.toml's (ADR-0075),
+# written by `node scripts/platform-release.mjs --write`; do not edit them here.
 ARG STUDIO_GEARBOX_REPO=https://github.com/AndrejK666/gearbox
 ARG STUDIO_GEARBOX_RELEASE=snapshot-f2deac5
 ARG STUDIO_GEARBOX_VERSION=0.1.0-f2deac5

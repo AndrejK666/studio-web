@@ -1,0 +1,47 @@
+# The platform release Studio is built and composed against (ADR-0075).
+#
+# One place for the versions of gears-rust and the Gearbox engine that every
+# other pin in this repository is derived from. Change a value here, then
+#
+#   node scripts/platform-release.mjs --write    # rewrite every derived pin
+#   node scripts/check-platform-release.mjs      # the gate: all of them agree
+#
+# Moving the engine to a new release: set `release`, `version` and `ref`, then
+# `node scripts/platform-release.mjs --fetch-sha256 --write` fills the three
+# archive hashes from the release's SHA256SUMS.
+#
+# Only a flat `key = "string"` per line under a `[section]` is read.
+
+# The gears-rust commit the Gearbox corpus is read at, everywhere: the
+# backend's catalogue on Dev, Test and the stand (corpusRef, never a branch),
+# and the `gears-rust` source of product.gdl. A commit of the fork branch that
+# carries gear.gdl descriptors until constructorfabric/gears-rust#4793 merges.
+[gears_rust]
+repo = "https://github.com/AndrejK666/gears-rust.git"
+commit = "75f5d9eaffe1a78552e004dfed0aab14cbb266d7"
+
+# The Gearbox engine: one release for the server and builder images, the IDE
+# session image and the desktop's engine extension. A snapshot of the fork until
+# constructorfabric/gearbox#17 and the GDL 1.6 infra services merge.
+[gearbox]
+repo = "https://github.com/AndrejK666/gearbox"
+release = "snapshot-f2deac5"
+version = "0.1.0-f2deac5"
+ref = "f2deac58fee0144ad418abdd36abbc5d378e1474"
+sha256_linux_x64 = "acc86bffdde0417c91dfad0e3358ac14cd65953599ca72ca18c056110b62b305"
+sha256_win32_x64 = "49a3577380099f184f3a6447443451cfe680366e3e837258412a23d7c593f97b"
+sha256_darwin_arm64 = "b8ff4472a8545a14cb0bfebf4b113b32fb8f768374615783d57878d6903a1277"
+
+# The platform toolkit studio-backend links from crates.io: Cargo.toml pins it
+# with `=` and Cargo.lock must resolve exactly this version.
+[toolkit]
+version = "0.13.1"
+
+# The gears-rust commits the gears matcher's catalogue is read at (its
+# docs/GEARS.md and its gear.gdl files), and so the snapshot in
+# studio-backend/src/gears_matcher/fixtures/gear-directories.json. The matcher's
+# own Helm values live with the matcher (its branch), not here; keep them equal.
+[gears_matcher]
+repo = "https://github.com/constructorfabric/gears-rust.git"
+gears_md_commit = "62d89b0ca1e507bd33cb6345eeaab23da2776198"
+gear_gdl_commit = "70a5354d83ed95b84361386f7190b46c5e49c668"
