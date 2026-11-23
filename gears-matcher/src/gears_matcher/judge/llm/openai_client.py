@@ -39,6 +39,7 @@ __all__ = [
     "DEFAULT_BASE_URL",
     "DEFAULT_MODEL",
     "KEY_VARIABLE",
+    "MAX_TOKENS",
     "SETTING_VARIABLES",
     "ClientError",
     "MissingConfigError",
