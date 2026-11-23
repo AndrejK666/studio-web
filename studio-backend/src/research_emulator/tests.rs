@@ -303,9 +303,10 @@ async fn a_build_reads_its_dockerfile_from_the_desk_and_streams_its_log() {
     .send()
     .await
     .unwrap();
+    // Research's rules: a desk whose file service is not running answers 503.
     assert_eq!(
         early.status(),
-        409,
+        503,
         "a desk's files are reachable once it runs"
     );
 

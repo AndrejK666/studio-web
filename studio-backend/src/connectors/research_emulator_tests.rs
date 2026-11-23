@@ -314,7 +314,10 @@ async fn a_tree_and_a_12_mb_file_go_up_by_the_desks_rules_on_the_emulator() {
     let refused: Vec<_> = st
         .calls
         .iter()
+        // A DELETE before a parts upload finds no file the first time: 404 is
+        // its answer then, not a missing folder.
         .filter(|c| matches!(c.status, 400 | 404 | 409 | 413))
+        .filter(|c| !(c.status == 404 && c.method == "DELETE"))
         .map(|c| format!("{} {} {}", c.status, c.method, c.path))
         .collect();
     assert!(
