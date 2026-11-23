@@ -8,22 +8,18 @@ backend:
   # A subject id is per-installation, so this value cannot be shared with
   # another environment — this is `admin` in the studio realm of studio-dev.cfabric.org.
   platformAdmins: "46ac15da-3618-4fd2-9a8e-67699228c132"
-  # The gear catalogue in the IDE's Building mode. The corpus is the fork
-  # branch that carries gear.gdl descriptors until
-  # constructorfabric/gears-rust#4793 merges; named here so dev does not
-  # silently follow a change of the code's default.
-  #
-  # The branch again, not a commit: from 2026-10-23 dev was pinned to
-  # b90bea45, the branch's last commit the engine then in the Dockerfiles could
-  # read. The engine is now a constructorfabric/gearbox release
-  # (STUDIO_GEARBOX_RELEASE), which reads the branch's GDL (`deps` on
-  # `gear(...)`, `helm_chart(...)`) and reports an error in b90bea45 itself.
-  # Move this and the engine together: an engine older than the branch's GDL
-  # empties the catalogue (500 on /gearbox/catalogue).
+  # The gear catalogue in the IDE's Building mode. The corpus is a commit of
+  # the fork branch that carries gear.gdl descriptors until
+  # constructorfabric/gears-rust#4793 merges, never the branch itself: a
+  # branch that moves on its own outran the engine (2026-10-17, 2026-10-23)
+  # and emptied the catalogue (500 on /gearbox/catalogue). Both values are
+  # platform-release.toml's (ADR-0075), released with the engine the images
+  # carry; scripts/platform-release.mjs --write keeps them here, and the real
+  # Dev values follow this file.
   gearbox:
     enabled: true
-    corpusUrl: "https://github.com/MikeFalcon77/gears-rust.git"
-    corpusRef: "feature/gearbox"
+    corpusUrl: "https://github.com/AndrejK666/gears-rust.git"
+    corpusRef: "75f5d9eaffe1a78552e004dfed0aab14cbb266d7"
     # The checkouts outlive a restart (#848), as the artifact clones do.
     persistence:
       enabled: true

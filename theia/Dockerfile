@@ -201,16 +201,19 @@ FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe6
 # and the GDL 1.6 infra services on top of it (`feat/product-infra`) merge, the
 # engine is a snapshot of that branch on its author's fork; move back to a
 # constructorfabric/gearbox release once they do.
+# Every STUDIO_GEARBOX_* value below is platform-release.toml's (ADR-0075),
+# written by `node scripts/platform-release.mjs --write`; do not edit them here.
 ARG STUDIO_GEARBOX_REPO=https://github.com/AndrejK666/gearbox
 ARG STUDIO_GEARBOX_RELEASE=snapshot-f2deac5
 ARG STUDIO_GEARBOX_VERSION=0.1.0-f2deac5
 ARG STUDIO_GEARBOX_REF=f2deac58fee0144ad418abdd36abbc5d378e1474
 ARG STUDIO_GEARBOX_SHA256=acc86bffdde0417c91dfad0e3358ac14cd65953599ca72ca18c056110b62b305
 # Not used here: gearbox-engine.yml reads them for the desktop's archives.
-# Empty when the release has no archive for that platform: the workflow then
-# packs no engine for it.
-ARG STUDIO_GEARBOX_SHA256_WIN32_X64=
-ARG STUDIO_GEARBOX_SHA256_DARWIN_ARM64=
+# Never empty: a release without an archive for a desktop platform is not one
+# Studio pins, and both the workflow and scripts/check-platform-release.mjs
+# fail on an empty hash instead of leaving the desktop on an older engine.
+ARG STUDIO_GEARBOX_SHA256_WIN32_X64=49a3577380099f184f3a6447443451cfe680366e3e837258412a23d7c593f97b
+ARG STUDIO_GEARBOX_SHA256_DARWIN_ARM64=b8ff4472a8545a14cb0bfebf4b113b32fb8f768374615783d57878d6903a1277
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* \
     && name="gearbox-${STUDIO_GEARBOX_VERSION}-x86_64-unknown-linux-gnu" \

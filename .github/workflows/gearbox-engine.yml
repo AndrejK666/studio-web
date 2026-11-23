@@ -14,8 +14,9 @@ name: Gearbox engine extension
 # revision in the Dockerfile is a new release; a change to the packaging alone
 # needs that package.json's version raised. A platform added later goes into
 # the release that is already there, beside the VSIXs it holds. A platform
-# whose SHA-256 the Dockerfile leaves empty has no archive in that engine
-# release; it is skipped, not failed, and stays in the matrix for the next one.
+# whose SHA-256 the Dockerfile leaves empty fails the run: the pins come from
+# platform-release.toml (ADR-0075), which names every desktop archive, and a
+# skipped platform used to leave the desktop on an older engine than the portal.
 #
 # A pull request builds it and keeps the VSIXs as artifacts. A push publishes
 # what the version's release is missing -- on the upstream that is main; a
@@ -87,8 +88,8 @@ jobs:
             exit 1
           fi
           if [ -z "$sha256" ]; then
-            echo "::notice::$release has no ${{ matrix.target }} archive (${{ matrix.sha256 }} is empty); no engine for it this time"
-            echo "SKIP=true" >> "$GITHUB_ENV"
+            echo "::error::${{ matrix.sha256 }} is empty: $release would give the ${{ matrix.target }} desktop no engine. Pin a release that publishes it in platform-release.toml (node scripts/platform-release.mjs --fetch-sha256 --write)"
+            exit 1
           fi
           version="$(node -p "require('./theia/gearbox-engine/package.json').version")-${ref:0:7}"
           {

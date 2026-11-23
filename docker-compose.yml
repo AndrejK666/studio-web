@@ -292,11 +292,12 @@ services:
       STUDIO_WORKSPACES_ROOT: /srv/cf-studio-workspaces
       # Product previews through the Gearbox engine (components_catalog/
       # gearbox.rs): the gear-corpus checkout lives here, refreshed at most
-      # every STUDIO_GEARBOX_REFRESH_SECS. The corpus is the branch that carries
-      # gear.gdl descriptors until constructorfabric/gears-rust#4793 merges.
+      # every STUDIO_GEARBOX_REFRESH_SECS. The corpus is platform-release.toml's
+      # gears-rust commit (ADR-0075), written here by scripts/platform-release.mjs:
+      # a commit, not a branch, which can outrun the engine.
       STUDIO_GEARBOX_WORKDIR: /var/lib/studio/gearbox
-      STUDIO_GEARBOX_CORPUS_URL: ${STUDIO_GEARBOX_CORPUS_URL:-https://github.com/MikeFalcon77/gears-rust.git}
-      STUDIO_GEARBOX_CORPUS_REF: ${STUDIO_GEARBOX_CORPUS_REF:-feature/gearbox}
+      STUDIO_GEARBOX_CORPUS_URL: ${STUDIO_GEARBOX_CORPUS_URL:-https://github.com/AndrejK666/gears-rust.git}
+      STUDIO_GEARBOX_CORPUS_REF: ${STUDIO_GEARBOX_CORPUS_REF:-75f5d9eaffe1a78552e004dfed0aab14cbb266d7}
       # The source id descriptions name the corpus by; unset takes the corpus
       # repository's name (gears-rust here).
       # STUDIO_GEARBOX_CORPUS_ID: gears-rust
