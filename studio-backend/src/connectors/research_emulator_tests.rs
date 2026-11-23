@@ -303,7 +303,10 @@ async fn a_tree_and_a_12_mb_file_go_up_by_the_desks_rules_on_the_emulator() {
 
     let st = emu.state_for_tests();
     let stored = &st.files[&desk];
-    assert_eq!(stored.files["studio-build/t1/repo/a/b/c/deep.txt"], b"deep\n");
+    assert_eq!(
+        stored.files["studio-build/t1/repo/a/b/c/deep.txt"],
+        b"deep\n"
+    );
     assert!(
         stored.files["studio-build/t1/repo/a/big.bin"] == big,
         "the parts make the file again"
@@ -314,7 +317,10 @@ async fn a_tree_and_a_12_mb_file_go_up_by_the_desks_rules_on_the_emulator() {
         .filter(|c| matches!(c.status, 400 | 404 | 409 | 413))
         .map(|c| format!("{} {} {}", c.status, c.method, c.path))
         .collect();
-    assert!(refused.is_empty(), "never 413, never a missing folder: {refused:?}");
+    assert!(
+        refused.is_empty(),
+        "never 413, never a missing folder: {refused:?}"
+    );
     let parts = st
         .calls
         .iter()
@@ -334,7 +340,11 @@ async fn a_desk_whose_file_service_is_down_is_started_and_the_write_goes_on_on_t
     api.put_file(&desk, "x.txt", b"x").await.unwrap();
     let st = emu.state_for_tests();
     assert_eq!(st.files[&desk].files["x.txt"], b"x");
-    let seen: Vec<String> = st.calls.iter().map(|c| format!("{} {}", c.status, c.method)).collect();
+    let seen: Vec<String> = st
+        .calls
+        .iter()
+        .map(|c| format!("{} {}", c.status, c.method))
+        .collect();
     assert!(seen.contains(&"503 PUT".to_owned()), "{seen:?}");
     assert!(
         st.calls
@@ -362,6 +372,10 @@ async fn a_damaged_part_is_sent_again_on_the_emulator() {
         .filter(|c| c.method == "PUT" && c.path.ends_with("/weights.bin"))
         .map(|c| c.status)
         .collect();
-    assert_eq!(puts.len(), 4, "three parts and the damaged one again: {puts:?}");
+    assert_eq!(
+        puts.len(),
+        4,
+        "three parts and the damaged one again: {puts:?}"
+    );
     assert_eq!(puts.iter().filter(|s| **s == 409).count(), 1, "{puts:?}");
 }

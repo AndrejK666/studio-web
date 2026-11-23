@@ -1058,7 +1058,11 @@ async fn a_12_mb_file_goes_up_in_three_parts_of_exactly_5_mib_each_but_the_last(
     assert_eq!(
         parts,
         [
-            ("bytes 0-5242879/12582912".to_owned(), sum(0, 5_242_880), 5_242_880),
+            (
+                "bytes 0-5242879/12582912".to_owned(),
+                sum(0, 5_242_880),
+                5_242_880
+            ),
             (
                 "bytes 10485760-12582911/12582912".to_owned(),
                 sum(10_485_760, 12_582_912),

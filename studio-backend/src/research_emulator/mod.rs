@@ -1209,18 +1209,26 @@ fn dav(emu: &Shared, m: &str, desk: &str, rel: &str, headers: &HeaderMap, body: 
     }
     // As on a stand: the desk's file service is not there until it runs.
     if d.status != "running" {
-        return (StatusCode::SERVICE_UNAVAILABLE, "the desk's file service is not running")
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "the desk's file service is not running",
+        )
             .into_response();
     }
     if body.len() > DAV_MAX_BODY {
-        return (StatusCode::PAYLOAD_TOO_LARGE, "413 Request Entity Too Large").into_response();
+        return (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "413 Request Entity Too Large",
+        )
+            .into_response();
     }
-    let corrupt = if m == "PUT" && headers.contains_key("content-range") && st.corrupt_next_parts > 0 {
-        st.corrupt_next_parts -= 1;
-        true
-    } else {
-        false
-    };
+    let corrupt =
+        if m == "PUT" && headers.contains_key("content-range") && st.corrupt_next_parts > 0 {
+            st.corrupt_next_parts -= 1;
+            true
+        } else {
+            false
+        };
     let rel = unescape(rel).trim_matches('/').to_owned();
     let files = st.files.entry(d.id).or_default();
     let parent_ok = |files: &state::DeskFiles, p: &str| match p.rsplit_once('/') {

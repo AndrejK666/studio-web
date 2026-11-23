@@ -599,7 +599,11 @@ impl ResearchApi {
                     "the desk's file service did not start within {} minutes after it \
                      answered 502/503 (Research reports it {})",
                     self.dav_retry.start_for.as_secs().div_ceil(60),
-                    if status.is_empty() { "without a status" } else { status.as_str() }
+                    if status.is_empty() {
+                        "without a status"
+                    } else {
+                        status.as_str()
+                    }
                 );
             }
             tokio::time::sleep(self.dav_retry.poll).await;
@@ -974,47 +978,48 @@ impl ResearchApi {
         let sends: Vec<BoxFuture<'_, anyhow::Result<()>>> = parts
             .into_iter()
             .map(|(start, part)| {
-            let url = url.clone();
-            Box::pin(async move {
-                debug_assert!(part.len() <= MAX_BODY);
-                let end = start + part.len() - 1;
-                let headers = [
-                    ("Content-Range", format!("bytes {start}-{end}/{total}")),
-                    ("X-CheckSum", hex::encode(sha2::Sha256::digest(part))),
-                ];
-                let what = format!(
-                    "writing part {} of {count} of {path} (bytes {start}-{end}) to the desk",
-                    start / PART_SIZE + 1
-                );
-                let mut tries = 0;
-                loop {
-                    tries += 1;
-                    let res = self
-                        .send_dav(
-                            desk,
-                            reqwest::Method::PUT,
-                            &url,
-                            Body::Bytes(part),
-                            &headers,
-                            &what,
-                        )
-                        .await?;
-                    if res.status().is_success() {
-                        return anyhow::Ok(());
+                let url = url.clone();
+                Box::pin(async move {
+                    debug_assert!(part.len() <= MAX_BODY);
+                    let end = start + part.len() - 1;
+                    let headers = [
+                        ("Content-Range", format!("bytes {start}-{end}/{total}")),
+                        ("X-CheckSum", hex::encode(sha2::Sha256::digest(part))),
+                    ];
+                    let what = format!(
+                        "writing part {} of {count} of {path} (bytes {start}-{end}) to the desk",
+                        start / PART_SIZE + 1
+                    );
+                    let mut tries = 0;
+                    loop {
+                        tries += 1;
+                        let res = self
+                            .send_dav(
+                                desk,
+                                reqwest::Method::PUT,
+                                &url,
+                                Body::Bytes(part),
+                                &headers,
+                                &what,
+                            )
+                            .await?;
+                        if res.status().is_success() {
+                            return anyhow::Ok(());
+                        }
+                        let status = res.status();
+                        let e = Self::dav_refused(res, &what, path).await;
+                        // A part the desk will never take as sent (its size, its
+                        // range, its length) is not sent again.
+                        if tries >= PART_TRIES
+                            || status == reqwest::StatusCode::BAD_REQUEST
+                            || status == reqwest::StatusCode::PAYLOAD_TOO_LARGE
+                        {
+                            return Err(e.context(format!("after {tries} tries")));
+                        }
                     }
-                    let status = res.status();
-                    let e = Self::dav_refused(res, &what, path).await;
-                    // A part the desk will never take as sent (its size, its
-                    // range, its length) is not sent again.
-                    if tries >= PART_TRIES || status == reqwest::StatusCode::BAD_REQUEST
-                        || status == reqwest::StatusCode::PAYLOAD_TOO_LARGE
-                    {
-                        return Err(e.context(format!("after {tries} tries")));
-                    }
-                }
-            }) as BoxFuture<'_, _>
-        })
-        .collect();
+                }) as BoxFuture<'_, _>
+            })
+            .collect();
         let mut sent = futures_util::stream::iter(sends).buffer_unordered(PART_CONCURRENCY);
         while let Some(done) = sent.next().await {
             done?;
