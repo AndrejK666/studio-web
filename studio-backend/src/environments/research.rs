@@ -374,8 +374,9 @@ fn lay_out(
         let spec = app.services.iter().find(|s| s.image == pending);
         let context = work.join(&i.context);
         let source = work.join(&i.dockerfile);
-        let mut text = std::fs::read_to_string(&source)
+        let text = std::fs::read_to_string(&source)
             .with_context(|| format!("no Dockerfile for {}", i.app))?;
+        let mut text = qualified_bases(&text);
         let dir = format!("{OVERLAY_DIR}/{}", i.app);
         if let Some(spec) = spec {
             text.push_str(&spec.overlay(&dir));
@@ -419,7 +420,7 @@ fn lay_out(
     }
     for db in app.services.iter().filter(|s| s.database) {
         let dir = root.join(format!("{OVERLAY_DIR}-db")).join(&db.name);
-        let mut text = format!("FROM {database_image}\n");
+        let mut text = qualified_bases(&format!("FROM {database_image}\n"));
         text.push_str(&db.overlay("."));
         for (path, content) in db.overlay_files() {
             write(&dir.join(path), &content)?;
@@ -435,6 +436,112 @@ fn lay_out(
         bakes.insert(key, db.bake());
     }
     Ok((builds, bakes))
+}
+
+/// Research builds images with buildah, which enforces fully qualified
+/// image names: a short `FROM pgvector/pgvector:pg18` fails with "short-name
+/// resolution enforced but cannot prompt without a TTY" (Research DEV,
+/// 2026-11-23). Every `FROM` that names an image by a short name gets Docker
+/// Hub's: `rust:1` becomes `docker.io/library/rust:1`, `a/b` becomes
+/// `docker.io/a/b`. A name with a registry (a first part with `.` or `:`, or
+/// `localhost`), `scratch`, one built from `${...}` and an earlier stage's
+/// name stay as they are.
+pub(crate) fn qualified_bases(dockerfile: &str) -> String {
+    let mut stages: Vec<String> = Vec::new();
+    let mut out = String::with_capacity(dockerfile.len() + 64);
+    for line in dockerfile.split_inclusive('\n') {
+        let trimmed = line.trim_start();
+        let is_from = trimmed.len() > 5 && trimmed[..5].eq_ignore_ascii_case("FROM ");
+        if !is_from {
+            out.push_str(line);
+            continue;
+        }
+        let indent = &line[..line.len() - trimmed.len()];
+        let ending = if line.ends_with("\r\n") {
+            "\r\n"
+        } else if line.ends_with('\n') {
+            "\n"
+        } else {
+            ""
+        };
+        let body = trimmed.trim_end_matches(['\r', '\n']);
+        let mut words: Vec<String> = body.split_whitespace().map(str::to_owned).collect();
+        // `FROM [--flag=...]* image [AS name]`
+        let at = words
+            .iter()
+            .skip(1)
+            .position(|w| !w.starts_with("--"))
+            .map(|i| i + 1);
+        if let Some(at) = at {
+            let image = words[at].clone();
+            let keep = image.contains('$')
+                || image.eq_ignore_ascii_case("scratch")
+                || stages.iter().any(|s| s.eq_ignore_ascii_case(&image));
+            if !keep {
+                words[at] = qualified_image(&image);
+            }
+            if let (Some(kw), Some(name)) = (words.get(at + 1), words.get(at + 2))
+                && kw.eq_ignore_ascii_case("AS")
+            {
+                stages.push(name.clone());
+            }
+        }
+        out.push_str(indent);
+        out.push_str(&words.join(" "));
+        out.push_str(ending);
+    }
+    out
+}
+
+/// `image` with Docker Hub's registry when it names none.
+fn qualified_image(image: &str) -> String {
+    let first = image.split('/').next().unwrap_or(image);
+    let has_registry =
+        image.contains('/') && (first.contains('.') || first.contains(':') || first == "localhost");
+    if has_registry {
+        image.to_owned()
+    } else if image.contains('/') {
+        format!("docker.io/{image}")
+    } else {
+        format!("docker.io/library/{image}")
+    }
+}
+
+#[cfg(test)]
+mod qualified_bases_tests {
+    use super::qualified_bases;
+
+    #[test]
+    fn short_names_get_docker_hub_and_the_rest_stay() {
+        let before = "FROM rust:1.97.0-bookworm AS build\n\
+                      RUN cargo build\n\
+                      FROM --platform=linux/amd64 debian:bookworm-slim\n\
+                      COPY --from=build /a /a\n\
+                      FROM build AS again\n\
+                      FROM pgvector/pgvector:pg18\n\
+                      FROM ghcr.io/org/app:1\n\
+                      FROM localhost:5000/x\n\
+                      FROM scratch\n\
+                      FROM ${BASE}\n";
+        let after = qualified_bases(before);
+        let lines: Vec<&str> = after.lines().collect();
+        assert_eq!(
+            lines[0],
+            "FROM docker.io/library/rust:1.97.0-bookworm AS build"
+        );
+        assert_eq!(lines[1], "RUN cargo build");
+        assert_eq!(
+            lines[2],
+            "FROM --platform=linux/amd64 docker.io/library/debian:bookworm-slim"
+        );
+        assert_eq!(lines[3], "COPY --from=build /a /a");
+        assert_eq!(lines[4], "FROM build AS again");
+        assert_eq!(lines[5], "FROM docker.io/pgvector/pgvector:pg18");
+        assert_eq!(lines[6], "FROM ghcr.io/org/app:1");
+        assert_eq!(lines[7], "FROM localhost:5000/x");
+        assert_eq!(lines[8], "FROM scratch");
+        assert_eq!(lines[9], "FROM ${BASE}");
+    }
 }
 
 /* ── build ── */
@@ -1320,7 +1427,7 @@ spec:
             }]
         );
         assert_eq!(bakes["shop"], app.services[0].bake());
-        assert!(dockerfile.starts_with("FROM debian:bookworm-slim\n"));
+        assert!(dockerfile.starts_with("FROM docker.io/library/debian:bookworm-slim\n"));
         assert!(
             dockerfile.contains("COPY [\"studio-research/shop/files/\",\"/\"]\n"),
             "{dockerfile}"
