@@ -536,6 +536,11 @@ export interface ProjectPath {
   targets?: ProjectTargets | null;
   /** With `include=deployments`: the body of `GET /deployments` for the project; absent likewise. */
   deployments?: DeploymentList | null;
+  /**
+   * The project's path from its product to running as every tab draws it
+   * (`PathStage` in mfe-shared/path, stages 5-9); absent from a server before it.
+   */
+  stages?: unknown;
 }
 
 /** The caller's own Research projects, and the connection they were read with (#1053). */

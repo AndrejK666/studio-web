@@ -27,6 +27,10 @@ vi.mock('@gears-frontx/react', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@gears-frontx/react')>()),
   apiRegistry: { getService: () => service },
   useSharedProperty: () => scope.project,
+  useMfeBridge: () => null,
+  // The shared path strip's own dictionary: its words as `path.<key>`.
+  useScreenTranslations: () => ({ isLoaded: true }),
+  useTranslation: () => ({ language: 'en', t: (key: string) => `path.${key.split(':').pop()}` }),
 }));
 
 import { ReleasesScreen } from './ReleasesScreen';
@@ -215,7 +219,7 @@ const el = (selector: string) =>
 
 /** Picks a stage on the release map. */
 const openStage = async (stage: string) => {
-  fireEvent.click(await el(`[data-map-stage="${stage}"]`));
+  fireEvent.click(await el(`[data-stage="${stage}"]`));
   return el(`[data-release-stage="${stage}"]`);
 };
 
@@ -236,29 +240,52 @@ describe('ReleasesScreen', () => {
     expect(screen.getByText('no_project')).toBeTruthy();
   });
 
-  describe('the release map', () => {
-    it('draws Build → Images → Environment → Deploy with each state and fact, and opens on the stage that failed', async () => {
+  describe('the project path, Build to Deploy', () => {
+    it("draws the path step's states and causes numbered as on the whole path, and opens on the stage that failed", async () => {
       render(<ReleasesScreen bridge={null} />);
-      const map = await el('[data-release-map]');
+      const strip = await el('[data-project-path]');
       await waitFor(() =>
-        expect([...map.querySelectorAll('[data-map-stage]')].map((n) => `${n.getAttribute('data-map-stage')}:${n.getAttribute('data-map-state')}`)).toEqual([
-          'build:failed',
+        expect([...strip.querySelectorAll('[data-stage]')].map((n) => `${n.getAttribute('data-stage')}:${n.getAttribute('data-stage-state')}`)).toEqual([
+          'build:done',
           'images:done',
           'environment:done',
-          'deploy:done',
+          'deploy:current',
         ])
       );
-      // The newest build failed; the images are the passed one's, deployed to dev.
-      expect(map.querySelector('[data-map-stage="build"] [data-map-fact]')?.textContent).toBe('desktop-3');
-      expect(map.querySelector('[data-map-stage="images"]')?.textContent).toContain('map_images_from {"build":"studio-2"}');
-      expect(map.querySelector('[data-map-stage="environment"] [data-map-fact]')?.textContent).toBe('dev');
-      expect(map.querySelector('[data-map-stage="deploy"]')?.textContent).toContain('0.2.0');
-      // The page opens on the stage that needs attention, and says so in the map.
+      // The server's words, under the same numbers as on Overview.
+      expect(strip.querySelector('[data-stage="build"]')?.getAttribute('title')).toContain('6.');
+      expect(strip.querySelector('[data-stage="build"]')?.getAttribute('title')).toContain('Build studio-2 passed.');
+      expect(strip.querySelector('[data-stage="deploy"] [data-mark]')?.textContent).toBe('9');
+      // The page opens on the stage its builds say needs attention: a chip is a tab of the panel.
       expect((await el('[data-release-stage]')).getAttribute('data-release-stage')).toBe('build');
-      expect(map.querySelector('[data-map-stage="build"]')?.getAttribute('aria-selected')).toBe('true');
-      // No overview, no path: the map replaced them.
+      const build = document.getElementById('release-stage-build');
+      expect(build?.getAttribute('aria-selected')).toBe('true');
+      expect(build?.getAttribute('aria-controls')).toBe('release-stage-panel');
       expect(document.querySelector('[data-release-overview]')).toBeNull();
-      expect(document.querySelector('[data-project-path]')).toBeNull();
+      expect(document.querySelector('[data-release-map]')).toBeNull();
+    });
+
+    it("draws the server's stages as sent", async () => {
+      setUp({
+        path: readyPath({
+          stages: [
+            { id: 'build', number: 6, state: 'done', cause: 'Build studio-2 passed.', tab: 'releases', focus: false },
+            { id: 'images', number: 7, state: 'done', cause: '0.2.0 is published.', tab: 'releases', focus: false },
+            { id: 'environment', number: 8, state: 'blocked', cause: '1 thing is missing before a deploy to dev.', tab: 'releases', focus: true, action: { kind: 'provide_secret', label: 'Provide it' } },
+            { id: 'deploy', number: 9, state: 'todo', cause: 'Waits for the steps before it.', tab: 'releases', focus: false },
+          ],
+        }),
+      });
+      render(<ReleasesScreen bridge={null} />);
+      await waitFor(() => expect(document.querySelector('[data-stage="environment"]')?.getAttribute('data-stage-state')).toBe('blocked'));
+      expect(document.querySelector('[data-focus]')?.getAttribute('data-stage')).toBe('environment');
+      // Picking it shows its stage under the strip, and its cause on the line.
+      fireEvent.click(document.querySelector('[data-stage="environment"]') as HTMLElement);
+      expect((await el('[data-release-stage]')).getAttribute('data-release-stage')).toBe('environment');
+      expect(document.querySelector('[data-stage-detail]')?.textContent).toContain('1 thing is missing');
+      // Its action is the screen's own: the Environment stage, where a secret is given.
+      fireEvent.click(await el('[data-stage-action="provide_secret"]'));
+      expect((await el('[data-release-stage]')).getAttribute('data-release-stage')).toBe('environment');
     });
 
     it('shows one stage at a time and keeps the stage in the address', async () => {
@@ -348,7 +375,7 @@ describe('ReleasesScreen', () => {
       // The passed Research build is the images' build: three, in Research.
       const images = await openStage('images');
       await waitFor(() => expect(images.querySelector('[data-images-build]')?.getAttribute('data-images-build')).toBe('research-1'));
-      expect(document.querySelector('[data-map-stage="images"]')?.textContent).toContain('map_images_count {"done":3,"total":3}');
+      expect(document.querySelector('[data-stage="images"]')?.getAttribute('aria-selected')).toBe('true');
       // One row per image on the shared grid: where it lives, whether it can run.
       await waitFor(() => expect(images.querySelectorAll('[data-build-image]').length).toBe(3));
       expect([...images.querySelectorAll('[data-image-place]')].map((e) => e.getAttribute('data-image-place'))).toEqual([
@@ -401,16 +428,25 @@ describe('ReleasesScreen', () => {
       });
     });
 
-    it('a failed deploy shows its cause in the map and on the stage, which the page opens on', async () => {
+    it('a failed deploy shows its cause on the path and on the stage, which the page opens on', async () => {
+      const ready = readyPath();
       setUp({
         noBuilds: true,
         deployments: [deployment({ id: 'd5', state: 'failed', outcome: 'ImagePullBackOff: denied\nmore' })],
+        path: {
+          ...ready,
+          steps: [
+            ...ready.steps.slice(0, 4),
+            { id: 'running', state: 'failed', reason: 'The deploy to dev failed: ImagePullBackOff: denied', checklist: [], deployment_id: 'd5' },
+          ],
+        },
       });
       render(<ReleasesScreen bridge={null} />);
       const deploy = await el('[data-release-stage="deploy"]');
-      expect(document.querySelector('[data-map-stage="deploy"]')?.getAttribute('data-map-state')).toBe('failed');
-      expect(document.querySelector('[data-map-stage="deploy"] [data-map-more]')?.textContent).toBe('ImagePullBackOff: denied');
-      expect(deploy.querySelector('[data-deploy-cause]')?.textContent).toBe('ImagePullBackOff: denied');
+      expect(document.querySelector('[data-stage="deploy"]')?.getAttribute('data-stage-state')).toBe('failed');
+      expect(document.querySelector('[data-stage="deploy"]')?.getAttribute('title')).toContain('ImagePullBackOff: denied');
+      // The path's note says it once, on the stage.
+      expect(deploy.textContent).toContain('ImagePullBackOff: denied');
       fireEvent.click(deploy.querySelector('[data-deploy-open-detail]') as HTMLElement);
       expect(await el('[data-deployment-detail="d5"]')).toBeTruthy();
     });
@@ -551,8 +587,8 @@ describe('ReleasesScreen', () => {
       });
       render(<ReleasesScreen bridge={null} />);
       const build = await el('[data-release-stage="build"]');
-      expect(document.querySelector('[data-map-stage="build"]')?.getAttribute('data-map-state')).toBe('running');
-      expect(document.querySelector('[data-map-stage="build"]')?.textContent).toContain('map_build_running_at');
+      // The path is the server's: it says the build that ran last (studio-2), and the stage shows the one running.
+      expect(document.querySelector('[data-stage="build"]')?.getAttribute('aria-selected')).toBe('true');
       const card = await el('[data-build-card="research-1"]');
       expect(card.querySelector('[data-research-progress]')?.getAttribute('data-research-progress')).toBe('images');
       // Build and run in Research opens the dialog on the Research target.
@@ -567,7 +603,7 @@ describe('ReleasesScreen', () => {
     it('takes them from the path answer and does not read them again', async () => {
       setUp({ carry: true });
       render(<ReleasesScreen bridge={null} />);
-      await el('[data-map-stage="deploy"][data-map-state="done"]');
+      await el('[data-stage="deploy"]');
       expect(calls.find((c) => c.name === 'projectPath')?.args).toEqual([
         { projectId: 'p1', include: 'targets,deployments' },
       ]);
@@ -577,7 +613,7 @@ describe('ReleasesScreen', () => {
 
     it('reads them on their own from a backend whose path does not carry them', async () => {
       render(<ReleasesScreen bridge={null} />);
-      await el('[data-map-stage="deploy"][data-map-state="done"]');
+      await el('[data-stage="deploy"]');
       expect(asked('targets')).toBe(1);
       expect(asked('deployments')).toBe(1);
     });
@@ -891,7 +927,7 @@ describe('ReleasesScreen', () => {
       render(<ReleasesScreen bridge={null} />);
       const line = await el('[data-releases-no-product]');
       expect(line.textContent).toContain('no_product_actions');
-      await waitFor(() => expect(document.querySelector('[data-map-stage="build"]')?.getAttribute('data-map-state')).toBe('blocked'));
+      await waitFor(() => expect(document.querySelector('[data-stage="build"]')?.getAttribute('data-stage-state')).toBe('blocked'));
       expect(document.querySelector('[data-release-stage]')?.getAttribute('data-release-stage')).toBe('build');
       expect(((await el('[data-research-open]')) as HTMLButtonElement).disabled).toBe(true);
       await openStage('environment');

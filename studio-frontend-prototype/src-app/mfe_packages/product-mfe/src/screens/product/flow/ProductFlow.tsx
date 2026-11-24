@@ -1,8 +1,13 @@
 /**
- * The Product page's strip (the prototype's `product-flow-view.tsx`):
- * configure the product, save it to product.gdl, build it, deploy it — each
- * step with what the project holds; Save opens below it, Configure opens the
- * map, Build and Deploy open Releases. The model is product-flow.ts.
+ * The Product page's part of the project's ONE path (the shared
+ * `ProjectPath`, numbered as on Overview): Product, Build, Images,
+ * Environment, Deploy, as the server decides them
+ * (`GET /studio-environments/v1/project-path` `stages`). Product opens its
+ * save below the strip; the rest open Releases. A server before `stages`
+ * answers its own steps, said as stages, with the Product stage from the
+ * flow below (product-flow.ts: configured, saved).
+ *
+ * The flow model still feeds the page's header and its sections' dots.
  *
  * The save is the page's one: it composes the description from what the
  * sections configured (the gears and their configuration, the profile, the
@@ -13,6 +18,18 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { Badge, Button } from '@gears-frontx/ui-kit';
+import { openScreen } from '@constructor-studio/mfe-shared';
+import {
+  PRODUCT_STAGES,
+  ProjectPath,
+  joinStages,
+  stageOf,
+  stagesFromDelivery,
+  stagesOf,
+  type DeliveryPathStep,
+  type PathStage,
+  type StageState,
+} from '@constructor-studio/mfe-shared/path';
 import {
   productApi,
   type ArtifactNode,
@@ -30,16 +47,48 @@ import { lineDiff, productFlow, type DiffLine, type FlowState, type FlowStep } f
 import { infrastructureOf, type ProductSectionId } from '../../../model/product-sections';
 import { deployableBuilds } from '../../../model/project-deploys';
 import { useFlowTranslations } from '../../../i18n';
-import { errText, openTab, StatusChip, useScope } from '../../common';
+import { errText, StatusChip, useScope } from '../../common';
 import { buildableEnvironments } from './buildable';
-import { StepStrip, type StepState, type StripStep } from './StepStrip';
 import common from '../../product.module.css';
 import styles from './flow.module.css';
 
 type Text = ReturnType<typeof useFlowTranslations>['t'];
 
-/** A flow state as the strip draws it. */
-const STEP_STATE: Record<FlowState, StepState> = { done: 'done', todo: 'warn', failed: 'failed', unknown: 'todo', none: 'todo' };
+/** A flow state as a stage's. */
+const STAGE_STATE: Record<FlowState, StageState> = { done: 'done', todo: 'todo', failed: 'failed', unknown: 'unknown', none: 'todo' };
+
+/**
+ * The Product stage from the flow, for a server before `stages`: the
+ * product configured (it resolves) and saved, as `project_path.rs` decides it.
+ */
+export function productStageOf(steps: readonly FlowStep[], gears: number): PathStage | null {
+  const configure = steps.find((s) => s.id === 'configure');
+  const save = steps.find((s) => s.id === 'save');
+  if (!configure || !save) return null;
+  if (configure.state === 'failed') {
+    return stageOf('product', 'failed', configure.status, { action: { kind: 'open_product', label: 'Fix the product' } });
+  }
+  if (save.state === 'done' || save.state === 'unknown') return stageOf('product', STAGE_STATE[save.state], save.status);
+  return gears > 0
+    ? stageOf('product', 'todo', save.status, { action: { kind: 'save_product', label: 'Save to product.gdl' } })
+    : stageOf('product', 'todo', configure.status, { action: { kind: 'open_product', label: 'Compose the product' } });
+}
+
+/** Stages 5-9: the server's, else an older server's steps with the flow's Product, else the flow's own. */
+export function productStages(
+  path: { stages?: unknown; steps?: DeliveryPathStep[] } | null,
+  steps: readonly FlowStep[],
+  gears: number
+): PathStage[] {
+  const server = stagesOf(path?.stages);
+  if (server) return server;
+  const product = productStageOf(steps, gears);
+  const delivery = stagesFromDelivery(path?.steps);
+  const flow = delivery.length
+    ? []
+    : steps.flatMap((s) => (s.id === 'build' || s.id === 'deploy' ? [stageOf(s.id, STAGE_STATE[s.state], s.status)] : []));
+  return joinStages(delivery, flow, product ? [product] : []);
+}
 
 type Read = {
   /** When it was read: the build hint's "how long ago" is measured from it. */
@@ -50,6 +99,8 @@ type Read = {
   kept: { revision: number; text: string } | null | undefined;
   builds: IdeBuild[] | null;
   deployments: Deployment[] | null;
+  /** `GET /project-path`: its `stages`, or an older server's `steps`; null when it could not be read. */
+  path: { stages?: unknown; steps?: DeliveryPathStep[] } | null;
 };
 
 export function ProductFlow({
@@ -104,10 +155,12 @@ export function ProductFlow({
         productApi.deployments({ project: projectId }).then((d) => d.items),
         null
       ),
-    ]).then(([product, cfg, targets, kept, buildNodes, runs, repoPaths, deployments]) => {
+      // The path's stages 5-9 as the server decides them; an older server, its steps.
+      soft(productApi.projectPath(projectId), null),
+    ]).then(([product, cfg, targets, kept, buildNodes, runs, repoPaths, deployments, path]) => {
       if (!live) return;
       const builds = buildNodes ? productBuildsOf(ideBuildsOf(buildNodes), runs, cfg?.build, repoPaths) : null;
-      setRead({ at: Date.now(), product, cfg, targets, kept, builds, deployments });
+      setRead({ at: Date.now(), product, cfg, targets, kept, builds, deployments, path });
     });
     return () => {
       live = false;
@@ -142,31 +195,46 @@ export function ProductFlow({
 
   if (!steps || !read) return <p className={common.muted}>{t('reading')}</p>;
 
-  const flow: StripStep[] = steps.map((s) => ({
-    id: s.id,
-    title: s.title,
-    state: STEP_STATE[s.state],
-    status: s.status,
-    // Configure is the sections below; Build and Deploy are Releases'.
-    onSelect: s.id === 'configure' ? () => onSection('map') : s.tab ? () => openTab(bridge, 'releases') : undefined,
-    body:
-      s.id === 'save' ? (
-        <SaveStep
-          product={read.product}
-          profile={profilesToCheck(read.targets?.bindings ?? [])[0]}
-          kept={read.kept}
-          t={t}
-          onSaved={() => {
-            setMine((n) => n + 1);
-            onSaved();
-          }}
-        />
-      ) : undefined,
-  }));
-
+  const stages = productStages(read.path, steps, read.product?.gears?.length ?? 0);
+  // Product is this page's: its save opens below the strip. The rest are Releases'.
+  const toggleSave = () => onOpen(open === 'save' ? null : 'save');
   return (
-    <div data-product-flow>
-      <StepStrip steps={flow} label={t('strip_label')} open={open} onOpen={onOpen} />
+    <div data-product-flow className={common.stack}>
+      <ProjectPath
+        stages={stages}
+        only={PRODUCT_STAGES}
+        onOpen={(route) => openScreen(bridge, route)}
+        onSelect={(s) => {
+          if (s.id !== 'product') return false;
+          toggleSave();
+          return true;
+        }}
+        onAction={(s) => {
+          if (s.action?.kind === 'open_product') {
+            onSection('map');
+            return true;
+          }
+          if (s.action?.kind === 'save_product') {
+            onOpen('save');
+            return true;
+          }
+          return false;
+        }}
+      />
+      {open === 'save' && (
+        <div className={styles.detail} data-step-detail="save">
+          <SaveStep
+            product={read.product}
+            profile={profilesToCheck(read.targets?.bindings ?? [])[0]}
+            kept={read.kept}
+            t={t}
+            onSaved={() => {
+              setMine((n) => n + 1);
+              onSaved();
+            }}
+          />
+        </div>
+      )}
     </div>
   );
 }

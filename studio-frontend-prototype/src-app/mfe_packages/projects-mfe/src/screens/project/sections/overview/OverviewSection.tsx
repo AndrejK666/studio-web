@@ -8,9 +8,10 @@
  *   1. ONE verdict — On track, At risk or Blocked — its reason in a phrase,
  *      "+N more below", and ONE primary action: the next step of the path
  *      (Open IDE once the path is done).
- *   2. The path as a strip: each step's state, the current one outlined, its
- *      line on hover and, on click, below the strip with the button to the
- *      screen where it is done.
+ *   2. The project's ONE path, sources to running product, as the shared
+ *      `ProjectPath` draws it on Product and Releases too: the server's
+ *      `stages`; from a server (or a kept status) without them, the old
+ *      `path` and studio-environments' `GET /project-path` said as stages.
  *   3. Needs attention: the signals behind the verdict, worst first, one
  *      sentence and one action a row; what the server could not read is
  *      named ("Not read: …"), never counted as nothing wrong.
@@ -25,7 +26,7 @@
  * studio-mcp is down: shown as an error, not as an empty project.
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { apiRegistry, useApiQuery, useMfeBridge } from '@gears-frontx/react';
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Skeleton } from '@gears-frontx/ui-kit';
 import {
@@ -38,16 +39,16 @@ import {
   useScreenAvailability,
   useStudioEventRefresh,
 } from '@constructor-studio/mfe-shared';
-import { ProjectStatusApiService } from '../../../../api/ProjectStatusApiService';
 import {
-  LEVEL_TONE,
-  VERDICT_VARIANT,
-  nextStep,
-  pathProgress,
-  routeFor,
-  type ProjectPathStep,
-  type ProjectStatus,
-} from '../../../../model/projectStatus';
+  ProjectPath,
+  joinStages,
+  stagesFromDelivery,
+  stagesFromStatus,
+  stagesOf,
+  type PathStage,
+} from '@constructor-studio/mfe-shared/path';
+import { ProjectDeliveryApiService, ProjectStatusApiService } from '../../../../api/ProjectStatusApiService';
+import { LEVEL_TONE, VERDICT_VARIANT, nextStep, routeFor, type ProjectStatus } from '../../../../model/projectStatus';
 import { useOverviewSectionTranslations } from '../../../../i18n';
 import styles from './OverviewSection.module.css';
 import { PhaseChip } from './PhaseChip';
@@ -91,6 +92,28 @@ export const OverviewSection: React.FC<{
   // or the path: read the status again (the shell's live channel, scoped to
   // the organization on screen), keeping the old answer on screen meanwhile.
   useStudioEventRefresh(isRunEnding, () => void read.refetch());
+  // The path's stages are the server's. A status without them (a server
+  // before them, or one kept before them and not yet computed again) says
+  // its own steps 1-6, and studio-environments says 5-9.
+  const serverStages = stagesOf(read.data?.stages);
+  const olderStatus = !!read.data && !serverStages;
+  const [delivery, setDelivery] = useState<PathStage[] | null>(null);
+  useEffect(() => {
+    if (!olderStatus) return;
+    let live = true;
+    apiRegistry
+      .getService(ProjectDeliveryApiService)
+      .path({ projectId })
+      .fetch({ staleTime: STATUS_FRESH_MS })
+      .then(
+        (p) => live && setDelivery(stagesOf(p.stages) ?? stagesFromDelivery(p.steps)),
+        () => live && setDelivery([])
+      );
+    return () => {
+      live = false;
+    };
+  }, [olderStatus, projectId]);
+  const stages = serverStages ?? joinStages(stagesFromStatus(read.data?.path), delivery ?? []);
   const open = (route: string | null) => {
     if (route) openScreen(bridge, route);
   };
@@ -165,6 +188,7 @@ export const OverviewSection: React.FC<{
       />
       <StatusView
         status={read.data}
+        stages={stages}
         t={t}
         open={open}
         reach={reach}
@@ -179,6 +203,7 @@ OverviewSection.displayName = 'OverviewSection';
 
 function StatusView({
   status,
+  stages,
   t,
   open,
   reach,
@@ -186,6 +211,8 @@ function StatusView({
   onRefresh,
 }: {
   status: ProjectStatus;
+  /** The whole path, sources to running product. */
+  stages: PathStage[];
   t: Text;
   open: (route: string | null) => void;
   reach: Reach;
@@ -240,7 +267,7 @@ function StatusView({
       </div>
       <p className={styles.about}>{t('about')}</p>
 
-      <PathStrip steps={status.path} t={t} open={open} reach={reach} />
+      <ProjectPath stages={stages} onOpen={(route) => open(route)} />
 
       <KitContentSlot name="project.overview.content" />
 
@@ -289,73 +316,5 @@ function StatusView({
         </CardContent>
       </Card>
     </div>
-  );
-}
-
-/** The path as one row of steps; a step's line and its button open below the strip. */
-function PathStrip({
-  steps,
-  t,
-  open,
-  reach,
-}: {
-  steps: ProjectPathStep[];
-  t: Text;
-  open: (route: string | null) => void;
-  reach: Reach;
-}) {
-  const [picked, setPicked] = useState<string | null>(null);
-  const progress = pathProgress(steps);
-  const shown = steps.find((s) => s.step === picked) ?? null;
-  return (
-    <section className={styles.path} data-project-path aria-label={t('path_label')}>
-      <div className={styles.pathHead}>
-        <h3 className={styles.pathTitle} title={t('path_about')}>
-          {t('path_title')}
-        </h3>
-        {steps.length > 0 && (
-          <Badge variant={progress.done === progress.total ? 'success' : 'secondary'} data-path-progress>
-            {t('path_progress', { done: progress.done, total: progress.total })}
-          </Badge>
-        )}
-      </div>
-      {steps.length === 0 ? (
-        <p className={styles.muted}>{t('path_unknown')}</p>
-      ) : (
-        <ol className={styles.steps}>
-          {steps.map((s, i) => (
-            <li key={s.step} className={styles.stepItem}>
-              <button
-                type="button"
-                className={`${styles.step} ${styles[`flow_${s.flow}`] ?? ''} ${picked === s.step ? styles.picked : ''}`}
-                title={s.state === 'unknown' ? t('step_unknown', { status: s.status }) : s.status}
-                aria-expanded={picked === s.step}
-                data-path-step={s.step}
-                data-state={s.state}
-                data-flow={s.flow}
-                onClick={() => setPicked((p) => (p === s.step ? null : s.step))}
-              >
-                <span className={styles.stepNo}>{s.state === 'done' ? '✓' : i + 1}</span>
-                {s.title}
-              </button>
-            </li>
-          ))}
-        </ol>
-      )}
-      {shown && (
-        <div className={styles.stepDetail} data-step-detail={shown.step}>
-          <span>{shown.state === 'unknown' ? t('step_unknown', { status: shown.status }) : shown.status}</span>
-          {reach(shown.tab, shown.step, shown.kit) && (
-            <Button
-              variant={shown.state === 'current' ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => open(reach(shown.tab, shown.step, shown.kit))}
-            >
-              {shown.action}
-            </Button>
-          )}
-        </div>
-      )}
-    </section>
   );
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { nextStep, pathProgress, routeFor, type ProjectPathStep, type ProjectStatus } from './projectStatus';
+import { nextStep, routeFor, type ProjectPathStep, type ProjectStatus } from './projectStatus';
 
 const step = (id: string, state: ProjectPathStep['state']): ProjectPathStep => ({
   step: id,
@@ -21,13 +21,6 @@ describe('project status', () => {
     expect(routeFor('pulls')).toBeNull();
     // Findings are decided on Issues.
     expect(routeFor('model', 'findings')).toBe('/issues');
-  });
-
-  it('counts the steps done', () => {
-    expect(pathProgress([step('repos', 'done'), step('types', 'current'), step('model', 'todo')])).toEqual({
-      done: 1,
-      total: 3,
-    });
   });
 
   it('finds the step the server names as next', () => {
