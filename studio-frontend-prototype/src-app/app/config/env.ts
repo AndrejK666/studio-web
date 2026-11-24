@@ -19,6 +19,8 @@ export interface StudioRuntimeEnv {
    * ask before sign-in lists a realm's brokers.
    */
   CONSTRUCTOR_SIGN_IN?: string;
+  /** `"true"` where the realm brokers GitLab (alias `gitlab`), for the same reason. */
+  GITLAB_SIGN_IN?: string;
 }
 
 declare global {
@@ -46,6 +48,12 @@ export const env = {
     const raw =
       runtime().CONSTRUCTOR_SIGN_IN ??
       (import.meta.env.VITE_CONSTRUCTOR_SIGN_IN as string | undefined);
+    return raw?.trim().toLowerCase() === 'true';
+  },
+  /** Whether the sign-in screen offers GitLab. Off unless said, never guessed. */
+  get gitlabSignIn(): boolean {
+    const raw =
+      runtime().GITLAB_SIGN_IN ?? (import.meta.env.VITE_GITLAB_SIGN_IN as string | undefined);
     return raw?.trim().toLowerCase() === 'true';
   },
 };

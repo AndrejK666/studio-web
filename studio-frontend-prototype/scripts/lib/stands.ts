@@ -12,7 +12,8 @@
  * `STUDIO_BACKEND_URL`, `STUDIO_OIDC_ISSUER`, `STUDIO_OIDC_CLIENT_ID` — and
  * `STUDIO_DISCORD_URL` adds the invite a stand's header links, and
  * `STUDIO_CONSTRUCTOR_SIGN_IN=true` offers Constructor on the sign-in screen
- * where the stand's realm brokers it. Vite reads
+ * where the stand's realm brokers it, and `STUDIO_GITLAB_SIGN_IN=true` offers
+ * GitLab likewise. Vite reads
  * them from the shell and from `.env` / `.env.local` (gitignored) next to
  * `vite.config.ts`; none of them reaches the bundle.
  */
@@ -31,6 +32,8 @@ export interface Stand {
   discordUrl?: string;
   /** The realm brokers Constructor, as `CONSTRUCTOR_SIGN_IN`; off unless said. */
   constructorSignIn?: boolean;
+  /** The realm brokers GitLab, as `GITLAB_SIGN_IN`; off unless said. */
+  gitlabSignIn?: boolean;
 }
 
 type StandEnv = Readonly<Record<string, string | undefined>>;
@@ -99,6 +102,7 @@ export function resolveStand(env: StandEnv): Stand {
     clientId: value(env.STUDIO_OIDC_CLIENT_ID) ?? known.clientId,
     discordUrl: value(env.STUDIO_DISCORD_URL),
     constructorSignIn: value(env.STUDIO_CONSTRUCTOR_SIGN_IN)?.toLowerCase() === 'true',
+    gitlabSignIn: value(env.STUDIO_GITLAB_SIGN_IN)?.toLowerCase() === 'true',
   };
 }
 
@@ -154,6 +158,7 @@ export function renderRuntimeEnv(stand: Stand): string {
     OIDC_CLIENT_ID: stand.clientId,
     DISCORD_URL: stand.discordUrl,
     CONSTRUCTOR_SIGN_IN: stand.constructorSignIn ? 'true' : undefined,
+    GITLAB_SIGN_IN: stand.gitlabSignIn ? 'true' : undefined,
   };
   return `window.__STUDIO_ENV__ = ${JSON.stringify(runtimeEnv)};\n`;
 }
