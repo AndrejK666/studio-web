@@ -6,7 +6,10 @@ const { openScreen } = vi.hoisted(() => ({ openScreen: vi.fn() }));
 
 vi.mock('../../../i18n', () => ({
   useFlowTranslations: () => ({
-    t: (key: string, params?: Record<string, unknown>) => (params ? `${key} ${JSON.stringify(params)}` : key),
+    t: Object.assign(
+      (key: string, params?: Record<string, unknown>) => (params ? `${key} ${JSON.stringify(params)}` : key),
+      { count: (key: string, count: number) => `${key} ${JSON.stringify({ count })}` }
+    ),
     loading: false,
   }),
 }));
@@ -80,7 +83,7 @@ describe('ProductFlow', () => {
     const check = await screen.findByText('check');
     fireEvent.click(check);
     await waitFor(() => expect(document.querySelector('[data-flow-diff]')).not.toBeNull());
-    expect(screen.getByText('lines_change {"count":"1"}')).toBeTruthy();
+    expect(screen.getByText('lines_change {"count":1}')).toBeTruthy();
     expect(preview.mock.calls[0][2]).toMatchObject({ product_id: 'shop', gears: ['cf-gears-api-gateway'] });
     expect(preview.mock.calls[0][2].write).toBeUndefined();
 

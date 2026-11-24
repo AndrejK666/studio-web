@@ -36,6 +36,7 @@
 //! `.../gears-rust.git`), or `STUDIO_GEARBOX_CORPUS_ID`. No organization's
 //! settings or sync can change either.
 
+use crate::plural::plural;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
@@ -245,10 +246,10 @@ impl EngineCatalogue {
                 .map(|(c, n)| format!("{c} \u{d7}{n}"))
                 .collect();
             Some(format!(
-                "the gear engine read no gear from the repository `{id}`: {} error(s) ({}), \
+                "the gear engine read no gear from the repository `{id}`: {} ({}), \
                  first: {}. The repository has likely moved to a GDL this engine cannot read; \
                  point the deployment at a ref this engine reads, or move the engine",
-                errors.len(),
+                plural(errors.len(), "error", "errors"),
                 codes.join(", "),
                 first.message
             ))

@@ -553,7 +553,8 @@ async fn check_limit(
             .with_precondition_violation(
                 "organization".to_owned(),
                 format!(
-                    "you already own {owned} organization(s), the most this installation allows"
+                    "you already own {}, the most this installation allows",
+                    crate::plural::plural(owned, "organization", "organizations")
                 ),
                 "ORGANIZATION_LIMIT_REACHED",
             )

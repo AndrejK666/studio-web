@@ -12,6 +12,7 @@
 //! Now it is a run. Nothing else about the pipeline changed — it is handed a
 //! place to report progress instead of a task id.
 
+use crate::plural::plural;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -160,13 +161,16 @@ impl TaskHandler for CatalogSyncTask {
         match outcome {
             Ok(counts) => {
                 let mut summary = format!(
-                    "{} gear(s), {} version(s), {} node(s) stored",
-                    counts.gears, counts.versions, counts.stored,
+                    "{}, {}, {} stored",
+                    plural(counts.gears, "gear", "gears"),
+                    plural(counts.versions, "version", "versions"),
+                    plural(counts.stored, "node", "nodes"),
                 );
                 if let Some(r) = &counts.registry {
                     summary.push_str(&format!(
-                        "; registry: {} project(s), {} new entr(ies)",
-                        r.projects, r.entries_created
+                        "; registry: {}, {}",
+                        plural(r.projects, "project", "projects"),
+                        plural(r.entries_created, "new entry", "new entries")
                     ));
                 }
                 if !counts.left_to_platform.is_empty() {
@@ -252,8 +256,9 @@ impl CatalogSyncTask {
             Ok(mut counts) => {
                 counts.not_owned = not_owned;
                 let summary = format!(
-                    "project {project}: {} component(s), {} node(s) stored",
-                    counts.gears, counts.stored
+                    "project {project}: {}, {} stored",
+                    plural(counts.gears, "component", "components"),
+                    plural(counts.stored, "node", "nodes")
                 );
                 match serde_json::to_value(counts) {
                     Ok(result) => TaskOutcome::done_with(summary, result),

@@ -18,6 +18,7 @@
 //! Every run shares the `catalog` partition with `catalog.sync`: both write
 //! the same organization's catalogue nodes, so they queue behind each other.
 
+use crate::plural::plural;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -134,11 +135,11 @@ impl TaskHandler for RegistryTask {
         match outcome {
             Ok(counts) => {
                 let summary = format!(
-                    "{} project(s): {} repository(ies) read, {} unchanged; {} new entr(ies)",
-                    counts.projects,
-                    counts.repos_read,
+                    "{}: {} read, {} unchanged; {}",
+                    plural(counts.projects, "project", "projects"),
+                    plural(counts.repos_read, "repository", "repositories"),
                     counts.repos_unchanged,
-                    counts.entries_created,
+                    plural(counts.entries_created, "new entry", "new entries"),
                 );
                 match serde_json::to_value(&counts) {
                     Ok(result) => TaskOutcome::done_with(summary, result),

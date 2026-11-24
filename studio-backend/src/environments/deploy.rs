@@ -1092,9 +1092,14 @@ pub fn secret_unread(rendered: &str, p: &DeployPayload) -> Option<String> {
     let name = super::model::config_secret_name(&p.release);
     (!p.secret_keys.is_empty() && !rendered.contains(&name)).then(|| {
         format!(
-            "the chart reads no configuration secret {name}, so {} reach(es) no application: \
+            "the chart reads no configuration secret {name}, so {} {} no application: \
              set where the chart reads it (the build's values paths)",
-            p.secret_keys.join(", ")
+            p.secret_keys.join(", "),
+            if p.secret_keys.len() == 1 {
+                "reaches"
+            } else {
+                "reach"
+            }
         )
     })
 }

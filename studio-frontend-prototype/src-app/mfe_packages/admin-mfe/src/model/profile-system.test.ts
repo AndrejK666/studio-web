@@ -25,8 +25,11 @@ import {
 import { personalConnections, personalProviders, sharedConnections } from './connections';
 import type { StoredConnection } from '../api/types';
 
-const t = (key: string, values?: Record<string, string | number>) =>
-  values ? `${key}(${Object.entries(values).map(([k, v]) => `${k}=${v}`).join(',')})` : key;
+const t = Object.assign(
+  (key: string, values?: Record<string, string | number | boolean>) =>
+    values ? `${key}(${Object.entries(values).map(([k, v]) => `${k}=${v}`).join(',')})` : key,
+  { count: (key: string, count: number) => `${key}(count=${count})` }
+);
 
 describe('profile', () => {
   it('puts the primary address first, else the typed one', () => {

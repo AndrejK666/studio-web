@@ -26,6 +26,7 @@
 //! 6. **nobody** — open, not a draft, and nobody was ever asked. The stuck
 //!    pull request a manager cannot see from anywhere else.
 
+use crate::plural::plural;
 use serde_json::Value;
 
 use super::activity::parse_rfc3339_ms;
@@ -128,10 +129,6 @@ pub fn review_decision(
     } else {
         None
     }
-}
-
-fn plural(n: usize, one: &str, many: &str) -> String {
-    format!("{n} {}", if n == 1 { one } else { many })
 }
 
 /// Which bucket a pull request is in. See the module comment for the order.

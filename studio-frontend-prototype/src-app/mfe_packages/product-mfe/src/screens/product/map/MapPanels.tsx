@@ -563,7 +563,7 @@ function GdlText({
   const said = check
     ? check.ok
       ? t('gdl_verdict_ok')
-      : t('gdl_verdict_errors', { count: String(check.errors) })
+      : t.count('gdl_verdict_errors', check.errors)
     : t('gdl_verdict_none');
   const head = (
     <div className={styles.gdlHead} data-pmap-gdl-verdict={check ? (current ? 'current' : 'other') : 'none'}>

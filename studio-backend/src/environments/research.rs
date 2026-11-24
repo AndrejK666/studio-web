@@ -23,6 +23,7 @@
 //! that member's connection as them -- that one credential, for the build or
 //! deploy they asked for, and nothing else.
 
+use crate::plural::plural;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -1174,7 +1175,8 @@ impl TaskHandler for ResearchBuildTask {
             Ok(Went::Built(outcome)) => {
                 let images = outcome.images.len();
                 let built = format!(
-                    "Constructor Research built {images} image(s) of {}",
+                    "Constructor Research built {} of {}",
+                    plural(images, "image", "images"),
                     p.repo.repo
                 );
                 self.record(&ctx.security, &p, (*outcome).clone()).await;
@@ -1397,9 +1399,14 @@ fn service_bodies(
         notes.insert(
             0,
             format!(
-                "{secrets} secret value(s) are plain environment variables in Constructor \
-                 Research: its public API keeps no secret variables, and shows them to whoever \
-                 can open the service"
+                "{} plain environment {} in Constructor Research: its public API keeps no \
+                 secret variables, and shows them to whoever can open the service",
+                plural(secrets, "secret value is a", "secret values are"),
+                if secrets == 1 {
+                    "variable"
+                } else {
+                    "variables"
+                }
             ),
         );
     }

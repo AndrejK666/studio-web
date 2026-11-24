@@ -686,9 +686,9 @@ function ProfileVerdicts({
               title={
                 check
                   ? t('profile_title', {
-                      errors: String(check.errors),
-                      warnings: String(check.warnings),
-                      applications: String(check.applications.length),
+                      errors: t.count('errors', check.errors),
+                      warnings: t.count('warnings', check.warnings),
+                      applications: t.count('applications', check.applications.length),
                     })
                   : t('profile_unchecked')
               }
@@ -743,7 +743,7 @@ function EngineDetails({
       {c.errors > 0 && (
         <p className={common.error} data-corpus-errors>
           {c.errors === errors ? t('corpus_all') : t('corpus_some', { errors: String(c.errors) })}{' '}
-          {t('corpus_files', { files: String(c.files) })}
+          {t.count('corpus_files', c.files)}
           {corpus.ref ? ` (${corpus.ref})` : ''}
           {t('corpus_why', { engine: corpus.engine ? ` (${corpus.engine})` : '' })}
         </p>

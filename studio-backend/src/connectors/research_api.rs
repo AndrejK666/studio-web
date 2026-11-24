@@ -15,6 +15,7 @@
 //! stream: a build is a desk's files and an image per Dockerfile, a deploy is
 //! one call per service, and both are polled.
 
+use crate::plural::plural;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -2310,8 +2311,9 @@ impl ResearchApi {
             .upload_measured(desk, local, folder, Some(lock), measure)
             .await?;
         progress(format!(
-            "uploaded {files} files; building {} image(s)",
-            images.len()
+            "uploaded {}; building {}",
+            plural(files, "file", "files"),
+            plural(images.len(), "image", "images")
         ))
         .await;
         if !pace.settle.is_zero() {
@@ -2664,7 +2666,11 @@ impl ResearchApi {
             bail!("the deploy has no application to follow (an internal error)");
         };
         let ids = &state.services;
-        progress(format!("waiting for {} service(s) to run", ids.len())).await;
+        progress(format!(
+            "waiting for {} to run",
+            plural(ids.len(), "service", "services")
+        ))
+        .await;
         let until = state
             .start_until
             .unwrap_or_else(|| unix_now() + pace.start_for.as_secs());

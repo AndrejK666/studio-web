@@ -166,11 +166,11 @@ export function ProductConfigurator({
         )}
         <span className={common.muted}>
           {t('status_summary', {
-            parts: String(composition.parts.length),
+            chosen: t.count('status_chosen', composition.parts.length),
             automatic: String(composition.automatic.length),
           })}
           {preview && !stale && preview.applications.length > 0
-            ? ` · ${t('status_runs_as', { count: String(preview.applications.length), profile: preview.profile })}`
+            ? ` · ${t.count('status_runs_as', preview.applications.length, { profile: preview.profile })}`
             : ''}
         </span>
       </div>
@@ -361,7 +361,7 @@ function ReadyPill({ r, t }: { r: Readiness | undefined; t: Text }) {
     <span
       className={styles.ready}
       data-ready={r.percent}
-      title={t('ready_title', { gears: String(r.gears), breakdown: readinessBreakdown(r) })}
+      title={t.count('ready_title', r.gears, { breakdown: readinessBreakdown(r) })}
     >
       {t('ready', { percent: String(r.percent) })}
     </span>

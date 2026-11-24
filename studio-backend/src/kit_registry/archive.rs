@@ -34,6 +34,7 @@
 //! entry's path is checked ([`safe_path`]): relative, no `..`, `.` or empty
 //! segment, no backslash, drive or control character.
 
+use crate::plural::plural;
 use std::io::Write;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -631,16 +632,20 @@ pub async fn fetch_into(
     }
     if !missing.is_empty() {
         archive.notes.push(format!(
-            "{} file(s) the manifest names are not in {label}: {}",
-            missing.len(),
+            "{} not in {label}: {}",
+            if missing.len() == 1 {
+                "1 file the manifest names is".to_string()
+            } else {
+                format!("{} files the manifest names are", missing.len())
+            },
             listed(&missing)
         ));
     }
     if !failed.is_empty() {
         let paths: Vec<String> = failed.iter().map(|(p, _)| p.clone()).collect();
         archive.notes.push(format!(
-            "{} file(s) could not be read from {label} ({}): {}",
-            failed.len(),
+            "{} could not be read from {label} ({}): {}",
+            plural(failed.len(), "file", "files"),
             failed[0].1,
             listed(&paths)
         ));
@@ -961,29 +966,35 @@ pub fn readme(m: &Meta<'_>, archive: &Archive) -> String {
         ));
     }
     out.push_str(&format!(
-        "| `model/contents.json` | the {} type(s) as Studio reads them (GTS id, model id, new or \
+        "| `model/contents.json` | the {} (GTS id, model id, new or \
          existing, fields) and what the model adds on other types |\n",
-        c.types.len()
+        if c.types.len() == 1 {
+            "1 type as Studio reads it".to_string()
+        } else {
+            format!("{} types as Studio reads them", c.types.len())
+        }
     ));
     out.push_str(&format!(
-        "| `claims.json` | what it claims of {} gear(s), its {} MCP tool(s), Inbox sources, rules, \
+        "| `claims.json` | what it claims of {}, its {}, Inbox sources, rules, \
          functions and permissions |\n",
-        c.gears.len(),
-        c.mcp_tools.len()
+        plural(c.gears.len(), "gear", "gears"),
+        plural(c.mcp_tools.len(), "MCP tool", "MCP tools")
     ));
     let material = archive.count_under("material/");
     if material > 0 || !c.material.is_empty() {
         out.push_str(&format!(
-            "| `material/` | {material} file(s) `cfs` writes into a project's checkout \
+            "| `material/` | {} `cfs` writes into a project's checkout \
              (`<cf-studio-path>/config/kits/{}/`), read from the repository at the pinned commit |\n",
+            plural(material, "file", "files"),
             k.slug
         ));
     }
     let bundles = archive.count_under("mfe/");
     if bundles > 0 || !c.mfe.is_empty() {
         out.push_str(&format!(
-            "| `mfe/` | {bundles} file(s) of its micro-frontend bundles, loaded by the shell at run \
-             time (ADR-0068 phase 5) |\n"
+            "| `mfe/` | {} of its micro-frontend bundles, loaded by the shell at run \
+             time (ADR-0068 phase 5) |\n",
+            plural(bundles, "file", "files")
         ));
     }
     if k.shelf == SHELF_BUILTIN {

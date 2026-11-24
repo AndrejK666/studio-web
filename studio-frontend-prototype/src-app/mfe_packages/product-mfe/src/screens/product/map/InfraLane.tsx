@@ -161,7 +161,7 @@ export function InfraLane({ needs, environments }: { needs: ProductTechnology[] 
         <div key={b.need.id} data-infra-need={b.need.id}>
           <div className={styles.itemSub}>
             <b>{b.need.name}</b> — {b.need.why};{' '}
-            {t('infra_for_gears', { count: String(b.need.gears.length) })}
+            {t.count('infra_for_gears', b.need.gears.length)}
             {b.capability ? ` · ${t('infra_needs_capability', { capability: b.capability })}` : ''}
           </div>
           {b.service ? (

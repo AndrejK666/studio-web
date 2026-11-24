@@ -17,8 +17,14 @@ vi.mock('@gears-frontx/react', async (importOriginal) => ({
   },
 }));
 vi.mock('@/app/i18n/shellTranslations', () => ({
-  useShellText: () => (key: string, params?: Record<string, unknown>) =>
-    params ? `${key}:${Object.values(params).join('|')}` : key,
+  useShellText: () =>
+    Object.assign(
+      (key: string, params?: Record<string, unknown>) => (params ? `${key}:${Object.values(params).join('|')}` : key),
+      {
+        count: (key: string, count: number, params?: Record<string, unknown>) =>
+          `${key}:${[count, ...Object.values(params ?? {})].join('|')}`,
+      }
+    ),
 }));
 
 import { EditorBar } from './EditorBar';

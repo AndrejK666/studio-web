@@ -34,6 +34,8 @@
 //! verdict is computed from the rest; the repository connection and the IDE
 //! are the shell's and always stay.
 
+use crate::plural::plural;
+
 /// A pull request quiet this many days or more is stuck.
 pub const QUIET_DAYS: u32 = 7;
 
@@ -65,10 +67,6 @@ impl Kits {
             (Kits::Only(kits), Some(k)) => kits.iter().any(|x| x == k),
         }
     }
-}
-
-fn plural(n: u32, one: &str, many: &str) -> String {
-    format!("{n} {}", if n == 1 { one } else { many })
 }
 
 fn plural_s(n: u32, one: &str) -> String {

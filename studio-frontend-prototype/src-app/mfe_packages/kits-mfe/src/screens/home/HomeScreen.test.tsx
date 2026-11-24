@@ -81,7 +81,7 @@ const SDLC = {
 
 describe('HomeScreen', () => {
   beforeEach(() => {
-    useScreenTranslationsMock.mockReturnValue({ t: (key: string) => key, loading: false });
+    useScreenTranslationsMock.mockReturnValue({ t: Object.assign((key: string) => key, { count: (key: string) => key }), loading: false });
     useApiQueryMock.mockReturnValue({
       isLoading: false,
       isError: false,
@@ -252,7 +252,7 @@ describe('HomeScreen', () => {
   );
 
   it('renders the translation-loading skeleton before localized content is ready', () => {
-    useScreenTranslationsMock.mockReturnValue({ t: (key: string) => key, loading: true });
+    useScreenTranslationsMock.mockReturnValue({ t: Object.assign((key: string) => key, { count: (key: string) => key }), loading: true });
 
     const { bridge } = createMfeBridgeFixture({
       domainId: TEST_DOMAIN_ID,

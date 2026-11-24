@@ -498,8 +498,8 @@ export function MapCanvas({
           <>
             <span className={styles.nodeWhat}>{shows.length ? shows.join(', ') : n.detail.what}</span>
             <span className={styles.nodeMeta}>
-              {shows.length ? `${t('screens_count', { count: String(shows.length) })} · ` : ''}
-              {t('calls_gears', { count: String(calls) })}
+              {shows.length ? `${t.count('screens_count', shows.length)} · ` : ''}
+              {t.count('calls_gears', calls)}
             </span>
           </>
         )}
@@ -540,7 +540,7 @@ export function MapCanvas({
           title={folded ? t('kids_unfold') : t('kids_fold')}
           data-pmap-kids-toggle={n.id}
         >
-          {folded ? '▸' : '▾'} {t('databases', { count: String(kids.length) })}
+          {folded ? '▸' : '▾'} {t.count('databases', kids.length)}
         </button>
         {!folded && <div className={styles.kids}>{kids.map((k) => chip(k))}</div>}
       </div>

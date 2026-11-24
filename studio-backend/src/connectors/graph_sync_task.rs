@@ -20,6 +20,7 @@
 //! a progress update. That keeps the walk's own signature untouched — it
 //! predates all of this and has no business knowing about runs.
 
+use crate::plural::plural;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -138,13 +139,13 @@ impl TaskHandler for GraphSyncTask {
         match outcome {
             Ok(outcome) => {
                 let summary = format!(
-                    "{} at {}: {} node(s), {} edge(s), {} file(s), {} contributor(s){}",
+                    "{} at {}: {}, {}, {}, {}{}",
                     payload.repo_full_path,
                     outcome.git_ref,
-                    outcome.nodes_upserted,
-                    outcome.edges_upserted,
-                    outcome.files,
-                    outcome.contributors,
+                    plural(outcome.nodes_upserted, "node", "nodes"),
+                    plural(outcome.edges_upserted, "edge", "edges"),
+                    plural(outcome.files, "file", "files"),
+                    plural(outcome.contributors, "contributor", "contributors"),
                     if outcome.truncated { ", truncated" } else { "" },
                 );
                 match serde_json::to_value(&outcome) {

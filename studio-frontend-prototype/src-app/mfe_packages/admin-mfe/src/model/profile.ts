@@ -3,6 +3,7 @@
 // file into what `PUT /me/avatar` takes, the account kinds a person may claim and how sure Studio is of each, and
 // what one confirmation pass found. The words are in i18n; this file returns keys and values.
 
+import type { ScreenText } from '@constructor-studio/mfe-shared';
 import type { AliasConfirmReport, PersonEmail } from '../api/types';
 
 /** Image types the backend stores as a photo; SVG is refused there. */
@@ -72,7 +73,7 @@ export function aliasKindLabel(kind: string, t: Text): string {
 }
 
 /** One line on what a confirmation pass found. */
-export function confirmSummary(report: AliasConfirmReport, t: Text): string {
+export function confirmSummary(report: AliasConfirmReport, t: ScreenText): string {
   const parts = [
     report.confirmed.length
       ? t('prof_confirmed', {
@@ -81,7 +82,7 @@ export function confirmSummary(report: AliasConfirmReport, t: Text): string {
       : t('prof_nothing_to_confirm'),
   ];
   if (report.already_confirmed) parts.push(t('prof_already_confirmed', { count: report.already_confirmed }));
-  if (report.skipped_shared) parts.push(t('prof_skipped_shared', { count: report.skipped_shared }));
+  if (report.skipped_shared) parts.push(t.count('prof_skipped_shared', report.skipped_shared));
   if (report.refused.length) parts.push(report.refused.join(' '));
   return parts.join(' ');
 }
