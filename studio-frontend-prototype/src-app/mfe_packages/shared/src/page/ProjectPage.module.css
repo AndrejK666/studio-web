@@ -9,8 +9,16 @@
   background: var(--card);
 }
 
-.header {
+/*
+ * The title sits where a one-line header centres it (the default header's
+ * 64 less the title's line, halved), whatever wraps under it: the kit centres
+ * a one-line header and tops a taller one, so in its narrow layout a tab with
+ * chips or actions put its title higher than a tab with none.
+ */
+.page > .header {
   flex: none;
+  align-items: flex-start;
+  padding-block-start: calc((var(--space-8) * 2 - var(--text-heading-1-line-height)) / 2);
 }
 
 .meta {
@@ -22,7 +30,11 @@
   height: var(--text-heading-1-line-height);
 }
 
-.helpTrigger {
+/* As tall as the title's line, so the row beside the title does not move it. */
+.meta .helpTrigger {
+  block-size: var(--text-heading-1-line-height);
+  inline-size: var(--text-heading-1-line-height);
+  min-block-size: 0;
   color: var(--muted-foreground);
 }
 
