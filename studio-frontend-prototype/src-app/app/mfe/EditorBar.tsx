@@ -142,7 +142,7 @@ export function EditorBar() {
       <span className="ml-auto inline-flex flex-wrap items-center gap-2">
         {names.length > 0 && (
           <span className="text-muted-foreground" data-desktop-presence>
-            {t('editor_desktop_open_on', { count: names.length, names: names.join(', ') })}
+            {t.count('editor_desktop_open_on', names.length, { names: names.join(', ') })}
           </span>
         )}
         <Button

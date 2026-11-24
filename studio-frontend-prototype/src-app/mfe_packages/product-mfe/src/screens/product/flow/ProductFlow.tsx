@@ -247,7 +247,7 @@ function SaveStep({
             {changes === 0 ? (
               <StatusChip tone="ok">{t('nothing_to_save')}</StatusChip>
             ) : (
-              <StatusChip tone="info">{t('lines_change', { count: String(changes) })}</StatusChip>
+              <StatusChip tone="info">{t.count('lines_change', changes)}</StatusChip>
             )}
             {!draft.ok && (
               <StatusChip tone="warn" title={t('not_resolving_title')}>
@@ -347,7 +347,7 @@ function Revisions({
 
   return (
     <details open={open} onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)} data-flow-history>
-      <summary className={styles.summary}>{t('history', { count: String(latest.revision) })}</summary>
+      <summary className={styles.summary}>{t.count('history', latest.revision)}</summary>
       {err && <div className={common.error}>{err}</div>}
       {open && !items && !err && <p className={common.muted}>{t('reading_revisions')}</p>}
       {items && (

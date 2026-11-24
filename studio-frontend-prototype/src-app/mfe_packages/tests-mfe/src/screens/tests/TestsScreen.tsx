@@ -373,7 +373,7 @@ function ProjectTests({
                       : checks.total === 0
                         ? t('docs_none')
                         : docFailing
-                          ? t('docs_failing', { count: docFailing })
+                          ? t.count('docs_failing', docFailing)
                           : t('docs_pass')}
                 </span>
               </CardContent>

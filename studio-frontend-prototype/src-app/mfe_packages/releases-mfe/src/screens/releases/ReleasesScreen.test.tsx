@@ -90,7 +90,7 @@ const readyPath = (patch: Partial<ProjectPath> = {}): ProjectPath => ({
   steps: [
     { id: 'product', state: 'done', reason: 'The product is described (revision 3).', checklist: [] },
     { id: 'build', state: 'done', reason: 'Build studio-2 passed.', checklist: [], build_id: 'studio-2' },
-    { id: 'image', state: 'done', reason: '0.2.0 is published with 1 image(s).', checklist: [] },
+    { id: 'image', state: 'done', reason: '0.2.0 is published with 1 image.', checklist: [] },
     { id: 'environment', state: 'done', reason: 'dev is ready for a deploy.', checklist: [] },
     {
       id: 'running',

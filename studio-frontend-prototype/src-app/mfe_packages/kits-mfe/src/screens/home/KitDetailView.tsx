@@ -40,7 +40,7 @@ import page from './kit/KitPage.module.css';
 /** The card's one line: how much of each kind the kit brings. */
 export function contentsSummary(c: KitContents, t: Text): string {
   const parts: string[] = [];
-  const add = (n: number, key: string) => n > 0 && parts.push(t(key, { count: n }));
+  const add = (n: number, key: string) => n > 0 && parts.push(t.count(key, n));
   add(c.screens.length, 'sum_screens');
   add(c.types.length, 'sum_types');
   add(c.rules.length + c.functions.length, 'sum_handlers');

@@ -65,7 +65,7 @@ describe('AddFromRepository', () => {
     previewFetch.mockResolvedValue(KIT);
     addFetch.mockResolvedValue(KIT);
     const onAdded = vi.fn();
-    render(<AddFromRepository organizationId={ORG} t={((k: string) => k) as never} onAdded={onAdded} onCancel={() => {}} />);
+    render(<AddFromRepository organizationId={ORG} t={Object.assign((k: string) => k, { count: (k: string) => k }) as never} onAdded={onAdded} onCancel={() => {}} />);
 
     const select = (await screen.findByRole('combobox')) as HTMLSelectElement;
     expect([...select.options].map((o) => o.value)).toEqual(['c-own']);
@@ -88,7 +88,7 @@ describe('AddFromRepository', () => {
 
   it('shows the server\'s refusal', async () => {
     previewFetch.mockRejectedValue(new Error('a slug Studio already has'));
-    render(<AddFromRepository organizationId={ORG} t={((k: string) => k) as never} onAdded={() => {}} onCancel={() => {}} />);
+    render(<AddFromRepository organizationId={ORG} t={Object.assign((k: string) => k, { count: (k: string) => k }) as never} onAdded={() => {}} onCancel={() => {}} />);
     await screen.findByRole('combobox');
     fireEvent.change(screen.getAllByRole('textbox')[0], { target: { value: 'acme/kits' } });
     fireEvent.click(screen.getByRole('button', { name: 'add_read' }));

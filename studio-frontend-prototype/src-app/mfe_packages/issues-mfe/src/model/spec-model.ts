@@ -536,7 +536,7 @@ export function buildLine(build: SpecModelBuild): string {
     return `Reading documents ${build.done}/${build.documents}${build.current ? ` · ${build.current}` : ""}`;
   }
   if (build.error) return `Stopped: ${build.error}`;
-  if (build.finished_at) return `Built ${build.done} document(s), checked ${build.judged} candidate(s)`;
+  if (build.finished_at) return `Built ${build.done} document${build.done === 1 ? "" : "s"}, checked ${build.judged} candidate${build.judged === 1 ? "" : "s"}`;
   return "";
 }
 

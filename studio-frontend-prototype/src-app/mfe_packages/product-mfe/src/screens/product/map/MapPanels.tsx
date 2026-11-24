@@ -579,7 +579,7 @@ function GdlText({
               {kept
                 ? changes === 0
                   ? t('gdl_same', { revision: String(kept.revision) })
-                  : t('gdl_differ', { count: String(changes), revision: String(kept.revision) })
+                  : t.count('gdl_differ', changes, { revision: String(kept.revision) })
                 : t('gdl_nothing_saved')}
             </span>
           </>

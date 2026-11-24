@@ -67,7 +67,7 @@ vi.mock('./i18n', () => ({
 describe('blank-mfe lifecycle', () => {
   beforeEach(() => {
     getServiceMock.mockReturnValue({ getStatus: { type: 'status' } });
-    useScreenTranslationsMock.mockReturnValue({ t: (key: string) => key, loading: false });
+    useScreenTranslationsMock.mockReturnValue({ t: Object.assign((key: string) => key, { count: (key: string) => key }), loading: false });
     useApiQueryMock.mockReturnValue({
       data: {
         message: 'Blank MFE query example is active.',

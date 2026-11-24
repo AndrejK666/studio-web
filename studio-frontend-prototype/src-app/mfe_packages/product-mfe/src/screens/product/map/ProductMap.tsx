@@ -410,14 +410,14 @@ export function ProductMap({
             it and the Backend section lists it. */}
         {engineErrors > 0 && (
           <StatusChip tone="danger" onClick={() => onSection('backend')} data-pmap-engine-errors={String(engineErrors)}>
-            {t('engine_errors', { count: String(engineErrors) })}
+            {t.count('engine_errors', engineErrors)}
           </StatusChip>
         )}
         <StatusChip
           tone={problems.some((p) => p.node.state !== 'unused') ? 'danger' : 'ok'}
           data-pmap-problems={String(problems.length)}
         >
-          {problems.length === 0 ? t('problems_none') : t('problems', { count: String(problems.length) })}
+          {problems.length === 0 ? t('problems_none') : t.count('problems', problems.length)}
         </StatusChip>
         {view === 'map' && (
           <DropdownMenu>

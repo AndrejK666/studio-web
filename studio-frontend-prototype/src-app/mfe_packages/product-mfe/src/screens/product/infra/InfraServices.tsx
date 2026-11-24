@@ -630,7 +630,7 @@ function RowDetail({
             <b>{e.name}</b>: {pill?.detail ?? '—'}
             {s && (e.registry ? (copy ? ` · ${t('copy_in_registry')}` : ` · ${t('no_copy_in_registry')}`) : '')}
             {s?.public_url && ` · ${t('public_at', { url: s.public_url })}`}
-            {s?.files && Object.keys(s.files).length > 0 && ` · ${t('files_mounted', { count: String(Object.keys(s.files).length) })}`}
+            {s?.files && Object.keys(s.files).length > 0 && ` · ${t.count('files_mounted', Object.keys(s.files).length)}`}
             {s?.chart_ref && ` · ${t('ready_chart', { chart: s.chart_ref })}`}{' '}
             <button type="button" className={styles.link} onClick={onReleases}>
               {t('releases_link')}
