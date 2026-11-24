@@ -30,5 +30,8 @@
   "next_title": "Что дальше: {type}",
   "next_open": "Открыть",
   "next_dismiss": "Скрыть",
-  "next_dismiss_failed": "Шаг не скрыт: {error}"
+  "next_dismiss_failed": "Шаг не скрыт: {error}",
+  "status_computed": "вычислено {ago} назад",
+  "status_computing": "вычисляется…",
+  "status_refresh": "Вычислить статус заново сейчас"
 }

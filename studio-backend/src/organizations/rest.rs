@@ -1457,23 +1457,32 @@ pub struct ProjectStatusDto {
     /// The kits installed for the project that the status was computed for;
     /// null when they could not be read, and nothing was left out.
     pub kits: Option<Vec<String>>,
+    /// When this status was computed: a kept one answers at once and is
+    /// computed again in the background once it is older than 30 s.
+    #[serde(default)]
+    pub computed_at: Option<String>,
 }
 
 /// `?project_id=`: the project whose status to read.
 #[derive(Debug, serde::Deserialize)]
 pub struct ProjectStatusQuery {
     pub project_id: String,
+    /// Compute it now rather than answer the kept one (the screen's ↻).
+    #[serde(default)]
+    pub refresh: bool,
 }
 
+/// The project's status: the kept one at once, computed again in the
+/// background when it is older than `status_view::FRESH_FOR`; computed now
+/// when nothing is kept or `refresh` asks (`status_view.rs`).
 async fn get_project_status(
     Extension(ctx): Extension<SecurityContext>,
     Extension(sources): Extension<Option<Arc<super::rollups::Sources>>>,
     Extension(overview): Extension<Option<Arc<super::overview::Overview>>>,
     headers: axum::http::HeaderMap,
     axum::extract::Query(query): axum::extract::Query<ProjectStatusQuery>,
-) -> ApiResult<JsonBody<ProjectStatusDto>> {
+) -> ApiResult<JsonBody<serde_json::Value>> {
     let project_id = query.project_id;
-    use super::status;
     let unavailable = || {
         CanonicalError::service_unavailable()
             .with_detail("account-management is not available, so nothing can be read")
@@ -1515,6 +1524,77 @@ async fn get_project_status(
                 .with_detail("studio-mcp is not running here, so the other gears cannot be read")
                 .create()
         })?;
+    // The kept status, in the organization's model, reached as this gear.
+    let port = overview
+        .as_ref()
+        .and_then(|o| crate::derived_view::port(&o.hub));
+    let model_ctx = match &overview {
+        Some(o) => crate::derived_view::in_org_of(&o.hub, &ctx, id).await,
+        None => ctx.clone(),
+    };
+    if let (Some(port), false) = (&port, query.refresh)
+        && let Ok(Some((state, mut kept))) =
+            super::status_view::read(port.as_ref(), &model_ctx, id).await
+    {
+        if super::status_view::stale(&state, time::OffsetDateTime::now_utc())
+            && let Some(claim) = super::status_view::claim(id)
+        {
+            let (ctx, sources, overview, port, model_ctx) = (
+                ctx.clone(),
+                Arc::clone(&sources),
+                overview.clone(),
+                Arc::clone(port),
+                model_ctx.clone(),
+            );
+            tokio::spawn(async move {
+                let _claim = claim;
+                if let Ok(dto) = compute_project_status(ctx, sources, overview, api, id, org).await
+                    && let Ok(value) = serde_json::to_value(&dto)
+                    && let Err(e) =
+                        super::status_view::keep(port.as_ref(), &model_ctx, id, value).await
+                {
+                    tracing::warn!(project = %id, error = %format!("{e:#}"), "project status: could not keep the status");
+                }
+            });
+        }
+        kept["computed_at"] = serde_json::json!(state.computed_at);
+        if let Some(obj) = kept.as_object_mut() {
+            obj.remove("_scope");
+        }
+        return Ok(Json(kept));
+    }
+    let dto = compute_project_status(ctx, Arc::clone(&sources), overview, api, id, org).await?;
+    let mut value = serde_json::to_value(&dto)
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+    if let Some(port) = &port {
+        match super::status_view::keep(port.as_ref(), &model_ctx, id, value.clone()).await {
+            Ok(state) => value["computed_at"] = serde_json::json!(state.computed_at),
+            Err(e) => {
+                tracing::warn!(project = %id, error = %format!("{e:#}"), "project status: could not keep the status");
+            }
+        }
+    }
+    if value["computed_at"].is_null() {
+        value["computed_at"] = serde_json::json!(crate::derived_view::now_rfc3339());
+    }
+    Ok(Json(value))
+}
+
+/// The project's status, read now from the other gears as the caller.
+async fn compute_project_status(
+    ctx: SecurityContext,
+    sources: Arc<super::rollups::Sources>,
+    overview: Option<Arc<super::overview::Overview>>,
+    api: crate::mcp::sdk::Api,
+    id: Uuid,
+    org: Option<Uuid>,
+) -> ApiResult<ProjectStatusDto> {
+    use super::status;
+    let not_found = || {
+        OrganizationError::not_found(format!("there is no project {id} for this caller"))
+            .with_resource(id.to_string())
+            .create()
+    };
     let project = id.to_string();
     // The project's rollup row beside the other gears' reads, not before
     // them: the project was just read as the caller, and one after the other
@@ -1623,7 +1703,7 @@ async fn get_project_status(
     let verdict = status::project_verdict(&signals, Some(&path));
     let next = status::next_step(&path).map(|s| s.id.to_string());
     let path_facts = facts.path.clone().unwrap_or_default();
-    Ok(Json(ProjectStatusDto {
+    Ok(ProjectStatusDto {
         project_id: id.to_string(),
         verdict: verdict.state.to_string(),
         label: verdict.label.to_string(),
@@ -1662,7 +1742,8 @@ async fn get_project_status(
             status::Kits::All => None,
             status::Kits::Only(kits) => Some(kits),
         },
-    }))
+        computed_at: None,
+    })
 }
 
 /// `?range=` and the narrower scope, if any.
@@ -2290,12 +2371,19 @@ Labels are deliberately \
              next. Computed from the same reads the portal made, as the caller, so it shows no \
              more than those routes would; a source that could not be read is named in \
              `unread` and never counted as nothing wrong or nothing done. 404 when the \
-             project is not the caller's to see.",
+             project is not the caller's to see. Kept once computed: a read answers the \
+             kept status at once with `computed_at`, and one older than 30 s is computed \
+             again in the background for the next read; `refresh=true` computes it now.",
         )
         .tag("StudioOrganizations")
         .authenticated()
         .require_license_features::<License>([])
         .query_param("project_id", true, "The project's tenant id")
+        .query_param(
+            "refresh",
+            false,
+            "true: compute the status now rather than answer the kept one",
+        )
         .handler(get_project_status)
         .json_response_with_schema::<ProjectStatusDto>(openapi, StatusCode::OK, "The status")
         .error_400(openapi)

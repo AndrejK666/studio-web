@@ -163,6 +163,11 @@ export class ProjectStatusApiService extends BaseApiService {
     ({ projectId }) => `/project-status?${new URLSearchParams({ project_id: projectId })}`
   );
 
+  /** The status computed now rather than the kept one (the Overview's ↻). */
+  readonly freshStatus = this.protocol(RestEndpointProtocol).queryWith<ProjectStatus, { projectId: string }>(
+    ({ projectId }) => `/project-status?${new URLSearchParams({ project_id: projectId, refresh: 'true' })}`
+  );
+
   /**
    * The project types an organization offers: the built-in ones, then the kits
    * it installed whose model derives a subtype of Project (ADR-0073 Amendment 2).

@@ -38,6 +38,13 @@ pub mod sdk;
 mod service;
 mod status;
 mod status_read;
+mod status_view; // a project's status kept, computed again in the background
+
+/// The types the kept project status needs in the model, for the kits' claims test.
+#[cfg(test)]
+pub(crate) fn declared_view_types() -> Vec<crate::domain_model::port::TypeNeed> {
+    status_view::VIEW.needs()
+}
 
 use std::sync::{Arc, OnceLock};
 

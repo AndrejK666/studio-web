@@ -53,6 +53,8 @@ export interface ProjectStatus {
   unread: string[];
   /** The kits installed for the project the status was computed for; null when they could not be read. */
   kits?: string[] | null;
+  /** When the server computed this status (it keeps it and recomputes it in the background). */
+  computed_at?: string | null;
 }
 
 /**
