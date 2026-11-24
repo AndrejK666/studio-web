@@ -51,7 +51,7 @@ pub struct GearMatchDiffQuery {
 }
 
 /// The strategy a request names, checked as a kit's id is (`snake_case`).
-fn strategy_param(s: Option<String>) -> ApiResult<String> {
+pub(super) fn strategy_param(s: Option<String>) -> ApiResult<String> {
     match s.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
         None => Ok(gear_match::services::SHIPPED_STRATEGY.to_owned()),
         Some(s) => crate::product::assembly::Strategy::parse(s)

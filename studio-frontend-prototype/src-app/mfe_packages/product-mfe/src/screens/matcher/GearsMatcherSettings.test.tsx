@@ -1,8 +1,12 @@
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { stubResizeObserver } from '@frontx-test-utils/stubResizeObserver';
 
 stubResizeObserver();
+// The kit's Checkbox (Base UI) builds a PointerEvent on click, which jsdom lacks.
+if (typeof window.PointerEvent === 'undefined') {
+  (window as unknown as { PointerEvent: typeof MouseEvent }).PointerEvent = MouseEvent;
+}
 
 vi.mock('../../i18n', () => ({
   useAssemblyTranslations: () => ({
@@ -14,6 +18,7 @@ vi.mock('../../i18n', () => ({
 import { api } from '../../api/client';
 import type { AssemblyStrategy } from '../../model/assembly';
 import type { GearMatchUsage } from '../../model/gear-match-usage';
+import type { MatcherSettings } from '../../model/matcher-settings';
 import { GearsMatcherSettings } from './GearsMatcherSettings';
 
 const strategy = (extra: Partial<AssemblyStrategy> = {}): AssemblyStrategy => ({
@@ -90,6 +95,26 @@ const usage = (extra: Partial<GearMatchUsage> = {}): GearMatchUsage => ({
   ...extra,
 });
 
+const runValues = { provider: 'constructor', models: ['c1', 'c1', 'c1'], max_calls: 400, max_extract_calls: 60 };
+const runSettings = (extra: Partial<MatcherSettings> = {}): MatcherSettings => ({
+  strategy: 'gears_matcher',
+  scope: 'deployment',
+  may_change: true,
+  version: 2,
+  updated_at: '2026-11-20T10:00:00Z',
+  updated_by: 'u-1',
+  effective: runValues,
+  config: runValues,
+  overrides: { provider: null, models: null, max_calls: null, max_extract_calls: null },
+  providers: [
+    { id: 'constructor', available: true },
+    { id: 'anthropic', available: false, reason: 'ANTHROPIC_API_KEY is not set' },
+    { id: 'openai', available: true },
+  ],
+  ceilings: { max_calls: 2000, max_extract_calls: 500 },
+  ...extra,
+});
+
 const found = (selector: string) =>
   waitFor(() => {
     const el = document.querySelector(selector);
@@ -98,6 +123,10 @@ const found = (selector: string) =>
   });
 
 describe('GearsMatcherSettings', () => {
+  beforeEach(() => {
+    vi.spyOn(api, 'matcherSettings').mockResolvedValue(runSettings({ may_change: false }));
+  });
+
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
@@ -197,5 +226,66 @@ describe('GearsMatcherSettings', () => {
     await waitFor(() =>
       expect(connect).toHaveBeenCalledWith('', 'o1', 'acme_matcher', 'https://acme.example/matcher', 's3cret', 'Acme matcher')
     );
+  });
+
+  it('shows the run settings read-only to a caller who may not change them, with no key anywhere', async () => {
+    vi.spyOn(api, 'organizationAssemblyStrategy').mockResolvedValue(strategy());
+    vi.spyOn(api, 'gearMatchUsage').mockResolvedValue(usage());
+    render(<GearsMatcherSettings orgId="o1" />);
+    const block = await found('[data-matcher-settings="deployment"]');
+    expect(block.getAttribute('data-matcher-settings-may-change')).toBe('false');
+    expect(block.textContent).toContain('run_scope_deployment');
+    expect(document.querySelector('[data-matcher-settings-effective]')?.textContent).toContain('c1, c1, c1');
+    expect(document.querySelector('[data-matcher-settings-save]')).toBeNull();
+    expect(block.querySelector('input[type="password"]')).toBeNull();
+  });
+
+  it('saves the override against the version read; an unavailable provider cannot be picked', async () => {
+    vi.spyOn(api, 'organizationAssemblyStrategy').mockResolvedValue(strategy());
+    const reads = vi.spyOn(api, 'gearMatchUsage').mockResolvedValue(usage());
+    vi.spyOn(api, 'matcherSettings').mockResolvedValue(runSettings());
+    const put = vi.spyOn(api, 'putMatcherSettings').mockResolvedValue(
+      runSettings({ version: 3, overrides: { provider: 'openai', models: ['gpt-x'], max_calls: 300, max_extract_calls: null } })
+    );
+    render(<GearsMatcherSettings orgId="o1" />);
+    const provider = (await found('[data-matcher-settings-provider]')) as HTMLSelectElement;
+    expect(provider.querySelector('option[value="anthropic"]')?.hasAttribute('disabled')).toBe(true);
+    fireEvent.change(provider, { target: { value: 'openai' } });
+    fireEvent.click(await found('[data-matcher-settings-same-model]'));
+    fireEvent.change(await found('[data-matcher-settings-model="0"]'), { target: { value: 'gpt-x' } });
+    fireEvent.change(await found('[data-matcher-settings-max-calls]'), { target: { value: '300' } });
+    const before = reads.mock.calls.length;
+    fireEvent.click(await found('[data-matcher-settings-save]'));
+    await waitFor(() =>
+      expect(put).toHaveBeenCalledWith('', 'o1', 'gears_matcher', {
+        version: 2,
+        overrides: { provider: 'openai', models: ['gpt-x'], max_calls: 300, max_extract_calls: null },
+      })
+    );
+    // The card reads the service's live check again, for the new models.
+    await waitFor(() => expect(reads.mock.calls.length).toBeGreaterThan(before));
+  });
+
+  it('refuses a bound over its ceiling before anything is sent', async () => {
+    vi.spyOn(api, 'organizationAssemblyStrategy').mockResolvedValue(strategy());
+    vi.spyOn(api, 'gearMatchUsage').mockResolvedValue(usage());
+    vi.spyOn(api, 'matcherSettings').mockResolvedValue(runSettings());
+    const put = vi.spyOn(api, 'putMatcherSettings');
+    render(<GearsMatcherSettings orgId="o1" />);
+    fireEvent.change(await found('[data-matcher-settings-max-calls]'), { target: { value: '5000' } });
+    fireEvent.click(await found('[data-matcher-settings-save]'));
+    expect((await found('[data-matcher-settings-save-error]')).textContent).toContain('run_max_calls_bad');
+    expect(put).not.toHaveBeenCalled();
+  });
+
+  it('on a conflict says the settings changed and reads them again', async () => {
+    vi.spyOn(api, 'organizationAssemblyStrategy').mockResolvedValue(strategy());
+    vi.spyOn(api, 'gearMatchUsage').mockResolvedValue(usage());
+    const read = vi.spyOn(api, 'matcherSettings').mockResolvedValue(runSettings());
+    vi.spyOn(api, 'putMatcherSettings').mockRejectedValue(Object.assign(new Error('conflict'), { response: { status: 409 } }));
+    render(<GearsMatcherSettings orgId="o1" />);
+    fireEvent.click(await found('[data-matcher-settings-save]'));
+    await found('[data-matcher-settings-conflict]');
+    await waitFor(() => expect(read.mock.calls.length).toBeGreaterThanOrEqual(2));
   });
 });

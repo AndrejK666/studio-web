@@ -104,3 +104,23 @@
   font-size: 0.75rem;
   color: var(--muted-foreground);
 }
+
+/* The service card's run settings form. */
+.settings {
+  display: grid;
+  gap: var(--space-3);
+  max-width: 40rem;
+}
+
+.field {
+  display: grid;
+  gap: var(--space-1);
+  font-size: 0.875rem;
+  min-width: 0;
+}
+
+.models {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: var(--space-2);
+}

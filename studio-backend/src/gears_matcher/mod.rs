@@ -1,4 +1,4 @@
-//! The gears-matcher on the Studio side (ADR-0071, `docs/design/studio-gears-matcher.md`).
+//! The gears-matcher on the Studio side (ADR-0076, `docs/design/studio-gears-matcher.md`).
 //!
 //! Only the id mapping is here so far; the client of the service and the pilot records are later
 //! pull requests.

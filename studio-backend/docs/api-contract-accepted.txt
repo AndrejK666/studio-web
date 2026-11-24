@@ -1320,6 +1320,12 @@ request	PUT /studio-product/v1/gear-match-decisions	decision	String	required
 request	PUT /studio-product/v1/gear-match-decisions	gear_id	String	required
 request	PUT /studio-product/v1/gear-match-decisions	match_id	Uuid	optional
 request	PUT /studio-product/v1/gear-match-decisions	requirement_id	String	required
+request	PUT /studio-product/v1/gears-matcher-settings	overrides	{}	required
+request	PUT /studio-product/v1/gears-matcher-settings	overrides.max_calls	u64	optional
+request	PUT /studio-product/v1/gears-matcher-settings	overrides.max_extract_calls	u64	optional
+request	PUT /studio-product/v1/gears-matcher-settings	overrides.models	Vec<String>	optional
+request	PUT /studio-product/v1/gears-matcher-settings	overrides.provider	String	optional
+request	PUT /studio-product/v1/gears-matcher-settings	version	u64	required
 request	PUT /studio-product/v1/product-infra	base_revision	i64	optional
 request	PUT /studio-product/v1/product-infra	items	Vec<Value>	required
 request	PUT /studio-product/v1/product-kind	kind	String	required
@@ -5441,6 +5447,35 @@ response	GET /studio-product/v1/gearbox/extension-points	items.sdk	String	always
 response	GET /studio-product/v1/gearbox/extension-points	items.spec	String	always
 response	GET /studio-product/v1/gearbox/extension-points	items.trait_ident	String	always
 response	GET /studio-product/v1/gearbox/extension-points	total	u32	always
+response	GET /studio-product/v1/gears-matcher-settings	ceilings	{}	always
+response	GET /studio-product/v1/gears-matcher-settings	ceilings.max_calls	u64	optional
+response	GET /studio-product/v1/gears-matcher-settings	ceilings.max_extract_calls	u64	optional
+response	GET /studio-product/v1/gears-matcher-settings	config	{}	always
+response	GET /studio-product/v1/gears-matcher-settings	config.max_calls	u64	always
+response	GET /studio-product/v1/gears-matcher-settings	config.max_extract_calls	u64	always
+response	GET /studio-product/v1/gears-matcher-settings	config.models	Vec<String>	always
+response	GET /studio-product/v1/gears-matcher-settings	config.provider	String	always
+response	GET /studio-product/v1/gears-matcher-settings	effective	{}	always
+response	GET /studio-product/v1/gears-matcher-settings	effective.max_calls	u64	always
+response	GET /studio-product/v1/gears-matcher-settings	effective.max_extract_calls	u64	always
+response	GET /studio-product/v1/gears-matcher-settings	effective.models	Vec<String>	always
+response	GET /studio-product/v1/gears-matcher-settings	effective.provider	String	always
+response	GET /studio-product/v1/gears-matcher-settings	may_change	bool	always
+response	GET /studio-product/v1/gears-matcher-settings	overrides	{}	always
+response	GET /studio-product/v1/gears-matcher-settings	overrides.max_calls	u64	optional
+response	GET /studio-product/v1/gears-matcher-settings	overrides.max_extract_calls	u64	optional
+response	GET /studio-product/v1/gears-matcher-settings	overrides.models	Vec<String>	optional
+response	GET /studio-product/v1/gears-matcher-settings	overrides.provider	String	optional
+response	GET /studio-product/v1/gears-matcher-settings	problem	String	optional
+response	GET /studio-product/v1/gears-matcher-settings	providers	Vec<{}>	always
+response	GET /studio-product/v1/gears-matcher-settings	providers.available	bool	always
+response	GET /studio-product/v1/gears-matcher-settings	providers.id	String	always
+response	GET /studio-product/v1/gears-matcher-settings	providers.reason	String	optional
+response	GET /studio-product/v1/gears-matcher-settings	scope	String	always
+response	GET /studio-product/v1/gears-matcher-settings	strategy	String	always
+response	GET /studio-product/v1/gears-matcher-settings	updated_at	String	optional
+response	GET /studio-product/v1/gears-matcher-settings	updated_by	String	optional
+response	GET /studio-product/v1/gears-matcher-settings	version	u64	always
 response	GET /studio-product/v1/inbox/gear-match-questions	items	Vec<{}>	always
 response	GET /studio-product/v1/inbox/gear-match-questions	items.detail	String	optional
 response	GET /studio-product/v1/inbox/gear-match-questions	items.id	String	always
@@ -6253,6 +6288,7 @@ response	GET /studio-user/v1/users/{}/memberships	items.status	String	always
 response	GET /studio-user/v1/users/{}/memberships	items.updated_at_epoch_ms	i64	always
 response	GET /studio-user/v1/users/{}/memberships	items.user_id	String	always
 response	PATCH /studio-connector/v1/connections/{}	account	String	always
+response	PATCH /studio-connector/v1/connections/{}	avatar_url	String	optional
 response	PATCH /studio-connector/v1/connections/{}	checks	Vec<{}>	always
 response	PATCH /studio-connector/v1/connections/{}	checks.detail	String	always
 response	PATCH /studio-connector/v1/connections/{}	checks.name	String	always
@@ -6673,6 +6709,7 @@ response	POST /studio-components-catalog/v1/screen-previews	width	u32	optional
 response	POST /studio-components-catalog/v1/sync	run_id	String	always
 response	POST /studio-components-catalog/v1/sync	status	String	always
 response	POST /studio-connector/v1/connections	account	String	always
+response	POST /studio-connector/v1/connections	avatar_url	String	optional
 response	POST /studio-connector/v1/connections	checks	Vec<{}>	always
 response	POST /studio-connector/v1/connections	checks.detail	String	always
 response	POST /studio-connector/v1/connections	checks.name	String	always
@@ -6720,6 +6757,7 @@ response	POST /studio-connector/v1/connections/{}/messages	message_id	String	opt
 response	POST /studio-connector/v1/connections/{}/messages	provider	String	always
 response	POST /studio-connector/v1/connections/{}/messages	target	String	always
 response	POST /studio-connector/v1/connections/{}/test	account	String	always
+response	POST /studio-connector/v1/connections/{}/test	avatar_url	String	optional
 response	POST /studio-connector/v1/connections/{}/test	checks	Vec<{}>	always
 response	POST /studio-connector/v1/connections/{}/test	checks.detail	String	always
 response	POST /studio-connector/v1/connections/{}/test	checks.name	String	always
@@ -6739,6 +6777,7 @@ response	POST /studio-connector/v1/connections/{}/test	connection.scope	String	a
 response	POST /studio-connector/v1/connections/{}/test	connection.secret_ref	String	always
 response	POST /studio-connector/v1/connections/{}/test	display_name	String	optional
 response	POST /studio-connector/v1/oauth/complete	account	String	always
+response	POST /studio-connector/v1/oauth/complete	avatar_url	String	optional
 response	POST /studio-connector/v1/oauth/complete	checks	Vec<{}>	always
 response	POST /studio-connector/v1/oauth/complete	checks.detail	String	always
 response	POST /studio-connector/v1/oauth/complete	checks.name	String	always
@@ -6759,6 +6798,7 @@ response	POST /studio-connector/v1/oauth/complete	connection.secret_ref	String	a
 response	POST /studio-connector/v1/oauth/complete	display_name	String	optional
 response	POST /studio-connector/v1/oauth/start	authorize_url	String	always
 response	POST /studio-connector/v1/probe	account	String	always
+response	POST /studio-connector/v1/probe	avatar_url	String	optional
 response	POST /studio-connector/v1/probe	checks	Vec<{}>	always
 response	POST /studio-connector/v1/probe	checks.detail	String	always
 response	POST /studio-connector/v1/probe	checks.name	String	always
@@ -9022,6 +9062,35 @@ response	PUT /studio-product/v1/gear-match-decisions	gear_id	String	optional
 response	PUT /studio-product/v1/gear-match-decisions	subject	String	always
 response	PUT /studio-product/v1/gear-match-decisions	updated_at	String	always
 response	PUT /studio-product/v1/gear-match-decisions	value	String	optional
+response	PUT /studio-product/v1/gears-matcher-settings	ceilings	{}	always
+response	PUT /studio-product/v1/gears-matcher-settings	ceilings.max_calls	u64	optional
+response	PUT /studio-product/v1/gears-matcher-settings	ceilings.max_extract_calls	u64	optional
+response	PUT /studio-product/v1/gears-matcher-settings	config	{}	always
+response	PUT /studio-product/v1/gears-matcher-settings	config.max_calls	u64	always
+response	PUT /studio-product/v1/gears-matcher-settings	config.max_extract_calls	u64	always
+response	PUT /studio-product/v1/gears-matcher-settings	config.models	Vec<String>	always
+response	PUT /studio-product/v1/gears-matcher-settings	config.provider	String	always
+response	PUT /studio-product/v1/gears-matcher-settings	effective	{}	always
+response	PUT /studio-product/v1/gears-matcher-settings	effective.max_calls	u64	always
+response	PUT /studio-product/v1/gears-matcher-settings	effective.max_extract_calls	u64	always
+response	PUT /studio-product/v1/gears-matcher-settings	effective.models	Vec<String>	always
+response	PUT /studio-product/v1/gears-matcher-settings	effective.provider	String	always
+response	PUT /studio-product/v1/gears-matcher-settings	may_change	bool	always
+response	PUT /studio-product/v1/gears-matcher-settings	overrides	{}	always
+response	PUT /studio-product/v1/gears-matcher-settings	overrides.max_calls	u64	optional
+response	PUT /studio-product/v1/gears-matcher-settings	overrides.max_extract_calls	u64	optional
+response	PUT /studio-product/v1/gears-matcher-settings	overrides.models	Vec<String>	optional
+response	PUT /studio-product/v1/gears-matcher-settings	overrides.provider	String	optional
+response	PUT /studio-product/v1/gears-matcher-settings	problem	String	optional
+response	PUT /studio-product/v1/gears-matcher-settings	providers	Vec<{}>	always
+response	PUT /studio-product/v1/gears-matcher-settings	providers.available	bool	always
+response	PUT /studio-product/v1/gears-matcher-settings	providers.id	String	always
+response	PUT /studio-product/v1/gears-matcher-settings	providers.reason	String	optional
+response	PUT /studio-product/v1/gears-matcher-settings	scope	String	always
+response	PUT /studio-product/v1/gears-matcher-settings	strategy	String	always
+response	PUT /studio-product/v1/gears-matcher-settings	updated_at	String	optional
+response	PUT /studio-product/v1/gears-matcher-settings	updated_by	String	optional
+response	PUT /studio-product/v1/gears-matcher-settings	version	u64	always
 response	PUT /studio-product/v1/product-infra	items	Vec<Value>	always
 response	PUT /studio-product/v1/product-infra	revision	i64	optional
 response	PUT /studio-product/v1/product-infra	services	Vec<{}>	always
@@ -9409,6 +9478,7 @@ route	GET /studio-artifact-ingest/v1/edges
 route	GET /studio-artifact-ingest/v1/nodes
 route	GET /studio-artifact-ingest/v1/open-pull-requests
 route	GET /studio-artifact-ingest/v1/outputs
+route	GET /studio-artifact-ingest/v1/outputs/{}/content
 route	GET /studio-artifact-ingest/v1/outputs/{}/download
 route	GET /studio-artifact-ingest/v1/repo-files
 route	GET /studio-artifact-ingest/v1/runs
@@ -9612,6 +9682,7 @@ route	GET /studio-product/v1/gearbox/catalogue
 route	GET /studio-product/v1/gearbox/corpus/info/refs
 route	GET /studio-product/v1/gearbox/corpus/{}/info/refs
 route	GET /studio-product/v1/gearbox/extension-points
+route	GET /studio-product/v1/gears-matcher-settings
 route	GET /studio-product/v1/inbox/gear-match-questions
 route	GET /studio-product/v1/organizations/{}/gearbox/corpus/{}/info/refs
 route	GET /studio-product/v1/product-description
@@ -9917,6 +9988,7 @@ route	PUT /studio-product/v1/assembly-strategy
 route	PUT /studio-product/v1/gear-explanations/{}
 route	PUT /studio-product/v1/gear-match-answers
 route	PUT /studio-product/v1/gear-match-decisions
+route	PUT /studio-product/v1/gears-matcher-settings
 route	PUT /studio-product/v1/product-infra
 route	PUT /studio-product/v1/product-kind
 route	PUT /studio-product/v1/project-assembly-strategy

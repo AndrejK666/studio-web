@@ -60,6 +60,7 @@ import type { GearBrings } from '../model/gear-brings';
 import type { GearMatch, GearMatchDiff, GearMatchItem } from '../model/gear-match';
 import type { AssemblyStrategy, StrategyId } from '../model/assembly';
 import type { GearMatchUsage } from '../model/gear-match-usage';
+import type { MatcherSettings, MatcherSettingsUpdate } from '../model/matcher-settings';
 
 /** The tenant-metadata type a project's configuration is kept under. */
 export const PROJECT_CONFIG_TYPE = 'gts.cf.core.am.tenant_metadata.v1~cf.studio.project.config.v1~';
@@ -622,6 +623,22 @@ export class ProductApiService extends BaseApiService {
   >(({ organizationId, periodDays }) =>
     orgScoped(`/studio-product/v1/gear-match-usage?period_days=${periodDays}&limit=200`, organizationId)
   );
+
+  /** A strategy's service's run settings: provider, models, call bounds (Organization › Gears matcher). */
+  readonly matcherSettings = this.protocol(RestEndpointProtocol).queryWith<
+    MatcherSettings,
+    { organizationId: string; strategy: string }
+  >(({ organizationId, strategy }) =>
+    orgScoped(`/studio-product/v1/gears-matcher-settings?strategy=${enc(strategy)}`, organizationId)
+  );
+
+  /** Replace their override; 409 when they changed since they were read. */
+  putMatcherSettings(organizationId: string, strategy: string) {
+    return this.rest.mutation<MatcherSettings, MatcherSettingsUpdate>(
+      'PUT',
+      orgScoped(`/studio-product/v1/gears-matcher-settings?strategy=${enc(strategy)}`, organizationId)
+    );
+  }
 
   readonly artifactNodes = this.protocol(RestEndpointProtocol).queryWith<ArtifactNodePage, { query: string }>(
     ({ query }) => `/studio-artifact-ingest/v1/nodes${query ? `?${query}` : ''}`

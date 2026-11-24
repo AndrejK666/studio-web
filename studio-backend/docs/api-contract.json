@@ -1,6 +1,6 @@
 {
   "note": "The API surface studio-backend declares. Generated from source by `cargo run --quiet -- api-contract`; the rules it must follow are docs/api-conventions.md.",
-  "open_violations": 255,
+  "open_violations": 256,
   "operations": [
     {
       "method": "DELETE",
@@ -3956,6 +3956,23 @@
       ],
       "errors": [
         "401",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-product/v1/gears-matcher-settings",
+      "operation_id": "studio_product.get_gears_matcher_settings",
+      "tag": "StudioProduct",
+      "summary": "The gears-matcher service's run settings",
+      "authenticated": true,
+      "responses": [
+        "MatcherSettingsDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
         "500"
       ]
     },
@@ -9127,6 +9144,25 @@
       "errors": [
         "400",
         "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/studio-product/v1/gears-matcher-settings",
+      "operation_id": "studio_product.upsert_gears_matcher_settings",
+      "tag": "StudioProduct",
+      "summary": "Change the gears-matcher service's run settings",
+      "authenticated": true,
+      "request": "SetMatcherSettingsRequest",
+      "responses": [
+        "MatcherSettingsDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
         "404",
         "500"
       ]

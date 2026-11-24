@@ -18,6 +18,7 @@ pub mod client;
 pub mod config;
 pub mod report;
 pub mod services;
+pub mod settings;
 pub mod store;
 pub mod task;
 pub mod usage;
@@ -155,14 +156,28 @@ impl GearMatches {
         org: Uuid,
         strategy: &str,
     ) -> Result<Arc<dyn Matcher>, Refusal> {
+        self.service_for(ctx, org, strategy).await.map(|(m, _)| m)
+    }
+
+    /// The same, saying whose service it is: the organization's own
+    /// connection, or the deployment's, which every organization shares.
+    pub async fn service_for(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        strategy: &str,
+    ) -> Result<(Arc<dyn Matcher>, settings::ServiceScope), Refusal> {
         match self.directory.connected(ctx, org, strategy).await {
-            Ok(Some(m)) => return Ok(m),
+            Ok(Some(m)) => return Ok((m, settings::ServiceScope::Organization)),
             Ok(None) => {}
             Err(why) => tracing::warn!(%org, strategy, "studio-product: {why}"),
         }
         if strategy == SHIPPED_STRATEGY {
             return match self.matcher.missing() {
-                None => Ok(Arc::clone(&self.matcher)),
+                None => Ok((
+                    Arc::clone(&self.matcher),
+                    settings::ServiceScope::Deployment,
+                )),
                 Some(why) => Err(Refusal::Unavailable(why)),
             };
         }
@@ -214,6 +229,20 @@ impl GearMatches {
         };
         cache.insert(key, (std::time::Instant::now(), info.clone()));
         Some(info)
+    }
+
+    /// Forget what the service said when last asked, so the next live check
+    /// asks again: its run settings changed, and with them its models. The
+    /// deployment's service is every organization's, so its answer is
+    /// forgotten for all of them.
+    pub async fn forget_info(&self, org: Uuid, strategy: &str, scope: settings::ServiceScope) {
+        let mut cache = self.info_cache.lock().await;
+        match scope {
+            settings::ServiceScope::Organization => {
+                cache.remove(&(org, strategy.to_owned()));
+            }
+            settings::ServiceScope::Deployment => cache.retain(|(_, s), _| s != strategy),
+        }
     }
 
     pub fn store(&self) -> Result<&Arc<MatchStore>, Refusal> {

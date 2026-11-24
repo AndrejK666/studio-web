@@ -1,0 +1,147 @@
+# studio-gears-matcher
+
+The gears-matcher service for studio-web: run the **verified** matcher on a specification by API
+and get back a coverage report (what each requirement needs, which Gears cover it, with a confidence).
+T9 / HYP-3172; the API contract is [`schemas/service/matcher-service.openapi.yaml`](schemas/service/matcher-service.openapi.yaml).
+
+It is Python, unlike `studio-backend` beside it, and ships as its own image.
+
+## Layout
+
+- `src/gears_matcher/` — the matching code, copied from
+  [constructorfabric/gears-matcher](https://github.com/constructorfabric/gears-matcher). `SOURCE`
+  names the commit and what was left out (the command line, the evaluation). From the copy on, this
+  is the production line of the service.
+- `src/gears_matcher/service/` — the HTTP service: request checks, the run store, the run manager and
+  the FastAPI routes; `gears-service` starts it.
+- `src/gears_matcher/run.py` — the library entry point the service calls: a spec in, a coverage
+  report out, with progress, a call budget and cancel. No command line, no printing, no files.
+- `schemas/` — the coverage report's schema, the extraction schema, and the service contract
+  (`schemas/service/matcher-service.openapi.yaml`).
+- `tests/` — the copied core's tests, and `test_run.py` for the library entry point, on a fake model.
+
+Decision: [ADR-0076](../docs/adr/0076-the-gears-matcher-runs-as-a-python-service-beside-the-backend.md);
+design: [studio-gears-matcher](../docs/design/studio-gears-matcher.md).
+
+## Run the service
+
+```bash
+cd gears-matcher
+export GEARS_MATCHER_CONFIG=./config.toml       # the keys (see below)
+export GEARS_RUST_REPO=/path/to/gears-rust      # the catalogue, read at the pinned commits
+export GEARS_MATCHER_DATABASE_URL=postgresql://studio:studio@localhost:5432/gears_matcher  # the runs
+export GEARS_MATCHER_DATA=./data                # the reply cache and scratch space
+uv run gears-service-prepare database           # once, as a role that may create databases (PG*)
+uv run gears-service                            # http://0.0.0.0:8080
+```
+
+The keys are in the service's config file, `GEARS_MATCHER_CONFIG` (TOML):
+
+```toml
+shared_secret = "..."          # callers send it as a bearer token
+
+[llm]                          # the Constructor LLM connector
+access_key = "..."
+stand = "..."
+cmodel_id = "..."
+public_connector_id = "..."
+
+# Or OpenAI instead of the connector (the three models of `verified`: candidates, candidates, checks):
+# provider = "openai"
+# openai_api_key = "..."
+# openai_base_url = "..."       # optional, default https://api.openai.com/v1 (https only)
+# models = "gpt-5.4,gpt-5.5,gpt-5.4"   # or one id for all three; unset: Sonnet, Opus, gpt-5.4
+
+# Or the LiteLLM gateway, which works without the VPN (OpenAI-compatible; models glm-5.3-flash,
+# deepseek-v4.1-flash-1017, deepseek-v4.1-flash):
+# provider = "litellm"
+# litellm_api_key = "..."       # the gateway's key: ask its owner; a secret, kept only here
+# litellm_base_url = "..."      # optional, default https://litellm.ext.constr.dev/v1 (https only)
+# models = "glm-5.3-flash"      # one id for all three: the service's own default. A run that chooses
+#                               # litellm uses it too, fixed. (deepseek-v4.1-flash took 104 s for
+#                               # one call and times out, so it is not used.)
+
+[gears_rust]                   # used by `gears-service-prepare checkout`
+url = "https://github.com/constructorfabric/gears-rust.git"
+token = "..."                  # optional: a private gears-rust
+
+[database]                     # optional: GEARS_MATCHER_DATABASE_URL or the PG* variables otherwise
+url = "postgresql://..."
+```
+
+Each value is also an environment variable (`GEARS_MATCHER_SECRET`, `LLM_CONNECTORS_ACCESS_KEY`,
+`CONSTRUCTOR_STAND`, `CONSTRUCTOR_CMODEL_ID`, `CONSTRUCTOR_PUBLIC_CONNECTOR_ID`, `OPENAI_API_KEY`,
+`LITELLM_API_KEY`, `GEARS_RUST_URL`, `GEARS_RUST_TOKEN`, `GEARS_MATCHER_DATABASE_URL`), and a variable set in the environment wins over the
+file. An unknown key in the file is refused, naming the key and never the value.
+
+**A run chooses its own connection.** `options.provider` (`litellm` or `openai`) in `POST /v1/runs`
+picks the connection, and with it the three models the run uses: `litellm` runs `glm-5.3-flash` for all
+three, `openai` runs `gpt-5.4`, `gpt-5.5` and `gpt-5.4` (the combinations that were measured; a request
+cannot name a model). Without it a run takes what the run settings say (`GET /v1/settings`, below:
+the `provider` above unless overridden); the call bounds stay the settings' either way. The service
+must hold that provider's key (`LITELLM_API_KEY` or `OPENAI_API_KEY`), else the run is refused with
+`422 provider_unavailable` before anything is stored. `constructor` is not a choice. `GET /v1/info`
+lists each provider, its models and whether it has a key. The key is never sent in a request and never
+shown: it lives only in the service's config or environment.
+
+The runs are in PostgreSQL (the service creates its table at start; the database is created by
+`gears-service-prepare database`, because the runtime role in a cluster cannot create one). The service
+refuses to start, and says which variable, if the secret, the checkout, the database or a model client
+cannot be set up. `GEARS_MATCHER_ENV_FILE` may still name a `.env` file holding the connector settings,
+for a local run. The others, all optional: `GEARS_MATCHER_DB_POOL` (4), `GEARS_MATCHER_HOST`, `GEARS_MATCHER_PORT`, `GEARS_MATCHER_WORKERS`
+(default 4), `GEARS_MATCHER_MAX_CONCURRENT_RUNS` (unset: no cap), `GEARS_MATCHER_MAX_CALLS` (the per-run
+call bound: a request may lower it, never raise it, and it is the default when a request sets none;
+400) and `GEARS_MATCHER_MAX_EXTRACT_CALLS` (100), `GEARS_MD_REF`, `GEARS_GDL_REF`, `GEARS_BUNDLE` (a
+gears bundle for `options.use_gears_bundle`).
+
+The connector's settings are `LLM_CONNECTORS_ACCESS_KEY`, `CONSTRUCTOR_STAND`, `CONSTRUCTOR_CMODEL_ID`
+and `CONSTRUCTOR_PUBLIC_CONNECTOR_ID`; the matcher uses three models through it (see
+`gears_matcher.run.VERIFIED_MODELS`), so the key must cover them all.
+
+Then, as studio-web's backend would (documents carry their own SHA-256):
+
+```bash
+curl -s -X POST localhost:8080/v1/runs -H "Authorization: Bearer $GEARS_MATCHER_SECRET" \
+  -H "Idempotency-Key: my-run-1" -H "Content-Type: application/json" -d @request.json   # 202, a run
+curl -s localhost:8080/v1/runs/<id> -H "Authorization: Bearer $GEARS_MATCHER_SECRET"    # poll
+curl -s localhost:8080/v1/runs/<id>/report -H "Authorization: Bearer $GEARS_MATCHER_SECRET"
+```
+
+`/healthz` and `/readyz` need no secret. Everything else is in the contract.
+
+The provider, the models and the two call bounds may also be changed while the service runs, without
+touching the config file: `GET /v1/settings` shows the config file's values, the override and what a run
+uses now; `PUT /v1/settings` with `{"version": <read>, "overrides": {"provider": "openai", "models":
+["gpt-5.4"], "max_calls": 600}}` replaces the override (null or absent: the config file's value). Only
+a provider whose key is in the config file can be chosen; keys are never settings. Studio's portal sets
+them on Organization › Gears matcher.
+
+## The image
+
+```bash
+docker build -t gears-matcher gears-matcher
+docker run --rm -p 8080:8080 \
+  -e GEARS_MATCHER_CONFIG=/etc/gears-matcher/config.toml -v ./config.toml:/etc/gears-matcher/config.toml:ro \
+  -e GEARS_MATCHER_DATABASE_URL=postgresql://... \
+  -v /path/to/gears-rust:/var/lib/gears-matcher/gears-rust:ro \
+  -v ./cache:/var/lib/gears-matcher/cache \
+  gears-matcher
+```
+
+The image needs a `gears-rust` checkout and a writable reply cache; `/readyz` says 503 until the cache can
+be written. In a cluster it is a Helm release of its own (`deploy/helm/gears-matcher/`), which clones the
+catalogue onto its claim and mounts the config file from one Secret; see `deploy/README.md`. A mounted checkout owned by another user needs
+`-e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*'` (git refuses it
+otherwise), which a checkout cloned by the Pod itself does not.
+
+## Work on it
+
+```bash
+cd gears-matcher
+uv sync
+uv run pytest
+uv run ruff check . && uv run ruff format --check .
+uv run mypy
+```
+
+Needs `uv` 0.12.23 or newer and Python 3.12.
