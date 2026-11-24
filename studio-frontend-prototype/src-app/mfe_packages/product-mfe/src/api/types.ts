@@ -1206,6 +1206,10 @@ export interface ProjectProduct {
   checks?: Record<string, ProductCheck>;
   /** The latest check, whichever profile it was: kept for older readers. */
   last_preview?: ProductCheck & { profile: string };
+  /** The latest queued check per profile (`POST product-check-runs`): its
+   *  run, where it got to and, when it failed, why. Its verdict lands in
+   *  `checks`; a failed one leaves the verdict before it. */
+  check_runs?: Record<string, ProductCheckRun>;
   /** Where `product.gdl` was last committed; `path` is relative to the repository root. */
   written?: { branch: string; commit_sha: string; pr_url?: string | null; path?: string };
   /** The description revision Studio keeps (ADR-0053), and its path in the repository. */
@@ -1233,6 +1237,29 @@ export interface ProductCheck {
   infrastructure?: ProductTechnology[];
   /** The hash of the `product.gdl` it checked; absent in a record from before. */
   gdl_sha256?: string;
+  /** When the verdict was made (RFC 3339); set by a queued check. */
+  checked_at?: string;
+  /** The saved revision a queued check judged. */
+  revision?: number;
+  /** The project repository's commit it read. */
+  home_commit?: string | null;
+  /** The queued check (studio-tasks run) that made it. */
+  run_id?: string;
+  /** Its first errors and warnings, as a queued check keeps them. */
+  diagnostics?: { code: string; severity: string; message: string; file?: string | null; line?: number | null }[];
+}
+
+/** A queued check of the product for one profile. */
+export interface ProductCheckRun {
+  /** The studio-tasks run. */
+  run_id: string;
+  state: "queued" | "succeeded" | "failed";
+  queued_at?: string;
+  finished_at?: string;
+  /** The revision it was asked for, or judged. */
+  revision?: number;
+  /** Why it failed. */
+  error?: string;
 }
 
 /** One revision of a product's description, which Studio keeps (ADR-0053). */

@@ -86,6 +86,18 @@ This README is what you need to work in the directory.
   `checking: true` if the check is still running (ADR-0053, amendment
   2026-11-04). The same text saved again is the latest revision, never a
   conflict (`descriptions::settled`), so a client may resend a lost save.
+  The project's own repository (the home) is one root of the check: every
+  corpus root of the same repository gives way to it (`of_home`), and the
+  description's copy of it is that root, so the engine scans it once. A
+  request reads the server's clone of it as it is (`home_with(.., false)`);
+  only a queued check fetches.
+- `check_task.rs` (a child of `rest.rs`) — `product.check` on studio-tasks:
+  `POST product-check-runs` queues the check of the latest saved revision and
+  answers at once; the run keeps the verdict under `checks.<profile>` (with
+  `checked_at`, the revision, the home commit, the first diagnostics) and its
+  own state under `check_runs.<profile>` (with the cause when it failed). The
+  Product page shows the kept verdict and queues a check only when it is
+  about another text, or on Check now.
 - `explanations.rs` — gears in plain words: the stored row, the model's
   question and the cleanup of its answer, and the rule that a model never
   writes over a person's words unless asked. `explanations_rest.rs` (a child of

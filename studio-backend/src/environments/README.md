@@ -133,7 +133,8 @@ of studio-user through `OrgAuthority`.
   or from a chart generated from the passport (Deployment or StatefulSet with
   a volume claim, Service, Secret). A service providing `postgres` is made by
   the database step with its image. `GET /environments/{id}/infra-plan` says
-  all of it before a deploy; a deploy refuses `INFRA_IMAGE_NOT_IMPORTED`,
+  all of it before a deploy (`GET /infra-plans` for every environment of the
+  project at once, reading what they share once); a deploy refuses `INFRA_IMAGE_NOT_IMPORTED`,
   `IMAGE_NOT_IN_PROJECT_PATH` or `INFRA_NOT_IN_SHARED_PLACE`. The cluster
   connection needs Deployments, StatefulSets, PVCs, Services and Secrets in
   the namespace; `admin` there does.

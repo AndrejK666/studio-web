@@ -12,7 +12,6 @@ import { productApi } from '../../../api/client';
 import type { DescriptionOutline, GearConfigSchema, ProjectProduct } from '../../../api/types';
 import type { Mfe } from '../../../model/frontend-constructor';
 import { offers } from '../../../model/product-configurator';
-import { lineDiff } from '../../../model/product-flow';
 import {
   catalogueMfe,
   gearConfigOf,
@@ -30,6 +29,7 @@ import { useMapTranslations } from '../../../i18n';
 import { errText, Segmented, useScope } from '../../common';
 import type { Catalogue } from '../catalogue';
 import { InfraLane } from './InfraLane';
+import { useKeptCheck, type KeptCheck } from '../keptCheck';
 import { DRAG_GEAR, DRAG_MFE, hueOf, kindWord, stateWord } from './words';
 import styles from './ProductMap.module.css';
 
@@ -452,85 +452,82 @@ export function Detail({
 
 /* ── product.gdl: the map's other view ── */
 
-type Draft = { text: string; source: 'draft' | 'kept'; ok?: boolean; note?: string };
-
 /**
- * What the next save would write: composed by the engine from the product
- * as it is (a check, which writes no revision), against the kept revision,
- * line by line. Which lines say which node is the server's reading of the
- * text (`POST product-description-outlines`); `productGdlLines` keeps the
- * map's nodes of it. The prototype read the text in the browser.
+ * The saved product.gdl -- the revision Studio keeps -- with the engine's
+ * verdict on it as the server kept it, and when it was made. Opening it runs
+ * nothing: a check is queued on the server only when the kept verdict is about
+ * another text (`useKeptCheck`), or on Check now. Which lines say which node
+ * is the server's reading of the text (`POST product-description-outlines`);
+ * `productGdlLines` keeps the map's nodes of it.
  */
 export function GdlView({
   product,
   profile,
+  description,
   nodeIds,
   selected,
   onSelect,
 }: {
   product: ProjectProduct | null;
-  /** The profile the draft is composed for. */
+  /** The profile the verdict is for. */
   profile: string;
+  /** The saved revision, as the map read it; `null` when there is none. */
+  description: { revision: number; text: string; sha256: string } | null;
   nodeIds: string[];
   selected: string | null;
   onSelect: (id: string | null) => void;
 }) {
   const { projectId } = useScope();
   const { t } = useMapTranslations();
-  // What the next save would compose from; a check of the same writes the
-  // same record, so it is asked again only when this changes.
-  const inputs = product?.product_id
-    ? JSON.stringify({ id: product.product_id, name: product.name, gears: product.gears ?? [], profile, config: product.config, frontend: product.frontend })
-    : null;
-  return <GdlText key={inputs ?? ''} projectId={projectId} inputs={inputs} nodeIds={nodeIds} selected={selected} onSelect={onSelect} t={t} />;
+  const kept = useMemo(
+    () => (description ? { revision: description.revision, sha256: description.sha256 } : null),
+    [description]
+  );
+  const verdict = useKeptCheck(projectId, product, profile, kept);
+  return (
+    <GdlText
+      key={`${projectId}|${description?.revision ?? ''}`}
+      projectId={projectId}
+      text={description?.text ?? ''}
+      revision={description?.revision ?? null}
+      verdict={verdict}
+      nodeIds={nodeIds}
+      selected={selected}
+      onSelect={onSelect}
+      t={t}
+    />
+  );
 }
 
-/** Keyed by what it composes: another product is another draft, from nothing. */
+/** When a verdict was made, as a person reads it. */
+function whenText(at: string | undefined): string {
+  if (!at) return '';
+  const d = new Date(at);
+  return Number.isNaN(d.getTime()) ? at : d.toLocaleString();
+}
+
+/** Keyed by the revision: another revision is another text, from nothing. */
 function GdlText({
   projectId,
-  inputs,
+  text,
+  revision,
+  verdict,
   nodeIds,
   selected,
   onSelect,
   t,
 }: {
   projectId: string;
-  inputs: string | null;
+  text: string;
+  revision: number | null;
+  verdict: KeptCheck;
   nodeIds: string[];
   selected: string | null;
   onSelect: (id: string | null) => void;
   t: ReturnType<typeof useMapTranslations>['t'];
 }) {
-  const [draft, setDraft] = useState<Draft | null>(null);
-  const [kept, setKept] = useState<{ revision: number; text: string } | null | undefined>(undefined);
   const box = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    let live = true;
-    const keptP = productApi.productDescription(projectId).then(
-      (d) => (d.latest ? { revision: d.latest.revision, text: d.latest.text } : null),
-      () => null
-    );
-    void keptP.then((k) => live && setKept(k));
-    const p = inputs
-      ? (JSON.parse(inputs) as { id: string; name?: string; gears: string[]; profile?: string; config?: ProjectProduct['config'] })
-      : null;
-    const compose =
-      p && p.gears.length > 0
-        ? productApi.previewProduct(projectId, { product_id: p.id, name: p.name ?? p.id, gears: p.gears, profile: p.profile, config: p.config })
-        : Promise.reject(new Error(t('no_gears_to_compose')));
-    compose
-      .then((r) => live && setDraft({ text: r.product_gdl, source: 'draft', ok: r.ok }))
-      .catch(async (e: unknown) => {
-        const k = await keptP;
-        if (!live) return;
-        setDraft(k ? { text: k.text, source: 'kept', note: errText(e) } : { text: '', source: 'kept', note: errText(e) });
-      });
-    return () => {
-      live = false;
-    };
-    // `t` is stable for the language; the draft follows the inputs.
-  }, [projectId, inputs]); // eslint-disable-line react-hooks/exhaustive-deps
+  const draft = useMemo(() => (text ? { text } : null), [text]);
 
   // The server says which lines are which node; until it answers, no line is tied.
   const [outline, setOutline] = useState<DescriptionOutline['lines'] | null>(null);
@@ -546,18 +543,13 @@ function GdlText({
     };
   }, [projectId, draft]);
   const lines = useMemo(() => (outline ? productGdlLines(outline, nodeIds) : null), [outline, nodeIds]);
-  const rows = useMemo(() => {
+  const rows = useMemo((): { kind: 'same' | 'add' | 'del'; text: string; n: number | null }[] => {
     if (!draft) return [];
-    const diff =
-      draft.source === 'draft' && kept
-        ? lineDiff(kept.text, draft.text)
-        : draft.text
-            .replace(/\r\n/g, '\n')
-            .split('\n')
-            .map((text) => ({ kind: 'same' as const, text }));
-    let n = 0;
-    return diff.map((l) => ({ ...l, n: l.kind === 'del' ? null : ++n }));
-  }, [draft, kept]);
+    return draft.text
+      .replace(/\r\n/g, '\n')
+      .split('\n')
+      .map((line, i) => ({ kind: 'same', text: line, n: i + 1 }));
+  }, [draft]);
   const mine = useMemo(() => (selected ? (lines?.byNode.get(selected) ?? []) : []), [selected, lines]);
 
   useEffect(() => {
@@ -567,29 +559,38 @@ function GdlText({
     if (row) el.scrollTop = Math.max(0, row.offsetTop - el.clientHeight / 3);
   }, [mine]);
 
-  if (!draft) return <div className={cx(styles.gdl, styles.muted)}>{t('gdl_composing')}</div>;
-  const changes = rows.filter((r) => r.kind !== 'same').length;
+  const { check, run, current, checking, stillChecking, error, start } = verdict;
+  const said = check
+    ? check.ok
+      ? t('gdl_verdict_ok')
+      : t('gdl_verdict_errors', { count: String(check.errors) })
+    : t('gdl_verdict_none');
+  const head = (
+    <div className={styles.gdlHead} data-pmap-gdl-verdict={check ? (current ? 'current' : 'other') : 'none'}>
+      {revision !== null ? t('gdl_saved', { revision: String(revision) }) : t('gdl_nothing_saved')}{' '}
+      <span data-pmap-gdl-check={check ? (check.ok ? 'ok' : 'failed') : 'none'}>{said}</span>{' '}
+      {check?.checked_at && (
+        <span className={styles.muted}>{t('gdl_checked_at', { when: whenText(check.checked_at) })} </span>
+      )}
+      {check && !current && <span className={styles.muted}>{t('gdl_verdict_other')} </span>}
+      {checking && <span className={styles.muted} data-pmap-gdl-checking>{t('gdl_checking')} </span>}
+      {stillChecking && <span className={styles.muted}>{t('gdl_still_checking')} </span>}
+      {!checking && run?.state === 'failed' && run.error && (
+        <span className={styles.error}>{t('gdl_check_failed', { error: run.error })} </span>
+      )}
+      {error && <span className={styles.error}>{error} </span>}
+      {revision !== null && (
+        <Button size="sm" variant="ghost" disabled={checking} onClick={start} data-pmap-gdl-check-now>
+          {t('gdl_check_now')}
+        </Button>
+      )}{' '}
+      <span className={styles.muted}>{t('gdl_click')}</span>
+    </div>
+  );
+  if (!draft) return <div className={styles.gdl} data-pmap-gdl="none">{head}</div>;
   return (
-    <div className={styles.gdl} data-pmap-gdl={draft.source}>
-      <div className={styles.gdlHead}>
-        {draft.source === 'draft' ? (
-          <>
-            {draft.ok === false ? t('gdl_next_unresolved') : t('gdl_next')}{' '}
-            <span className={styles.muted}>
-              {kept
-                ? changes === 0
-                  ? t('gdl_same', { revision: String(kept.revision) })
-                  : t('gdl_differ', { count: String(changes), revision: String(kept.revision) })
-                : t('gdl_nothing_saved')}
-            </span>
-          </>
-        ) : draft.text ? (
-          <>{t('gdl_kept', { revision: kept ? String(kept.revision) : '', note: draft.note ?? '' })}</>
-        ) : (
-          <>{t('gdl_none', { note: draft.note ?? '' })}</>
-        )}{' '}
-        <span className={styles.muted}>{t('gdl_click')}</span>
-      </div>
+    <div className={styles.gdl} data-pmap-gdl="kept" data-project={projectId}>
+      {head}
       <div className={styles.gdlBox} ref={box}>
         {rows.map((r, i) => {
           const owner = r.n !== null ? lines?.byLine.get(r.n) : undefined;

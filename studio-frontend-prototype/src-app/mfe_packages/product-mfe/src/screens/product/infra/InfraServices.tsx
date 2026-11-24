@@ -139,12 +139,17 @@ export function ProductInfraServices({
       productApi.projectImages(projectId, { limit: 200 }).catch(() => ({ items: [] as ProjectImage[], total: 0 })),
       productApi.projectProduct(projectId).catch(() => null),
       productApi.productDescription(projectId).catch(() => null),
-      Promise.all(
-        envIds
-          .split(',')
-          .filter(Boolean)
-          .map((id) => productApi.infraPlan(projectId, id).catch(() => null))
-      ),
+      // Every environment's plan in one call; this section shows the ones
+      // that run the product.
+      envIds
+        ? productApi.infraPlans(projectId).then(
+            (all) => {
+              const wanted = new Set(envIds.split(','));
+              return all.filter((p) => wanted.has(p.environment_id));
+            },
+            (): InfraPlan[] => []
+          )
+        : Promise.resolve([] as InfraPlan[]),
     ])
       .then(([s, c, im, product, description, ps]) => {
         if (!live) return;
@@ -153,7 +158,7 @@ export function ProductInfraServices({
         setOffered(offeredInfra(c.nodes ?? []));
         setImages(im.items);
         setConfigs({ record: product?.config, described: describedConfigs(description?.latest?.text ?? '') });
-        setPlans(ps.filter((p): p is InfraPlan => !!p));
+        setPlans(ps);
         setReadErr(null);
       })
       .catch((e) => live && setReadErr(errText(e)));

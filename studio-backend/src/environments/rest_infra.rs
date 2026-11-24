@@ -366,6 +366,16 @@ pub struct InfraPlanDto {
     pub configuration: Vec<ConfigClashDto>,
 }
 
+/// Every environment's plan for a project's infra services.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct InfraPlanListDto {
+    pub items: Vec<InfraPlanDto>,
+    /// All of them: one per environment the project may deploy to, never
+    /// paged.
+    pub total: u32,
+}
+
 fn plan_dto(p: InfraPlan) -> InfraPlanDto {
     InfraPlanDto {
         environment_id: p.environment_id,
@@ -539,6 +549,23 @@ async fn get_infra_plan(
     Ok(Json(plan_dto(plan)))
 }
 
+async fn list_infra_plans(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(envs): Extension<Environments>,
+    Query(q): Query<ProjectQuery>,
+) -> ApiResult<JsonBody<InfraPlanListDto>> {
+    let plans = envs
+        .0
+        .infra_plans(&ctx, q.project_id)
+        .await
+        .map_err(problem)?;
+    let items: Vec<InfraPlanDto> = plans.into_iter().map(plan_dto).collect();
+    Ok(Json(InfraPlanListDto {
+        total: u32::try_from(items.len()).unwrap_or(u32::MAX),
+        items,
+    }))
+}
+
 pub fn register(mut router: Router, openapi: &dyn OpenApiRegistry) -> Router {
     router = OperationBuilder::get("/studio-environments/v1/infra-services")
         .operation_id("studio_environments.list_infra_services")
@@ -637,6 +664,31 @@ pub fn register(mut router: Router, openapi: &dyn OpenApiRegistry) -> Router {
             .error_404(openapi)
             .error_500(openapi)
             .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-environments/v1/infra-plans")
+        .operation_id("studio_environments.list_infra_plans")
+        .summary("What a deploy does with a project's infra services, in every environment")
+        .description(
+            "For `?project_id=`: the plan `GET environments/{environment_id}/infra-plan` answers, \
+             for every environment the project may deploy to (the organization's that admit it, \
+             then its own), in one call that reads the project's records, its description and \
+             its slug once. An environment whose plan is refused is left out.",
+        )
+        .tag(TAG)
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param_typed("project_id", true, "The project", "string")
+        .handler(list_infra_plans)
+        .json_response_with_schema::<InfraPlanListDto>(
+            openapi,
+            StatusCode::OK,
+            "One plan per environment",
+        )
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
 
     router
 }

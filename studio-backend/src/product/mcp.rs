@@ -160,6 +160,34 @@ pub fn tools() -> Vec<Tool> {
             },
         },
         Tool {
+            name: "product_check_queue",
+            description: "Queue the check `product_description_check` makes of the latest saved \
+                revision, for one `profile` (default `prod`), and answer at once with its \
+                studio-tasks `run_id`. The run fetches the project's repository first; its \
+                verdict lands on the product record (`product_record`) under \
+                `checks.<profile>` with `checked_at`, and the run's state (with the cause when \
+                it failed) under `check_runs.<profile>`. Use it for a product whose check takes \
+                longer than a request may wait.",
+            input_schema: || {
+                object(
+                    json!({
+                        "project_id": project_id(),
+                        "profile": { "type": "string",
+                            "description": "A profile id the description declares (`prod`, `dev`). Default `prod`." },
+                        "strictness": { "type": "string", "enum": ["dev", "prod"],
+                            "description": "`dev`: production rules' findings as warnings." }
+                    }),
+                    &["project_id"],
+                )
+            },
+            effect: Effect::Write,
+            experimental: false,
+            run: Run::Post {
+                path: "/studio-product/v1/product-check-runs",
+                query: &["project_id"],
+            },
+        },
+        Tool {
             name: "product_infra",
             description: "The product's infra services (PostgreSQL, Keycloak, …) as its \
                 description says them: each the catalogue's passport with what the \
@@ -596,6 +624,16 @@ mod tests {
         );
         assert_eq!(r.query, vec![("project_id".to_owned(), "p".to_owned())]);
         assert_eq!(r.body, json!({"revision": 4, "profile": "prod"}));
+        let r = request_of(
+            &tools(),
+            "product_check_queue",
+            json!({"project_id": "p", "profile": "dev"}),
+        );
+        assert_eq!(
+            (r.method, r.path.as_str()),
+            (Method::Post, "/studio-product/v1/product-check-runs")
+        );
+        assert_eq!(r.body, json!({"profile": "dev"}));
     }
 
     #[test]
