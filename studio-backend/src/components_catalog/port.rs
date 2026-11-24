@@ -232,6 +232,18 @@ pub trait ComponentCatalog: Send + Sync {
         project_id: &str,
     ) -> anyhow::Result<(Vec<Value>, Map<String, Value>)>;
 
+    /// The commit of the server's clone of each project source the code is
+    /// read from, as `(owner/repo, commit)`: what a comparison of the code
+    /// was made at. Empty when no source has a clone on the server (the code
+    /// is then read through the provider).
+    async fn project_code_commits(
+        &self,
+        _ctx: &SecurityContext,
+        _project_id: &str,
+    ) -> Vec<(String, String)> {
+        Vec::new()
+    }
+
     /// What the Gearbox engine would add to `gears` for them to resolve, and
     /// what it says cannot run. `None` when no engine is configured.
     async fn engine_completion(
@@ -330,6 +342,14 @@ impl ComponentCatalog for CatalogComponents {
     ) -> anyhow::Result<(Vec<Value>, Map<String, Value>)> {
         let gears = self.service.project_gears(ctx, project_id).await?;
         Ok(super::project_gears::catalogue_shape(&gears))
+    }
+
+    async fn project_code_commits(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+    ) -> Vec<(String, String)> {
+        self.service.clone_commits(ctx, project_id).await
     }
 
     async fn engine_completion(

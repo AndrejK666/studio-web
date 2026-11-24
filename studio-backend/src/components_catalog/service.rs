@@ -1933,7 +1933,7 @@ impl CatalogService {
         // The repositories are read side by side, then judged in their order,
         // so an owned repository that cannot be read still fails the call
         // the way it did when they were read one after another.
-        let enrichers = self.enrichers(repos)?;
+        let enrichers = self.enrichers_on_clones(ctx, project_id, repos).await?;
         // A loop rather than a closure over `iter()`: a closure borrowing
         // each pair is not general enough for the `Send` the async trait
         // asks of this future.
@@ -1983,7 +1983,7 @@ impl CatalogService {
         if repos.is_empty() {
             return Ok(out);
         }
-        for (target, enricher) in self.enrichers(repos)? {
+        for (target, enricher) in self.enrichers_on_clones(ctx, project_id, repos).await? {
             match enricher.project_gears(ctx, &self.project_gears).await {
                 Ok(found) => {
                     for gear in found.iter() {
@@ -2027,6 +2027,101 @@ impl CatalogService {
             }
         }
         Ok(out)
+    }
+
+    /// [`Self::enrichers`], each reading the server's own clone of its
+    /// repository when there is one (the checkout a sync and the IDE share):
+    /// its tree is `git ls-tree` and its files are read from disk, so the
+    /// provider is not asked. A clone on another branch than the one the
+    /// project names is not used. Without a clone, the API as before.
+    pub(super) async fn enrichers_on_clones(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+        repos: Vec<ProjectRepo>,
+    ) -> anyhow::Result<Vec<(ProjectRepo, RepoEnricher)>> {
+        let enrichers = self.enrichers(repos)?;
+        let dirs = self.clone_dirs(ctx, project_id).await;
+        if dirs.is_empty() {
+            return Ok(enrichers);
+        }
+        let mut out = Vec::with_capacity(enrichers.len());
+        for (target, enricher) in enrichers {
+            let dir = dirs.get(&target.repo.trim().to_ascii_lowercase()).cloned();
+            let usable = match &dir {
+                Some(d) if !target.branch.trim().is_empty() => {
+                    let d = d.clone();
+                    let head = tokio::task::spawn_blocking(move || {
+                        crate::connectors::sdk::git_checkout::head_ref(&d)
+                    })
+                    .await
+                    .ok()
+                    .flatten();
+                    head.as_deref() == Some(target.branch.trim())
+                }
+                Some(_) => true,
+                None => false,
+            };
+            out.push(match (dir, usable) {
+                (Some(d), true) => (target, enricher.with_checkout(d)),
+                _ => (target, enricher),
+            });
+        }
+        Ok(out)
+    }
+
+    /// `(owner/repo, HEAD commit)` of the server's clone of each project
+    /// source, sorted: what the code is read at.
+    pub async fn clone_commits(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+    ) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        for (repo, dir) in self.clone_dirs(ctx, project_id).await {
+            let commit = tokio::task::spawn_blocking(move || {
+                crate::connectors::sdk::git_checkout::head_commit(&dir)
+            })
+            .await
+            .ok()
+            .flatten();
+            if let Some(c) = commit {
+                out.push((repo, c));
+            }
+        }
+        out.sort();
+        out
+    }
+
+    /// `owner/repo` (lowercase) -> the server's clone of each project source.
+    async fn clone_dirs(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+    ) -> std::collections::HashMap<String, std::path::PathBuf> {
+        let mut out = std::collections::HashMap::new();
+        let (Some(am), Some(hub), Ok(project)) = (
+            self.account_management.get(),
+            self.hub.get(),
+            Uuid::parse_str(project_id.trim()),
+        ) else {
+            return out;
+        };
+        let Ok(reader) = hub.get::<dyn crate::artifact_ingest::port::RepoFileReader>() else {
+            return out;
+        };
+        let Ok(Some(sources)) =
+            crate::project_sources::read_checked(am.as_ref(), ctx, project).await
+        else {
+            return out;
+        };
+        let scope = project.to_string();
+        for s in sources {
+            if let Some(dir) = reader.checkout_dir(&scope, &s.dir) {
+                out.insert(s.full_path.trim().to_ascii_lowercase(), dir);
+            }
+        }
+        out
     }
 
     /// Where the project's code is: the gear repository when one is
