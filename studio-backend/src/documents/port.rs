@@ -15,6 +15,48 @@ use async_trait::async_trait;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
+/// What a project's status (studio-organizations) reads of its documents,
+/// in process: the counts `/spec-rows`, `/project-domain-model` and its
+/// `/findings` would give, as whoever asks -- the organizations gear
+/// computing the status as itself in the background as much as a person.
+/// Registered in the REST phase; absent before it.
+#[async_trait]
+pub trait ProjectStatusFacts: Send + Sync + 'static {
+    /// `Err` when the project cannot be read at all; a part that could not
+    /// be read is `None` in the answer.
+    async fn status_facts(
+        &self,
+        ctx: &SecurityContext,
+        project_id: Uuid,
+    ) -> anyhow::Result<DocumentStatusFacts>;
+}
+
+/// [`ProjectStatusFacts::status_facts`]'s answer.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DocumentStatusFacts {
+    /// `(queue, count)` of the spec rows' queues (`bound`, `needs-review`,
+    /// `not-scanned`, ...).
+    pub queues: Option<Vec<(String, u32)>>,
+    pub model: Option<ModelCounts>,
+    pub findings: Option<FindingCounts>,
+}
+
+/// The project domain model in counts.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ModelCounts {
+    pub documents: u32,
+    pub extracted: u32,
+    pub facts: u32,
+    pub running: bool,
+}
+
+/// The project domain model's findings nobody decided.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FindingCounts {
+    pub open: u32,
+    pub high: u32,
+}
+
 /// One file offered for classification, as the gear that walked it has it.
 #[derive(Debug, Clone)]
 pub struct IngestedDocument {

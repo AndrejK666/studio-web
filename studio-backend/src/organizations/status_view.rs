@@ -4,34 +4,35 @@
 //! routes on every open of the Overview (spec rows 614 KB, the project
 //! domain model 526 KB with its documents parsed again, findings, product,
 //! CI runs, deployments, open pull requests): 3.5-5.4 s on the local stand
-//! (2026-11-24). Those reads are made AS THE CALLER, through their routes,
-//! so the status shows no more than they would; a background run has no
-//! caller to make them as. So this view is kept the other way round from
-//! the components': stale-while-revalidate.
+//! (2026-11-24). Now it is computed by this gear as itself and kept:
 //!
-//! - A read answers the kept status at once, with when it was computed.
-//! - A kept status older than [`FRESH_FOR`] is computed again in the
-//!   background with the reader's own credentials, once per project at a
-//!   time in this process, and the next read has it.
-//! - `?refresh=true` (the screen's ↻), and a project with nothing kept yet,
-//!   compute it now, as before.
-//!
-//! One status is kept per project: a member who reaches the project sees
-//! the one the last reader computed. The routes it reads answer every member
-//! of a project alike today (they check the project, not the person); a
-//! read that came to depend on the person would have to key this by reader.
+//! - **Who computes it.** This gear's service principal
+//!   (`logo::SERVICE_SUBJECT_ID`) in the project's organization
+//!   (`status_read::service_ctx`), reading the other gears in process
+//!   through their ports (`status_read::read`). Never a reader's token: a
+//!   status computed with one reader's rights is never served to another.
+//! - **When.** A `organizations.project-status` run ([`StatusDerive`], a
+//!   `derived_view::DeriveTask`) computes it: queued when a kept status is
+//!   older than [`FRESH_FOR`] (one run per project waits, the rest join it),
+//!   and after every sync of one of the project's repositories. A project
+//!   with nothing kept, and `?refresh=true`, compute it in the request, as
+//!   the same service identity.
+//! - **Who sees it.** A read first checks that the caller reaches the
+//!   project (account-management's `get_tenant` as the caller, as the route
+//!   always did); only then is the kept status read ([`read_for`]). A caller
+//!   who does not reach it gets the same 404 as before.
 
-use std::collections::HashSet;
-use std::sync::{Mutex, OnceLock};
+use std::sync::Arc;
 
+use async_trait::async_trait;
 use serde_json::Value;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
-use crate::derived_view::{Derived, ViewInput, ViewSpec, ViewState};
+use crate::derived_view::{Derive, Derived, ViewInput, ViewSpec, ViewState};
 use crate::domain_model::port::DomainObjects;
 
-/// A kept status younger than this is answered as it is.
+/// A kept status younger than this is answered without queueing another.
 pub const FRESH_FOR: time::Duration = time::Duration::seconds(30);
 
 /// The key of the one row the view keeps per project.
@@ -50,17 +51,33 @@ pub(crate) static VIEW: ViewSpec = ViewSpec {
     state_name: "Project Status View",
 };
 
-/// The kept status of `project` and its state, when there is one.
-pub async fn read(
+/// What a read may show a caller.
+#[derive(Debug, PartialEq)]
+pub enum Shown {
+    /// The caller does not reach the project: nothing is read for them.
+    NotReached,
+    /// Nothing kept yet.
+    Nothing,
+    Kept(ViewState, Value),
+}
+
+/// The kept status of `project` for a caller who `reaches` it (checked by
+/// the route before, as the caller); [`Shown::NotReached`] without reading
+/// anything otherwise.
+pub async fn read_for(
+    reaches: bool,
     port: &dyn DomainObjects,
     ctx: &SecurityContext,
     project: Uuid,
-) -> anyhow::Result<Option<(ViewState, Value)>> {
+) -> anyhow::Result<Shown> {
+    if !reaches {
+        return Ok(Shown::NotReached);
+    }
     crate::derived_view::ensure_types(port, ctx, &VIEW).await?;
     let (state, rows) = VIEW.read(port, ctx, project).await?;
     Ok(match (state, rows.into_iter().next()) {
-        (Some(state), Some(row)) if state.computed_at.is_some() => Some((state, row)),
-        _ => None,
+        (Some(state), Some(row)) if state.computed_at.is_some() => Shown::Kept(state, row),
+        _ => Shown::Nothing,
     })
 }
 
@@ -72,20 +89,18 @@ pub async fn keep(
     status: Value,
 ) -> anyhow::Result<ViewState> {
     crate::derived_view::ensure_types(port, ctx, &VIEW).await?;
-    VIEW.store(
-        port,
-        ctx,
-        project,
-        Derived {
-            inputs: vec![ViewInput {
-                source: "studio-organizations/project-status".to_owned(),
-                ..ViewInput::default()
-            }],
-            items: vec![(ROW.to_owned(), status)],
-            detail: Value::Null,
-        },
-    )
-    .await
+    VIEW.store(port, ctx, project, derived(status)).await
+}
+
+fn derived(status: Value) -> Derived {
+    Derived {
+        inputs: vec![ViewInput {
+            source: "studio-organizations/project-status".to_owned(),
+            ..ViewInput::default()
+        }],
+        items: vec![(ROW.to_owned(), status)],
+        detail: Value::Null,
+    }
 }
 
 /// Whether a kept status should be computed again.
@@ -99,27 +114,37 @@ pub fn stale(state: &ViewState, now: time::OffsetDateTime) -> bool {
         .is_none_or(|at| now - at > FRESH_FOR)
 }
 
-/// Claim the right to compute `project` again in the background; `None`
-/// when a computation of it is already running in this process. The claim
-/// is let go when the guard drops.
-pub fn claim(project: Uuid) -> Option<Claim> {
-    let running = running();
-    let mut set = running.lock().ok()?;
-    set.insert(project).then_some(Claim(project))
+/// The `organizations.project-status` run: the status computed as this
+/// gear's service identity in the project's organization.
+pub struct StatusDerive {
+    pub sources: Arc<super::rollups::Sources>,
+    pub overview: Arc<super::overview::Overview>,
 }
 
-fn running() -> &'static Mutex<HashSet<Uuid>> {
-    static RUNNING: OnceLock<Mutex<HashSet<Uuid>>> = OnceLock::new();
-    RUNNING.get_or_init(Mutex::default)
-}
+#[async_trait]
+impl Derive for StatusDerive {
+    fn spec(&self) -> &'static ViewSpec {
+        &VIEW
+    }
 
-pub struct Claim(Uuid);
-
-impl Drop for Claim {
-    fn drop(&mut self) {
-        if let Ok(mut set) = running().lock() {
-            set.remove(&self.0);
-        }
+    async fn derive(
+        &self,
+        _ctx: &SecurityContext,
+        org: &SecurityContext,
+        project: Uuid,
+    ) -> anyhow::Result<Derived> {
+        let org_id = org.subject_tenant_id();
+        let service = super::status_read::service_ctx(org_id)?;
+        let dto = super::rest::compute_project_status(
+            service,
+            Arc::clone(&self.sources),
+            Some(Arc::clone(&self.overview)),
+            project,
+            org_id,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        Ok(derived(serde_json::to_value(&dto)?))
     }
 }
 
@@ -141,11 +166,11 @@ mod tests {
     async fn a_kept_status_is_read_back_with_when_it_was_computed() {
         let port = crate::domain_model::port::in_memory();
         let project = Uuid::from_u128(9);
-        assert!(
-            read(port.as_ref(), &ctx(), project)
+        assert_eq!(
+            read_for(true, port.as_ref(), &ctx(), project)
                 .await
-                .unwrap()
-                .is_none()
+                .unwrap(),
+            Shown::Nothing
         );
         keep(
             port.as_ref(),
@@ -155,7 +180,12 @@ mod tests {
         )
         .await
         .unwrap();
-        let (state, row) = read(port.as_ref(), &ctx(), project).await.unwrap().unwrap();
+        let Shown::Kept(state, row) = read_for(true, port.as_ref(), &ctx(), project)
+            .await
+            .unwrap()
+        else {
+            panic!("the status was kept");
+        };
         assert_eq!(row["verdict"], "on_track");
         assert!(!stale(&state, time::OffsetDateTime::now_utc()));
         assert!(stale(
@@ -164,12 +194,30 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn one_computation_per_project_at_a_time() {
-        let p = Uuid::from_u128(77);
-        let first = claim(p).expect("free");
-        assert!(claim(p).is_none());
-        drop(first);
-        assert!(claim(p).is_some());
+    #[tokio::test]
+    async fn a_kept_status_is_never_shown_to_a_caller_who_does_not_reach_the_project() {
+        let port = crate::domain_model::port::in_memory();
+        let project = Uuid::from_u128(10);
+        keep(
+            port.as_ref(),
+            &ctx(),
+            project,
+            serde_json::json!({"verdict": "blocked", "reason": "secret"}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            read_for(false, port.as_ref(), &ctx(), project)
+                .await
+                .unwrap(),
+            Shown::NotReached
+        );
+        // The same project, for a caller who reaches it.
+        assert!(matches!(
+            read_for(true, port.as_ref(), &ctx(), project)
+                .await
+                .unwrap(),
+            Shown::Kept(..)
+        ));
     }
 }

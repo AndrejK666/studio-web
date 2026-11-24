@@ -1472,14 +1472,14 @@ pub struct ProjectStatusQuery {
     pub refresh: bool,
 }
 
-/// The project's status: the kept one at once, computed again in the
-/// background when it is older than `status_view::FRESH_FOR`; computed now
-/// when nothing is kept or `refresh` asks (`status_view.rs`).
+/// The project's status: once the caller is shown to reach the project, the
+/// kept one at once, its recomputation queued when it is older than
+/// `status_view::FRESH_FOR`; computed now when nothing is kept or `refresh`
+/// asks. Always computed as this gear, never as the reader (`status_view.rs`).
 async fn get_project_status(
     Extension(ctx): Extension<SecurityContext>,
     Extension(sources): Extension<Option<Arc<super::rollups::Sources>>>,
     Extension(overview): Extension<Option<Arc<super::overview::Overview>>>,
-    headers: axum::http::HeaderMap,
     axum::extract::Query(query): axum::extract::Query<ProjectStatusQuery>,
 ) -> ApiResult<JsonBody<serde_json::Value>> {
     let project_id = query.project_id;
@@ -1501,15 +1501,16 @@ async fn get_project_status(
             .with_resource(id.to_string())
             .create()
     };
+    // Whether the caller reaches the project, asked as the caller: the
+    // check this route always made. Nothing kept is read for one who does not.
     let tenant = sources
         .am
         .get_tenant(&ctx, id)
         .await
-        .map_err(|_| not_found())?;
-    if tenant.tenant_type.as_deref() != Some(super::sdk::PROJECT_TENANT_TYPE) {
-        return Err(not_found());
-    }
-    let org = match tenant.parent_id {
+        .ok()
+        .filter(|t| t.tenant_type.as_deref() == Some(super::sdk::PROJECT_TENANT_TYPE));
+    let reaches = tenant.is_some();
+    let org = match tenant.as_ref().and_then(|t| t.parent_id) {
         Some(ws) => sources
             .am
             .get_tenant(&ctx, ws.0)
@@ -1518,56 +1519,75 @@ async fn get_project_status(
             .and_then(|w| w.parent_id.map(|p| p.0)),
         None => None,
     };
-    let api = crate::mcp::api_as(headers.get(axum::http::header::AUTHORIZATION).cloned())
-        .ok_or_else(|| {
-            CanonicalError::service_unavailable()
-                .with_detail("studio-mcp is not running here, so the other gears cannot be read")
-                .create()
-        })?;
-    // The kept status, in the organization's model, reached as this gear.
-    let port = overview
-        .as_ref()
-        .and_then(|o| crate::derived_view::port(&o.hub));
-    let model_ctx = match &overview {
-        Some(o) => crate::derived_view::in_org_of(&o.hub, &ctx, id).await,
-        None => ctx.clone(),
+    if !reaches {
+        return Err(not_found());
+    }
+    let Some(overview) = overview else {
+        return Err(CanonicalError::service_unavailable()
+            .with_detail("the organization overview is not available, so no status is kept")
+            .create());
     };
+    let hub = Arc::clone(&overview.hub);
+    let org = org.ok_or_else(not_found)?;
+    let model_ctx = crate::derived_view::in_org_of(&hub, &ctx, id).await;
+    let port = crate::derived_view::port(&hub);
     if let (Some(port), false) = (&port, query.refresh)
-        && let Ok(Some((state, mut kept))) =
-            super::status_view::read(port.as_ref(), &model_ctx, id).await
+        && let Ok(shown) =
+            super::status_view::read_for(reaches, port.as_ref(), &model_ctx, id).await
     {
+        let (state, mut kept) = match shown {
+            super::status_view::Shown::NotReached => return Err(not_found()),
+            super::status_view::Shown::Kept(state, kept) => (state, kept),
+            super::status_view::Shown::Nothing => {
+                return compute_and_keep(&sources, &overview, &port, &model_ctx, id, org).await;
+            }
+        };
         if super::status_view::stale(&state, time::OffsetDateTime::now_utc())
-            && let Some(claim) = super::status_view::claim(id)
+            && let Err(e) = crate::derived_view::request(
+                &hub,
+                &model_ctx,
+                model_ctx.subject_tenant_id(),
+                &super::status_view::VIEW,
+                id,
+            )
+            .await
         {
-            let (ctx, sources, overview, port, model_ctx) = (
-                ctx.clone(),
-                Arc::clone(&sources),
-                overview.clone(),
-                Arc::clone(port),
-                model_ctx.clone(),
-            );
-            tokio::spawn(async move {
-                let _claim = claim;
-                if let Ok(dto) = compute_project_status(ctx, sources, overview, api, id, org).await
-                    && let Ok(value) = serde_json::to_value(&dto)
-                    && let Err(e) =
-                        super::status_view::keep(port.as_ref(), &model_ctx, id, value).await
-                {
-                    tracing::warn!(project = %id, error = %format!("{e:#}"), "project status: could not keep the status");
-                }
-            });
+            tracing::warn!(project = %id, error = %format!("{e:#}"), "project status: could not queue its recomputation");
         }
         kept["computed_at"] = serde_json::json!(state.computed_at);
         if let Some(obj) = kept.as_object_mut() {
             obj.remove("_scope");
+            obj.remove("project_id_scope");
         }
         return Ok(Json(kept));
     }
-    let dto = compute_project_status(ctx, Arc::clone(&sources), overview, api, id, org).await?;
+    compute_and_keep(&sources, &overview, &port, &model_ctx, id, org).await
+}
+
+/// Nothing kept yet, or ↻: the status computed now, as this gear's service
+/// identity in the project's organization, kept and answered.
+async fn compute_and_keep(
+    sources: &Arc<super::rollups::Sources>,
+    overview: &Arc<super::overview::Overview>,
+    port: &Option<Arc<dyn crate::domain_model::port::DomainObjects>>,
+    model_ctx: &SecurityContext,
+    id: Uuid,
+    org: Uuid,
+) -> ApiResult<JsonBody<serde_json::Value>> {
+    let service = super::status_read::service_ctx(org)
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+    let dto = compute_project_status(
+        service,
+        Arc::clone(sources),
+        Some(Arc::clone(overview)),
+        id,
+        org,
+    )
+    .await?;
     let mut value = serde_json::to_value(&dto)
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
-    if let Some(port) = &port {
-        match super::status_view::keep(port.as_ref(), &model_ctx, id, value.clone()).await {
+    if let Some(port) = port {
+        match super::status_view::keep(port.as_ref(), model_ctx, id, value.clone()).await {
             Ok(state) => value["computed_at"] = serde_json::json!(state.computed_at),
             Err(e) => {
                 tracing::warn!(project = %id, error = %format!("{e:#}"), "project status: could not keep the status");
@@ -1580,30 +1600,39 @@ async fn get_project_status(
     Ok(Json(value))
 }
 
-/// The project's status, read now from the other gears as the caller.
-async fn compute_project_status(
+/// The project's status, read now from the other gears through their ports
+/// as `ctx` -- this gear's service identity in the project's organization
+/// (`status_read::service_ctx`), never a reader's credentials.
+pub(super) async fn compute_project_status(
     ctx: SecurityContext,
     sources: Arc<super::rollups::Sources>,
     overview: Option<Arc<super::overview::Overview>>,
-    api: crate::mcp::sdk::Api,
     id: Uuid,
-    org: Option<Uuid>,
+    org: Uuid,
 ) -> ApiResult<ProjectStatusDto> {
     use super::status;
+    let org = Some(org);
     let not_found = || {
         OrganizationError::not_found(format!("there is no project {id} for this caller"))
             .with_resource(id.to_string())
             .create()
     };
-    let project = id.to_string();
+    let hub = overview.as_ref().map(|o| Arc::clone(&o.hub));
     // The project's rollup row beside the other gears' reads, not before
-    // them: the project was just read as the caller, and one after the other
-    // the status waited for the rollup (2-3 s on the local stand) and then
-    // for the slowest read (2026-11-18).
-    let (rollup, mut read) = tokio::join!(
-        sources.one_project(&ctx, id),
-        super::status_read::read(&api, &project, None)
-    );
+    // them: one after the other the status waited for the rollup (2-3 s on
+    // the local stand) and then for the slowest read (2026-11-18).
+    let reads = async {
+        match &hub {
+            Some(hub) => Some(super::status_read::read(hub, &ctx, id).await),
+            None => None,
+        }
+    };
+    let (rollup, read) = tokio::join!(sources.one_project(&ctx, id), reads);
+    let mut read = read.ok_or_else(|| {
+        CanonicalError::service_unavailable()
+            .with_detail("the organization overview is not available, so nothing can be read")
+            .create()
+    })?;
     let rollup = rollup.ok_or_else(not_found)?;
     read.path.repositories = rollup.repos;
     // This project's line of the overview, computed for it alone: building
@@ -2371,9 +2400,11 @@ Labels are deliberately \
              next. Computed from the same reads the portal made, as the caller, so it shows no \
              more than those routes would; a source that could not be read is named in \
              `unread` and never counted as nothing wrong or nothing done. 404 when the \
-             project is not the caller's to see. Kept once computed: a read answers the \
-             kept status at once with `computed_at`, and one older than 30 s is computed \
-             again in the background for the next read; `refresh=true` computes it now.",
+             project is not the caller's to see. Computed by this gear as itself, from the \
+             other gears' in-process reads, and kept: once the caller is shown to reach the \
+             project a read answers the kept status at once with `computed_at`, and one older \
+             than 30 s is queued to be computed again for the next read; `refresh=true` \
+             computes it now.",
         )
         .tag("StudioOrganizations")
         .authenticated()

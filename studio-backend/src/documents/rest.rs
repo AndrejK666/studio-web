@@ -8628,7 +8628,65 @@ async fn list_spec_rows(
 ) -> ApiResult<JsonBody<SpecRowListDto>> {
     let project_id = parse_project_id(&query.project_id)?;
     let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
+    let (rows, files_known, reviews_known, repos_known) =
+        spec_rows_of(&ctx, &service, &quality, workspace_id, project_id).await?;
+    let counts = super::spec_rows::counts(&rows)
+        .into_iter()
+        .map(|(queue, count)| SpecCountDto {
+            queue: queue.as_str().to_owned(),
+            count,
+        })
+        .collect();
 
+    let items: Vec<SpecRowDto> = rows
+        .into_iter()
+        .map(|r| SpecRowDto {
+            queues: super::spec_rows::queues_of(&r)
+                .into_iter()
+                .map(|q| q.as_str().to_owned())
+                .collect(),
+            id: r.id,
+            origin: r.origin.as_str().to_owned(),
+            name: r.name,
+            path: r.path,
+            type_key: r.type_key,
+            node_id: r.node_id,
+            state: r.state.map(|s| s.as_str().to_owned()),
+            status: r.status,
+            conforms: r.conforms,
+            updated_at: r.updated_at,
+            repo: r.repo,
+            repo_full_path: r.repo_full_path,
+            confidence: r.confidence.map(f64::from),
+            checked_at: r.review.checked_at,
+            findings: r.review.findings,
+        })
+        .collect();
+
+    Ok(Json(SpecRowListDto {
+        total: u32::try_from(items.len()).unwrap_or(u32::MAX),
+        items,
+        sources: SpecRowsSourcesDto {
+            files_known,
+            reviews_known,
+            repos_known,
+            counts,
+        },
+    }))
+}
+
+/// A project's spec rows, and which of the ingest gear's reads they could
+/// use (`files_known`, `reviews_known`, `repos_known`): what `/spec-rows`
+/// answers, and what a project's status counts its queues from.
+async fn spec_rows_of(
+    ctx: &SecurityContext,
+    service: &Arc<DocumentsService>,
+    quality: &Quality,
+    workspace_id: Uuid,
+    project_id: Uuid,
+) -> ApiResult<(Vec<super::spec_rows::SpecRow>, bool, bool, bool)> {
+    let ctx = ctx.clone();
+    let service = Arc::clone(service);
     // The project's documents and its members' decisions are independent
     // reads: asked together, the screen waits for the slower, not the sum.
     let (both, decisions) = tokio::join!(
@@ -8703,49 +8761,94 @@ async fn list_spec_rows(
     };
 
     let rows = super::spec_rows::rows(&bindings, &authored, &candidates, &known);
-    let counts = super::spec_rows::counts(&rows)
-        .into_iter()
-        .map(|(queue, count)| SpecCountDto {
-            queue: queue.as_str().to_owned(),
-            count,
-        })
-        .collect();
+    Ok((rows, files_known, reviews_known, repos_known))
+}
 
-    let items: Vec<SpecRowDto> = rows
-        .into_iter()
-        .map(|r| SpecRowDto {
-            queues: super::spec_rows::queues_of(&r)
-                .into_iter()
-                .map(|q| q.as_str().to_owned())
-                .collect(),
-            id: r.id,
-            origin: r.origin.as_str().to_owned(),
-            name: r.name,
-            path: r.path,
-            type_key: r.type_key,
-            node_id: r.node_id,
-            state: r.state.map(|s| s.as_str().to_owned()),
-            status: r.status,
-            conforms: r.conforms,
-            updated_at: r.updated_at,
-            repo: r.repo,
-            repo_full_path: r.repo_full_path,
-            confidence: r.confidence.map(f64::from),
-            checked_at: r.review.checked_at,
-            findings: r.review.findings,
-        })
-        .collect();
+/// What a project's status reads of its documents (`port::ProjectStatusFacts`),
+/// in process and as whoever asks: the same reads `/spec-rows`,
+/// `/project-domain-model` and its `/findings` make, folded to counts.
+pub struct StatusFactsPort {
+    pub service: Arc<DocumentsService>,
+    pub hub: Arc<toolkit::client_hub::ClientHub>,
+}
 
-    Ok(Json(SpecRowListDto {
-        total: u32::try_from(items.len()).unwrap_or(u32::MAX),
-        items,
-        sources: SpecRowsSourcesDto {
-            files_known,
-            reviews_known,
-            repos_known,
-            counts,
-        },
-    }))
+#[async_trait::async_trait]
+impl super::port::ProjectStatusFacts for StatusFactsPort {
+    async fn status_facts(
+        &self,
+        ctx: &SecurityContext,
+        project_id: Uuid,
+    ) -> anyhow::Result<super::port::DocumentStatusFacts> {
+        let quality = Quality {
+            hub: Arc::clone(&self.hub),
+        };
+        let workspace_id = parent_workspace(&self.service, ctx, project_id)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        let queues = spec_rows_of(ctx, &self.service, &quality, workspace_id, project_id)
+            .await
+            .ok()
+            .map(|(rows, ..)| {
+                super::spec_rows::counts(&rows)
+                    .into_iter()
+                    .map(|(queue, count)| (queue.as_str().to_owned(), count))
+                    .collect()
+            });
+        let (model, findings) = match quality.reader() {
+            Ok(reader) => {
+                let model = spec_model_state(
+                    &self.service,
+                    ctx,
+                    workspace_id,
+                    project_id,
+                    reader.as_ref(),
+                )
+                .await
+                .ok()
+                .map(|(_, facts, coverage)| super::port::ModelCounts {
+                    documents: u32::try_from(coverage.len()).unwrap_or(u32::MAX),
+                    extracted: u32::try_from(
+                        coverage.iter().filter(|c| c.state == "extracted").count(),
+                    )
+                    .unwrap_or(u32::MAX),
+                    facts: u32::try_from(facts.len()).unwrap_or(u32::MAX),
+                    running: super::spec_model::build::state(project_id).running,
+                });
+                let findings = match self
+                    .service
+                    .spec_model_sources(ctx, workspace_id, project_id, reader.as_ref())
+                    .await
+                {
+                    Ok(sources) => {
+                        spec_model_findings(ctx, &self.service, workspace_id, project_id, &sources)
+                            .await
+                            .ok()
+                            .map(|(findings, decisions)| {
+                                let open: Vec<_> = findings
+                                    .iter()
+                                    .filter(|f| !decisions.contains_key(&f.fingerprint))
+                                    .collect();
+                                super::port::FindingCounts {
+                                    open: u32::try_from(open.len()).unwrap_or(u32::MAX),
+                                    high: u32::try_from(
+                                        open.iter().filter(|f| f.severity == "high").count(),
+                                    )
+                                    .unwrap_or(u32::MAX),
+                                }
+                            })
+                    }
+                    Err(_) => None,
+                };
+                (model, findings)
+            }
+            Err(_) => (None, None),
+        };
+        Ok(super::port::DocumentStatusFacts {
+            queues,
+            model,
+            findings,
+        })
+    }
 }
 
 /// What the project has of each declared type.
@@ -12325,6 +12428,12 @@ pub fn register_routes(
     .error_500(openapi)
     .register(router, openapi);
 
+    // What a project's status reads of its documents, for studio-organizations'
+    // kept status (computed as that gear, in the background).
+    hub.register::<dyn super::port::ProjectStatusFacts>(Arc::new(StatusFactsPort {
+        service: Arc::clone(&service),
+        hub: Arc::clone(&hub),
+    }));
     router
         .layer(Extension(Quality { hub }))
         .layer(Extension(service))
