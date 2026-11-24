@@ -238,7 +238,20 @@ impl GitProxy {
             tracing::warn!(%project_id, "studio-git: no task queue, so a push cannot re-sync the server's checkout");
             return;
         };
-        for run in runs {
+        // Filed under the project's organization, where the sync writes and
+        // the organization's Background work lists it -- not the pusher's
+        // home, which for a platform administrator is the root. The pusher
+        // stays the run's `requested_by` and decides the token check.
+        let org = crate::organizations::sdk::organization_of(
+            self.account_management.as_ref(),
+            ctx,
+            project_id,
+        )
+        .await
+        .unwrap_or_else(|| ctx.subject_tenant_id());
+        for mut run in runs {
+            run.organization_id = Some(org);
+            run.requested_in = Some(ctx.subject_tenant_id());
             let partition_key = run.partition_key();
             let repo = run.repo_full_path.clone();
             let Ok(payload) = serde_json::to_value(run) else {
@@ -248,7 +261,7 @@ impl GitProxy {
                 .enqueue(
                     ctx,
                     crate::tasks::sdk::NewRun {
-                        tenant: ctx.subject_tenant_id(),
+                        tenant: org,
                         task_type: crate::artifact_ingest::INGEST_TASK_TYPE,
                         payload,
                         partition_key: Some(&partition_key),

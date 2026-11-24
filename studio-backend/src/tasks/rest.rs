@@ -288,15 +288,30 @@ async fn get_run(
 ) -> ApiResult<JsonBody<RunDto>> {
     let svc = tasks.get()?;
     let tenant = tasks.reached(&ctx, q.tenant).await?;
-    let row = svc
+    let mut row = svc
         .get(&ctx, tenant, id)
         .await
-        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?
-        .ok_or_else(|| {
-            StudioTasksError::not_found("Run not found")
-                .with_resource(id.to_string())
-                .create()
-        })?;
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+    // The caller's own run, filed elsewhere: a project's sync or detach is
+    // filed under the project's organization, which for a platform
+    // administrator is not home. Polled without `?tenant=` it is still
+    // theirs to read, once they reach the tenant it is filed in.
+    if row.is_none() && q.tenant.is_none() {
+        let theirs = svc
+            .get_requested(ctx.subject_id(), id)
+            .await
+            .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+        if let Some(found) = theirs
+            && tasks.reached(&ctx, Some(found.tenant_id)).await.is_ok()
+        {
+            row = Some(found);
+        }
+    }
+    let row = row.ok_or_else(|| {
+        StudioTasksError::not_found("Run not found")
+            .with_resource(id.to_string())
+            .create()
+    })?;
     Ok(Json(to_dto(row)))
 }
 
