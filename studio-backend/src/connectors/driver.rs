@@ -478,6 +478,29 @@ pub enum DownloadTarget {
     ReleaseAsset(i64),
 }
 
+/// Why a provider gives no download link for a file it does have: it serves
+/// the file itself rather than through a signed link (a GitLab with its
+/// artifacts on local storage). The caller then fetches it with
+/// [`ConnectorDriver::download`], on the connection's credential, and
+/// streams it on: the credential never reaches the browser.
+#[derive(Debug, Clone)]
+pub struct DownloadNeedsProxy {
+    pub provider: &'static str,
+}
+
+impl std::fmt::Display for DownloadNeedsProxy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} serves this file itself rather than through a signed link; Studio \
+             downloads it on the caller's behalf",
+            self.provider
+        )
+    }
+}
+
+impl std::error::Error for DownloadNeedsProxy {}
+
 /// One CI workflow of a repository: what the sync reads its runs by. Its
 /// name comes with every run.
 #[derive(Debug, Clone, Default)]
@@ -942,6 +965,21 @@ pub trait ConnectorDriver: Send + Sync + 'static {
             "{} cannot hand out download links through this connection",
             self.display_name()
         ))
+    }
+
+    /// The file `target` names, as a response to read or stream: what a
+    /// server-side reader (a pipeline's manifest) and Studio's own download
+    /// route use, for a provider whose [`Self::download_link`] may answer
+    /// [`DownloadNeedsProxy`]. Defaulted to fetching the signed link, with no
+    /// credential, as it is meant to be fetched.
+    async fn download(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        target: DownloadTarget,
+    ) -> anyhow::Result<reqwest::Response> {
+        let url = self.download_link(auth, repo_full_path, target).await?;
+        Ok(reqwest::get(&url).await?.error_for_status()?)
     }
 
     /// The jobs of one CI run's latest attempt, by the provider's run id.

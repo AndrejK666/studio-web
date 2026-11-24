@@ -8,13 +8,16 @@
 //! [`client`] for the transport rules.
 //!
 //! The token is a personal, group or project access token with `read_api` and
-//! `read_repository`. Nothing here writes: publishing to GitLab (commits,
-//! branches, merge requests) is still refused by the trait's defaults.
+//! `read_repository` to read, and `api` (which includes `write_repository`) to
+//! publish: commits, files, branches, tags, merge requests, issues, commit
+//! statuses and pipelines ([`write`]).
 
 mod ci;
 mod client;
 mod model;
+mod outputs;
 mod reviews;
+mod write;
 
 #[cfg(test)]
 mod mock;
@@ -24,10 +27,11 @@ mod tests;
 use async_trait::async_trait;
 
 use super::driver::{
-    ConnectionAuth, ConnectorCategory, ConnectorDriver, Contributor, DriverIdentity,
-    PullRequestThreads, RemoteComment, RemoteCommit, RemoteFile, RemoteFileList, RemoteFileText,
-    RemoteIssue, RemotePullRequest, RemoteRepo, RemoteWorkflowJob, RemoteWorkflowRun, RepoTree,
-    RepoTreeEntry,
+    CommitStatus, ConnectionAuth, ConnectorCategory, ConnectorDriver, Contributor, CreatedIssue,
+    CreatedRepository, DownloadTarget, DriverIdentity, FileToWrite, OpenedPullRequest,
+    PullRequestThreads, RemoteBuildArtifact, RemoteComment, RemoteCommit, RemoteFile,
+    RemoteFileList, RemoteFileText, RemoteIssue, RemotePullRequest, RemoteRelease, RemoteRepo,
+    RemoteWorkflowJob, RemoteWorkflowRun, RepoTree, RepoTreeEntry, WrittenFile,
 };
 use super::references::ReferenceSyntax;
 use client::{Api, Family, Retry, encode, is_item_refusal};
@@ -41,6 +45,9 @@ use reviews::ReviewState;
 /// 100 entries each, so 20,000 entries -- the artifact ingest's own file cap
 /// is 10,000.
 const MAX_TREE_PAGES: u32 = 200;
+
+/// Pages of jobs (100 each, newest first) searched for artifact archives.
+const JOB_PAGES: u32 = 5;
 
 /// Pages of the repository listing walked to fill one `limit`.
 const MAX_REPO_PAGES: u32 = 20;
@@ -482,6 +489,297 @@ impl ConnectorDriver for GitLabDriver {
         Ok(out)
     }
 
+    /* ── Writes (write.rs) ── */
+
+    async fn put_file(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        branch: Option<&str>,
+        path: &str,
+        content: &str,
+        message: &str,
+    ) -> anyhow::Result<WrittenFile> {
+        self.write_file(auth, repo_full_path, branch, path, content, message)
+            .await
+    }
+
+    async fn commit_files(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        base_branch: &str,
+        branch: &str,
+        files: &[FileToWrite],
+        message: &str,
+    ) -> anyhow::Result<String> {
+        self.write_commit(
+            auth,
+            repo_full_path,
+            base_branch,
+            branch,
+            files,
+            &[],
+            message,
+        )
+        .await
+    }
+
+    async fn commit_changes(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        base_branch: &str,
+        branch: &str,
+        files: &[FileToWrite],
+        deleted: &[String],
+        message: &str,
+    ) -> anyhow::Result<String> {
+        self.write_commit(
+            auth,
+            repo_full_path,
+            base_branch,
+            branch,
+            files,
+            deleted,
+            message,
+        )
+        .await
+    }
+
+    async fn commit_replacing_branch(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        base_branch: &str,
+        branch: &str,
+        files: &[FileToWrite],
+        message: &str,
+    ) -> anyhow::Result<String> {
+        self.write_replacing_branch(auth, repo_full_path, base_branch, branch, files, message)
+            .await
+    }
+
+    async fn create_branch(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        branch: &str,
+        from_sha: &str,
+    ) -> anyhow::Result<()> {
+        self.write_branch(auth, repo_full_path, branch, from_sha)
+            .await
+    }
+
+    async fn create_tag(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        tag: &str,
+        sha: &str,
+    ) -> anyhow::Result<()> {
+        self.write_tag(auth, repo_full_path, tag, sha).await
+    }
+
+    async fn open_pull_request(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        head: &str,
+        base: &str,
+        title: &str,
+        body: Option<&str>,
+    ) -> anyhow::Result<OpenedPullRequest> {
+        self.write_merge_request(auth, repo_full_path, head, base, title, body)
+            .await
+    }
+
+    fn supports_pull_requests(&self) -> bool {
+        true
+    }
+
+    async fn find_open_pull_request(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        head: &str,
+        base: &str,
+    ) -> anyhow::Result<Option<OpenedPullRequest>> {
+        self.open_merge_request(auth, repo_full_path, head, base)
+            .await
+    }
+
+    async fn create_issue(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        title: &str,
+        body: &str,
+        assignees: &[String],
+    ) -> anyhow::Result<CreatedIssue> {
+        self.write_issue(auth, repo_full_path, title, body, assignees)
+            .await
+    }
+
+    async fn set_commit_status(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        sha: &str,
+        status: &CommitStatus,
+    ) -> anyhow::Result<()> {
+        self.write_status(auth, repo_full_path, sha, status).await
+    }
+
+    async fn dispatch_workflow(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        workflow: &str,
+        git_ref: &str,
+    ) -> anyhow::Result<()> {
+        self.write_pipeline(auth, repo_full_path, workflow, git_ref)
+            .await
+    }
+
+    async fn create_repository(
+        &self,
+        auth: &ConnectionAuth,
+        owner: Option<&str>,
+        is_org: bool,
+        name: &str,
+        private: bool,
+    ) -> anyhow::Result<CreatedRepository> {
+        self.write_project(auth, owner, is_org, name, private).await
+    }
+
+    /* ── Outputs (outputs.rs) ── */
+
+    async fn list_releases(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        page: u32,
+        per_page: u32,
+    ) -> anyhow::Result<Vec<RemoteRelease>> {
+        let api = self.api(auth);
+        let url = api.project(
+            repo_full_path,
+            &format!(
+                "/releases?order_by=released_at&sort=desc&per_page={}&page={}",
+                per_page.clamp(1, 100),
+                page.max(1)
+            ),
+        );
+        // A project with releases turned off has none.
+        Ok(api
+            .page::<outputs::Release>(&url, Family::Item)
+            .await?
+            .map(|p| {
+                p.items
+                    .into_iter()
+                    .map(outputs::Release::into_remote)
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
+    async fn list_build_artifacts(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        page: u32,
+        per_page: u32,
+    ) -> anyhow::Result<Vec<RemoteBuildArtifact>> {
+        // GitLab cannot list only the jobs that kept an archive, and most do
+        // not. A short page would end the caller's walk, so page 1 is every
+        // archive among the newest `JOB_PAGES` pages of jobs, and later
+        // pages are empty.
+        let _ = per_page;
+        if page > 1 {
+            return Ok(Vec::new());
+        }
+        let api = self.api(auth);
+        let url = api.project(
+            repo_full_path,
+            "/jobs?scope[]=success&scope[]=failed&per_page=100",
+        );
+        let (jobs, _) = api
+            .walk::<outputs::Job>(&url, Family::Item, JOB_PAGES)
+            .await?;
+        let now = chrono::Utc::now();
+        Ok(jobs
+            .into_iter()
+            .filter_map(|j| j.into_artifact(now))
+            .collect())
+    }
+
+    async fn download_link(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        target: DownloadTarget,
+    ) -> anyhow::Result<String> {
+        let api = self.api(auth);
+        match target {
+            DownloadTarget::BuildArtifact(job) => {
+                let url = api.project(repo_full_path, &format!("/jobs/{job}/artifacts"));
+                let res = api.get_unfollowed(&url).await?;
+                match res
+                    .headers()
+                    .get(reqwest::header::LOCATION)
+                    .and_then(|v| v.to_str().ok())
+                {
+                    Some(location) if res.status().is_redirection() => Ok(location.to_owned()),
+                    _ => Err(outputs::needs_proxy()),
+                }
+            }
+            DownloadTarget::ReleaseAsset(link) => {
+                let target = self.release_link(&api, repo_full_path, link).await?;
+                // A file in this project's own package registry needs the
+                // token; a link anywhere else is the file's own address.
+                if api.same_origin(&target) {
+                    Err(outputs::needs_proxy())
+                } else {
+                    Ok(target)
+                }
+            }
+        }
+    }
+
+    async fn download(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        target: DownloadTarget,
+    ) -> anyhow::Result<reqwest::Response> {
+        let api = self.api(auth);
+        let url = match target {
+            DownloadTarget::BuildArtifact(job) => {
+                api.project(repo_full_path, &format!("/jobs/{job}/artifacts"))
+            }
+            DownloadTarget::ReleaseAsset(link) => {
+                self.release_link(&api, repo_full_path, link).await?
+            }
+        };
+        if !api.same_origin(&url) {
+            // Somebody else's address: fetched as anyone would, no token.
+            return Ok(reqwest::get(&url).await?.error_for_status()?);
+        }
+        let res = api.get_unfollowed(&url).await?;
+        if res.status().is_redirection() {
+            // Object storage's signed link: no token goes with it.
+            let location = res
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|v| v.to_str().ok())
+                .ok_or_else(|| anyhow::anyhow!("GitLab redirected the download nowhere"))?
+                .to_owned();
+            return Ok(reqwest::get(&location).await?.error_for_status()?);
+        }
+        Ok(res)
+    }
+
     /// GitLab numbers issues (`#5`) and merge requests (`!5`) separately.
     fn reference_syntax(&self) -> ReferenceSyntax {
         ReferenceSyntax::GitLab
@@ -756,6 +1054,26 @@ const COMMENT_ITEMS: u32 = 20;
 const MAX_SILENT_PAGES: u32 = 5;
 
 impl GitLabDriver {
+    /// Where release asset link `link` points, from the project's releases
+    /// (newest first, a few pages): the trait names an asset by its id only.
+    async fn release_link(
+        &self,
+        api: &Api<'_>,
+        repo_full_path: &str,
+        link: i64,
+    ) -> anyhow::Result<String> {
+        let url = api.project(repo_full_path, "/releases?per_page=100");
+        let (releases, _) = api.walk::<outputs::Release>(&url, Family::Item, 5).await?;
+        releases
+            .iter()
+            .flat_map(|r| r.assets.links.iter())
+            .find(|l| l.id == link)
+            .and_then(|l| l.target().map(str::to_owned))
+            .ok_or_else(|| {
+                anyhow::anyhow!("no release of {repo_full_path} has the asset {link} any more")
+            })
+    }
+
     /// Where one merge request stands in review ([`reviews::fold`]): its
     /// discussions, and with `approvals` the `/approvals` extra, which an
     /// unlicensed edition answers with 402 and which is then left out.

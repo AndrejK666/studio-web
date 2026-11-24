@@ -51,7 +51,8 @@ pub(super) enum Family {
 pub enum GitLabErrorKind {
     /// 401: the token was refused.
     Unauthorized,
-    /// 403: the token may not read this.
+    /// 403: the token may not do this -- read it, or write it (a protected
+    /// branch refuses a push, a read-only token any write).
     Forbidden,
     /// 404: there is no such thing, or the token cannot see it.
     NotFound,
@@ -61,6 +62,12 @@ pub enum GitLabErrorKind {
     RateLimited,
     /// 5xx, still after every retry, or no answer at all.
     Unavailable,
+    /// 409: the write conflicts with what is there (a merge request already
+    /// open for the branch, a ref moved meanwhile).
+    Conflict,
+    /// 400 or 422: GitLab refused the request as invalid (a file that already
+    /// exists, a branch name it does not accept).
+    Invalid,
     /// Any other status.
     Rejected,
     /// A GraphQL `errors` array inside an HTTP 200.
@@ -84,6 +91,8 @@ impl GitLabError {
             402 => GitLabErrorKind::NotLicensed,
             403 => GitLabErrorKind::Forbidden,
             404 => GitLabErrorKind::NotFound,
+            409 => GitLabErrorKind::Conflict,
+            400 | 422 => GitLabErrorKind::Invalid,
             429 => GitLabErrorKind::RateLimited,
             500..=599 => GitLabErrorKind::Unavailable,
             _ => GitLabErrorKind::Rejected,
@@ -91,8 +100,14 @@ impl GitLabError {
         Self {
             kind,
             status: Some(status.as_u16()),
-            detail: body.chars().take(200).collect(),
+            detail: body.chars().take(300).collect(),
         }
+    }
+
+    /// Whether GitLab's message says `needle` (case-insensitive): GitLab
+    /// answers several different refusals with the same 400.
+    pub fn says(&self, needle: &str) -> bool {
+        self.detail.to_lowercase().contains(&needle.to_lowercase())
     }
 
     /// Whether this refusal is about one item rather than the connection:
@@ -118,8 +133,14 @@ impl fmt::Display for GitLabError {
                 "GitLab 401: the token was refused -- it needs the read_api and \
                  read_repository scopes ({detail})"
             ),
-            GitLabErrorKind::Forbidden => {
-                write!(f, "GitLab 403: the token may not read this ({detail})")
+            GitLabErrorKind::Forbidden => write!(
+                f,
+                "GitLab 403: the token may not do this -- a protected branch, or a token \
+                 without the api / write_repository scope for a write ({detail})"
+            ),
+            GitLabErrorKind::Conflict => write!(f, "GitLab 409: conflict ({detail})"),
+            GitLabErrorKind::Invalid => {
+                write!(f, "GitLab {status}: GitLab refused the request ({detail})")
             }
             GitLabErrorKind::NotFound => write!(
                 f,
@@ -222,16 +243,33 @@ impl<'a> Api<'a> {
 
     /// Send one request, retrying a throttle, a server error and a dropped
     /// connection. Answers whatever status GitLab settled on.
+    ///
+    /// A write is retried only where GitLab cannot have done it: on 429 (the
+    /// request was turned away) and on a connection that never opened. A 5xx
+    /// or a connection lost mid-answer may have committed, so a write is not
+    /// sent again; the caller's own idempotency (an existing branch holding
+    /// the same files, an open merge request found) covers a retry by hand.
     async fn send(
         &self,
         method: Method,
         url: &str,
         body: Option<&serde_json::Value>,
     ) -> anyhow::Result<reqwest::Response> {
+        self.send_on(self.http, method, url, body).await
+    }
+
+    async fn send_on(
+        &self,
+        http: &reqwest::Client,
+        method: Method,
+        url: &str,
+        body: Option<&serde_json::Value>,
+    ) -> anyhow::Result<reqwest::Response> {
+        let idempotent = matches!(method, Method::GET | Method::HEAD)
+            || (method == Method::POST && url.ends_with("/api/graphql"));
         let mut attempt = 0u32;
         loop {
-            let mut rb = self
-                .http
+            let mut rb = http
                 .request(method.clone(), url)
                 .header("Accept", "application/json")
                 .header("User-Agent", "constructor-studio");
@@ -246,7 +284,7 @@ impl<'a> Api<'a> {
             let backoff = self.retry.backoff.saturating_mul(1 << attempt.min(16));
             match rb.send().await {
                 Err(e) => {
-                    if attempt >= self.retry.attempts {
+                    if attempt >= self.retry.attempts || (!idempotent && !e.is_connect()) {
                         return Err(GitLabError {
                             kind: GitLabErrorKind::Unavailable,
                             status: None,
@@ -260,7 +298,7 @@ impl<'a> Api<'a> {
                 Ok(res) => {
                     let status = res.status();
                     let transient = status == StatusCode::TOO_MANY_REQUESTS
-                        || matches!(status.as_u16(), 500 | 502 | 503 | 504);
+                        || (idempotent && matches!(status.as_u16(), 500 | 502 | 503 | 504));
                     if !transient || attempt >= self.retry.attempts {
                         return Ok(res);
                     }
@@ -280,6 +318,40 @@ impl<'a> Api<'a> {
         let res = self.send(Method::GET, url, None).await?;
         let status = res.status();
         if status.is_success() {
+            return Ok(res);
+        }
+        let body = res.text().await.unwrap_or_default();
+        Err(GitLabError::from_status(status, &body).into())
+    }
+
+    /// A write (`POST`, `PUT`, `DELETE`) with a JSON body, decoded; the
+    /// refusal as a [`GitLabError`].
+    pub async fn write<T: DeserializeOwned>(
+        &self,
+        method: Method,
+        url: &str,
+        body: &serde_json::Value,
+    ) -> anyhow::Result<T> {
+        let res = self.send(method, url, Some(body)).await?;
+        let status = res.status();
+        if !status.is_success() {
+            let text = res.text().await.unwrap_or_default();
+            return Err(GitLabError::from_status(status, &text).into());
+        }
+        Ok(res.json().await?)
+    }
+
+    /// A GET that does not follow a redirect: a download GitLab hands to
+    /// object storage answers 302 to a signed link, and following it would
+    /// pull the file through Studio -- with the token, which reqwest only
+    /// strips from `Authorization`, not from `PRIVATE-TOKEN`.
+    pub async fn get_unfollowed(&self, url: &str) -> anyhow::Result<reqwest::Response> {
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()?;
+        let res = self.send_on(&client, Method::GET, url, None).await?;
+        let status = res.status();
+        if status.is_success() || status.is_redirection() {
             return Ok(res);
         }
         let body = res.text().await.unwrap_or_default();
@@ -419,7 +491,7 @@ impl<'a> Api<'a> {
     }
 
     /// Whether `url` is on this installation: scheme, host and port.
-    fn same_origin(&self, url: &str) -> bool {
+    pub fn same_origin(&self, url: &str) -> bool {
         let (Ok(a), Ok(b)) = (reqwest::Url::parse(url), reqwest::Url::parse(&self.root)) else {
             return false;
         };

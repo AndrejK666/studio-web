@@ -1007,3 +1007,520 @@ async fn a_pipeline_gone_before_its_jobs_are_read_has_none() {
     assert!(jobs.is_empty());
     assert!(mock.calls("/api/graphql").is_empty());
 }
+
+/* ── Writes ── */
+
+fn file(path: &str, content: &str) -> super::super::driver::FileToWrite {
+    super::super::driver::FileToWrite {
+        path: path.into(),
+        content: content.into(),
+    }
+}
+
+#[tokio::test]
+async fn a_commit_onto_a_new_branch_is_one_call_with_create_and_update_actions() {
+    let mock = Mock::builder()
+        // `docs/a.md` is on the base already, `docs/b.md` is new.
+        .get_q(
+            &format!("{PROJECT}/repository/files/docs%2Fa.md"),
+            "ref=main",
+            Reply::json(json!({ "blob_id": "b1", "last_commit_id": "c0" })),
+        )
+        .route(
+            axum::http::Method::POST,
+            &format!("{PROJECT}/repository/commits"),
+            "",
+            Reply::json(json!({ "id": "c1" })),
+        )
+        .start()
+        .await;
+    let sha = mock
+        .driver()
+        .commit_changes(
+            &mock.auth(),
+            "acme/platform/app",
+            "main",
+            "product/x",
+            &[file("docs/a.md", "A"), file("docs/b.md", "B")],
+            &["old.md".to_string()],
+            "Describe the product",
+        )
+        .await
+        .unwrap();
+    assert_eq!(sha, "c1");
+    let posted = mock.calls(&format!("{PROJECT}/repository/commits"));
+    assert_eq!(posted.len(), 1);
+    let body = posted[0].body.clone().unwrap();
+    assert_eq!(body["branch"], "product/x");
+    assert_eq!(body["start_branch"], "main");
+    let actions: Vec<(&str, &str)> = body["actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| {
+            (
+                a["action"].as_str().unwrap(),
+                a["file_path"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    // `old.md` is not on the base: nothing to delete.
+    assert_eq!(actions, [("update", "docs/a.md"), ("create", "docs/b.md")]);
+}
+
+#[tokio::test]
+async fn committing_the_same_files_again_answers_the_branch_it_already_has() {
+    let mock = Mock::builder()
+        .get(
+            &format!("{PROJECT}/repository/branches/product%2Fx"),
+            Reply::json(json!({ "name": "product/x", "commit": { "id": "c1" } })),
+        )
+        .get_q(
+            &format!("{PROJECT}/repository/files/docs%2Fa.md/raw"),
+            "ref=product%2Fx",
+            Reply::text("A"),
+        )
+        .start()
+        .await;
+    let driver = mock.driver();
+    let auth = mock.auth();
+    let again = driver
+        .commit_files(
+            &auth,
+            "acme/platform/app",
+            "main",
+            "product/x",
+            &[file("docs/a.md", "A")],
+            "m",
+        )
+        .await
+        .unwrap();
+    assert_eq!(again, "c1");
+    let other = driver
+        .commit_files(
+            &auth,
+            "acme/platform/app",
+            "main",
+            "product/x",
+            &[file("docs/a.md", "Z")],
+            "m",
+        )
+        .await
+        .unwrap_err();
+    assert!(other.to_string().contains("different content"), "{other}");
+    assert!(
+        mock.calls(&format!("{PROJECT}/repository/commits"))
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn a_write_is_not_resent_after_a_server_error() {
+    let mock = Mock::builder()
+        .route(
+            axum::http::Method::POST,
+            &format!("{PROJECT}/repository/commits"),
+            "",
+            Reply::status(502),
+        )
+        .start()
+        .await;
+    let err = mock
+        .driver()
+        .commit_files(
+            &mock.auth(),
+            "acme/platform/app",
+            "main",
+            "main",
+            &[file("a", "A")],
+            "m",
+        )
+        .await
+        .unwrap_err();
+    assert!(format!("{err:#}").contains("502"), "{err:#}");
+    assert_eq!(
+        mock.calls(&format!("{PROJECT}/repository/commits")).len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn a_file_is_created_replaced_or_left_when_it_already_says_that() {
+    let path = format!("{PROJECT}/repository/files/notes.md");
+    let mock = Mock::builder()
+        .get_q(&format!("{path}/raw"), "ref=trunk", Reply::status(404))
+        .then(Reply::text("same"))
+        .route(
+            axum::http::Method::POST,
+            &path,
+            "",
+            Reply::json(json!({ "file_path": "notes.md" })),
+        )
+        .get_q(
+            &path,
+            "ref=trunk",
+            Reply::json(json!({ "blob_id": "blob9", "last_commit_id": "c9" })),
+        )
+        .start()
+        .await;
+    let driver = mock.driver();
+    let auth = mock.auth();
+    let created = driver
+        .put_file(
+            &auth,
+            "acme/platform/app",
+            Some("trunk"),
+            "notes.md",
+            "same",
+            "m",
+        )
+        .await
+        .unwrap();
+    assert!(!created.updated);
+    assert_eq!(created.sha, "blob9");
+    assert_eq!(created.commit.as_deref(), Some("c9"));
+    assert_eq!(created.branch.as_deref(), Some("trunk"));
+    // Now it holds "same": asking again writes nothing.
+    let again = driver
+        .put_file(
+            &auth,
+            "acme/platform/app",
+            Some("trunk"),
+            "notes.md",
+            "same",
+            "m",
+        )
+        .await
+        .unwrap();
+    assert!(again.updated);
+    let writes = mock
+        .calls(&path)
+        .into_iter()
+        .filter(|c| c.method != axum::http::Method::GET)
+        .count();
+    assert_eq!(writes, 1);
+}
+
+#[tokio::test]
+async fn a_protected_branch_is_a_typed_403_that_says_so() {
+    let path = format!("{PROJECT}/repository/files/notes.md");
+    let mock = Mock::builder()
+        .get(&format!("{path}/raw"), Reply::text("old"))
+        .route(
+            axum::http::Method::PUT,
+            &path,
+            "",
+            Reply::error(403, "You are not allowed to push into this branch"),
+        )
+        .start()
+        .await;
+    let err = mock
+        .driver()
+        .put_file(
+            &mock.auth(),
+            "acme/platform/app",
+            Some("main"),
+            "notes.md",
+            "new",
+            "m",
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(kind_of(&err), Some(GitLabErrorKind::Forbidden));
+    let text = format!("{err:#}");
+    assert!(text.contains("protected branch"), "{text}");
+    assert!(text.contains("not allowed to push"), "{text}");
+}
+
+#[tokio::test]
+async fn a_merge_request_already_open_is_reused() {
+    let mrs = format!("{PROJECT}/merge_requests");
+    let mock = Mock::builder()
+        .route(
+            axum::http::Method::POST,
+            &mrs,
+            "",
+            Reply::error(
+                409,
+                "Another open merge request already exists for this source branch: !4",
+            ),
+        )
+        .get_q(
+            &mrs,
+            "state=opened&source_branch=product%2Fx&target_branch=main",
+            Reply::json(json!([{ "iid": 4, "web_url": "https://g.example/mr/4" }])),
+        )
+        .start()
+        .await;
+    let driver = mock.driver();
+    assert!(driver.supports_pull_requests());
+    let mr = driver
+        .open_pull_request(
+            &mock.auth(),
+            "acme/platform/app",
+            "product/x",
+            "main",
+            "T",
+            Some("B"),
+        )
+        .await
+        .unwrap();
+    assert_eq!((mr.number, mr.created), (4, false));
+    let sent = mock
+        .calls(&mrs)
+        .into_iter()
+        .find(|c| c.method == axum::http::Method::POST)
+        .unwrap();
+    assert_eq!(sent.body.unwrap()["description"], "B");
+}
+
+#[tokio::test]
+async fn a_tag_already_at_the_commit_is_the_answer_and_one_elsewhere_is_refused() {
+    let mock = Mock::builder()
+        .route(
+            axum::http::Method::POST,
+            &format!("{PROJECT}/repository/tags"),
+            "",
+            Reply::error(400, "Tag v1 already exists"),
+        )
+        .get(
+            &format!("{PROJECT}/repository/tags/v1"),
+            Reply::json(json!({ "name": "v1", "commit": { "id": "c1" } })),
+        )
+        .start()
+        .await;
+    let driver = mock.driver();
+    let auth = mock.auth();
+    driver
+        .create_tag(&auth, "acme/platform/app", "v1", "c1")
+        .await
+        .unwrap();
+    let err = driver
+        .create_tag(&auth, "acme/platform/app", "v1", "c2")
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("already points at c1"), "{err}");
+}
+
+#[tokio::test]
+async fn a_status_maps_its_state_and_a_repeated_one_is_not_an_error() {
+    let mock = Mock::builder()
+        .route(
+            axum::http::Method::POST,
+            &format!("{PROJECT}/statuses/abc"),
+            "",
+            Reply::json(json!({ "id": 1 })),
+        )
+        .then(Reply::error(
+            400,
+            "Cannot transition status via :drop from :failed",
+        ))
+        .start()
+        .await;
+    let driver = mock.driver();
+    let status = super::super::driver::CommitStatus {
+        state: "failure".into(),
+        context: "studio/build".into(),
+        description: "x".repeat(300),
+        target_url: Some("https://studio.example/b/1".into()),
+    };
+    let auth = mock.auth();
+    driver
+        .set_commit_status(&auth, "acme/platform/app", "abc", &status)
+        .await
+        .unwrap();
+    driver
+        .set_commit_status(&auth, "acme/platform/app", "abc", &status)
+        .await
+        .unwrap();
+    let body = mock.calls(&format!("{PROJECT}/statuses/abc"))[0]
+        .body
+        .clone()
+        .unwrap();
+    assert_eq!(body["state"], "failed");
+    assert_eq!(body["name"], "studio/build");
+    assert_eq!(body["description"].as_str().unwrap().len(), 140);
+}
+
+#[tokio::test]
+async fn a_dispatch_is_a_pipeline_on_the_ref_naming_the_workflow() {
+    let mock = Mock::builder()
+        .route(
+            axum::http::Method::POST,
+            &format!("{PROJECT}/pipeline"),
+            "",
+            Reply::json(json!({ "id": 5 })),
+        )
+        .start()
+        .await;
+    mock.driver()
+        .dispatch_workflow(&mock.auth(), "acme/platform/app", "build.yml", "main")
+        .await
+        .unwrap();
+    let body = mock.calls(&format!("{PROJECT}/pipeline"))[0]
+        .body
+        .clone()
+        .unwrap();
+    assert_eq!(body["ref"], "main");
+    assert_eq!(body["variables"][0]["key"], "STUDIO_WORKFLOW");
+    assert_eq!(body["variables"][0]["value"], "build.yml");
+}
+
+#[tokio::test]
+async fn an_issue_is_assigned_to_the_accounts_its_logins_name() {
+    let mock = Mock::builder()
+        .get_q(
+            "/api/v4/users",
+            "username=ada",
+            Reply::json(json!([{ "id": 7, "username": "ada" }])),
+        )
+        .get("/api/v4/users", Reply::json(json!([])))
+        .route(
+            axum::http::Method::POST,
+            &format!("{PROJECT}/issues"),
+            "",
+            Reply::json(json!({ "iid": 12, "web_url": "https://g.example/i/12" })),
+        )
+        .start()
+        .await;
+    let issue = mock
+        .driver()
+        .create_issue(
+            &mock.auth(),
+            "acme/platform/app",
+            "Gap",
+            "Body",
+            &["ada".to_string(), "ghost".to_string()],
+        )
+        .await
+        .unwrap();
+    assert_eq!(issue.number, 12);
+    let body = mock.calls(&format!("{PROJECT}/issues"))[0]
+        .body
+        .clone()
+        .unwrap();
+    assert_eq!(body["assignee_ids"], json!([7]));
+}
+
+/* ── Releases, artifacts and downloads ── */
+
+#[tokio::test]
+async fn a_release_is_keyed_by_its_tag_and_its_links_are_its_files() {
+    let mock = Mock::builder()
+        .get(
+            &format!("{PROJECT}/releases"),
+            Reply::json(json!([{
+                "tag_name": "v1.2.0", "name": "1.2", "released_at": "2026-11-20T00:00:00Z",
+                "upcoming_release": false,
+                "_links": { "self": "https://g.example/acme/platform/app/-/releases/v1.2.0" },
+                "assets": { "links": [
+                    { "id": 31, "name": "app.tgz", "url": "https://files.example/app.tgz",
+                      "link_type": "package" }
+                ] }
+            }])),
+        )
+        .start()
+        .await;
+    let driver = mock.driver();
+    let releases = driver
+        .list_releases(&mock.auth(), "acme/platform/app", 1, 100)
+        .await
+        .unwrap();
+    let r = &releases[0];
+    assert_eq!(r.id, super::outputs::release_id("v1.2.0"));
+    assert_eq!(r.tag, "v1.2.0");
+    assert_eq!(r.assets[0].id, 31);
+    // A link outside the installation is the file's own address.
+    let link = driver
+        .download_link(
+            &mock.auth(),
+            "acme/platform/app",
+            super::super::driver::DownloadTarget::ReleaseAsset(31),
+        )
+        .await
+        .unwrap();
+    assert_eq!(link, "https://files.example/app.tgz");
+}
+
+#[tokio::test]
+async fn jobs_with_an_archive_are_the_build_artifacts_all_on_the_first_page() {
+    let mock = Mock::builder()
+        .get(
+            &format!("{PROJECT}/jobs"),
+            Reply::json(json!([
+                { "id": 1, "name": "lint", "artifacts": [{ "file_type": "trace", "size": 1 }] },
+                { "id": 2, "name": "studio-build", "ref": "main",
+                  "artifacts": [{ "file_type": "archive", "size": 512 }],
+                  "pipeline": { "id": 70, "sha": "s1" } }
+            ])),
+        )
+        .start()
+        .await;
+    let driver = mock.driver();
+    let auth = mock.auth();
+    let first = driver
+        .list_build_artifacts(&auth, "acme/platform/app", 1, 100)
+        .await
+        .unwrap();
+    assert_eq!(first.len(), 1);
+    assert_eq!((first[0].id, first[0].run_id), (2, Some(70)));
+    assert!(
+        driver
+            .list_build_artifacts(&auth, "acme/platform/app", 2, 100)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(mock.calls(&format!("{PROJECT}/jobs")).len(), 1);
+}
+
+#[tokio::test]
+async fn an_artifact_on_object_storage_is_its_signed_link_and_one_served_locally_is_streamed() {
+    use super::super::driver::{DownloadNeedsProxy, DownloadTarget};
+    let mock = Mock::builder()
+        .get(
+            &format!("{PROJECT}/jobs/2/artifacts"),
+            Reply::status(302).header("location", "{base}/storage/signed?sig=1"),
+        )
+        .get("/storage/signed", Reply::text("zip-bytes"))
+        .get(
+            &format!("{PROJECT}/jobs/3/artifacts"),
+            Reply::text("local-zip"),
+        )
+        .start()
+        .await;
+    let driver = mock.driver();
+    let auth = mock.auth();
+    let link = driver
+        .download_link(&auth, "acme/platform/app", DownloadTarget::BuildArtifact(2))
+        .await
+        .unwrap();
+    assert_eq!(link, format!("{}/storage/signed?sig=1", mock.base));
+    let err = driver
+        .download_link(&auth, "acme/platform/app", DownloadTarget::BuildArtifact(3))
+        .await
+        .unwrap_err();
+    assert!(err.downcast_ref::<DownloadNeedsProxy>().is_some(), "{err}");
+
+    let local = driver
+        .download(&auth, "acme/platform/app", DownloadTarget::BuildArtifact(3))
+        .await
+        .unwrap();
+    assert_eq!(local.text().await.unwrap(), "local-zip");
+    let signed = driver
+        .download(&auth, "acme/platform/app", DownloadTarget::BuildArtifact(2))
+        .await
+        .unwrap();
+    assert_eq!(signed.text().await.unwrap(), "zip-bytes");
+    // The token went to GitLab's API, never to the signed link.
+    assert!(
+        mock.calls("/storage/signed")
+            .iter()
+            .all(|c| c.token.is_none())
+    );
+    assert!(
+        mock.calls(&format!("{PROJECT}/jobs/3/artifacts"))
+            .iter()
+            .all(|c| c.token.as_deref() == Some("glpat-test"))
+    );
+}

@@ -2111,7 +2111,6 @@ async fn get_output_download(
     axum::extract::Path(output_id): axum::extract::Path<String>,
     Query(query): Query<OutputDownloadQuery>,
 ) -> ApiResult<JsonBody<OutputDownloadDto>> {
-    use super::builds::BuildRefusal;
     let project_id = BuildQuery {
         project_id: query.project_id.clone(),
     }
@@ -2127,19 +2126,68 @@ async fn get_output_download(
             query.asset_id.as_deref(),
         )
         .await
-        .map_err(|e| match e {
-            BuildRefusal::NotFound(why) => StudioArtifactIngestError::not_found(why)
-                .with_resource(output_id.clone())
-                .create(),
-            BuildRefusal::Invalid(why) => StudioArtifactIngestError::failed_precondition()
-                .with_precondition_violation("output".to_owned(), why, "NOT_DOWNLOADABLE")
-                .create(),
-            BuildRefusal::Provider(why) => StudioArtifactIngestError::failed_precondition()
-                .with_precondition_violation("provider".to_owned(), why, "DOWNLOAD_REFUSED")
-                .create(),
-            other => build_problem(other),
-        })?;
+        .map_err(|e| output_refusal(e, &output_id))?;
     Ok(Json(OutputDownloadDto { url }))
+}
+
+/// A refused download as a problem.
+fn output_refusal(e: super::builds::BuildRefusal, output_id: &str) -> CanonicalError {
+    use super::builds::BuildRefusal;
+    match e {
+        BuildRefusal::NotFound(why) => StudioArtifactIngestError::not_found(why)
+            .with_resource(output_id.to_owned())
+            .create(),
+        BuildRefusal::Invalid(why) => StudioArtifactIngestError::failed_precondition()
+            .with_precondition_violation("output".to_owned(), why, "NOT_DOWNLOADABLE")
+            .create(),
+        BuildRefusal::Provider(why) => StudioArtifactIngestError::failed_precondition()
+            .with_precondition_violation("provider".to_owned(), why, "DOWNLOAD_REFUSED")
+            .create(),
+        other => build_problem(other),
+    }
+}
+
+/// One output's bytes, streamed through Studio, for a member of its project:
+/// where the provider serves the file itself and signs no link.
+async fn get_output_content(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(ingest): Extension<Ingest>,
+    axum::extract::Path(output_id): axum::extract::Path<String>,
+    Query(query): Query<OutputDownloadQuery>,
+) -> ApiResult<axum::response::Response> {
+    use axum::http::header;
+    let project_id = BuildQuery {
+        project_id: query.project_id.clone(),
+    }
+    .project()?;
+    let svc = ingest.get()?;
+    let (am, _) = reachable_project(&ingest, &ctx, project_id).await?;
+    let upstream = svc
+        .output_download(
+            &ctx,
+            am.as_ref(),
+            project_id,
+            output_id.trim(),
+            query.asset_id.as_deref(),
+        )
+        .await
+        .map_err(|e| output_refusal(e, &output_id))?;
+    let mut out = axum::response::Response::builder().status(StatusCode::OK);
+    for name in [header::CONTENT_TYPE, header::CONTENT_LENGTH] {
+        if let Some(value) = upstream.headers().get(&name) {
+            out = out.header(name, value.clone());
+        }
+    }
+    let disposition = upstream
+        .headers()
+        .get(header::CONTENT_DISPOSITION)
+        .cloned()
+        .unwrap_or_else(|| header::HeaderValue::from_static("attachment"));
+    out.header(header::CONTENT_DISPOSITION, disposition)
+        .body(axum::body::Body::from_stream(upstream.bytes_stream()))
+        .map_err(|e| {
+            CanonicalError::internal(format!("could not answer the download: {e}")).create()
+        })
 }
 
 async fn scoped_entries(
@@ -2443,6 +2491,33 @@ pub fn register_routes(
         .query_param("asset_id", false, "For a release: which of its files")
         .handler(get_output_download)
         .json_response_with_schema::<OutputDownloadDto>(openapi, StatusCode::OK, "The link")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-artifact-ingest/v1/outputs/{output_id}/content")
+        .operation_id("studio_artifact_ingest.get_output_content")
+        .summary("One output's file, streamed through Studio")
+        .description(
+            "For a member of the project, where the provider serves the file itself and signs \
+             no link (a GitLab with its artifacts on local storage): `GET /outputs/{output_id}/\
+             download` then answers this route's path as `url`. Fetches the file through the \
+             connection of the project repository the output came from and streams it on with \
+             its type and `Content-Disposition: attachment`; the connection's token never \
+             reaches the browser. Call it with the bearer token and save the body. The same \
+             refusals as `/download`: 400 `NOT_DOWNLOADABLE`, 400 `DOWNLOAD_REFUSED`, 400 \
+             `CONNECTION_NOT_OWNED`; 404 for an output that is not the project's.",
+        )
+        .tag("StudioArtifactIngest")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("output_id", "An output id from /outputs")
+        .query_param("project_id", true, "The project")
+        .query_param("asset_id", false, "For a release: which of its files")
+        .handler(get_output_content)
+        .text_response(StatusCode::OK, "The file", "application/octet-stream")
         .error_400(openapi)
         .error_401(openapi)
         .error_404(openapi)

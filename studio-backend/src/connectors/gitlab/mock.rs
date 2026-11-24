@@ -54,6 +54,15 @@ impl Reply {
         }
     }
 
+    /// A refusal carrying GitLab's own message, as `{"message": …}`.
+    pub fn error(status: u16, message: &str) -> Self {
+        Self {
+            status,
+            headers: vec![("content-type".into(), "application/json".into())],
+            body: serde_json::json!({ "message": message }).to_string(),
+        }
+    }
+
     pub fn header(mut self, name: &str, value: &str) -> Self {
         self.headers.push((name.into(), value.into()));
         self

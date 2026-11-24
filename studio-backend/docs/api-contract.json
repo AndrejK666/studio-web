@@ -666,6 +666,20 @@
     },
     {
       "method": "GET",
+      "path": "/studio-artifact-ingest/v1/outputs/{output_id}/content",
+      "operation_id": "studio_artifact_ingest.get_output_content",
+      "tag": "StudioArtifactIngest",
+      "summary": "One output's file, streamed through Studio",
+      "authenticated": true,
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-artifact-ingest/v1/outputs/{output_id}/download",
       "operation_id": "studio_artifact_ingest.get_output_download",
       "tag": "StudioArtifactIngest",

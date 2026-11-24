@@ -2919,10 +2919,6 @@ impl IngestService {
                 return;
             }
         };
-        let http = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .build()
-            .unwrap_or_default();
         for a in manifests {
             let Some(run) = a.run_id else { continue };
             if known.contains(&gts::build_instance_id(
@@ -2931,11 +2927,12 @@ impl IngestService {
             )) {
                 continue;
             }
+            // Through the driver rather than its signed link: a GitLab that
+            // serves artifacts itself gives no link, only the bytes.
             let read = async {
-                let url = driver
-                    .download_link(auth, repo_full_path, DownloadTarget::BuildArtifact(a.id))
+                let res = driver
+                    .download(auth, repo_full_path, DownloadTarget::BuildArtifact(a.id))
                     .await?;
-                let res = http.get(&url).send().await?.error_for_status()?;
                 if res
                     .content_length()
                     .is_some_and(|n| n > builds::MAX_MANIFEST_BYTES as u64)
@@ -2948,7 +2945,11 @@ impl IngestService {
                 }
                 builds::manifest_from_zip(&bytes)
             };
-            let text = match read.await {
+            let read = tokio::time::timeout(std::time::Duration::from_secs(30), read);
+            let text = match read
+                .await
+                .unwrap_or_else(|_| Err(anyhow!("the manifest took longer than 30 s")))
+            {
                 Ok(t) => t,
                 Err(e) => {
                     warn!(error = %e, run, repo = repo_full_path, "studio-artifact-ingest: a pipeline's manifest could not be read");
@@ -3114,6 +3115,11 @@ impl IngestService {
     /// project repository it came from -- only one the project's organization
     /// owns, as for Build in CI. The link lives about a minute; nothing is
     /// downloaded here.
+    ///
+    /// A provider that serves the file itself gives no such link (a GitLab
+    /// with its artifacts on local storage): the answer is then Studio's own
+    /// route, `…/outputs/{output_id}/content`, which streams the file through
+    /// the same connection ([`Self::output_download`]).
     pub async fn output_download_link(
         &self,
         ctx: &SecurityContext,
@@ -3122,6 +3128,68 @@ impl IngestService {
         output_id: &str,
         asset: Option<&str>,
     ) -> Result<String, super::builds::BuildRefusal> {
+        use super::builds::BuildRefusal;
+        let (repository, target) = self
+            .output_repository(ctx, am, project, output_id, asset)
+            .await?;
+        match repository.download_link(target).await {
+            Ok(url) => Ok(url),
+            Err(e)
+                if e.downcast_ref::<crate::connectors::sdk::DownloadNeedsProxy>()
+                    .is_some() =>
+            {
+                let mut url = format!(
+                    "/cf/studio-artifact-ingest/v1/outputs/{}/content?project_id={project}",
+                    query_value(output_id)
+                );
+                if let Some(asset) = asset.map(str::trim).filter(|a| !a.is_empty()) {
+                    url.push_str("&asset_id=");
+                    url.push_str(&query_value(asset));
+                }
+                Ok(url)
+            }
+            Err(e) => Err(BuildRefusal::Provider(format!("{e:#}"))),
+        }
+    }
+
+    /// One output's bytes, fetched through the connection of the project
+    /// repository it came from, for Studio to stream on: what a member gets
+    /// where the provider signs no link. The same checks as
+    /// [`Self::output_download_link`].
+    pub async fn output_download(
+        &self,
+        ctx: &SecurityContext,
+        am: &dyn account_management_sdk::AccountManagementClient,
+        project: Uuid,
+        output_id: &str,
+        asset: Option<&str>,
+    ) -> Result<reqwest::Response, super::builds::BuildRefusal> {
+        let (repository, target) = self
+            .output_repository(ctx, am, project, output_id, asset)
+            .await?;
+        repository
+            .download(target)
+            .await
+            .map_err(|e| super::builds::BuildRefusal::Provider(format!("{e:#}")))
+    }
+
+    /// The repository an output came from, opened through its project
+    /// source's connection (only one the project's organization owns), and
+    /// what in it to download.
+    async fn output_repository(
+        &self,
+        ctx: &SecurityContext,
+        am: &dyn account_management_sdk::AccountManagementClient,
+        project: Uuid,
+        output_id: &str,
+        asset: Option<&str>,
+    ) -> Result<
+        (
+            crate::connectors::sdk::Repository,
+            crate::connectors::sdk::DownloadTarget,
+        ),
+        super::builds::BuildRefusal,
+    > {
         use super::builds::BuildRefusal;
         let output = self
             .list_outputs(ctx, &project.to_string())
@@ -3164,10 +3232,7 @@ impl IngestService {
         )
         .await
         .map_err(|e| BuildRefusal::Provider(format!("{e:#}")))?;
-        repository
-            .download_link(target)
-            .await
-            .map_err(|e| BuildRefusal::Provider(format!("{e:#}")))
+        Ok((repository, target))
     }
 
     pub async fn record_mapping_decision(
@@ -3898,6 +3963,20 @@ async fn read_one(dir: PathBuf, path: &str) -> anyhow::Result<Option<String>> {
 /// targets this sync holds a node of (ADR-0047 §3). Only an issue is closed
 /// or is a parent: "closes" naming a pull request is a reference to it, and
 /// "part of" a pull request is nothing.
+/// A query-string value, percent-encoded but for the unreserved characters.
+fn query_value(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char);
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
 fn item_link_edges(
     links: &[(String, &'static str, NumberRef)],
     issue_by_number: &HashMap<i64, String>,
