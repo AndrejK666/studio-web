@@ -16,6 +16,12 @@ pub enum ReferenceSyntax {
     /// `#42`, `owner/repo#42` and links to `…/issues/42`, `…/pull/42` or
     /// `…/merge_requests/42`: the git hosts.
     Numbered,
+    /// GitLab's: `#42` is an issue and `!42` a merge request, each with an
+    /// optional `group/project` before it, and links to `…/-/issues/42` or
+    /// `…/-/merge_requests/42`. Issues and merge requests are numbered
+    /// separately, so issue 5 and merge request 5 are two items and each
+    /// mention says which it means ([`RefKind`]).
+    GitLab,
     /// The provider's text names nothing Studio can place.
     None,
 }
@@ -39,13 +45,28 @@ impl Relation {
     }
 }
 
+/// Which kind of item a mention names, where the syntax says.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub enum RefKind {
+    /// The syntax does not say: on GitHub an issue and a pull request share
+    /// one sequence of numbers, so the number alone is the item.
+    #[default]
+    Any,
+    /// A work item (`#42` on GitLab).
+    Issue,
+    /// A change request (`!42` on GitLab).
+    ChangeRequest,
+}
+
 /// An item named by its number, in its repository, or in the one the text
 /// belongs to when `repo` is `None`.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct NumberRef {
     /// `owner/repo` (or `group/subgroup/repo`), as the text wrote it.
     pub repo: Option<String>,
     pub number: i64,
+    /// Whether the text said it is an issue or a change request.
+    pub kind: RefKind,
 }
 
 impl NumberRef {
@@ -102,7 +123,7 @@ pub fn find(text: &str, syntax: ReferenceSyntax) -> Vec<Mention> {
                 closing = !ends_sentence;
                 continue;
             }
-            if let Some(target) = number_ref(word) {
+            if let Some(target) = number_ref(word, syntax) {
                 let relation = if closing {
                     Relation::Closes
                 } else {
@@ -139,15 +160,32 @@ fn without_code_spans(line: &str) -> String {
     out
 }
 
-/// The item one word names: `#42`, `owner/repo#42`, or a link to one.
-fn number_ref(word: &str) -> Option<NumberRef> {
+/// The item one word names: `#42`, `owner/repo#42`, GitLab's `!42`, or a
+/// link to one.
+fn number_ref(word: &str, syntax: ReferenceSyntax) -> Option<NumberRef> {
+    let gitlab = syntax == ReferenceSyntax::GitLab;
     if word.starts_with("http://") || word.starts_with("https://") {
-        return link_ref(word);
+        return link_ref(word, gitlab);
     }
-    let (repo, number) = word.split_once('#')?;
+    let (repo, number, kind) = match word.split_once('#') {
+        Some((repo, number)) => (
+            repo,
+            number,
+            if gitlab { RefKind::Issue } else { RefKind::Any },
+        ),
+        None if gitlab => {
+            let (repo, number) = word.split_once('!')?;
+            (repo, number, RefKind::ChangeRequest)
+        }
+        None => return None,
+    };
     let number = digits(number)?;
     if repo.is_empty() {
-        return Some(NumberRef { repo: None, number });
+        return Some(NumberRef {
+            repo: None,
+            number,
+            kind,
+        });
     }
     let path_like = repo.contains('/')
         && repo.split('/').all(|seg| {
@@ -159,13 +197,15 @@ fn number_ref(word: &str) -> Option<NumberRef> {
     path_like.then(|| NumberRef {
         repo: Some(repo.to_string()),
         number,
+        kind,
     })
 }
 
 /// The item a link names: `https://host/owner/repo/issues/42`,
 /// `…/pull/42`, `…/-/merge_requests/42`. Anything after the number (a
-/// fragment, `/files`) does not change which item it is.
-fn link_ref(url: &str) -> Option<NumberRef> {
+/// fragment, `/files`) does not change which item it is. On GitLab the
+/// segment also says which kind of item it is.
+fn link_ref(url: &str, gitlab: bool) -> Option<NumberRef> {
     let rest = url.split_once("://")?.1;
     let rest = rest.split(['?', '#']).next()?;
     let segs: Vec<&str> = rest.split('/').skip(1).collect();
@@ -173,6 +213,11 @@ fn link_ref(url: &str) -> Option<NumberRef> {
         .iter()
         .position(|s| matches!(*s, "issues" | "pull" | "pulls" | "merge_requests"))?;
     let number = digits(segs.get(at + 1)?)?;
+    let kind = match (gitlab, segs[at]) {
+        (true, "issues") => RefKind::Issue,
+        (true, "merge_requests") => RefKind::ChangeRequest,
+        _ => RefKind::Any,
+    };
     let repo: Vec<&str> = segs[..at]
         .iter()
         .copied()
@@ -181,6 +226,7 @@ fn link_ref(url: &str) -> Option<NumberRef> {
     (repo.len() >= 2).then(|| NumberRef {
         repo: Some(repo.join("/")),
         number,
+        kind,
     })
 }
 
@@ -196,7 +242,11 @@ mod tests {
     use super::*;
 
     fn local(number: i64) -> NumberRef {
-        NumberRef { repo: None, number }
+        NumberRef {
+            repo: None,
+            number,
+            ..Default::default()
+        }
     }
 
     fn found(text: &str) -> Vec<(Relation, NumberRef)> {
@@ -234,6 +284,7 @@ mod tests {
         let target = NumberRef {
             repo: Some("constructorfabric/gearbox".into()),
             number: 2,
+            ..Default::default()
         };
         assert_eq!(
             found("Resolves constructorfabric/gearbox#2"),
@@ -255,14 +306,16 @@ mod tests {
                     Relation::References,
                     NumberRef {
                         repo: Some("o/r".into()),
-                        number: 7
+                        number: 7,
+                        ..Default::default()
                     }
                 ),
                 (
                     Relation::References,
                     NumberRef {
                         repo: Some("g/sub/p".into()),
-                        number: 9
+                        number: 9,
+                        ..Default::default()
                     }
                 ),
             ]
@@ -273,7 +326,8 @@ mod tests {
                 Relation::Closes,
                 NumberRef {
                     repo: Some("o/r".into()),
-                    number: 5
+                    number: 5,
+                    ..Default::default()
                 }
             )]
         );
@@ -297,5 +351,48 @@ mod tests {
     fn what_only_looks_like_a_number_is_not_one() {
         assert!(found("a#1 colour #fff &#38; #0 issue#x foo/#2").is_empty());
         assert!(find("Closes #1", ReferenceSyntax::None).is_empty());
+    }
+
+    fn gitlab(text: &str) -> Vec<(Relation, NumberRef)> {
+        find(text, ReferenceSyntax::GitLab)
+            .into_iter()
+            .map(|m| (m.relation, m.target))
+            .collect()
+    }
+
+    #[test]
+    fn on_gitlab_a_bang_is_a_merge_request_and_a_hash_an_issue() {
+        let item = |repo: Option<&str>, number, kind| NumberRef {
+            repo: repo.map(str::to_owned),
+            number,
+            kind,
+        };
+        assert_eq!(
+            gitlab("Closes #5. See !5, g/sub/p!9 and g/p#3. Done!"),
+            vec![
+                (Relation::Closes, item(None, 5, RefKind::Issue)),
+                (Relation::References, item(None, 5, RefKind::ChangeRequest)),
+                (
+                    Relation::References,
+                    item(Some("g/sub/p"), 9, RefKind::ChangeRequest)
+                ),
+                (Relation::References, item(Some("g/p"), 3, RefKind::Issue)),
+            ]
+        );
+        assert_eq!(
+            gitlab(
+                "https://gitlab.example/g/p/-/merge_requests/7 https://gitlab.example/g/p/-/issues/8"
+            ),
+            vec![
+                (
+                    Relation::References,
+                    item(Some("g/p"), 7, RefKind::ChangeRequest)
+                ),
+                (Relation::References, item(Some("g/p"), 8, RefKind::Issue)),
+            ]
+        );
+        // Elsewhere a bang is punctuation, and a hash says nothing of the kind.
+        assert!(found("!5").is_empty());
+        assert_eq!(found("#5")[0].1.kind, RefKind::Any);
     }
 }

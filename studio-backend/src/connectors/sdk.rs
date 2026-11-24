@@ -44,7 +44,7 @@ pub use super::kubernetes::{
     BOOTSTRAP_FILE, BOOTSTRAP_RIGHTS, ClusterAccess, ClusterRight, NAMESPACE_RIGHTS, Readiness,
     ReadinessReport, cluster_readiness,
 };
-pub use super::references::{Mention, NumberRef, Relation, find as find_references};
+pub use super::references::{Mention, NumberRef, RefKind, Relation, find as find_references};
 pub use super::registry::{
     CatalogVersion, Oci, RegistryAccess, RegistryCatalog, TokenScopes, catalog_for, same_registry,
     token_scopes, too_broad,

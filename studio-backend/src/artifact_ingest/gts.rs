@@ -1451,6 +1451,7 @@ mod tests {
                 target: NumberRef {
                     repo: None,
                     number: 3,
+                    ..Default::default()
                 },
             },
             Mention {
@@ -1458,6 +1459,7 @@ mod tests {
                 target: NumberRef {
                     repo: Some("o/r".into()),
                     number: 9,
+                    ..Default::default()
                 },
             },
         ];

@@ -214,7 +214,10 @@ impl<'a> Api<'a> {
     /// `{root}/api/v4/projects/{encoded path}{rest}`: a project is addressed
     /// by its full path, URL-encoded as one segment (`group%2Fsub%2Fproject`).
     pub fn project(&self, repo_full_path: &str, rest: &str) -> String {
-        self.v4(&format!("projects/{}{rest}", encode(project_path(repo_full_path))))
+        self.v4(&format!(
+            "projects/{}{rest}",
+            encode(project_path(repo_full_path))
+        ))
     }
 
     /// Send one request, retrying a throttle, a server error and a dropped
@@ -522,14 +525,23 @@ mod tests {
 
     #[test]
     fn a_project_path_is_one_encoded_segment() {
-        assert_eq!(encode(project_path("/group/sub/app.git")), "group%2Fsub%2Fapp");
+        assert_eq!(
+            encode(project_path("/group/sub/app.git")),
+            "group%2Fsub%2Fapp"
+        );
         assert_eq!(encode("a b&c"), "a%20b%26c");
     }
 
     #[test]
     fn an_address_typed_with_the_api_suffix_names_the_installation() {
-        assert_eq!(instance_root("https://g.example/api/v4/"), "https://g.example");
-        assert_eq!(instance_root("https://g.example/gitlab"), "https://g.example/gitlab");
+        assert_eq!(
+            instance_root("https://g.example/api/v4/"),
+            "https://g.example"
+        );
+        assert_eq!(
+            instance_root("https://g.example/gitlab"),
+            "https://g.example/gitlab"
+        );
         assert_eq!(instance_root("https://gitlab.com"), "https://gitlab.com");
     }
 

@@ -110,6 +110,10 @@ impl ConnectorCategory {
 pub struct DriverIdentity {
     pub account: String,
     pub display_name: Option<String>,
+    /// The account's picture, when the provider serves one with the
+    /// identity (GitLab's `/user` does). Shown beside the account so a
+    /// person recognises it; never fetched by Studio itself.
+    pub avatar_url: Option<String>,
     /// What else the test looked at, beside the credential working: a
     /// cluster's rights the bootstrap manifest gives (ADR-0043). Reported,
     /// never a failed test. Empty for most providers.
@@ -356,6 +360,11 @@ pub struct RemoteComment {
     pub id: String,
     /// Number of the issue/PR this comment is on.
     pub target_number: i64,
+    /// Whether it is on a pull request (`Some(true)`) or an issue
+    /// (`Some(false)`), for a provider that numbers the two separately
+    /// (GitLab: issue 5 and merge request 5 are different items). `None`
+    /// where one sequence of numbers covers both, as on GitHub.
+    pub target_is_pull_request: Option<bool>,
     pub author: Option<String>,
     pub body: Option<String>,
     pub url: Option<String>,

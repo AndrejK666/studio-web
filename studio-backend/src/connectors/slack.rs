@@ -193,6 +193,7 @@ impl ConnectorDriver for SlackDriver {
         let who: AuthTest = slack_envelope(res, "auth.test").await?;
         let team = who.team.unwrap_or_else(|| "unknown workspace".into());
         Ok(DriverIdentity {
+            avatar_url: None,
             checks: Vec::new(),
             account: match who.user {
                 Some(user) => format!("{user} in {team}"),
@@ -389,6 +390,7 @@ impl ConnectorDriver for SlackWebhookDriver {
     async fn test(&self, auth: &ConnectionAuth) -> anyhow::Result<DriverIdentity> {
         self.post(auth, &render(&probe(), "*")).await?;
         Ok(DriverIdentity {
+            avatar_url: None,
             checks: Vec::new(),
             account: "Slack incoming webhook".into(),
             display_name: Some(

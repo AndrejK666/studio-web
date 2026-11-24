@@ -94,7 +94,7 @@ code:
   authorizes a provider inside the dialog; creating a connection here is out of
   #687's scope. An organization with no source connection is offered the
   connection form of the Connections screen instead.
-  GitLab and Bitbucket connections are listed like GitHub ones; their
+  GitLab and Bitbucket connections are listed like GitHub ones; Bitbucket
   repositories are attached and not synced (below).
 - **A repository is attached once, whichever connection it came through.** Two
   sources are the same repository when their clone URLs give the same key, the
@@ -114,7 +114,7 @@ code:
   cannot hear it. The screen finds the sources the graph has no repository for
   and syncs those, deciding from the data as it does for a new project's first
   import (`cpt-studiofrontend-dod-project-artifacts-import-detect`).
-- **Only GitHub repositories are synced.** The GitLab and Bitbucket drivers list
+- **GitHub and GitLab repositories are synced.** The Bitbucket driver lists
   repositories and nothing more: a sync request for one is accepted, then fails
   five times. Such a repository is attached and its line in the import says why
   it is not synced (`cpt-studiofrontend-algo-project-artifacts-sync`).
@@ -1081,7 +1081,7 @@ keeps its place, and is not drawn as destructive, as in the design.
 - [ ] With 100 repositories attached, every row is inert and the footer says the project holds the maximum.
 - [ ] When the project's config cannot be read, the dialog says so and offers no Connect source.
 - [ ] A write that would take the project past 100, because its config grew after the dialog read it, is refused with the reason, and the picks are kept.
-- [ ] A GitLab or Bitbucket repository is attached, no sync is requested for it, and its line says why.
+- [ ] A Bitbucket repository is attached, no sync is requested for it, and its line says why; a GitLab one is synced.
 - [ ] With no source connection, the dialog says so and offers Add connection, which closes it and opens the connection form.
 - [ ] A refused config write leaves the dialog open with the reason and the picks.
 - [ ] Connecting repositories to a project with no artifacts keeps the member on Sources and syncs only the new repositories.
@@ -1096,7 +1096,7 @@ The rows (#685):
 
 - [ ] A synced GitHub source's row has its node's last sync time on the first line, its specs, its open and merged pull requests with one count per day of the last 7, and its commits.
 - [ ] A source with no repository node reads Not synced, with its specs, pull requests and commits missing.
-- [ ] A GitLab or Bitbucket source reads "Sync isn't available for GitLab yet" (or Bitbucket), and offers no sync.
+- [ ] A Bitbucket source reads "Sync isn't available for Bitbucket yet", and offers no sync.
 - [ ] A source whose connection is gone from the organization reads Not connected, and shows what its node holds.
 - [ ] A repository attached again through another connection does not show the old connection's node: it reads Not synced, and the screen requests its sync.
 - [ ] A row's name is the last segment of its path, and the path is followed by the config's branch only when the config has one.
@@ -1116,7 +1116,7 @@ The row menu (#686):
 - [ ] Sync now requests that source's sync and no other: its row's second line reads Syncing…, and the lines of the import's other repositories stay as they were.
 - [ ] While the sync is in flight the item reads Cancel sync; using it asks nothing, and the row reads Cancelling…, with Cancel sync disabled, until the cancel lands.
 - [ ] After a failed or cancelled sync, Sync now retries the same run; after a lost one, or a request the gear refused, it requests a new sync.
-- [ ] A GitLab or Bitbucket source's Sync now is disabled, with "Sync isn't available for GitLab yet" (or Bitbucket); a source whose connection is gone has it disabled, with "Its connection is gone", and an in-flight sync of it can still be cancelled.
+- [ ] A Bitbucket source's Sync now is disabled, with "Sync isn't available for Bitbucket yet"; a source whose connection is gone has it disabled, with "Its connection is gone", and an in-flight sync of it can still be cancelled.
 - [ ] When the connections could not be read, Sync now is disabled on a source with nothing to retry, with the reason.
 - [ ] When the gear refuses a cancel or a retry, a notification names the source and gives the gear's reason, and the row's sync stays as it was; a refused sync request or a failed sync gives no notification.
 - [ ] Open specs from this source, on any row, moves to Specs, with the Specs filter set to the source's path, Type confirmed and no document type.

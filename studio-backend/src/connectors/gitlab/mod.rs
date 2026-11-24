@@ -22,11 +22,16 @@ mod tests;
 use async_trait::async_trait;
 
 use super::driver::{
-    ConnectionAuth, ConnectorCategory, ConnectorDriver, DriverIdentity, RemoteCommit, RemoteFile,
-    RemoteFileList, RemoteFileText, RemoteRepo, RepoTree, RepoTreeEntry,
+    ConnectionAuth, ConnectorCategory, ConnectorDriver, Contributor, DriverIdentity, RemoteComment,
+    RemoteCommit, RemoteFile, RemoteFileList, RemoteFileText, RemoteIssue, RemotePullRequest,
+    RemoteRepo, RepoTree, RepoTreeEntry,
 };
-use client::{Api, Family, Retry, encode};
-use model::{Branch, Commit, Project, Tag, TreeItem, User};
+use super::references::ReferenceSyntax;
+use client::{Api, Family, Retry, encode, is_item_refusal};
+use model::{
+    Branch, Changes, Commit, Diff, Issue, MergeRequest, Note, Project, Tag, TreeItem, User,
+    noreply_username,
+};
 
 /// Pages of a repository tree read before the listing is called truncated:
 /// 100 entries each, so 20,000 entries -- the artifact ingest's own file cap
@@ -144,6 +149,7 @@ impl ConnectorDriver for GitLabDriver {
         let api = self.api(auth);
         let user: User = api.get(&api.v4("user")).await?;
         Ok(DriverIdentity {
+            avatar_url: user.avatar_url,
             checks: Vec::new(),
             account: user.username,
             display_name: user.name,
@@ -262,8 +268,8 @@ impl ConnectorDriver for GitLabDriver {
         let Some((headers, bytes)) = api.get_raw(&url).await? else {
             return Ok(None);
         };
-        let text = String::from_utf8(bytes)
-            .map_err(|_| anyhow::anyhow!("{path} is not a text file"))?;
+        let text =
+            String::from_utf8(bytes).map_err(|_| anyhow::anyhow!("{path} is not a text file"))?;
         Ok(Some(RemoteFileText {
             text,
             sha: headers
@@ -389,12 +395,286 @@ impl ConnectorDriver for GitLabDriver {
     ) -> anyhow::Result<serde_json::Value> {
         self.api(auth).graphql_raw(body).await
     }
+
+    /// GitLab numbers issues (`#5`) and merge requests (`!5`) separately.
+    fn reference_syntax(&self) -> ReferenceSyntax {
+        ReferenceSyntax::GitLab
+    }
+
+    async fn list_issues(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        since: Option<&str>,
+        page: u32,
+        per_page: u32,
+    ) -> anyhow::Result<Vec<RemoteIssue>> {
+        // A project with its issues turned off answers 403 or 404 here. That
+        // is about the feature, not the connection: the sync carries on with
+        // the merge requests, and a project the token cannot see fails there.
+        let api = self.api(auth);
+        let url = api.project(
+            repo_full_path,
+            &listing_query("/issues?scope=all&state=all", since, page, per_page),
+        );
+        Ok(api
+            .page::<Issue>(&url, Family::Item)
+            .await?
+            .map(|p| p.items.into_iter().map(Issue::into_remote).collect())
+            .unwrap_or_default())
+    }
+
+    async fn list_pull_requests(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        since: Option<&str>,
+        page: u32,
+        per_page: u32,
+    ) -> anyhow::Result<Vec<RemotePullRequest>> {
+        let api = self.api(auth);
+        let mrs = self
+            .merge_requests(&api, repo_full_path, "all", since, page, per_page)
+            .await?;
+        Ok(mrs
+            .into_iter()
+            .map(|mr| {
+                let reviewers = mr.reviewer_logins();
+                mr.into_remote(reviewers)
+            })
+            .collect())
+    }
+
+    async fn pull_request_files(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        number: i64,
+    ) -> anyhow::Result<Vec<String>> {
+        // `/diffs` pages (15.7+); an older GitLab has only `/changes`, which
+        // answers the whole list at once.
+        let api = self.api(auth);
+        let url = api.project(
+            repo_full_path,
+            &format!("/merge_requests/{number}/diffs?per_page=100"),
+        );
+        let diffs: Vec<Diff> = match api.page::<Diff>(&url, Family::Item).await? {
+            Some(first) => {
+                let mut out = first.items;
+                if let Some(next) = first.next {
+                    out.extend(api.walk::<Diff>(&next, Family::Item, 10).await?.0);
+                }
+                out
+            }
+            None => {
+                let url = api.project(repo_full_path, &format!("/merge_requests/{number}/changes"));
+                match api.get::<Changes>(&url).await {
+                    Ok(c) => c.changes,
+                    Err(e) if is_item_refusal(&e) => Vec::new(),
+                    Err(e) => return Err(e),
+                }
+            }
+        };
+        Ok(diffs.into_iter().map(|d| d.new_path).collect())
+    }
+
+    async fn list_comments(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        since: Option<&str>,
+        page: u32,
+        per_page: u32,
+    ) -> anyhow::Result<Vec<RemoteComment>> {
+        // GitLab has no project-wide notes listing: notes hang off each merge
+        // request and issue. Comment page N is therefore the notes of item
+        // page N -- the merge requests and issues updated since `since` (a new
+        // note updates its item) -- `COMMENT_ITEMS` of each. Pages whose items
+        // hold no comment at all are stepped over, because an empty answer
+        // ends the caller's walk; the caller may then read a page twice, which
+        // an upsert by note id makes harmless.
+        let api = self.api(auth);
+        let since = since.map(str::trim).filter(|s| !s.is_empty());
+        let per_items = per_page.clamp(1, COMMENT_ITEMS);
+        let mut item_page = page.max(1);
+        for _ in 0..MAX_SILENT_PAGES {
+            let mrs = self
+                .merge_requests(&api, repo_full_path, "all", since, item_page, per_items)
+                .await?;
+            let issues_url = api.project(
+                repo_full_path,
+                &listing_query("/issues?scope=all&state=all", since, item_page, per_items),
+            );
+            let issues: Vec<Issue> = api
+                .page::<Issue>(&issues_url, Family::Item)
+                .await?
+                .map(|p| p.items)
+                .unwrap_or_default();
+            if mrs.is_empty() && issues.is_empty() {
+                return Ok(Vec::new());
+            }
+            let mut out = Vec::new();
+            let targets = mrs
+                .iter()
+                .map(|m| (true, m.iid, m.web_url.clone()))
+                .chain(issues.iter().map(|i| (false, i.iid, i.web_url.clone())));
+            for (is_mr, iid, web_url) in targets {
+                let kind = if is_mr { "merge_requests" } else { "issues" };
+                let url = api.project(
+                    repo_full_path,
+                    &format!("/{kind}/{iid}/notes?sort=asc&order_by=created_at&per_page=100"),
+                );
+                let (notes, _) = api.walk::<Note>(&url, Family::Item, 10).await?;
+                out.extend(
+                    notes
+                        .into_iter()
+                        .filter(|n| !n.system)
+                        .filter(|n| since.is_none_or(|s| not_before(n.updated_at.as_deref(), s)))
+                        .map(|n| RemoteComment {
+                            id: n.id.to_string(),
+                            target_number: iid,
+                            target_is_pull_request: Some(is_mr),
+                            author: n.author_login(),
+                            url: web_url.as_ref().map(|u| format!("{u}#note_{}", n.id)),
+                            body: n.body,
+                            created_at: n.created_at,
+                            updated_at: n.updated_at,
+                        }),
+                );
+            }
+            if !out.is_empty() {
+                return Ok(out);
+            }
+            item_page += 1;
+        }
+        Ok(Vec::new())
+    }
+
+    async fn list_commits(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        since: Option<&str>,
+        page: u32,
+        per_page: u32,
+    ) -> anyhow::Result<Vec<RemoteCommit>> {
+        let api = self.api(auth);
+        let mut url = api.project(
+            repo_full_path,
+            &format!(
+                "/repository/commits?per_page={}&page={}",
+                per_page.clamp(1, 100),
+                page.max(1)
+            ),
+        );
+        if let Some(s) = since.map(str::trim).filter(|s| !s.is_empty()) {
+            url.push_str("&since=");
+            url.push_str(&encode(s));
+        }
+        let commits: Vec<Commit> = api.get(&url).await?;
+        Ok(commits.into_iter().map(Commit::into_remote).collect())
+    }
+
+    async fn contributors(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        max: u32,
+    ) -> anyhow::Result<Vec<Contributor>> {
+        // GitLab counts contributors by commit e-mail, not by account. The
+        // noreply form names the account; any other address stands for
+        // itself rather than being matched to an account by guesswork.
+        let api = self.api(auth);
+        let url = api.project(
+            repo_full_path,
+            "/repository/contributors?order_by=commits&sort=desc&per_page=100",
+        );
+        let pages = max.max(1).div_ceil(100).min(10);
+        let (mut list, _) = api
+            .walk::<model::Contributor>(&url, Family::Scope, pages)
+            .await?;
+        list.sort_by(|a, b| b.commits.cmp(&a.commits));
+        list.truncate(max.max(1) as usize);
+        Ok(list
+            .into_iter()
+            .map(|c| Contributor {
+                login: noreply_username(&c.email).unwrap_or(c.email),
+                display_name: Some(c.name).filter(|n| !n.trim().is_empty()),
+                contributions: c.commits,
+            })
+            .collect())
+    }
+}
+
+/// Items whose notes make one page of comments: each costs a call of its
+/// own, so a page stays small.
+const COMMENT_ITEMS: u32 = 20;
+
+/// Item pages without a single comment stepped over before a comment page
+/// answers empty.
+const MAX_SILENT_PAGES: u32 = 5;
+
+impl GitLabDriver {
+    /// One page of a project's merge requests, most recently updated first.
+    /// `state` is GitLab's: `all`, `opened`, `merged`, `closed`.
+    async fn merge_requests(
+        &self,
+        api: &Api<'_>,
+        repo_full_path: &str,
+        state: &str,
+        since: Option<&str>,
+        page: u32,
+        per_page: u32,
+    ) -> anyhow::Result<Vec<MergeRequest>> {
+        let url = api.project(
+            repo_full_path,
+            &listing_query(
+                &format!("/merge_requests?state={state}"),
+                since,
+                page,
+                per_page,
+            ),
+        );
+        Ok(api
+            .page::<MergeRequest>(&url, Family::Scope)
+            .await?
+            .map(|p| p.items)
+            .unwrap_or_default())
+    }
+}
+
+/// A dated listing's query: newest activity first, one page, and
+/// `updated_after` for an incremental sync.
+fn listing_query(path: &str, since: Option<&str>, page: u32, per_page: u32) -> String {
+    let mut q = format!(
+        "{path}&order_by=updated_at&sort=desc&per_page={}&page={}",
+        per_page.clamp(1, 100),
+        page.max(1)
+    );
+    if let Some(s) = since.map(str::trim).filter(|s| !s.is_empty()) {
+        q.push_str("&updated_after=");
+        q.push_str(&encode(s));
+    }
+    q
+}
+
+/// Whether `at` is not before `since`, both RFC 3339. A time that does not
+/// parse is kept: dropping a comment over a format is the worse mistake.
+fn not_before(at: Option<&str>, since: &str) -> bool {
+    let parse = |s: &str| chrono::DateTime::parse_from_rfc3339(s.trim()).ok();
+    match (at.and_then(parse), parse(since)) {
+        (Some(at), Some(since)) => at >= since,
+        _ => true,
+    }
 }
 
 /// `/repository/files/{path}/raw?ref=…`. Without a ref GitLab reads `HEAD`,
 /// which is the default branch.
 fn raw_file_url(api: &Api<'_>, repo_full_path: &str, path: &str, git_ref: Option<&str>) -> String {
-    let git_ref = git_ref.map(str::trim).filter(|r| !r.is_empty()).unwrap_or("HEAD");
+    let git_ref = git_ref
+        .map(str::trim)
+        .filter(|r| !r.is_empty())
+        .unwrap_or("HEAD");
     api.project(
         repo_full_path,
         &format!(

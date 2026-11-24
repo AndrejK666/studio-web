@@ -243,22 +243,36 @@ repository sync (`cpt-studio-component-artifact-ingest`). A refused write is a 4
 `failed_precondition` `CONNECTION_NOT_OWNED`; a refused read is skipped and
 reported.
 
-#### Only GitHub reads and writes more than a repository list
+#### Only GitHub writes; GitHub and GitLab read
 
 - [x] `p2` - **ID**: `cpt-studio-constraint-connector-github-depth`
 
-The GitLab and Bitbucket drivers implement `test` and `list_repositories`
-only. Issues, pull requests, commits, files, the repository tree, a path's
-history, tags, contributors, file writes, multi-file commits, branches,
-pull-request creation, repository creation, GraphQL and the clone URL are
-GitHub's alone today, so a repository import, a catalogue scan, a scaffold, a
-checkout or a file publish through any other source host answers with that
-driver's refusal. The pull-request listing
-carries `draft`, the reviewers and teams still owed a review, and the
-assignees, as GitHub's `/pulls` returns them; each reviewer's last word comes
-from the same GraphQL query as the unresolved review threads, so neither costs
-a call of its own. A GitLab or Bitbucket project therefore has no pull
-requests in the artifact graph, and nothing waiting on anybody.
+The Bitbucket driver implements `test` and `list_repositories` only. File
+writes, multi-file commits, branch and tag creation, pull-request creation,
+repository creation, commit statuses and workflow dispatch are GitHub's alone
+today, so a scaffold or a file publish through any other source host answers
+with that driver's refusal. The pull-request listing carries `draft`, the
+reviewers and teams still owed a review, and the assignees, as GitHub's
+`/pulls` returns them; each reviewer's last word comes from the same GraphQL
+query as the unresolved review threads, so neither costs a call of its own. A
+Bitbucket project therefore has no pull requests in the artifact graph, and
+nothing waiting on anybody.
+
+The GitLab driver reads (`connectors/gitlab/`, after Insight's GitLab
+connector): the identity with its avatar, the paged project listing, issues,
+merge requests, their notes as comments, commits, changed files,
+contributors, the keyset-paged tree, raw files, branches, tags, path history,
+the clone URL (`oauth2` as the clone username), each reviewer's last word and
+the unresolved discussions of open merge requests (from GitLab's system notes,
+with `/approvals` as an optional extra that may answer 402), and CI pipelines
+and jobs through GraphQL. Its token is a personal, group or project access
+token with `read_api` and `read_repository`. It follows `Link` only on the
+installation's own origin, waits out 429 by `Retry-After` and backs off on
+5xx, and classifies refusals: on a project's own listing they fail, on one
+item (a merge request's notes, an unlicensed feature) they skip it. GitLab
+numbers issues (`#5`) and merge requests (`!5`) separately, so a comment and
+a mention say which kind they name, and the artifact ingest keeps the two
+number spaces apart.
 
 ## 3. Technical Architecture
 

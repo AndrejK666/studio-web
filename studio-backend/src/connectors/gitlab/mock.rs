@@ -135,9 +135,7 @@ impl MockBuilder {
             routes: Mutex::new(self.routes),
             seen: Mutex::new(Vec::new()),
         });
-        let app = Router::new()
-            .fallback(serve)
-            .with_state(Arc::clone(&state));
+        let app = Router::new().fallback(serve).with_state(Arc::clone(&state));
         tokio::spawn(async move {
             let _ = axum::serve(listener, app).await;
         });

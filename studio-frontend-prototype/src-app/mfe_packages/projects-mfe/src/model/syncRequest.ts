@@ -12,8 +12,8 @@ import { ARTIFACT_NODE_TYPES, type ArtifactNodeDto } from '../api/artifactTypes'
 import type { SyncRequest } from '../events/artifactEvents';
 
 // TODO: take this from the gear once it says which drivers can sync.
-/** GitLab and Bitbucket only list repositories; a sync for one fails five times. */
-export const SYNCABLE_PROVIDERS: readonly string[] = ['github'];
+/** Bitbucket only lists repositories; a sync for one fails five times. */
+export const SYNCABLE_PROVIDERS: readonly string[] = ['github', 'gitlab'];
 
 export type SyncPlan = Pick<SyncRequest, 'repos' | 'unsyncable'>;
 
