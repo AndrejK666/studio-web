@@ -184,12 +184,12 @@ describe("the release map", () => {
     expect(map.deploy.state).toBe("todo");
   });
 
-  it("without a product the first two stages are blocked; without builds there is nothing to deploy", () => {
+  it("without a product Build is blocked and the page opens on it", () => {
     const map = releaseMap({ builds: [], steps: ladderSteps(targets, [], []), deployments: [], productMissing: true });
     expect(map.build.state).toBe("blocked");
-    expect(map.images.state).toBe("blocked");
+    expect(map.images.state).toBe("todo");
     expect(map.environment.state).toBe("todo");
-    expect(attentionStage(map)).toBe("deploy");
+    expect(attentionStage(map)).toBe("build");
   });
 
   it("a failed build with no images fails the Images stage too", () => {
@@ -200,7 +200,15 @@ describe("the release map", () => {
     expect(attentionStage(map)).toBe("build");
   });
 
-  it("a deploy's cause is its cause's summary first", () => {
+  it("a deploy's cause is the log line its cause quotes, else its summary", () => {
+    expect(
+      deployCause(
+        deploy({
+          state: "failed",
+          cause: { code: "X", summary: "Its log says why.", lines: ["2026-11-24T09:53:53.696790626Z Error: SECRET is not set", "more"], actions: [] },
+        }),
+      ),
+    ).toBe("Error: SECRET is not set");
     expect(deployCause(deploy({ state: "failed", cause: { code: "X", summary: "Sign in again.", lines: [], actions: [] }, outcome: "x" }))).toBe("Sign in again.");
     expect(deployCause(deploy({ state: "declined", reason: "not now" }))).toBe("not now");
   });

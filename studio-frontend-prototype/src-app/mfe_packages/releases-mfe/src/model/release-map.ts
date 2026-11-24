@@ -162,11 +162,14 @@ export function deployState(d: Deployment | null): StageState {
   }
 }
 
-/** A failed deploy's cause in one line: its cause's summary, else its
- *  outcome's first line, else the reason it was declined. */
+/** A failed deploy's cause in one line: the first line its cause quotes
+ *  from the log -- what actually went wrong, where the summary may only say
+ *  "its log says why" -- without the log's timestamp; else the cause's
+ *  summary, else its outcome's first line, else the reason it was declined. */
 export function deployCause(d: Deployment): string | null {
-  const line = (s: string | null | undefined) => s?.split("\n").find((l) => l.trim())?.trim() ?? null;
-  return d.cause?.summary?.trim() || line(d.outcome) || line(d.reason);
+  const line = (s: string | null | undefined) => s?.split("\n").find((l) => l.trim())?.trim() || null;
+  const quoted = line(d.cause?.lines?.find((l) => l.trim()))?.replace(/^\d{4}-\d\d-\d\dT[\d:.]+Z?\s+/, "") || null;
+  return quoted || d.cause?.summary?.trim() || line(d.outcome) || line(d.reason);
 }
 
 /** The build the Images stage opens on: the chosen one; else the newest
@@ -216,7 +219,7 @@ export function releaseMap(input: MapInput): ReleaseMap {
   const fits = imgBuild ? environments.filter((e) => imagesFit(imgBuild, e)) : [];
   const deployable = !!imgBuild && hasDeployableImages(imgBuild);
   const imagesState: StageState = input.productMissing
-    ? "blocked"
+    ? "todo"
     : !imgBuild
       ? "todo"
       : deployable
@@ -261,8 +264,10 @@ export function releaseMap(input: MapInput): ReleaseMap {
   };
 }
 
-/** The stage the page opens on: the first that failed or runs, else Deploy. */
+/** The stage the page opens on: the first that failed or runs, else Deploy;
+ *  with no product yet, Build, which cannot start. */
 export function attentionStage(map: ReleaseMap): StageId {
+  if (map.build.state === "blocked") return "build";
   return STAGES.find((s) => map[s].state === "failed" || map[s].state === "running") ?? "deploy";
 }
 

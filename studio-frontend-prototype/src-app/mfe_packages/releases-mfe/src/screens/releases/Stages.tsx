@@ -303,7 +303,8 @@ export function DeployStage({
                   </a>
                 </p>
               )}
-              {map.deploy.cause && (
+              {/* The path's note above says it already, with the actions that fix it. */}
+              {map.deploy.cause && !(pathStep?.state === 'failed' && pathStep.deployment_id === latest.id) && (
                 <div className={`${styles.error} ${styles.pre}`} data-deploy-cause>
                   {map.deploy.cause}
                 </div>
