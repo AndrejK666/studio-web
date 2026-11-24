@@ -31,6 +31,7 @@
 //! back by the next attempt or a `POST /studio-tasks/v1/runs/{id}/retry`; both
 //! steps are idempotent besides, so a record lost with a crash costs a read.
 
+use crate::plural::plural;
 use std::sync::Arc;
 
 use account_management_sdk::{AccountManagementClient, UpsertMetadataRequest};
@@ -110,8 +111,10 @@ impl DetachRecord {
                 format!("{what}; still attached through another source, nothing forgotten")
             }
             (Some(p), _) => format!(
-                "{what}; forgot {} repository node(s), {} artifact(s), {} binding(s)",
-                p.repos, p.nodes, p.bindings
+                "{what}; forgot {}, {}, {}",
+                plural(p.repos, "repository node", "repository nodes"),
+                plural(p.nodes, "artifact", "artifacts"),
+                plural(p.bindings, "binding", "bindings")
             ),
             (None, false) => what,
         }

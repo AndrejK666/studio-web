@@ -28,7 +28,7 @@ fn documents_that_follow_their_template_pass() {
     let ty = adr();
     let out = check(&[("docs/adr/0001.md".to_string(), &ty, filled(&ty))]);
     assert_eq!(out.state, "success", "{out:?}");
-    assert_eq!(out.description, "1 document(s) follow their templates");
+    assert_eq!(out.description, "1 document follows its template");
 }
 
 #[test]
@@ -49,7 +49,8 @@ fn a_missing_required_section_fails_and_says_which() {
     ]);
     assert_eq!(out.state, "failure");
     assert!(
-        out.description.starts_with("1 of 2 document(s)"),
+        out.description
+            .starts_with("1 of 2 documents does not follow its template"),
         "{}",
         out.description
     );

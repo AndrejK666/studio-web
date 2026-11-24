@@ -672,7 +672,8 @@ fn public_url_missing(s: &InfraService) -> Option<String> {
         return None;
     }
     let what = if capabilities.is_empty() {
-        format!("its file(s) {}", files.join(", "))
+        let noun = if files.len() == 1 { "file" } else { "files" };
+        format!("its {noun} {}", files.join(", "))
     } else {
         format!("what it gives as {}", capabilities.join(", "))
     };

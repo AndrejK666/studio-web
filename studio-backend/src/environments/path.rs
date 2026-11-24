@@ -13,6 +13,7 @@
 //! with the cause when the cluster would stop it (`readiness.rs`). Specs come
 //! before the Product step and are the spec mapping's (`studio-spec-mapping`).
 
+use crate::plural::plural;
 use uuid::Uuid;
 
 use super::failure::{self, FailureAction, FailureCause, Of};
@@ -309,15 +310,19 @@ fn image_step(f: &PathFacts) -> PathStep {
         PathStep::new(
             "image",
             StepState::Done,
-            format!("Built in Constructor Research: {images} image(s), kept there."),
+            format!(
+                "Built in Constructor Research: {}, kept there.",
+                plural(images, "image", "images")
+            ),
         )
     } else if b.chart_ref.is_some() {
         PathStep::new(
             "image",
             StepState::Done,
             format!(
-                "{} is published with {images} image(s).",
-                b.chart_version.as_deref().unwrap_or("The chart")
+                "{} is published with {}.",
+                b.chart_version.as_deref().unwrap_or("The chart"),
+                plural(images, "image", "images")
             ),
         )
     } else {

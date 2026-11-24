@@ -12,6 +12,7 @@
 //! route reads the facts as the caller (`product_kind_rest`), this weighs
 //! them.
 
+use crate::plural::plural;
 use std::collections::BTreeSet;
 use std::sync::LazyLock;
 
@@ -231,10 +232,6 @@ fn quoted(words: &[String]) -> String {
         .map(|w| format!("\u{201c}{w}\u{201d}"))
         .collect::<Vec<_>>()
         .join(", ")
-}
-
-fn plural(n: usize, one: &str, many: &str) -> String {
-    format!("{n} {}", if n == 1 { one } else { many })
 }
 
 /// Studio's proposal: the kind the facts point to, and why.

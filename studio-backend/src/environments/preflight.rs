@@ -18,6 +18,7 @@
 //! a pending install is removed (it never ran), a pending upgrade or rollback
 //! rolled back to the last revision that did.
 
+use crate::plural::plural;
 use std::collections::{BTreeMap, BTreeSet};
 
 use k8s_openapi::api::core::v1::Pod;
@@ -161,10 +162,10 @@ pub fn missing_secrets(
                     r.secret, d.host
                 ),
                 (Some(d), DatabaseMode::Shared) => format!(
-                    "secret {}{keys} holds the password of Postgres '{}' ({} database(s)), and the environment gives no database: set its database to the product's own, or create the secret",
+                    "secret {}{keys} holds the password of Postgres '{}' ({}), and the environment gives no database: set its database to the product's own, or create the secret",
                     r.secret,
                     d.host,
-                    d.databases.len()
+                    plural(d.databases.len(), "database", "databases")
                 ),
                 (None, _) => format!(
                     "secret {}{keys} is read by the chart and nothing creates it: add it to the release's configuration secrets, or create it",

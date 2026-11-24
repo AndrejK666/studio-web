@@ -11,6 +11,7 @@
 //! A commit status rather than a check run because a personal token can set
 //! one; check runs need an installed app.
 
+use crate::plural::plural;
 use serde_json::{Value, json};
 
 use super::model::DocumentType;
@@ -121,7 +122,10 @@ pub fn check(changed: &[(String, &DocumentType, String)]) -> Outcome {
     let description = if files.is_empty() {
         "No Studio document changed".to_string()
     } else if failing == 0 {
-        format!("{} document(s) follow their templates", files.len())
+        match files.len() {
+            1 => "1 document follows its template".to_string(),
+            n => format!("{n} documents follow their templates"),
+        }
     } else {
         let first = files.iter().find(|f| !f.conforms).map(|f| {
             let name = f.path.rsplit('/').next().unwrap_or(&f.path);
@@ -131,8 +135,13 @@ pub fn check(changed: &[(String, &DocumentType, String)]) -> Outcome {
             }
         });
         format!(
-            "{failing} of {} document(s) do not follow their templates — {}",
-            files.len(),
+            "{failing} of {} {} — {}",
+            plural(files.len(), "document", "documents"),
+            if failing == 1 {
+                "does not follow its template"
+            } else {
+                "do not follow their templates"
+            },
             first.unwrap_or_default()
         )
     };

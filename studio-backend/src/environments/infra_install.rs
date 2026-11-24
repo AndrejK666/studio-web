@@ -5,6 +5,7 @@
 //! the chart generated from its passport -- unless the database step makes
 //! it or a shared place runs it.
 
+use crate::plural::plural;
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -215,8 +216,8 @@ pub(super) async fn bring(
             Install::Database => {}
             Install::Shared => {
                 ctx.progress(format!(
-                    "{name}: the organization's shared place, {} value(s) for the product",
-                    values.len()
+                    "{name}: the organization's shared place, {} for the product",
+                    plural(values.len(), "value", "values")
                 ))
                 .await;
             }

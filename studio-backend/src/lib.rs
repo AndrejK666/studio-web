@@ -43,6 +43,7 @@ mod org_scope; // `?organization_id=`: a request acts in the organization it nam
 mod organizations; // studio-organizations: a person creates an organization and owns it (ADR-0018)
 mod outbox_repair; // bring pre-0.16 toolkit-db outboxes up to the schema 0.16 expects (gears-rust#5044)
 mod pagination; // one ?offset=&limit= contract + total for every list endpoint
+mod plural; // "1 document", "2 documents": a count with its noun, never "document(s)"
 mod presence; // studio-presence: who is in Studio now, and a note to reach them
 mod product; // studio-product: a project's product, its gear repository, and the Gearbox engine
 mod project_sources; // a project's repositories: one record, project.config sources[]

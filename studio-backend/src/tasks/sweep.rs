@@ -17,6 +17,7 @@
 //! real, and a maintenance job is not a good reason to be the first code that
 //! steps over it.
 
+use crate::plural::plural;
 use async_trait::async_trait;
 use sea_orm::{ColumnTrait, Condition, EntityTrait};
 use std::sync::Arc;
@@ -105,8 +106,13 @@ impl TaskHandler for RetentionSweep {
 
         TaskOutcome::done_with(
             format!(
-                "kept {keep_days} days: pruned {pruned} run(s), \
-                 {dead_letters} resolved dead letter(s)"
+                "kept {keep_days} days: pruned {}, {}",
+                plural(pruned, "run", "runs"),
+                plural(
+                    dead_letters,
+                    "resolved dead letter",
+                    "resolved dead letters"
+                )
             ),
             serde_json::json!({
                 "keep_days": keep_days,

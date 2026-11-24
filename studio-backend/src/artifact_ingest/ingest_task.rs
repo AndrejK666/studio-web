@@ -24,6 +24,7 @@
 //! The route still resolves the token once, before enqueuing, so a wrong
 //! `secret_ref` is answered with a 400 there rather than found by a poll.
 
+use crate::plural::plural;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -245,20 +246,22 @@ impl TaskHandler for IngestTask {
         match outcome {
             Ok(counts) => {
                 let mut summary = format!(
-                    "{}: {} issue(s), {} pull request(s), {} file(s), {} comment(s), \
-                     {} commit(s), {} node(s) stored",
+                    "{}: {}, {}, {}, {}, {}, {} stored",
                     payload.repo_full_path,
-                    counts.issues,
-                    counts.pull_requests,
-                    counts.files,
-                    counts.comments,
-                    counts.commits,
-                    counts.stored,
+                    plural(counts.issues, "issue", "issues"),
+                    plural(counts.pull_requests, "pull request", "pull requests"),
+                    plural(counts.files, "file", "files"),
+                    plural(counts.comments, "comment", "comments"),
+                    plural(counts.commits, "commit", "commits"),
+                    plural(counts.stored, "node", "nodes"),
                 );
                 // Only when it happened: most syncs forget nothing, and "0
-                // deleted file(s) forgotten" on every one of them is noise.
+                // deleted files forgotten" on every one of them is noise.
                 if counts.pruned > 0 {
-                    summary.push_str(&format!(", {} deleted file(s) forgotten", counts.pruned));
+                    summary.push_str(&format!(
+                        ", {} forgotten",
+                        plural(counts.pruned, "deleted file", "deleted files")
+                    ));
                 }
                 match serde_json::to_value(counts) {
                     Ok(result) => TaskOutcome::done_with(summary, result),

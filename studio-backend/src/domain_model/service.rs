@@ -4,6 +4,7 @@
 //! extend a type with a new field, and read the ontology back so the frontend
 //! can be regenerated from the stored model.
 
+use crate::plural::plural;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -993,15 +994,19 @@ impl DomainModelService {
             };
             let summary = if change.adopted {
                 format!(
-                    "move onto the running core: {} type(s) completed, {} organization difference(s) kept",
-                    change.updated.len(),
-                    change.legacy_overrides
+                    "move onto the running core: {} completed, {} kept",
+                    plural(change.updated.len(), "type", "types"),
+                    plural(
+                        change.legacy_overrides,
+                        "organization difference",
+                        "organization differences"
+                    )
                 )
             } else {
                 format!(
-                    "running core: {} type(s) changed, {} key(s) released",
-                    change.updated.len(),
-                    change.released.len()
+                    "running core: {} changed, {} released",
+                    plural(change.updated.len(), "type", "types"),
+                    plural(change.released.len(), "key", "keys")
                 )
             };
             let version_no = self.next_version(ctx)?;
@@ -2559,8 +2564,12 @@ impl DomainModelService {
                 "kit-rename",
                 "",
                 format!(
-                    "kit-rename: {} mark(s) now name the kit that brings them: {}{}",
-                    moved.len(),
+                    "kit-rename: {}: {}{}",
+                    if moved.len() == 1 {
+                        "1 mark now names the kit that brings it".to_string()
+                    } else {
+                        format!("{} marks now name the kit that brings them", moved.len())
+                    },
                     shown.join("; "),
                     if moved.len() > shown.len() {
                         "; …"
@@ -3840,7 +3849,10 @@ impl DomainModelService {
                 ctx,
                 "revert",
                 "",
-                format!("revert to v{to} ({} change(s) undone)", undone.len()),
+                format!(
+                    "revert to v{to} ({} undone)",
+                    plural(undone.len(), "change", "changes")
+                ),
             )
             .with_patches(Value::Array(forward), Value::Array(redo));
             if !self.claim_version(ctx, &rev).await? {

@@ -6,6 +6,7 @@
 //! template placeholders, and a non-trivial title. Purely structural — no
 //! semantics, so a genuinely filled document never trips a false positive.
 
+use crate::plural::plural;
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
@@ -348,8 +349,9 @@ pub fn validate(content: &str, spec: &TemplateSpec) -> ValidationReport {
     if title_words < spec.rules.min_title_words {
         conforms = false;
         issues.push(format!(
-            "Title has {} word(s), need at least {}",
-            title_words, spec.rules.min_title_words
+            "Title has {}, need at least {}",
+            plural(title_words, "word", "words"),
+            spec.rules.min_title_words
         ));
     }
 

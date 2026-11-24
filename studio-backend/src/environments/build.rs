@@ -25,6 +25,7 @@
 //! for the Job's lifetime and are removed when the build is recorded; the
 //! runtime namespace gets only the pull secret.
 
+use crate::plural::plural;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
@@ -2349,8 +2350,8 @@ pub fn prepare_own(
     )?;
     name_for_studio(&prepared);
     println!(
-        "prepared {} image(s) and chart {} of the repository's own",
-        prepared.apps.len(),
+        "prepared {} and chart {} of the repository's own",
+        plural(prepared.apps.len(), "image", "images"),
         prepared.product
     );
     Ok(())
@@ -2618,8 +2619,8 @@ pub fn prepare_as(
     )?;
     name_for_studio(&prepared);
     println!(
-        "prepared {} application(s) of {}",
-        prepared.apps.len(),
+        "prepared {} of {}",
+        plural(prepared.apps.len(), "application", "applications"),
         prepared.product
     );
     Ok(())
@@ -2761,9 +2762,9 @@ pub fn publish(work: &Path, prefix: &str, registry_config: &Path) -> anyhow::Res
     if text.len() > TERMINATION_MESSAGE_BYTES {
         bail!(
             "the build's manifest is {} bytes, over the {TERMINATION_MESSAGE_BYTES} a \
-             termination message holds; its infra section has {} service(s)",
+             termination message holds; its infra section has {}",
             text.len(),
-            manifest.infra.len()
+            plural(manifest.infra.len(), "service", "services")
         );
     }
     let _ = std::fs::write("/dev/termination-log", &text);
