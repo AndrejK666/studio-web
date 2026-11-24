@@ -18,7 +18,7 @@ import type {
   DeployEnvironment,
   EnvironmentBinding,
 } from '../../api/types';
-import { buildRefusalText, type IdeBuild } from '../../model/builds';
+import { buildRefusalText, type IdeBuild } from '@constructor-studio/mfe-shared';
 import { STATE_LABELS, shortCommit, stateTone } from '../../model/environments';
 import {
   expiresIn,

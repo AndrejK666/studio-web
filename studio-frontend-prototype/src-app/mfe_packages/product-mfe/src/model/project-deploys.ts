@@ -3,7 +3,7 @@
  * rules behind them, kept apart from the React for their tests. */
 
 import type { Deployment, DeployEnvironment } from "../api/types";
-import type { IdeBuild } from "./builds";
+import type { IdeBuild } from "@constructor-studio/mfe-shared";
 
 /** The newest deployment of the project in each environment, whatever its
  *  state: the server lists them newest first. A preview is not what runs

@@ -1,4 +1,4 @@
-// Ported unchanged from the prototype (src/builds.ts at 00828880); only the import paths changed.
+// Ported from the prototype (src/builds.ts at 00828880); one copy for releases-, product- and infrastructure-mfe.
 /* The project's builds (ADR-0045): the CI runs the artifact sync reads from
  * the project's repositories (phase 1), and the product's builds -- the ones
  * the IDE ran and reported, in a member's desktop or a session (phase 2), and
@@ -8,7 +8,7 @@
  * it got: prepare (the generated tree), images, publish (images and chart in
  * the environment's registry). Build starts one in Studio or in CI. */
 
-import type { ArtifactNode } from "../api/types";
+import type { ArtifactNode } from "./artifactNode";
 
 /** One CI run, as the Builds tab shows it. */
 export interface BuildRun {

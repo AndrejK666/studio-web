@@ -15,6 +15,7 @@
 // the editor's problems are message keys with their values, so they read in
 // the person's language.
 
+import { PageCursors as SharedPageCursors } from '@constructor-studio/mfe-shared';
 import { fieldsOfModel, includableRelations, type DomainFieldKind, type DomainModel } from './domain-runtime';
 import type { RawEdge, RawObj } from '../screens/admin/domain-model/DomainModelGraph';
 
@@ -93,36 +94,8 @@ export interface LooseResult {
   next_cursor?: string;
 }
 
-/** Where each page of a query starts, as the page before it said. The table
- *  pages by number; the server pages by cursor (the platform's only way), so a
- *  page that follows one already read is asked by cursor, and only a jump to a
- *  page nobody has read yet goes by offset. */
-export class PageCursors {
-  private readonly starts = new Map<string, Map<number, string>>();
-
-  private static key(q: LooseQuery): string {
-    return JSON.stringify({ ...q, offset: undefined, limit: undefined, cursor: undefined });
-  }
-
-  /** `q` as sent: by cursor when its offset is a known page start. */
-  place(q: LooseQuery): LooseQuery {
-    const at = q.offset ?? 0;
-    const cursor = at > 0 ? this.starts.get(PageCursors.key(q))?.get(at) : undefined;
-    if (!cursor) return q;
-    const out: LooseQuery = { ...q, cursor };
-    delete out.offset;
-    return out;
-  }
-
-  /** What a page of `q` (as built, with its offset) said about the next one. */
-  note(q: LooseQuery, rows: number, next: string | undefined): void {
-    if (!next) return;
-    const key = PageCursors.key(q);
-    const starts = this.starts.get(key) ?? new Map<number, string>();
-    starts.set((q.offset ?? 0) + rows, next);
-    this.starts.set(key, starts);
-  }
-}
+/** Where each page of a view's query starts: mfe-shared's `PageCursors`, over this screen's query shape. */
+export class PageCursors extends SharedPageCursors<LooseQuery> {}
 
 /** Per loaded model, what has been derived from it: a new model (an edit
  *  reloaded it) starts empty. */

@@ -2,6 +2,7 @@
 
 import { useMemo } from 'react';
 import { apiRegistry, useApiQuery, type EndpointDescriptor } from '@gears-frontx/react';
+import { fetchAllPages } from '@constructor-studio/mfe-shared';
 import { DocumentsApiService } from '../api/DocumentsApiService';
 import type { DocumentDto } from '../api/documentTypes';
 
@@ -23,14 +24,12 @@ export function projectDocumentsQuery(
     key: ['projects-mfe', 'project-documents', workspaceId, projectId],
     fetch: async ({ signal } = {}) => {
       const documents = apiRegistry.getService(DocumentsApiService);
-      const all: DocumentDto[] = [];
-      for (;;) {
-        const page = await documents
-          .projectDocuments({ workspaceId, projectId, limit: PAGE, offset: all.length })
-          .fetch({ signal, staleTime: 0 });
-        all.push(...page.items);
-        if (page.items.length === 0 || all.length >= page.total) return all;
-      }
+      // The query cache keeps the whole list (this descriptor's key); each page is read fresh.
+      const read = await fetchAllPages<DocumentDto>(
+        (offset, limit) => documents.projectDocuments({ workspaceId, projectId, limit, offset }).fetch({ signal, staleTime: 0 }),
+        { pageSize: PAGE, advance: 'rows', signal }
+      );
+      return read.items;
     },
   };
 }

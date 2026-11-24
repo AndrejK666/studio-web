@@ -8,14 +8,73 @@ const { service, org, shared, calls } = vi.hoisted(() => ({
   calls: [] as { what: string; arg?: unknown; body?: unknown }[],
 }));
 
-vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@constructor-studio/mfe-shared')>()),
-  useOrganization: () => ({ org: org.value, loading: false, failed: false }),
-  useStudioEventRefresh: () => undefined,
-}));
+vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => {
+  const { useEffect, useState, useSyncExternalStore } = await import('react');
+  // An invalidation of the model: every reader reads it again.
+  let version = 0;
+  const listeners = new Set<() => void>();
+  const subscribe = (l: () => void) => {
+    listeners.add(l);
+    return () => listeners.delete(l);
+  };
+  return {
+    ...(await importOriginal<typeof import('@constructor-studio/mfe-shared')>()),
+    useOrganization: () => ({ org: org.value, loading: false, failed: false }),
+    useStudioEventRefresh: () => undefined,
+    // The model's one cached read, answered by the test's `types`.
+    useDomainTypes: (orgId: string) => {
+      const seen = useSyncExternalStore(subscribe, () => version);
+      const [read, setRead] = useState<{ data?: unknown; error?: unknown }>({});
+      useEffect(() => {
+        let live = true;
+        (service.types as (a: unknown) => { fetch: () => Promise<unknown> })({ orgId })
+          .fetch()
+          .then(
+            (data) => live && setRead({ data }),
+            (error: unknown) => live && setRead({ error })
+          );
+        return () => {
+          live = false;
+        };
+      }, [orgId, seen]);
+      return { data: read.data, error: read.error, isError: read.error !== undefined, isLoading: false };
+    },
+    invalidateDomainTypes: () => {
+      version += 1;
+      for (const l of [...listeners]) l();
+    },
+    // A query through the shared cache, answered by the test's `query`.
+    useDomainQuery: (orgId: string, body: unknown) => {
+      const seen = useSyncExternalStore(subscribe, () => version);
+      const [read, setRead] = useState<{ data?: unknown; error?: unknown }>({});
+      const key = JSON.stringify(body);
+      useEffect(() => {
+        if (!body) return undefined;
+        let live = true;
+        (service.query as (a: unknown) => { fetch: (b: unknown) => Promise<unknown> })(orgId)
+          .fetch(body)
+          .then(
+            (data) => live && setRead({ data }),
+            (error: unknown) => live && setRead({ error })
+          );
+        return () => {
+          live = false;
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [orgId, key, seen]);
+      return { data: read.data, error: read.error ?? null, isError: read.error !== undefined, isLoading: false };
+    },
+    invalidateDomainObjects: () => {
+      version += 1;
+      for (const l of [...listeners]) l();
+    },
+    domainMutate: (orgId: string) => (service.mutate as (a: unknown) => unknown)(orgId),
+  };
+});
 vi.mock('@gears-frontx/react', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@gears-frontx/react')>()),
   apiRegistry: { getService: () => service },
+  useQueryCache: () => ({}),
   useSharedProperty: (id: string) =>
     id.includes('.workspace.selected.') ? shared.workspace : id.includes('.project.selected.') ? shared.project : undefined,
 }));

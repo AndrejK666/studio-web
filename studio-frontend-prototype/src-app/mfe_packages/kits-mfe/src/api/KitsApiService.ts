@@ -6,7 +6,7 @@
  */
 
 import { BaseApiService, RestEndpointProtocol, RestProtocol } from '@gears-frontx/react';
-import type { DomainTypesResponse, ScreenPreview } from '@constructor-studio/mfe-shared';
+import { domainTypes, type DomainTypesResponse, type ScreenPreview } from '@constructor-studio/mfe-shared';
 import type { KitInstallation, ProjectRepository } from '../model/ideKits';
 
 export const KITS_API_BASE_URL = '/cf/studio-kits/v1';
@@ -270,9 +270,9 @@ export class KitPageApiService extends BaseApiService {
       .join('&')
   );
 
-  readonly modelTypes = this.protocol(RestEndpointProtocol).queryWith<DomainTypesResponse, { organizationId: string }>(
-    ({ organizationId }) => `/studio-domain-model/v1/types?${orgParam(organizationId)}`
-  );
+  /** The organization's model: the shared data layer's one cached read of it. */
+  readonly modelTypes = ({ organizationId }: { organizationId: string }) =>
+    domainTypes<DomainTypesResponse>(organizationId);
 }
 
 export class KitsApiService extends BaseApiService {

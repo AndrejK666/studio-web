@@ -37,15 +37,8 @@ import type { GearCatalogue } from '../model/product-configurator';
 /** The routes that name the organization on screen (the prototype's `ORG_SCOPED`). */
 const ORG_SCOPED = ['/studio-spec-mapping/', '/studio-product/'];
 
-let organization: string | null = null;
-
-/** The organization on screen: the root sets it from the shell's context. */
-export function setOrganization(id: string | null): void {
-  organization = id;
-}
-
-/** `path` naming the organization on screen, when it is one of `ORG_SCOPED` and there is one. */
-export function orgScoped(path: string, org: string | null = organization): string {
+/** `path` naming the organization on screen (`org`, from the caller's scope), when it is one of `ORG_SCOPED` and there is one. */
+export function orgScoped(path: string, org: string | null): string {
   if (!org || !ORG_SCOPED.some((p) => path.startsWith(p)) || /[?&]organization_id=/.test(path)) return path;
   return `${path}${path.includes('?') ? '&' : '?'}organization_id=${encodeURIComponent(org)}`;
 }
@@ -214,13 +207,13 @@ export class DomainModelApiService extends BaseApiService {
 
   readonly productFindings = this.protocol(RestEndpointProtocol).queryWith<
     { repo: string | null; items: ProductFinding[]; total: number },
-    { projectId: string }
-  >(({ projectId }) => orgScoped(`/studio-spec-mapping/v1/findings?${project(projectId)}`));
+    { projectId: string; orgId: string | null }
+  >(({ projectId, orgId }) => orgScoped(`/studio-spec-mapping/v1/findings?${project(projectId)}`, orgId));
 
   readonly projectPlan = this.protocol(RestEndpointProtocol).queryWith<
     { items: PlanRow[]; total: number; profile?: ProfileAdvice | null },
-    { projectId: string }
-  >(({ projectId }) => orgScoped(`/studio-spec-mapping/v1/plan?${project(projectId)}`));
+    { projectId: string; orgId: string | null }
+  >(({ projectId, orgId }) => orgScoped(`/studio-spec-mapping/v1/plan?${project(projectId)}`, orgId));
 
   /** The engine's catalogue: every gear its roots hold, and whose roots they are. */
   readonly gearboxCatalogue = this.protocol(RestEndpointProtocol).queryWith<
@@ -232,8 +225,8 @@ export class DomainModelApiService extends BaseApiService {
       project_sources?: string[];
       project_source_owners?: Record<string, string[]>;
     },
-    Record<string, never>
-  >(() => orgScoped('/studio-product/v1/gearbox/catalogue'));
+    { orgId: string | null }
+  >(({ orgId }) => orgScoped('/studio-product/v1/gearbox/catalogue', orgId));
 
   /* ── the project's kits ── */
 

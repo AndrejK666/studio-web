@@ -14,6 +14,7 @@
  */
 
 import { BaseApiService, RestEndpointProtocol, RestPlugin, RestProtocol, type RestRequestContext } from '@gears-frontx/react';
+import { DOMAIN_MODEL_PATH, domainTypes, gateway, readColleagues, readOrgMembers, withQuery } from '@constructor-studio/mfe-shared';
 import type {
   AliasConfirmReport,
   AliasWrite,
@@ -133,41 +134,15 @@ export class AdminApiService extends BaseApiService {
 
   /* ── studio-user ── */
 
-  readonly membersPage = this.protocol(RestEndpointProtocol).queryWith<
-    { items?: OrgMember[]; total?: number },
-    { orgId: string; offset: number }
-  >(
-    ({ orgId, offset }) =>
-      `/studio-user/v1/organizations/${e(orgId)}/members?${q({ offset: String(offset), limit: String(MAX_PAGE) })}`
-  );
-
   /** An organization's members, every page (`people.view`: an owner or a platform admin). */
-  async orgMembers(orgId: string): Promise<OrgMember[]> {
-    const items: OrgMember[] = [];
-    for (let offset = 0; ; offset += MAX_PAGE) {
-      const body = await this.membersPage({ orgId, offset }).fetch({ staleTime: 0 });
-      const page = body.items ?? [];
-      items.push(...page);
-      const total = typeof body.total === 'number' ? body.total : items.length;
-      if (page.length === 0 || items.length >= total) return items;
-    }
+  orgMembers(orgId: string): Promise<OrgMember[]> {
+    // Admin changes members and roles and reads them again: past the cache.
+    return readOrgMembers<OrgMember>(orgId, { fresh: true });
   }
 
-  readonly colleaguesPage = this.protocol(RestEndpointProtocol).queryWith<
-    { items?: Colleague[]; total?: number },
-    { offset: number }
-  >(({ offset }) => `/studio-user/v1/me/colleagues?${q({ offset: String(offset), limit: String(MAX_PAGE) })}`);
-
   /** Everybody the caller shares an organization with, every page. */
-  async myColleagues(): Promise<Colleague[]> {
-    const items: Colleague[] = [];
-    for (let offset = 0; ; offset += MAX_PAGE) {
-      const body = await this.colleaguesPage({ offset }).fetch({ staleTime: 0 });
-      const page = body.items ?? [];
-      items.push(...page);
-      const total = typeof body.total === 'number' ? body.total : items.length;
-      if (page.length === 0 || items.length >= total) return items;
-    }
+  myColleagues(): Promise<Colleague[]> {
+    return readColleagues<Colleague>({ fresh: true });
   }
 
   readonly myMemberships = this.protocol(RestEndpointProtocol).query<{ items: MyMembership[] }>(
@@ -510,9 +485,8 @@ export class AdminApiService extends BaseApiService {
    * The organization's model, and whether the caller may change it. Admin asks for what kits left
    * dormant too (`include=dormant`, ADR-0070 §4): only this screen shows them, marked `left_by`.
    */
-  readonly domainTypes = this.protocol(RestEndpointProtocol).queryWith<DomainTypesResponse, { orgId: string }>(
-    ({ orgId }) => `/studio-domain-model/v1/types?${q({ organization_id: orgId, include: 'dormant' })}`
-  );
+  readonly domainTypes = ({ orgId }: { orgId: string }) =>
+    domainTypes<DomainTypesResponse>(orgId, { dormant: true });
 
   /** How many objects of each type the organization holds. */
   readonly domainTypeCounts = this.protocol(RestEndpointProtocol).queryWith<DomainTypeCounts, { orgId: string }>(
@@ -588,16 +562,15 @@ export class AdminApiService extends BaseApiService {
    * descriptor, but a read: it answers 200 and writes nothing.
    */
   queryDomain(orgId: string) {
-    return this.rest.mutation<LooseResult, LooseQuery>(
-      'POST', `/studio-domain-model/v1/query?${q({ organization_id: orgId })}`
-    );
+    return gateway().send<LooseResult, LooseQuery>('POST', withQuery(`${DOMAIN_MODEL_PATH}/query`, { organization_id: orgId }));
   }
 
   /** Change domain objects in one batch, each checked against the model and the caller's rights. */
   mutateDomain(orgId: string) {
-    return this.rest.mutation<{ results: unknown[] }, { validate?: 'strict' | 'warn' | 'off'; operations: Record<string, unknown>[] }>(
-      'POST', `/studio-domain-model/v1/mutate?${q({ organization_id: orgId })}`
-    );
+    return gateway().send<
+      { results: unknown[] },
+      { validate?: 'strict' | 'warn' | 'off'; operations: Record<string, unknown>[] }
+    >('POST', withQuery(`${DOMAIN_MODEL_PATH}/mutate`, { organization_id: orgId }));
   }
 
   /** Drop a field the type itself declares. Stored values stay in the objects. */

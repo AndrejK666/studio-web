@@ -7,7 +7,6 @@
  */
 
 import React, { useState } from 'react';
-import { apiRegistry } from '@gears-frontx/react';
 import {
   Button,
   Checkbox,
@@ -20,8 +19,7 @@ import {
   NativeSelect,
   NativeSelectOption,
 } from '@gears-frontx/ui-kit';
-import { errorMessage, refusalText, type ScreenText } from '@constructor-studio/mfe-shared';
-import { ActivityApiService } from '../../api/ActivityApiService';
+import { domainMutate, errorMessage, refusalText, type ScreenText } from '@constructor-studio/mfe-shared';
 import type { ModelField } from '../../model/fields';
 import {
   FIRST_FIELDS,
@@ -70,10 +68,7 @@ export function MilestoneDialog({
     setBusy(true);
     setError(null);
     try {
-      await apiRegistry
-        .getService(ActivityApiService)
-        .mutateDomain(orgId)
-        .fetch({ operations: [saveOperation(ordered, draft, milestone, projectId, newKey())] });
+      await domainMutate(orgId).fetch({ operations: [saveOperation(ordered, draft, milestone, projectId, newKey())] });
       await onSaved();
     } catch (e) {
       setError(t('save_failed', { error: errText(e) }));

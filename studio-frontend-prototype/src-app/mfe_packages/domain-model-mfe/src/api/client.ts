@@ -6,6 +6,7 @@
  */
 
 import { apiRegistry } from '@gears-frontx/react';
+import { fetchAllPages } from '@constructor-studio/mfe-shared';
 import { DomainModelApiService, type ReviewItem } from './DomainModelApiService';
 import type { GlossaryDocRow, KitInstallation, SpecModelEntityEdit, SpecModelSentence } from './types';
 
@@ -67,20 +68,18 @@ export const dmApi = {
     body: { type_key: string; title: string; content?: string }
   ) => svc().createProjectDocument(workspaceId, projectId).fetch(body),
 
-  productFindings: (projectId: string) => svc().productFindings({ projectId }).fetch(FRESH),
-  projectPlan: (projectId: string) => svc().projectPlan({ projectId }).fetch(FRESH),
-  gearboxCatalogue: () => svc().gearboxCatalogue({}).fetch(FRESH),
+  // The organization on screen is an argument (`orgId`), read from the scope by the caller.
+  productFindings: (projectId: string, orgId: string | null) => svc().productFindings({ projectId, orgId }).fetch(FRESH),
+  projectPlan: (projectId: string, orgId: string | null) => svc().projectPlan({ projectId, orgId }).fetch(FRESH),
+  gearboxCatalogue: (orgId: string | null) => svc().gearboxCatalogue({ orgId }).fetch(FRESH),
 
   /** Every installation of the project, page by page, as the prototype's `requestAllPages` read them. */
   kitInstallations: async (projectId: string): Promise<{ items: KitInstallation[] }> => {
-    const items: KitInstallation[] = [];
-    for (let offset = 0; ; offset += KIT_PAGE) {
-      const page = await svc().kitInstallations({ projectId, offset }).fetch(FRESH);
-      const got = page.items ?? [];
-      items.push(...got);
-      const total = typeof page.total === 'number' ? page.total : items.length;
-      if (got.length === 0 || items.length >= total) return { items };
-    }
+    const read = await fetchAllPages<KitInstallation>(
+      (offset) => svc().kitInstallations({ projectId, offset }).fetch(FRESH),
+      { pageSize: KIT_PAGE }
+    );
+    return { items: read.items };
   },
 };
 

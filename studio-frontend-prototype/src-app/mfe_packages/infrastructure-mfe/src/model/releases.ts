@@ -11,7 +11,7 @@
  * and draws them. */
 
 import type { Deployment, DeployEnvironment } from "../api/types";
-import type { IdeBuild } from "./builds";
+import type { IdeBuild } from "@constructor-studio/mfe-shared";
 import { STATE_LABELS, shortCommit } from "./environments";
 import { deployableBuilds } from "./project-deploys";
 

@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 
-const { services, calls, context, events } = vi.hoisted(() => ({
+const { services, calls, context, events, model } = vi.hoisted(() => ({
+  model: { read: { data: undefined as unknown, isError: false } },
   services: { domain: {} as Record<string, unknown>, accounts: {} as Record<string, unknown> },
   calls: [] as { what: string; arg?: unknown; body?: unknown }[],
   context: { value: {} as Record<string, unknown> },
@@ -11,10 +12,21 @@ const { services, calls, context, events } = vi.hoisted(() => ({
 vi.mock('@gears-frontx/react', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@gears-frontx/react')>()),
   useAppSelector: (selector: (state: Record<string, unknown>) => unknown) => selector({ 'app/context': context.value }),
+  useQueryCache: () => ({}),
   apiRegistry: {
     getService: (service: { name: string }) =>
       service.name === 'DomainModelApiService' ? services.domain : services.accounts,
   },
+}));
+// The model comes from the shared data layer's one cached read: stood in for
+// here by what the test says it answered, and its invalidation recorded.
+vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@constructor-studio/mfe-shared')>()),
+  useDomainTypes: (orgId: string | null) => {
+    if (orgId) calls.push({ what: 'types', arg: { orgId } });
+    return orgId ? model.read : { data: undefined, isError: false };
+  },
+  invalidateDomainTypes: (_cache: unknown, orgId: string) => calls.push({ what: 'invalidate', arg: { orgId } }),
 }));
 vi.mock('@/app/live/useLiveChannel', () => ({
   useStudioEvents: (listener: (event: { kind: string }) => void) => {
@@ -23,7 +35,7 @@ vi.mock('@/app/live/useLiveChannel', () => ({
 }));
 
 import { WORKSPACE_SETTINGS_TYPE } from '@constructor-studio/mfe-shared';
-import { useHiddenTabs, useLevelModelTabs, useLevelTenant } from './useModelTabs';
+import { useDomainModelInvalidation, useHiddenTabs, useLevelModelTabs, useLevelTenant } from './useModelTabs';
 
 const reply = (what: string, answer: unknown) => (arg?: unknown) => ({
   fetch: (body?: unknown) => {
@@ -48,7 +60,7 @@ const ontology = {
 beforeEach(() => {
   calls.length = 0;
   context.value = { org: { id: 'o1', name: 'Acme' }, workspace: { id: 'w1', name: 'Platform' }, project: null };
-  services.domain = { types: reply('types', { ontology, can_edit_model: false }) };
+  model.read = { data: { ontology, can_edit_model: false }, isError: false };
   services.accounts = {
     getTenantMetadata: reply('read', { value: { icon: 'rocket', hidden_tabs: ['vendors'] } }),
     putTenantMetadata: (tenantId: string, type: string) => reply('write', null)({ tenantId, type }),
@@ -60,24 +72,23 @@ describe('the model’s tabs of a level', () => {
   it('are the shows relations of the level’s type in the organization’s model', async () => {
     const { result } = renderHook(() => useLevelModelTabs('organization'));
     await waitFor(() => expect(result.current.map((t) => t.name)).toEqual(['org', 'vendors']));
-    expect(calls[0]).toEqual({ what: 'types', arg: { orgId: 'o1' }, body: { staleTime: 0 } });
+    expect(calls[0]).toEqual({ what: 'types', arg: { orgId: 'o1' } });
   });
 
-  it('are read again when the model changes, and not for anything else', async () => {
-    renderHook(() => useLevelModelTabs('organization'));
-    await waitFor(() => expect(calls).toHaveLength(1));
+  it('are read again when the model changes, and not for anything else', () => {
+    renderHook(() => useDomainModelInvalidation());
     act(() => events.listener?.({ kind: 'tasks.run_updated' }));
+    expect(calls).toEqual([]);
     act(() => events.listener?.({ kind: 'domain.model_changed' }));
-    await waitFor(() => expect(calls).toHaveLength(2));
+    expect(calls).toEqual([{ what: 'invalidate', arg: { orgId: 'o1' } }]);
   });
 
-  it('are none above or beside the three levels, and none while the model will not answer', async () => {
+  it('are none above or beside the three levels, and none while the model will not answer', () => {
     const admin = renderHook(() => useLevelModelTabs('admin'));
     expect(admin.result.current).toEqual([]);
     expect(calls).toEqual([]);
-    services.domain = { types: reply('types', new Error('down')) };
+    model.read = { data: undefined, isError: true };
     const { result } = renderHook(() => useLevelModelTabs('organization'));
-    await waitFor(() => expect(calls).toHaveLength(1));
     expect(result.current).toEqual([]);
   });
 });

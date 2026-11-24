@@ -16,8 +16,8 @@
  * `domain.model_changed`).
  */
 
-import React, { Fragment, useEffect, useMemo, useState } from 'react';
-import { apiRegistry } from '@gears-frontx/react';
+import React, { Fragment, useMemo, useState } from 'react';
+import { useQueryCache } from '@gears-frontx/react';
 import {
   Badge,
   Button,
@@ -29,16 +29,17 @@ import {
   DialogTitle,
 } from '@gears-frontx/ui-kit';
 import {
-  domainChanged,
+  domainMutate,
   errorMessage,
+  invalidateDomainObjects,
   refusalText,
   typeAbsence,
+  useDomainQuery,
+  useDomainTypes,
   useOrganization,
-  useStudioEventRefresh,
   type ScreenText,
   type TypeAbsence,
 } from '@constructor-studio/mfe-shared';
-import { ActivityApiService } from '../../api/ActivityApiService';
 import { modelOf, shown, type DomainModel, type ModelField } from '../../model/fields';
 import {
   MILESTONE,
@@ -69,83 +70,62 @@ export const TimelineScreen: React.FC<{
 }> = ({ projectId, t, container }) => {
   const { org, loading: orgLoading } = useOrganization();
   const orgId = org?.id ?? null;
-  const [modelRead, setModelRead] = useState<ModelRead>(null);
-  const [items, setItems] = useState<Milestone[] | null>(null);
-  const [counts, setCounts] = useState<{ key: unknown[]; count: number }[]>([]);
-  const [total, setTotal] = useState(0);
-  const [error, setError] = useState<string | null>(null);
-  /** The objects route refused the type itself: dormant, or not installed here. */
-  const [absent, setAbsent] = useState<TypeAbsence | null>(null);
+  const cache = useQueryCache();
+  /** A write of this screen that failed: shown over the read's own state. */
+  const [writeError, setWriteError] = useState<string | null>(null);
   const [editing, setEditing] = useState<Milestone | 'new' | null>(null);
   const [removing, setRemoving] = useState<Milestone | null>(null);
   const [busy, setBusy] = useState(false);
-  const [revision, setRevision] = useState(0);
 
-  const watched = useMemo(() => domainChanged([MILESTONE], { model: true }), []);
-  useStudioEventRefresh(watched, () => setRevision((n) => n + 1));
-
-  const model = modelRead && 'model' in modelRead ? modelRead.model : null;
+  // The model first: without the type there is nothing to ask for. One cached
+  // read shared with every screen; the shell marks it stale when it changes.
+  const types = useDomainTypes(orgId);
+  const model: DomainModel | null = useMemo(
+    () => (orgId && !types.isError && types.data ? modelOf(types.data) : null),
+    [orgId, types.isError, types.data]
+  );
+  const modelRead: ModelRead = !orgId
+    ? null
+    : types.isError
+      ? { error: errText(types.error) }
+      : model
+        ? { model }
+        : null;
   const declared = hasMilestone(model);
-  // The model may still list the type while the objects route already refuses it.
-  const installed = declared && absent === null;
   const fields = useMemo(() => milestoneFields(model), [model]);
 
-  // The model first: without the type there is nothing to ask for.
-  useEffect(() => {
-    if (!orgId) return;
-    let alive = true;
-    apiRegistry
-      .getService(ActivityApiService)
-      .domainTypes({ orgId })
-      .fetch({ staleTime: 0 })
-      .then((res) => alive && setModelRead({ model: modelOf(res) }))
-      .catch((e: unknown) => alive && setModelRead({ error: errText(e) }));
-    return () => {
-      alive = false;
-    };
-  }, [orgId, revision]);
+  // The milestones, read again when any of them (or the model) changes, here or elsewhere.
+  const query = useMemo(() => milestoneQuery(projectId), [projectId]);
+  const milestones = useDomainQuery(orgId, declared ? query : null, { model: true });
+  const readError = milestones.isError ? milestones.error : null;
+  /** The objects route refused the type itself: dormant, or not installed here. */
+  const absent: TypeAbsence | null = readError ? typeAbsence(readError) : null;
+  // The model may still list the type while the objects route already refuses it.
+  const installed = declared && absent === null;
+  const items: Milestone[] | null = readError
+    ? []
+    : milestones.data
+      ? (milestones.data.items ?? []).map((r) => ({ id: r.id, value: (r.value ?? {}) as Record<string, unknown> }))
+      : null;
+  const counts = (!readError && milestones.data?.groups) || [];
+  const total = (!readError && milestones.data?.total) || 0;
+  const error =
+    writeError ?? (readError && !absent ? t('milestones_failed', { error: errText(readError) }) : null);
 
-  // Read again after a save or a delete here, as after one elsewhere (`revision`).
-  const [reads, setReads] = useState(0);
-  useEffect(() => {
-    if (!orgId || !declared) return;
-    let alive = true;
-    apiRegistry
-      .getService(ActivityApiService)
-      .queryDomain(orgId)
-      .fetch(milestoneQuery(projectId))
-      .then((res) => {
-        if (!alive) return;
-        setError(null);
-        setAbsent(null);
-        setItems((res.items ?? []).map((r) => ({ id: r.id, value: (r.value ?? {}) as Record<string, unknown> })));
-        setCounts(res.groups ?? []);
-        setTotal(res.total ?? 0);
-      })
-      .catch((e: unknown) => {
-        if (!alive) return;
-        const why = typeAbsence(e);
-        setAbsent(why);
-        setError(why ? null : t('milestones_failed', { error: errText(e) }));
-        setItems([]);
-      });
-    return () => {
-      alive = false;
-    };
-  }, [orgId, projectId, declared, revision, reads, t]);
+  /** After a write here: this screen's milestones, read again at once. */
+  const reread = () => {
+    if (orgId) invalidateDomainObjects(cache, orgId, MILESTONE);
+  };
 
   const remove = async (m: Milestone) => {
     if (!orgId) return;
     setBusy(true);
-    setError(null);
+    setWriteError(null);
     try {
-      await apiRegistry
-        .getService(ActivityApiService)
-        .mutateDomain(orgId)
-        .fetch({ operations: [{ op: 'delete', id: m.id }] });
-      setReads((n) => n + 1);
+      await domainMutate(orgId).fetch({ operations: [{ op: 'delete', id: m.id }] });
+      reread();
     } catch (e) {
-      setError(t('delete_failed', { error: errText(e) }));
+      setWriteError(t('delete_failed', { error: errText(e) }));
     } finally {
       setRemoving(null);
       setBusy(false);
@@ -253,7 +233,8 @@ export const TimelineScreen: React.FC<{
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);
-            setReads((n) => n + 1);
+            setWriteError(null);
+            reread();
           }}
         />
       )}

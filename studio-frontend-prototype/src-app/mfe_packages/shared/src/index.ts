@@ -324,9 +324,50 @@ export {
 export {
   DomainModelApiService,
   DOMAIN_MODEL_API_BASE_URL,
-  domainTypesPath,
   type DomainTypesResponse,
 } from './domain/DomainModelApiService';
+
+// The data layer: one gateway convention, every-page reads, the domain model as cached data.
+export {
+  DEFAULT_STALE_TIME_MS,
+  GATEWAY_BASE_URL,
+  GatewayApiService,
+  gateway,
+  gatewayKey,
+  invalidateGateway,
+  withQuery,
+  type InvalidatingCache,
+} from './data/gateway';
+export {
+  fetchAllCursorPages,
+  fetchAllPages,
+  useAllPages,
+  type AllPages,
+  type AllPagesOptions,
+  type CursorPage,
+  type OffsetPage,
+} from './data/pages';
+export {
+  DOMAIN_MODEL_PATH,
+  DOMAIN_TYPES_STALE_TIME_MS,
+  PageCursors,
+  domainMutate,
+  domainObjectsKey,
+  domainQuery,
+  domainQuerySend,
+  domainTypes,
+  domainTypesPath,
+  fetchDomainAll,
+  invalidateDomainObjects,
+  invalidateDomainTypes,
+  useDomainQuery,
+  useDomainTypes,
+  type DomainCache,
+  type PagedQuery,
+} from './data/domain';
+// The project's builds (ADR-0045): one model for Releases, Product and Infrastructure.
+export * from './builds/builds';
+export type { ArtifactNode as BuildArtifactNode } from './builds/artifactNode';
 // People and teams (people-mfe, team-mfe).
 export * from './people';
 // What a component is, in one word and one glyph: the catalogue's type.

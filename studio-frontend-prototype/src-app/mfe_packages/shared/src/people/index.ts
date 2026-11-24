@@ -5,4 +5,5 @@ export * from './access';
 export * from './orgPeople';
 export * from './activity';
 export { PeopleApiService, PEOPLE_PAGE } from './PeopleApiService';
+export { colleaguesPagePath, orgMembersPagePath, readColleagues, readOrgMembers } from './members';
 export { openProjectTeam, TEAM_ROUTE, type TeamTarget } from './openTeam';

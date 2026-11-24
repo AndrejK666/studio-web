@@ -28,7 +28,7 @@ import {
   NativeSelectOption,
 } from '@gears-frontx/ui-kit';
 import { productApi, type ScreenPreview } from '../../../api/client';
-import { repoPathsOf } from '../../../model/builds';
+import { repoPathsOf } from '@constructor-studio/mfe-shared';
 import {
   FRONTX_SHELL_TEMPLATE,
   assemblySteps,

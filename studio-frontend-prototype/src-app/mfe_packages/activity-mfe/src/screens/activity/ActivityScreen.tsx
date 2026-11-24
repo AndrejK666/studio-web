@@ -303,7 +303,7 @@ export const ActivityScreen: React.FC<{ projectId: string; t: ScreenText; langua
     apiRegistry
       .getService(ActivityApiService)
       .activity({ projectId })
-      .fetch({ staleTime: 0 })
+      .fetch()
       .then((feed) => {
         if (!alive) return;
         setError(null);

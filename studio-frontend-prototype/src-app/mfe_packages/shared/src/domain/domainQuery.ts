@@ -31,6 +31,10 @@ export interface DomainQueryRequest extends DomainSelection {
   /** The workspace or project the objects were created in (its tenant id). */
   project_id?: string;
   offset?: number;
+  /** The previous page's `next_cursor`: the rows after it (keyset paging). */
+  cursor?: string;
+  /** Counts of the matches grouped by fields, answered as `groups`. */
+  aggregate?: { group_by: string[] };
 }
 
 /** One object of an answer: `{id, entity, value, relations}`. */
@@ -54,10 +58,13 @@ export interface DomainQueryResult extends DomainRowSet {
   /** `read_model` (Postgres) or `graph`. */
   source?: string;
   next_cursor?: string | null;
+  /** With `aggregate`: the matches counted per group. */
+  groups?: { key: unknown[]; count: number }[] | null;
 }
 
 export type DomainOperation =
   | { op: 'patch'; id: string; set?: Record<string, unknown>; unset?: string[] }
+  | { op: 'delete'; id: string }
   | {
       op: 'upsert';
       type: string;

@@ -2,20 +2,27 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ScreenText } from '@constructor-studio/mfe-shared';
 
-const { service, calls } = vi.hoisted(() => ({
-  service: {} as Record<string, unknown>,
+import type { DomainStub } from '@constructor-studio/mfe-shared/testing';
+
+const { domain, calls } = vi.hoisted(() => ({
+  domain: { stub: null as DomainStub | null },
   calls: { query: [] as unknown[], mutate: [] as unknown[] },
 }));
 
 vi.mock('@gears-frontx/react', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@gears-frontx/react')>()),
-  apiRegistry: { getService: () => service },
+  useQueryCache: () => ({}),
 }));
-vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@constructor-studio/mfe-shared')>()),
-  useOrganization: () => ({ org: { id: 'o1', name: 'Acme' }, loading: false, failed: false }),
-  useStudioEventRefresh: () => undefined,
-}));
+// The domain data layer stood in for: what `/types`, `/query` and `/mutate` answer is the test's.
+vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => {
+  const { createDomainStub } = await import('@constructor-studio/mfe-shared/testing');
+  domain.stub = createDomainStub();
+  return {
+    ...(await importOriginal<typeof import('@constructor-studio/mfe-shared')>()),
+    ...domain.stub.hooks,
+    useOrganization: () => ({ org: { id: 'o1', name: 'Acme' }, loading: false, failed: false }),
+  };
+});
 
 import { TimelineScreen } from './TimelineScreen';
 
@@ -42,29 +49,24 @@ const WITH_MILESTONE = {
 };
 
 function serve(types: unknown, milestones: unknown[] | Error = [], mutate: () => Promise<unknown> = () => Promise.resolve({ results: [] })) {
-  Object.assign(service, {
-    domainTypes: () => ({ fetch: () => (types instanceof Error ? Promise.reject(types) : Promise.resolve(types)) }),
-    queryDomain: () => ({
-      fetch: (body: unknown) => {
-        calls.query.push(body);
-        return milestones instanceof Error
-          ? Promise.reject(milestones)
-          : Promise.resolve({
-              items: milestones,
-              total: milestones.length,
-              complete: true,
-              warnings: [],
-              groups: [{ key: ['planned'], count: milestones.length }],
-            });
-      },
-    }),
-    mutateDomain: () => ({
-      fetch: (body: unknown) => {
-        calls.mutate.push(body);
-        return mutate();
-      },
-    }),
-  });
+  const stub = domain.stub!;
+  stub.types = types;
+  stub.query = (body: unknown) => {
+    calls.query.push(body);
+    return milestones instanceof Error
+      ? Promise.reject(milestones)
+      : Promise.resolve({
+          items: milestones,
+          total: milestones.length,
+          complete: true,
+          warnings: [],
+          groups: [{ key: ['planned'], count: milestones.length }],
+        });
+  };
+  stub.mutate = (body: unknown) => {
+    calls.mutate.push(body);
+    return mutate();
+  };
 }
 
 const container = { current: null };

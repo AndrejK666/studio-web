@@ -20,7 +20,7 @@
 import { useState, type ReactNode } from 'react';
 import { Badge, Button, NativeSelect, NativeSelectOption } from '@gears-frontx/ui-kit';
 import type { Deployment, PathAction, PathStep } from '../../api/types';
-import type { IdeBuild } from '../../model/builds';
+import type { IdeBuild } from '@constructor-studio/mfe-shared';
 import { hasDeployableImages, type ReleaseMap, type StageId } from '../../model/release-map';
 import { rollbackTarget, runsNow } from '../../model/project-deploys';
 import { versionOf, type LadderStep } from '../../model/releases';

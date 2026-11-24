@@ -24,7 +24,7 @@ import {
 } from '@constructor-studio/mfe-shared';
 import type { Deployment, PathAction, PathStep, ProjectPath, ProjectTargets } from '../../api/types';
 import { ROUTES, deploymentFromSearch, type Intent } from '../../model/path';
-import { anyRunning, ideBuildsOf, type IdeBuild } from '../../model/builds';
+import { anyRunning, ideBuildsOf, type IdeBuild } from '@constructor-studio/mfe-shared';
 import { ladderSteps } from '../../model/releases';
 import {
   attentionStage,

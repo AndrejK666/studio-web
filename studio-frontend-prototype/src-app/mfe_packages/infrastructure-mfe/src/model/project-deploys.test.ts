@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Deployment, DeployEnvironment } from "../api/types";
-import type { IdeBuild } from "./builds";
+import type { IdeBuild } from "@constructor-studio/mfe-shared";
 import {
   deployableBuilds,
   expiresIn,

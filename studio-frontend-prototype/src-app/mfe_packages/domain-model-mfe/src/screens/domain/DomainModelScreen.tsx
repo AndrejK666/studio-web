@@ -88,7 +88,7 @@ const PRODUCT_ROUTE = '/product';
 type Catalogue = { index: CatalogueIndex } | { error: string } | null;
 
 export function DomainModelScreen() {
-  const { projectId, workspaceId, bridge } = useScope();
+  const { projectId, workspaceId, orgId, bridge } = useScope();
   const { t } = useDomainTranslations();
   const [model, setModel] = useState<SpecModel | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -143,13 +143,13 @@ export function DomainModelScreen() {
   useEffect(() => {
     let live = true;
     dmApi
-      .productFindings(projectId)
+      .productFindings(projectId, orgId)
       .then((r) => live && setProduct({ repo: r.repo, items: orderProductFindings(r.items) }))
       .catch((e: unknown) => live && setProduct({ error: errText(e) }));
     return () => {
       live = false;
     };
-  }, [projectId]);
+  }, [projectId, orgId]);
 
   // Its own read: no synced work must not hide the documents' own problems.
   useEffect(() => {
@@ -183,13 +183,13 @@ export function DomainModelScreen() {
     if (!mapOpened) return;
     let live = true;
     dmApi
-      .projectPlan(projectId)
+      .projectPlan(projectId, orgId)
       .then((r) => live && setOwnGears(r.items.flatMap((row) => row.candidates).filter((c) => c.origin === 'project')))
       .catch(() => undefined);
     return () => {
       live = false;
     };
-  }, [projectId, mapOpened]);
+  }, [projectId, orgId, mapOpened]);
 
   // Which gear keeps each Domain entity: the catalogue read when the map is
   // first opened. Without it no gear is known, so no gap is claimed either.
@@ -198,13 +198,13 @@ export function DomainModelScreen() {
     if (!mapOpened || catalogue) return;
     let live = true;
     dmApi
-      .gearboxCatalogue()
+      .gearboxCatalogue(orgId)
       .then((r) => live && setCatalogue({ index: indexCatalogue(r.catalogue, r, projectId) }))
       .catch((e: unknown) => live && setCatalogue({ error: errText(e) }));
     return () => {
       live = false;
     };
-  }, [projectId, mapOpened, catalogue]);
+  }, [projectId, orgId, mapOpened, catalogue]);
 
   // Read when the view is opened: it reads every code file of the checkouts.
   useEffect(() => {

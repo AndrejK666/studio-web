@@ -15,9 +15,9 @@
 
 import { useMemo } from 'react';
 import { apiRegistry, useApiQuery, useAppSelector } from '@gears-frontx/react';
-import { kitIn } from '@constructor-studio/mfe-shared';
+import { kitIn, useDomainTypes } from '@constructor-studio/mfe-shared';
 import { InstalledKitsApiService } from '@/app/api/InstalledKitsApiService';
-import { ModelTypesApiService } from '@/app/api/ModelTypesApiService';
+import type { ModelTypesSummary } from '@/app/api/ModelTypesApiService';
 import { APP_CONTEXT_SLICE_KEY, type AppContextState } from '@/app/slices/appContextSlice';
 import type { ScreenLevel, StudioScreenExtension } from '@/app/mfe/screenLevels';
 
@@ -125,9 +125,7 @@ export function useInstalledTypes(wanted: boolean): ReadonlySet<string> | null {
   const orgId = useAppSelector(
     (state) => (state[APP_CONTEXT_SLICE_KEY] as AppContextState | undefined)?.org?.id ?? null
   );
-  const read = useApiQuery(apiRegistry.getService(ModelTypesApiService).types({ organizationId: orgId ?? '' }), {
-    enabled: wanted && !!orgId,
-  });
+  const read = useDomainTypes<ModelTypesSummary>(orgId, { enabled: wanted });
   const entities = read.data?.ontology?.entities;
   return useMemo(
     () =>

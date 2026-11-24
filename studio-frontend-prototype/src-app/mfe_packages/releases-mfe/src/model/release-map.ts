@@ -18,7 +18,7 @@
  * draws them. */
 
 import type { Deployment, DeployEnvironment } from "../api/types";
-import { isLost, type IdeBuild } from "./builds";
+import { isLost, type IdeBuild } from "@constructor-studio/mfe-shared";
 import { targetKindOf, type TargetKind } from "./environment-targets";
 import { productUrls, promotionGap } from "./project-deploys";
 import type { LadderStep } from "./releases";

@@ -37,7 +37,7 @@ import type {
   StudioProfile,
   TaskRun,
 } from './types';
-import type { ScreenPreview } from '@constructor-studio/mfe-shared';
+import { fetchAllPages, readColleagues, readOrgMembers, type ScreenPreview } from '@constructor-studio/mfe-shared';
 import type { ComponentSnapshot } from '../model/field-trend';
 
 export const CATALOG = '/studio-components-catalog/v1';
@@ -273,39 +273,23 @@ export class ComponentsApiService extends BaseApiService {
     ({ offset }) => `/studio-kits/v1/catalog?offset=${offset}&limit=${PAGE}`
   );
 
-  private readonly colleaguesPage = this.protocol(RestEndpointProtocol).queryWith<Page<Colleague>, { offset: number }>(
-    ({ offset }) => `/studio-user/v1/me/colleagues?offset=${offset}&limit=${PAGE}`
-  );
-
-  private readonly membersPage = this.protocol(RestEndpointProtocol).queryWith<Page<OrgMember>, { org: string; offset: number }>(
-    ({ org, offset }) => `/studio-user/v1/organizations/${encodeURIComponent(org)}/members?offset=${offset}&limit=${PAGE}`
-  );
-
   /** The kit registry's catalogue, every page. */
   kits(): Promise<StudioKit[]> {
-    return allPages((offset) => this.kitsPage({ offset }).fetch({ staleTime: 0 }));
+    return allPages((offset) => this.kitsPage({ offset }).fetch());
   }
 
-  /** The caller's colleagues, every page. */
+  /** The caller's colleagues, every page (the same read People and Team make). */
   colleagues(): Promise<Colleague[]> {
-    return allPages((offset) => this.colleaguesPage({ offset }).fetch({ staleTime: 0 }));
+    return readColleagues();
   }
 
-  /** The organization's members, every page. */
+  /** The organization's members, every page (the same read People and Team make). */
   members(org: string): Promise<OrgMember[]> {
-    return allPages((offset) => this.membersPage({ org, offset }).fetch({ staleTime: 0 }));
+    return readOrgMembers(org);
   }
 }
 
-/** Every page of a list read by `offset`; an empty page also ends it, so a
- *  server that ignores the parameters does not spin forever. */
+/** Every page of a list read by `offset` (the shared `fetchAllPages`). */
 export async function allPages<T>(read: (offset: number) => Promise<Page<T>>): Promise<T[]> {
-  const items: T[] = [];
-  for (let offset = 0; ; offset += PAGE) {
-    const page = await read(offset);
-    const got = page.items ?? [];
-    items.push(...got);
-    const total = typeof page.total === 'number' ? page.total : items.length;
-    if (got.length === 0 || items.length >= total) return items;
-  }
+  return (await fetchAllPages(read, { pageSize: PAGE })).items;
 }

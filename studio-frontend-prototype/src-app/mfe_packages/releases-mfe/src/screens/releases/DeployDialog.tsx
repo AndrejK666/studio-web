@@ -41,7 +41,7 @@ import {
   NativeSelectOption,
 } from '@gears-frontx/ui-kit';
 import type { Deployment, DeployEnvironment, PathAction, ProjectPath, ResearchHardware, ResearchProject } from '../../api/types';
-import type { IdeBuild } from '../../model/builds';
+import type { IdeBuild } from '@constructor-studio/mfe-shared';
 import { SEARCH_FROM, deployTargets, type TargetRow } from '../../model/deploy-targets';
 import {
   ROUTES,

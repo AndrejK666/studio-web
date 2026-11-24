@@ -23,31 +23,9 @@ export interface ActivityFeed {
   total: number;
 }
 
-/** `GET /studio-domain-model/v1/types`: the part this kit reads. */
-export interface DomainTypesResponse {
-  ontology: { entities?: unknown[]; buckets?: unknown[] };
-  can_edit_model: boolean;
-}
-
 /** One object of `POST /studio-domain-model/v1/query`. */
 export interface DomainObject {
   id: string;
   entity?: string;
   value: Record<string, unknown>;
-}
-
-/** `POST /studio-domain-model/v1/query` (`QueryObjectsResponse`), the part this kit reads. */
-export interface DomainQueryResult {
-  items: DomainObject[];
-  total: number;
-  complete: boolean;
-  warnings: string[];
-  groups?: { key: unknown[]; count: number }[] | null;
-}
-
-export type DomainQuery = Record<string, unknown>;
-
-export interface DomainMutation {
-  validate?: 'strict' | 'warn' | 'off';
-  operations: Record<string, unknown>[];
 }

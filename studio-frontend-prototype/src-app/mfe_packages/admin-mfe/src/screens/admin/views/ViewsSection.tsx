@@ -87,7 +87,7 @@ function ViewsAdmin({ org }: { org: OrganizationRef }) {
     let live = true;
     api
       .domainTypes({ orgId: org.id })
-      .fetch({ staleTime: 0 })
+      .fetch()
       .then(modelOf)
       .then(
         (m) => {
