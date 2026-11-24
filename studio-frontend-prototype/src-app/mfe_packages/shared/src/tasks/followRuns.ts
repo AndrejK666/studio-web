@@ -1,6 +1,9 @@
 /**
  * Follows `studio-tasks` runs on the tenant's event stream until each settles.
- * Runs are read on an interval only while the stream cannot say.
+ * Runs are read on an interval only while the stream cannot say: when it is
+ * not open, and for a run it has not mentioned yet. A run filed in another
+ * tenant than the caller's home (a platform administrator's sync, filed under
+ * the project's organization) never reaches this stream, and is read to the end.
  */
 
 import { errorMessage } from '../errors/message';
@@ -59,18 +62,23 @@ export function createRunFollower(options: RunFollowerOptions): RunFollower {
   let stream: ReturnType<StudioEventsApiService['streamFrom']> | null = null;
   let connection: Promise<string> | null = null;
   let polling = false;
+  /** Runs on the open stream that it has not mentioned yet. */
+  const unheard = new Set<string>();
+  let checking = false;
 
   const close = (): void => {
     const open = stream;
     const id = connection;
     stream = null;
     connection = null;
+    unheard.clear();
     if (open && id) void id.then((value) => open.disconnect(value), () => undefined);
   };
 
   const forget = (runId: string): void => {
     followed.delete(runId);
     failures.delete(runId);
+    unheard.delete(runId);
     if (followed.size === 0) close();
   };
 
@@ -111,10 +119,23 @@ export function createRunFollower(options: RunFollowerOptions): RunFollower {
     polling = false;
   };
 
+  /** Reads the runs the open stream has not mentioned, on the interval, until it does or they settle. */
+  const check = async (): Promise<void> => {
+    if (checking) return;
+    checking = true;
+    while (stream && unheard.size > 0) {
+      await sleep(RUN_POLL_INTERVAL_MS);
+      if (!stream) break;
+      await Promise.all([...unheard].map(read));
+    }
+    checking = false;
+  };
+
   const fallBack = (from: typeof stream): void => {
     if (stream !== from) return;
     stream = null;
     connection = null;
+    unheard.clear();
     void poll();
   };
 
@@ -126,6 +147,8 @@ export function createRunFollower(options: RunFollowerOptions): RunFollower {
       if (polling) return;
       if (stream) {
         const joined = stream;
+        joining.forEach((runId) => unheard.add(runId));
+        void check();
         joining.forEach((runId) => {
           // The stream dropped what the run did before it joined: if this read fails, only the interval can tell.
           void read(runId).then(() => {
@@ -140,10 +163,14 @@ export function createRunFollower(options: RunFollowerOptions): RunFollower {
       }
       const opened = options.events.streamFrom(cursor);
       stream = opened;
+      joining.forEach((runId) => unheard.add(runId));
+      void check();
       connection = opened.connect(
         (event) => {
           const update = runUpdateFromEvent(event);
-          if (update) apply(update);
+          if (!update) return;
+          unheard.delete(update.runId);
+          apply(update);
         },
         () => fallBack(opened)
       );
