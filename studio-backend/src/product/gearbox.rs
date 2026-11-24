@@ -2629,8 +2629,7 @@ fn inside_home(dir: &Path, home: &Path) -> bool {
 /// the home stands in for it; kept beside it, the engine scanned the same
 /// gears twice (each declared twice, GBX0105) and took three times as long.
 fn of_home(root: &Root, home: &HomeCheckout) -> bool {
-    inside_home(&root.dir, &home.dir)
-        || (!root.repo.is_empty() && root.repo == repo_key(&home.url))
+    inside_home(&root.dir, &home.dir) || (!root.repo.is_empty() && root.repo == repo_key(&home.url))
 }
 
 /// `corpus` with the home repository's own catalogue laid over it
@@ -4617,8 +4616,10 @@ impl Gearbox {
                 repo: repo_key(&home.url),
             });
         }
-        let named: Vec<(String, PathBuf)> =
-            keyed.iter().map(|r| (r.id.clone(), r.dir.clone())).collect();
+        let named: Vec<(String, PathBuf)> = keyed
+            .iter()
+            .map(|r| (r.id.clone(), r.dir.clone()))
+            .collect();
         let gdl_checked = if input.development {
             development_profile(&product_gdl, &input.profile)
         } else {
@@ -4668,7 +4669,9 @@ impl Gearbox {
                         &product_path,
                         &gdl,
                         &profile,
-                        home_at.as_ref().map(|(id, dir)| (id.as_str(), dir.as_path())),
+                        home_at
+                            .as_ref()
+                            .map(|(id, dir)| (id.as_str(), dir.as_path())),
                     )?;
                     if let Some(k) = key {
                         evaluations
@@ -6583,7 +6586,10 @@ mod tests {
             commit: Some("0".into()),
             repo: repo_key("https://github.com/owner/studio-web"),
         };
-        assert!(of_home(&project_root, &home), "same repository, other checkout");
+        assert!(
+            of_home(&project_root, &home),
+            "same repository, other checkout"
+        );
         let inside = Root {
             dir: PathBuf::from("/work/gearbox-roots/home/repo/studio-backend"),
             repo: String::new(),

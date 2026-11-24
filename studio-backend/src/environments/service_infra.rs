@@ -113,8 +113,15 @@ impl EnvironmentService {
         } else {
             None
         };
-        self.plan_in(org, project, &env, &inputs, description.as_deref(), slug.as_deref())
-            .await
+        self.plan_in(
+            org,
+            project,
+            &env,
+            &inputs,
+            description.as_deref(),
+            slug.as_deref(),
+        )
+        .await
     }
 
     /// [`Self::infra_plan`] for every environment the project may deploy to
@@ -125,7 +132,11 @@ impl EnvironmentService {
     /// plan per environment made N calls that each read all of it again.
     /// An environment whose plan is refused (a namespace that cannot be
     /// placed) is left out, as a page that ignored the one refused call did.
-    pub async fn infra_plans(&self, ctx: &SecurityContext, project: Uuid) -> Result<Vec<InfraPlan>> {
+    pub async fn infra_plans(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+    ) -> Result<Vec<InfraPlan>> {
         let (org, name) = tokio::join!(
             self.organization_of_project(ctx, project),
             self.project_name(ctx, project)
@@ -170,7 +181,14 @@ impl EnvironmentService {
             (None, _) => None,
         };
         let plans = futures_util::future::join_all(envs.iter().map(|env| {
-            self.plan_in(org, project, env, &inputs, description.as_deref(), slug.as_deref())
+            self.plan_in(
+                org,
+                project,
+                env,
+                &inputs,
+                description.as_deref(),
+                slug.as_deref(),
+            )
         }))
         .await;
         let mut out = Vec::with_capacity(plans.len());
@@ -209,7 +227,8 @@ impl EnvironmentService {
                 configuration,
             });
         }
-        let slug = slug.ok_or_else(|| Refusal::Internal("the project's slug is not read".into()))?;
+        let slug =
+            slug.ok_or_else(|| Refusal::Internal("the project's slug is not read".into()))?;
         let place = self.place_with_slug(org, project, env, slug).await?;
         let items = infra::plan(Some(&placement), &inputs.services, |r| {
             under_project(env, &place.prefix, r)

@@ -878,7 +878,12 @@ pub(super) async fn check_saved_revision(
             .create()
     };
     let revision = match revision {
-        Some(n) => product.service.description_revision(ctx, project_id, n).await,
+        Some(n) => {
+            product
+                .service
+                .description_revision(ctx, project_id, n)
+                .await
+        }
         None => product.service.latest_description(ctx, project_id).await,
     }
     .map_err(|e| internal(&e))?
