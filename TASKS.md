@@ -1,3 +1,152 @@
+# 2026-11-24 — fork main: Research deploy, organization scope, GitLab
+
+Development runs in the fork `AndrejK666/studio-web`, whose `main` is the
+trunk; nothing goes upstream until we decide so. Code is written first and
+committed "(not gated)"; one combined gate runs on the fork's main at the end,
+then failures are fixed per area. Priorities: **P0** blocks the Research
+end-to-end deploy or leaves main broken, **P1** is needed to call the work
+done, **P2** can wait.
+
+## P0
+
+- [ ] Run the combined gate on the fork's main @andrejk666
+
+  Everything since 2026-11-23 is ungated: the GitLab connector and sign-in,
+  artifact-ingest in the project's organization, organization-filed runs
+  (find, cancel, retry), deployment logs and status by project, lost Research
+  builds, the chunked rehome, the release map. Run
+  `scripts/backend-gate.sh` (one slot; never two Rust builds at once), the
+  prototype's per-package unit suites, `node scripts/check-api-usage.mjs` and
+  `node scripts/check-docs.mjs`. The stabilization session (claude-0e) agreed
+  that whoever merges last runs it; agree who before starting. Failures in
+  these areas are mine: `connectors/gitlab`, `user_profile/gitlab_avatar`,
+  `artifact_ingest` (sync, outputs, `org_scope`), `tasks/rest.rs` `find_run`,
+  `connectors` and `git_proxy` run scoping, `environments` (research,
+  secret_preflight, build_records, service_research_builds, deployment
+  logs/status), `domain_model` rehome, releases-mfe, `LoginScreen`.
+
+- [ ] Regenerate the API contract @andrejk666
+
+  `docs/api-contract.json` was edited by hand for the GitLab routes
+  (`GET /studio-artifact-ingest/v1/outputs/{output_id}/content` and others).
+  Check whether 4fdc9d2e8 already regenerated it; if not:
+  `cargo run --locked --quiet -- api-contract > docs/api-contract.json && cargo run --locked --quiet -- api-contract --accept`
+  inside the gate container.
+
+- [ ] Find why postgres and studioweb-frontend fail in Research @andrejk666
+
+  Deploy 48d74242 (build `research-7a977fac4b5a` to environment
+  `research-hyp3099-git-pull-test`, 6d8703d1) got past api-gateway, which had
+  failed before, but `postgres` and `studioweb-frontend` ended `failed`.
+  Research gives Studio no container log and no reason
+  (`/deployments/{id}/logs` returns three empty containers). Read the
+  services' events/logs in the Research UI (project `hyp3099-git-pull-test`).
+  Suspects: postgres without its password variable or with a volume it
+  cannot write; the frontend's nginx not resolving `api-gateway`, or a
+  non-root container binding port 80. Fix in the build (Dockerfile, chart
+  values) or in `environments/research.rs`, then deploy only (no rebuild):
+  `POST /studio-environments/v1/builds/research-7a977fac4b5a/deploy?project_id=d5e76267-60e3-4153-8e60-d4d8753ed01e`
+  with `{"environment_id":"6d8703d1-9125-4ab5-bb97-8a919b8933d8"}`.
+
+- [ ] Rebuild the stand from the fork's main and check what landed after it @andrejk666
+
+  The stand runs `local-8fe24027b`. Rebuild with `bash local-stand.sh`
+  (frontend only: `docker compose -p studio build frontend-prototype && docker compose -p studio up -d --no-deps frontend-prototype`;
+  restart the portal after a backend restart, its nginx keeps the old IP).
+  Then check:
+
+  - the rehome on project d5e76267 (~19k objects) logs "rehome moved N of M"
+    and ends; before it died on `graph-storage node batch ingest: deadline_exceeded`
+    and left the root copies live;
+  - `research-e684c390ab39` (stuck `running`, no images, no run) turns
+    `failed` with "its run is gone" ten minutes after its start;
+  - `/deployments/{id}/logs?project_id=` and `/status?project_id=` answer a
+    platform admin (they 404'd without `organization_id`);
+  - a platform admin's sync of an organization's repository shows progress
+    to the end, survives a page reload, and can be cancelled and retried.
+
+## P1
+
+- [ ] Turn on deployments in the second Research project @andrejk666
+
+  Deploy cc93c9c4 (environment 3847d98c, Research project
+  `studioweb-research-example-project`, connection b06fa371) failed: Research
+  refused to turn on the project's deployments ("Insufficient permission"),
+  and two secret values became plain environment variables. Turn deployments
+  on by hand in Research, or with an account that may. Open question: should
+  Studio turn them on itself before a build, and refuse early when it may not?
+
+- [ ] Secrets in Research are plain variables @andrejk666
+
+  Research's public API keeps no secret variables, so every secret
+  (4 in deploy 48d74242) is visible to whoever can open the service. Decide:
+  accept and say so in the deploy dialog, or ask Research for secret
+  variables.
+
+- [ ] GitLab sign-in on the stand @andrejk666
+
+  Code is in (`5b1432b73`: `keycloak/GITLAB_SSO.md`, the
+  `keycloak-gitlab-idp` compose service, the Helm job `gitlab-idp-job.yaml`,
+  `keycloak.gitlabIdp` values, the button in `LoginScreen.tsx`). Needs a
+  GitLab OAuth application: redirect
+  `https://localhost:8443/realms/studio/broker/gitlab/endpoint`, scopes
+  `openid profile email read_user`. Put its id and secret into
+  `STUDIO_GITLAB_IDP_CLIENT_ID` / `STUDIO_GITLAB_IDP_CLIENT_SECRET` (and `STUDIO_GITLAB_IDP_BASE_URL` for a self-hosted GitLab), set
+  `STUDIO_GITLAB_SIGN_IN=1`, then sign in and check the avatar
+  (`user_profile/gitlab_avatar.rs`).
+
+- [ ] Try the GitLab connector on a real GitLab @andrejk666
+
+  `c024cd710` ported Insight's connector and added writes (commits,
+  branches, merge requests, statuses), releases, artifacts and the avatar.
+  Only mocks have run it. Connect a GitLab project, sync it, read a merge
+  request and a pipeline, download an output, open a merge request from
+  Studio. Self-hosted GitLab on a private address needs `url_guard`
+  `private_hosts`.
+
+- [ ] Tell the stabilization session what is ungated @andrejk666
+
+  Messages to claude-0e expire unread (the two sessions run in different
+  permission modes). Pass it by hand: the list under "Run the combined gate".
+
+## P2
+
+- [ ] Purge the root's deleted copies @andrejk666
+
+  The rehome marks moved root copies `_deleted` but keeps them. A one-time
+  migration could remove them once the rehome has finished everywhere.
+  Proposal only; not built.
+
+- [ ] Portal nginx keeps the backend's old address @andrejk666
+
+  After a backend restart the portal answers 502 until it restarts too.
+  Resolve the upstream per request (a `resolver` plus a variable in
+  `proxy_pass`).
+
+- [ ] Rotate the GHCR token @andrejk666
+
+  The PAT used for `ghcr.io/andrejk666` (deploy without GitHub) has been
+  passed around; issue a new one and update the `ghcr-pull` secret.
+
+- [ ] Kit gears at run time: answer ADR-0077's open questions @andrejk666
+
+  `docs/design/kit-gears-at-runtime.md` ends with five questions; the ADR
+  stays proposed until they are answered.
+
+- [ ] Gears as packages: the pilot @andrejk666
+
+  ADR-0078 and `docs/design/gears-as-packages.md` (with its inventory)
+  describe publishing gears as packages and a platform release as a BOM
+  version. Pick one gear and publish it from the forks of gearbox and
+  gears-rust. Not started.
+
+- [ ] Decide on the old branches @andrejk666
+
+  Not on the fork's main: `AndrejK666/domain-read-model` (draft #892,
+  ADR-0051, last 2026-10-28), `stand-tracks` (+198), `two-tracks-ingest-local`,
+  `two-tracks-session-clone` (2026-11-13), `domain-diagram-all`
+  (`docs/domain-model.md`, 2026-10-16, likely stale). Merge, rebase or delete.
+
 # 2026-10-15 — the project, its product, and where gears come from
 
 What #716, #742, #756, #774 and the combined #789 leave open. The designs:
