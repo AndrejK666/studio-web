@@ -24,7 +24,7 @@ from http import HTTPStatus
 from typing import Any, Protocol
 
 from gears_matcher.service.errors import ProblemError, bad_request, unprocessable
-from gears_matcher.service.request import Limits
+from gears_matcher.service.request import RUN_PROVIDERS, Limits
 
 MODEL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,99}$")
 UPDATED_BY_MAX = 200
@@ -94,15 +94,13 @@ def _bound(value: Any, name: str, ceiling: int) -> int:
 class Settings:
     """The config file's values, the stored override, and what a run uses now."""
 
-    def __init__(  # noqa: PLR0913 -- the last three are optional
+    def __init__(
         self,
         config: Values,
         providers: tuple[str, ...],
         check: ProviderCheck,
         store: Stored | None = None,
         clock: Callable[[], float] = time.time,
-        *,
-        default_model: Callable[[str], str] | None = None,
     ) -> None:
         self.config, self.providers, self.check, self.store, self.clock = (
             config,
@@ -111,7 +109,6 @@ class Settings:
             store,
             clock,
         )
-        self.default_model = default_model
         self._lock = threading.Lock()
         self._overrides: dict[str, Any] = {}
         self._version = 0
@@ -148,36 +145,30 @@ class Settings:
         return replace(base, max_calls=now.max_calls, max_extract_calls=now.max_extract_calls)
 
     def for_run(self, provider: str | None, models: tuple[str, str, str] | None) -> Values:
-        """What a run uses: what it chose itself (`options.provider`, `options.model`) on top of
-        the settings. A provider without its key is `422 provider_unavailable`, before anything is
-        stored or paid; no model chosen means the provider's default for all three roles."""
+        """What a run uses: the provider and models it chose itself (`options.provider`) in place
+        of the settings', the settings' call bounds either way. A provider without its key is
+        `422 provider_unavailable`, before anything is stored or paid."""
         now = self.effective()
-        if provider is None:
+        if provider is None or models is None:
             return now
         why = self.check(provider) if provider in self.providers else "not a provider"
         if why:
             raise unprocessable(
                 "provider_unavailable", f"this service cannot use {provider}: {why}"
             )
-        if models is None:
-            if provider == now.provider:
-                models = now.models
-            else:
-                one = self.default_model(provider) if self.default_model else None
-                if one is None:
-                    raise unprocessable("provider_unavailable", f"{provider} has no default model")
-                models = (one, one, one)
         return replace(now, provider=provider, models=models)
 
     def providers_view(self) -> list[dict[str, Any]]:
-        """`GET /v1/info`'s `providers`: whether each provider can be used, and its default."""
-        out: list[dict[str, Any]] = []
-        for name in self.providers:
-            entry: dict[str, Any] = {"code": name, "configured": self.check(name) is None}
-            if self.default_model:
-                entry["default_model"] = self.default_model(name)
-            out.append(entry)
-        return out
+        """`GET /v1/info`'s `providers`: what a run may choose, its models, and whether the service
+        holds its key."""
+        return [
+            {
+                "code": name,
+                "configured": name in self.providers and self.check(name) is None,
+                "models": list(models),
+            }
+            for name, models in RUN_PROVIDERS.items()
+        ]
 
     def view(self) -> dict[str, Any]:
         """The contract's `Settings`."""
