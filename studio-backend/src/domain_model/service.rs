@@ -1930,6 +1930,11 @@ impl DomainModelService {
     /// moves now was written to the root after that: it is still moved, and
     /// said as a warning, because it names a writer that still takes its
     /// tenant from the caller.
+    ///
+    /// An object the organization already holds keeps the organization's
+    /// copy when that one is further on ([`super::rehome::root_copy_wins`]):
+    /// a sweep that stopped half way leaves the root's copies live, and the
+    /// next one must not put a build that has since ended back to running.
     pub async fn rehome_scope(
         &self,
         root_ctx: &SecurityContext,
@@ -1942,6 +1947,8 @@ impl DomainModelService {
         let root = self.model(root_ctx).await?;
         let mut found: Vec<(String, String, Value)> = Vec::new();
         let mut seen = std::collections::HashSet::new();
+        // What the organization already holds of them, by id.
+        let mut held: HashMap<String, Value> = HashMap::new();
         for e in root.entities() {
             let Some(id) = e.get("id").and_then(Value::as_str) else {
                 continue;
@@ -1957,6 +1964,14 @@ impl DomainModelService {
                 Ok(out) => out.rows.items,
                 Err(_) => continue,
             };
+            if rows.is_empty() {
+                continue;
+            }
+            // The organization's model may not have the type yet: then it
+            // holds none of them.
+            if let Ok(out) = self.query_bulk(org_ctx, &q).await {
+                held.extend(out.rows.items.into_iter().map(|r| (r.id, r.value)));
+            }
             for r in rows {
                 if seen.insert(r.id.clone()) {
                     found.push((r.id, r.entity, r.value));
@@ -1986,6 +2001,7 @@ impl DomainModelService {
         self.ensure_types(org_ctx).await?;
         let nodes: Vec<NodeUpsert> = found
             .iter()
+            .filter(|(id, _, value)| super::rehome::root_copy_wins(value, held.get(id)))
             .map(|(id, entity, value)| NodeUpsert {
                 type_id: root.type_id_of(entity),
                 node_key: id.clone(),
