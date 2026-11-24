@@ -85,10 +85,21 @@
       "POST /studio-product/v1/gear-explanations/{gear_id}/generations",
       "POST /studio-spec-mapping/v1/decisions",
       "POST /studio-components-catalog/v1/sync",
-      "PUT /studio-components-catalog/v1/sources"
+      "PUT /studio-components-catalog/v1/sources",
+      "POST /studio-components-catalog/v1/project-components/refresh"
     ]
   },
   "gears": [
+    {
+      "gear": "studio-components-catalog",
+      "types": [
+        "project-component",
+        "project-component-view"
+      ],
+      "routes": [
+        "POST /studio-components-catalog/v1/project-components/refresh"
+      ]
+    },
     {
       "gear": "studio-product",
       "types": [

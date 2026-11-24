@@ -145,6 +145,39 @@ describe('ProjectComponentsInventory', () => {
     expect(screen.queryByText('retry')).toBeNull();
   });
 
+  it('does not wait for the code: the rows show while its conformance is still read', async () => {
+    vi.spyOn(api, 'conformance').mockReturnValue(new Promise(() => undefined) as never);
+    draw();
+    await waitFor(() => expect(document.querySelector('[data-inventory-row]')).not.toBeNull());
+    expect(document.querySelector('[data-inventory-partial]')).toBeNull();
+  });
+
+  it('says which commit the services were computed by, and computes them again on ↻', async () => {
+    const ready = {
+      items: [],
+      total: 0,
+      repos: 1,
+      view: {
+        status: 'ready',
+        computed_at: new Date().toISOString(),
+        inputs: [{ source: 'org/repo', commit: 'a68726c6ae5dddccd8777dd1fa482d2ab3e857e3' }],
+      },
+    };
+    const components = vi.spyOn(api, 'projectComponents').mockResolvedValue(ready as never);
+    const refresh = vi.spyOn(api, 'refreshProjectComponents').mockResolvedValue({ run_id: 'r1', status: 'queued' });
+    draw();
+    const strip = await waitFor(() => {
+      const el = document.querySelector('[data-inventory-services-view]');
+      expect(el).not.toBeNull();
+      return el!;
+    });
+    expect(strip.textContent).toContain('a68726c');
+    fireEvent.click(strip.querySelector('[data-derived-view-refresh]')!);
+    await waitFor(() => expect(refresh).toHaveBeenCalledWith(expect.anything(), 'p1'));
+    // Read again once asked.
+    await waitFor(() => expect(components.mock.calls.length).toBeGreaterThanOrEqual(2));
+  });
+
   it('shows the plan read failure with Retry', async () => {
     vi.spyOn(api, 'projectPlan').mockRejectedValue(new Error('down'));
     draw();

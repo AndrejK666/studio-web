@@ -189,6 +189,8 @@ export const api = {
     };
   },
   projectComponents: (_token: string, projectId: string) => svc().projectComponents({ projectId }).fetch(FRESH),
+  refreshProjectComponents: (_token: string, projectId: string) =>
+    svc().refreshProjectComponents(projectId).fetch(undefined),
   componentRegistry: (_token: string, params: { state?: string; project_id?: string; q?: string } = {}) =>
     svc().componentRegistry(params).fetch(FRESH),
   registryEntry: (_token: string, name: string) => svc().registryEntry({ name }).fetch(FRESH),
@@ -256,14 +258,20 @@ export const api = {
     organizationId: string,
     strategy: StrategyId | null
   ) => svc().setOrganizationAssemblyStrategy(organizationId).fetch({ strategy }),
-  conformance: (_token: string, projectId: string, capabilities: string[], vocabulary: readonly Capability[]) => {
+  conformance: (
+    _token: string,
+    projectId: string,
+    capabilities: string[],
+    vocabulary: readonly Capability[],
+    refresh = false
+  ) => {
     const terms: Record<string, string[]> = {};
     const contracts: Record<string, string[]> = {};
     for (const cap of vocabulary) {
       if (cap.terms?.length) terms[cap.key] = cap.terms;
       if (cap.contracts?.length) contracts[cap.key] = cap.contracts;
     }
-    return svc().conformance().fetch({ project_id: projectId, capabilities, terms, contracts });
+    return svc().conformance().fetch({ project_id: projectId, capabilities, terms, contracts, refresh });
   },
   capabilities: (_token: string, workspaceId: string) => svc().capabilities({ workspaceId }).fetch(FRESH),
   connections: (_token: string, tenant: string) => svc().connections({ tenant }).fetch(FRESH),

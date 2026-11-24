@@ -42,6 +42,7 @@ pub mod port;
 mod pull_request_waits;
 mod rest;
 mod service;
+mod synced; // who is told that a repository's sync finished
 
 use std::collections::HashMap;
 use std::path::PathBuf;

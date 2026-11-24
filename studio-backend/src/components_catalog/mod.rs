@@ -21,6 +21,7 @@ pub(crate) use kit_gdl::{FILE as KIT_GDL_FILE, read as read_kit_gdl};
 mod memo;
 mod ownership;
 pub mod port;
+mod project_components; // a project's components, derived when its repositories sync
 mod project_gears;
 mod quality;
 pub(crate) mod reference;
@@ -54,6 +55,7 @@ pub(crate) mod values;
 pub(crate) fn declared_types() -> Vec<crate::domain_model::port::TypeNeed> {
     let mut out = crate::catalog_graph::needs_of("studio-components-catalog");
     out.push(registry_curation::request_need());
+    out.extend(project_components::VIEW.needs());
     out
 }
 
@@ -167,6 +169,14 @@ impl RestApiCapability for StudioComponentsCatalogGear {
         // The registry walk (ADR-0041): an organization's projects, read for
         // the components they declare. Resolved through the hub when it runs.
         service.set_hub(ctx.client_hub());
+        // A project's components beyond its gears, derived when one of its
+        // repositories is synced and kept (`crate::derived_view`): the
+        // Components tab reads them instead of the provider.
+        crate::tasks::sdk::register(Arc::new(crate::derived_view::DeriveTask::new(
+            Arc::new(project_components::ProjectComponents::new(ctx.client_hub())),
+            ctx.client_hub(),
+        )))?;
+        crate::derived_view::RecomputeOnSync::register(ctx.client_hub(), &project_components::VIEW);
         let config: CatalogConfig = ctx.config_or_default()?;
         crate::data_places::note(
             "studio-components-catalog",

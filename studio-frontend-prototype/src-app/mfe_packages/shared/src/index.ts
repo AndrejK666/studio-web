@@ -258,6 +258,16 @@ export {
   usePollWhileVisible,
   type PollWhileVisibleOptions,
 } from './polling/pollWhileVisible';
+export {
+  DerivedViewStrip,
+  agoText,
+  isComputing,
+  useDerivedViewPoll,
+  viewCommits,
+  type DerivedViewInput,
+  type DerivedViewLabels,
+  type DerivedViewState,
+} from './derived/derivedView';
 
 // The Studio domain model at run time (ADR-0066): the shell's model tabs and
 // the generic screens that list a type's objects.

@@ -53,6 +53,7 @@ import type {
   TaskRun,
   UnreadableSource,
 } from './types';
+import type { DerivedViewState } from '@constructor-studio/mfe-shared';
 import type { ProjectComponent } from '../model/project-checks';
 import type { GlossaryEntry, SpecModel } from '../model/spec-model';
 import type { GearCatalogue } from '../model/product-configurator';
@@ -440,10 +441,25 @@ export class ProductApiService extends BaseApiService {
     );
   }
 
+  /** Kept since the project's repositories were last synced; `view` says from which commits and when. */
   readonly projectComponents = this.protocol(RestEndpointProtocol).queryWith<
-    { items: ProjectComponent[]; total: number; repos: number; unreadable?: { sources: UnreadableSource[] } },
+    {
+      items: ProjectComponent[];
+      total: number;
+      repos: number;
+      unreadable?: { sources: UnreadableSource[] };
+      view?: DerivedViewState | null;
+    },
     { projectId: string }
   >(({ projectId }) => orgScoped(`/studio-components-catalog/v1/project-components?${project(projectId)}`));
+
+  /** Compute the project's components again from what its syncs stored (202 with the run). */
+  refreshProjectComponents(projectId: string) {
+    return this.rest.mutation<{ run_id: string; status: string }, undefined>(
+      'POST',
+      orgScoped(`/studio-components-catalog/v1/project-components/refresh?${project(projectId)}`)
+    );
+  }
 
   readonly componentRegistry = this.protocol(RestEndpointProtocol).queryWith<
     { items: RegistryEntry[]; total: number },
@@ -474,7 +490,13 @@ export class ProductApiService extends BaseApiService {
   conformance() {
     return this.rest.mutation<
       Conformance,
-      { project_id: string; capabilities: string[]; terms: Record<string, string[]>; contracts: Record<string, string[]> }
+      {
+        project_id: string;
+        capabilities: string[];
+        terms: Record<string, string[]>;
+        contracts: Record<string, string[]>;
+        refresh?: boolean;
+      }
     >('POST', orgScoped('/studio-spec-mapping/v1/conformance'));
   }
 
