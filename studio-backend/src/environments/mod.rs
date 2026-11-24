@@ -58,6 +58,7 @@ mod records; // the gear's own tables (ADR-0062)
 mod research; // building and running on Constructor Research (ADR-0049 §3, §4)
 mod research_app; // a rendered chart as a Constructor Research application (ADR-0049 §4)
 mod research_envs; // one Research environment per Research project (#1053)
+pub(crate) mod research_images; // what Research says of each image of a build, now
 mod research_keys; // what a Research image is made of, so an unchanged one is reused
 mod research_progress; // how far a Research build and deploy are, counted (#1053)
 mod rest;

@@ -847,3 +847,99 @@ async fn a_service_start_longer_than_an_attempt_goes_on_in_the_next_and_says_whe
     assert_eq!(links.len(), 1);
     assert!(links[0].starts_with(&format!("{url}/_apps/")), "{links:?}");
 }
+
+#[tokio::test]
+async fn each_image_of_a_build_says_what_research_says_of_it_on_the_emulator() {
+    use crate::environments::research_images::{ImageStatus, image_state, image_states};
+    // As a Research build records an image (`research_app::image_reference`).
+    let image_reference =
+        |bake: &str, name: &str, id: &str| format!("research-image/{bake}/{name}:{id}");
+
+    let (url, emu) = spawn_for_tests(instant()).await;
+    let api = signed_in(&url).await;
+    let p = api.projects().await.unwrap()[0].id.clone();
+
+    let work = tree("FROM rust:1.97\nCMD [\"api\"]\n");
+    let built = api
+        .build_in_desk(&p, &work, "research-i1", &api_image(), FAST, &quiet, &never)
+        .await
+        .unwrap();
+    let _ = std::fs::remove_dir_all(&work);
+    let work = tree("FROM rust:1.97\n# research-emulator: fail\nRUN cargo build\n");
+    let _ = api
+        .build_in_desk(&p, &work, "research-i2", &api_image(), FAST, &quiet, &never)
+        .await;
+    let _ = std::fs::remove_dir_all(&work);
+    let (failed, building) = {
+        let mut st = emu.state_for_tests();
+        let failed = st
+            .images
+            .values()
+            .find(|i| i.fails.is_some())
+            .map(|i| i.id.clone())
+            .expect("the failed image");
+        // One still building: started an hour from now.
+        let mut b = st.images[&built[0].id].clone();
+        b.id = "img-building".into();
+        b.started_ms = u64::MAX / 2;
+        st.images.insert(b.id.clone(), b);
+        (failed, "img-building".to_owned())
+    };
+
+    let images = vec![
+        (
+            "api".to_owned(),
+            image_reference("b1", "gbx-api", &built[0].id),
+        ),
+        ("ui".to_owned(), image_reference("b2", "gbx-ui", &failed)),
+        (
+            "worker".to_owned(),
+            image_reference("b3", "gbx-worker", &building),
+        ),
+        (
+            "gone".to_owned(),
+            image_reference("b4", "gbx-gone", "img-removed"),
+        ),
+        ("db".to_owned(), "ghcr.io/acme/db:1".to_owned()),
+    ];
+    let states = image_states(&api, &images).await;
+    let status: Vec<(&str, ImageStatus)> =
+        states.iter().map(|s| (s.app.as_str(), s.status)).collect();
+    assert_eq!(
+        status,
+        [
+            ("api", ImageStatus::Built),
+            ("ui", ImageStatus::Failed),
+            ("worker", ImageStatus::Building),
+            ("gone", ImageStatus::Missing),
+            ("db", ImageStatus::Missing),
+        ]
+    );
+    let why = states[1].message.as_deref().unwrap_or_default();
+    assert!(
+        why.contains("research-emulator: fail") || why.contains("Error"),
+        "{why}"
+    );
+    assert_eq!(states[0].research_id.as_deref(), Some(built[0].id.as_str()));
+    assert_eq!(states[0].message, None);
+
+    // Research out of reach: unknown, with why -- never "missing".
+    let away = ResearchApi::new(
+        reqwest::Client::new(),
+        "http://127.0.0.1:9/api/platform-account/v1",
+        "rk-x".into(),
+    )
+    .with_net_retry(NetRetry {
+        tries: 0,
+        first: Duration::ZERO,
+    });
+    let s = image_state(&away, "api", &images[0].1).await;
+    assert_eq!(s.status, ImageStatus::Unknown);
+    assert!(
+        s.message
+            .as_deref()
+            .unwrap_or_default()
+            .contains(NOT_REACHED),
+        "{s:?}"
+    );
+}

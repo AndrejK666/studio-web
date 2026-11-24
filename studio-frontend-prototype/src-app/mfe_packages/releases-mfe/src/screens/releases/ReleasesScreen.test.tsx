@@ -200,6 +200,7 @@ function setUp({
     startBuild: write('startBuild', { build_id: 'research-7', run_id: 'r7', namespace: 'shop' }),
     deployBuiltImages: write('deployBuiltImages', deployment({ id: 'd8', state: 'queued', environment_id: 'e-research' })),
     buildImages: read('buildImages', { items: [], total: 0 }),
+    researchBuildImages: read('researchBuildImages', { items: [], total: 0 }),
     deploymentStatus: read('deploymentStatus', { deployment: deployment({}), workloads: [], hosts: [] }),
     taskRun: read('taskRun', { id: 'r', state: 'running' }),
   });
@@ -344,6 +345,15 @@ describe('ReleasesScreen', () => {
           }),
         ],
       });
+      // What Research says of each image now, not what the build's record says.
+      service.researchBuildImages = read('researchBuildImages', {
+        items: [
+          { app: 'api-gateway', image: 'research-image/studioweb/api-gateway:i1', status: 'built' },
+          { app: 'ui', image: 'research-image/studioweb/ui:i2', status: 'failed', message: 'npm ci failed' },
+          { app: 'studio-database-postgres', image: 'research-image/studioweb/postgres:i3', status: 'built' },
+        ],
+        total: 3,
+      });
       render(<ReleasesScreen bridge={null} />);
       // The passed Research build is the images' build: three, in Research.
       const images = await openStage('images');
@@ -356,11 +366,15 @@ describe('ReleasesScreen', () => {
         'research',
         'research',
       ]);
-      expect([...images.querySelectorAll('[data-image-status]')].map((e) => e.getAttribute('data-image-status'))).toEqual([
-        'ready',
-        'ready',
-        'ready',
-      ]);
+      await waitFor(() =>
+        expect([...images.querySelectorAll('[data-image-status]')].map((e) => e.getAttribute('data-image-status'))).toEqual([
+          'ready',
+          'ready',
+          'failed',
+        ])
+      );
+      expect(images.querySelector('[data-image-status="failed"]')?.getAttribute('title')).toBe('npm ci failed');
+      expect(calls.find((c) => c.name === 'researchBuildImages')?.args[0]).toMatchObject({ buildId: 'research-1' });
       // The search narrows the rows.
       fireEvent.change(screen.getByPlaceholderText('search_images'), { target: { value: 'postgres' } });
       await waitFor(() => expect(images.querySelectorAll('[data-build-image]').length).toBe(1));

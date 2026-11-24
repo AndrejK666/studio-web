@@ -9,7 +9,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Badge, Button, type DataGridTableColumn } from '@gears-frontx/ui-kit';
 import { GridClearFilters, GridEmpty, ListGrid, NoData, createGridCells, useLocalGridLoad } from '@constructor-studio/mfe-shared/grid';
-import type { ProjectImage } from '../../api/types';
+import type { ProjectImage, ResearchBuildImage } from '../../api/types';
 import type { IdeBuild } from '../../model/builds';
 import { imageRows, type ImageRow, type ImageStatus } from '../../model/image-rows';
 import { TargetIcon } from './Targets';
@@ -81,7 +81,11 @@ const BuiltCell: React.FC<{ item: ImageRow }> = ({ item }) => {
 const StatusCell: React.FC<{ item: ImageRow }> = ({ item }) => {
   const { t } = useImageCells();
   return (
-    <Badge variant={STATUS_BADGE[item.status]} title={t(`image_status_${item.status}_title`)} data-image-status={item.status}>
+    <Badge
+      variant={STATUS_BADGE[item.status]}
+      title={item.message ?? t(`image_status_${item.status}_title`)}
+      data-image-status={item.status}
+    >
       {t(`image_status_${item.status}`)}
     </Badge>
   );
@@ -130,7 +134,25 @@ export function ImagesGrid({ build }: { build: IdeBuild }) {
       live = false;
     };
   }, [api, projectId, build.buildId, build.where]);
-  const rows = useMemo(() => imageRows(build, build.where === 'research' ? [] : records), [build, records]);
+  // A Research build's images: what Research says of each, now.
+  const [research, setResearch] = useState<ResearchBuildImage[] | null | undefined>(undefined);
+  useEffect(() => {
+    setResearch(undefined);
+    if (build.where !== 'research') return;
+    let live = true;
+    api
+      .researchBuildImages({ projectId, buildId: build.buildId })
+      .fetch({ staleTime: 0 })
+      .then((page) => live && setResearch(page.items))
+      .catch(() => live && setResearch(null));
+    return () => {
+      live = false;
+    };
+  }, [api, projectId, build.buildId, build.where]);
+  const rows = useMemo(
+    () => (build.where === 'research' ? imageRows(build, [], research) : imageRows(build, records)),
+    [build, records, research]
+  );
   const { load, reloadBridge } = useLocalGridLoad(rows, IMAGE_OPTIONS);
   const columns = useMemo<DataGridTableColumn<ImageRow>[]>(
     () => [

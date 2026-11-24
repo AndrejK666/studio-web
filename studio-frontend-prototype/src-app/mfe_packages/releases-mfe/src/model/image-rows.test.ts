@@ -78,6 +78,24 @@ describe("a build's image rows", () => {
     expect(imageRows(build({ images, status: "failed", where: "studio" }), [])[0].status).toBe("failed");
   });
 
+  it("of a Research build say what Research says of each, and not confirmed only when it could not be asked", () => {
+    const said = [
+      { app: "api-gateway", image: images[0].image, status: "failed" as const, message: "STEP 3/7: cargo build failed" },
+      { app: "studio-database-postgres", image: images[1].image, status: "built" as const },
+    ];
+    const rows = imageRows(build({ images, status: "failed" }), [], said);
+    expect(rows.map((r) => [r.app, r.status, r.message])).toEqual([
+      ["api-gateway", "failed", "STEP 3/7: cargo build failed"],
+      ["studio-database-postgres", "ready", null],
+    ]);
+    expect(imageRows(build({ images }), [], [{ app: "api-gateway", image: images[0].image, status: "missing" }])[0].status).toBe("gone");
+    expect(imageRows(build({ images }), [], [{ app: "api-gateway", image: images[0].image, status: "unknown", message: "sign in" }])[0]).toMatchObject({
+      status: "unconfirmed",
+      message: "sign in",
+    });
+    expect(imageRows(build({ images }), [], null).map((r) => r.status)).toEqual(["unconfirmed", "unconfirmed"]);
+  });
+
   it("take when and whether from the registry's record where there is one", () => {
     const record = {
       id: "i1",

@@ -10,7 +10,7 @@
  *
  * Pure, so it is tested without a backend. */
 
-import type { ProjectImage } from "../api/types";
+import type { ProjectImage, ResearchBuildImage } from "../api/types";
 import type { IdeBuild } from "./builds";
 import { recordFor, shortDigest } from "./images";
 
@@ -37,7 +37,19 @@ export interface ImageRow {
   host: string | null;
   builtAt: string | null;
   status: ImageStatus;
+  /** Research's words beside the status: why it failed, or why it could not be asked. */
+  message: string | null;
 }
+
+/** What Research says of an image, as a row's status: `unconfirmed` only
+ *  when Research could not be asked. */
+const FROM_RESEARCH: Record<ResearchBuildImage["status"], ImageStatus> = {
+  built: "ready",
+  building: "building",
+  failed: "failed",
+  missing: "gone",
+  unknown: "unconfirmed",
+};
 
 const RESEARCH_PREFIX = "research-image/";
 
@@ -72,13 +84,24 @@ export function shortVersion(version: string): string {
   return version.length > 16 ? `${version.slice(0, 12)}…` : version;
 }
 
-/** One build's images as rows. */
-export function imageRows(build: IdeBuild, records: readonly ProjectImage[]): ImageRow[] {
+/** One build's images as rows. A Research build's status is what Research
+ *  says (`research`, `GET /builds/{id}/images`): `null` when it could not be
+ *  read, which leaves every image unconfirmed; absent while it is being read,
+ *  which says what the build's record says. */
+export function imageRows(
+  build: IdeBuild,
+  records: readonly ProjectImage[],
+  research?: readonly ResearchBuildImage[] | null
+): ImageRow[] {
   return build.images.map(({ app, image }) => {
     const ref = parseImageRef(image);
     const record = recordFor({ app, image }, records, build.buildId);
-    const status: ImageStatus =
-      record && (record.state === "deleted" || record.state === "missing")
+    const said = research === undefined ? undefined : research?.find((r) => r.app === app && r.image === image) ?? null;
+    const status: ImageStatus = said !== undefined
+      ? said
+        ? FROM_RESEARCH[said.status]
+        : "unconfirmed"
+      : record && (record.state === "deleted" || record.state === "missing")
         ? "gone"
         : build.status === "passed"
           ? "ready"
@@ -99,6 +122,7 @@ export function imageRows(build: IdeBuild, records: readonly ProjectImage[]): Im
       host: ref.host ?? record?.registry_host ?? null,
       builtAt: record?.pushed_at ?? (build.status === "passed" ? build.finishedAt : null),
       status,
+      message: said?.message ?? null,
     };
   });
 }

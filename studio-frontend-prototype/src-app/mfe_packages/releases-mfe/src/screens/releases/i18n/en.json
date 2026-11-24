@@ -420,7 +420,7 @@
   "image_status_ready_title": "Built, and still in its registry.",
   "image_status_building_title": "The build is still making it.",
   "image_status_failed_title": "The build failed before it made this image.",
-  "image_status_unconfirmed_title": "The build failed after it asked Research for this image: a deploy checks whether Research built it.",
+  "image_status_unconfirmed_title": "Constructor Research could not be asked whether it has this image: sign in to Research, or try again in a moment.",
   "image_status_gone_title": "Its registry no longer has it.",
   "images_fits_count_one": "Can go to {count} environment",
   "images_fits_count_many": "Can go to {count} environments",
