@@ -3,6 +3,7 @@
 //! start-up sweep, and before every gear's own move, so a gear finds its
 //! records — and its move markers — where it now looks.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -11,6 +12,7 @@ use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
 use super::service::DomainModelService;
+use super::store::EdgeView;
 
 pub struct Rehome(pub Arc<DomainModelService>);
 
@@ -80,6 +82,33 @@ pub(super) fn root_copy_wins(root: &Value, held: Option<&Value>) -> bool {
     }
 }
 
+/// The relations a rehome step copies: of the root's edges at the step's
+/// objects (`incident`), those with an end in the step and both ends among
+/// what the organization holds by now (`present`: the earlier steps, this
+/// one, and what earlier sweeps moved), each once. An edge to an object a
+/// later step moves waits for that step, where it is incident again; one to
+/// an object outside the scope is never copied.
+pub(super) fn edges_to_copy(
+    incident: Vec<EdgeView>,
+    step: &HashSet<&str>,
+    present: &HashSet<String>,
+) -> Vec<EdgeView> {
+    let mut seen = HashSet::new();
+    incident
+        .into_iter()
+        .filter(|e| step.contains(e.from.as_str()) || step.contains(e.to.as_str()))
+        .filter(|e| present.contains(&e.from) && present.contains(&e.to))
+        .filter(|e| {
+            seen.insert((
+                e.type_id.clone(),
+                e.from.clone(),
+                e.to.clone(),
+                e.relation.clone(),
+            ))
+        })
+        .collect()
+}
+
 /// The types Studio's own screens need, added to every organization's stored
 /// model at start (a model on the seed has them already).
 pub struct StudioTypes(pub Arc<DomainModelService>);
@@ -104,7 +133,10 @@ impl crate::model_sweep::TenantMover for StudioTypes {
 
 #[cfg(test)]
 mod tests {
-    use super::root_copy_wins;
+    use std::collections::HashSet;
+
+    use super::super::store::EdgeView;
+    use super::{edges_to_copy, root_copy_wins};
     use serde_json::json;
 
     fn build(status: &str, started: &str, finished: Option<&str>) -> serde_json::Value {
@@ -168,5 +200,84 @@ mod tests {
             &json!({"name": "new"}),
             Some(&json!({"name": "old", "updated_at": "2026-11-24T10:00:00Z"}))
         ));
+    }
+
+    fn edge(from: &str, to: &str) -> EdgeView {
+        EdgeView {
+            type_id: "rel".into(),
+            from: from.into(),
+            to: to.into(),
+            relation: Some("delivers".into()),
+            key: None,
+        }
+    }
+
+    /// The edges of `edges` incident to `ids`, as the graph's walk answers.
+    fn incident(edges: &[EdgeView], ids: &[&str]) -> Vec<EdgeView> {
+        edges
+            .iter()
+            .filter(|e| ids.contains(&e.from.as_str()) || ids.contains(&e.to.as_str()))
+            .cloned()
+            .collect()
+    }
+
+    /// Runs the steps of one sweep over `steps`, with `held` already in the
+    /// organization; answers the edges copied, in order.
+    fn sweep(edges: &[EdgeView], steps: &[&[&str]], held: &[&str]) -> Vec<(String, String)> {
+        let mut present: HashSet<String> = held.iter().map(|s| s.to_string()).collect();
+        let mut copied = Vec::new();
+        for step in steps {
+            present.extend(step.iter().map(|s| s.to_string()));
+            let in_step: HashSet<&str> = step.iter().copied().collect();
+            for e in edges_to_copy(incident(edges, step), &in_step, &present) {
+                copied.push((e.from, e.to));
+            }
+        }
+        copied
+    }
+
+    #[test]
+    fn a_relation_inside_one_step_is_copied_once() {
+        let edges = [edge("a", "b")];
+        // The walk can answer an edge once per seed it touches.
+        let twice = vec![edge("a", "b"), edge("a", "b")];
+        let step: HashSet<&str> = ["a", "b"].into_iter().collect();
+        let present: HashSet<String> = ["a", "b"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(edges_to_copy(twice, &step, &present).len(), 1);
+        assert_eq!(
+            sweep(&edges, &[&["a", "b"]], &[]),
+            vec![("a".into(), "b".into())]
+        );
+    }
+
+    #[test]
+    fn a_relation_across_steps_waits_for_its_second_end() {
+        let edges = [edge("a", "b"), edge("c", "a")];
+        let copied = sweep(&edges, &[&["a"], &["b"], &["c"]], &[]);
+        assert_eq!(
+            copied,
+            vec![("a".into(), "b".into()), ("c".into(), "a".into())],
+            "each relation once, in the step that moves its second end"
+        );
+    }
+
+    #[test]
+    fn a_relation_to_what_an_interrupted_sweep_moved_is_copied() {
+        // `a` moved and was marked deleted before the last sweep stopped;
+        // `b` is what is left, and its relation to `a` still comes along.
+        let edges = [edge("b", "a")];
+        assert_eq!(
+            sweep(&edges, &[&["b"]], &["a"]),
+            vec![("b".into(), "a".into())]
+        );
+    }
+
+    #[test]
+    fn a_relation_out_of_the_scope_stays_behind() {
+        let edges = [edge("a", "elsewhere"), edge("a", "b")];
+        assert_eq!(
+            sweep(&edges, &[&["a", "b"]], &[]),
+            vec![("a".into(), "b".into())]
+        );
     }
 }

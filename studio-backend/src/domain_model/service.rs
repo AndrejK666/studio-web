@@ -218,6 +218,28 @@ const EDIT_ATTEMPTS: usize = 4;
 /// gear's per-batch ceilings, and small enough that a failure re-runs cheaply.
 const MIGRATE_BATCH: usize = 100;
 
+/// Objects the rehome moves per step: written to the organization, given
+/// their relations and marked deleted in the root before the next step, so
+/// a sweep cut short keeps what it did. Small enough that a step is a few
+/// dozen graph writes (its copies in [`EMBEDDED_BATCH`]es, its relations and
+/// root marks in [`MIGRATE_BATCH`]es), large enough that 19k objects take
+/// about a hundred steps.
+const REHOME_STEP: usize = 200;
+
+/// Times one rehome write is tried before the sweep gives up on the tenant.
+const REHOME_WRITE_ATTEMPTS: usize = 3;
+
+/// One graph write of the rehome.
+#[derive(Clone, Copy)]
+enum RehomeWrite<'a> {
+    /// The organization's copies, embedded.
+    Nodes(&'a [NodeUpsert]),
+    /// The root's copies marked deleted: nothing embedded changes.
+    KeepingVectors(&'a [NodeUpsert]),
+    /// The relations between the organization's copies.
+    Edges(&'a [EdgeUpsert]),
+}
+
 /// What a revert did.
 #[derive(Debug, Clone)]
 pub struct RevertReport {
@@ -1922,7 +1944,15 @@ impl DomainModelService {
     /// records — went to the root's, where nobody in the organization sees
     /// them. Idempotent: what moved is marked deleted in the root, and no
     /// read (this one included) sees a deleted object, so a second sweep
-    /// finds nothing; one that stopped half way copies the same values again.
+    /// finds nothing.
+    ///
+    /// The move goes in steps of [`REHOME_STEP`] objects, each written to
+    /// the organization, given its relations and marked deleted in the root
+    /// before the next begins: a scope of 19k objects stopped at a
+    /// graph-storage deadline half way (stand, 2026-11-24) with every
+    /// organization copy written and no root copy marked, and did the same
+    /// on every start. A sweep that stops now leaves the steps before it
+    /// done, and the next one moves only what is left.
     ///
     /// A one-time migration since every writer of a project's records acts
     /// in its organization (build records through `OrgBuilds`, artifact
@@ -1949,6 +1979,8 @@ impl DomainModelService {
         let mut seen = std::collections::HashSet::new();
         // What the organization already holds of them, by id.
         let mut held: HashMap<String, Value> = HashMap::new();
+        // The types the organization was asked about.
+        let mut asked: std::collections::HashSet<String> = std::collections::HashSet::new();
         for e in root.entities() {
             let Some(id) = e.get("id").and_then(Value::as_str) else {
                 continue;
@@ -1972,6 +2004,7 @@ impl DomainModelService {
             if let Ok(out) = self.query_bulk(org_ctx, &q).await {
                 held.extend(out.rows.items.into_iter().map(|r| (r.id, r.value)));
             }
+            asked.insert(id.to_owned());
             for r in rows {
                 if seen.insert(r.id.clone()) {
                     found.push((r.id, r.entity, r.value));
@@ -1999,7 +2032,104 @@ impl DomainModelService {
         })
         .await?;
         self.ensure_types(org_ctx).await?;
-        let nodes: Vec<NodeUpsert> = found
+        // What of the scope the organization holds, so a relation reaches an
+        // object an earlier, interrupted sweep moved: of the types asked
+        // about above, and of every other type (one whose root copies all
+        // moved before is no longer found in the root).
+        let mut present: std::collections::HashSet<String> = held.keys().cloned().collect();
+        let org = self.model(org_ctx).await?;
+        for e in org.entities() {
+            let Some(id) = e.get("id").and_then(Value::as_str) else {
+                continue;
+            };
+            if asked.contains(id)
+                || e.get("abstract").and_then(Value::as_bool) == Some(true)
+                || e.get("bucket").and_then(Value::as_str) == Some("system-primitives")
+            {
+                continue;
+            }
+            let q = super::query::Query::from_json(json!({"type": id, "project_id": scope}))
+                .map_err(|e| anyhow::anyhow!(e))?;
+            if let Ok(out) = self.query_bulk(org_ctx, &q).await {
+                present.extend(out.rows.items.into_iter().map(|r| r.id));
+            }
+        }
+
+        let total = found.len();
+        let mut done = 0usize;
+        let mut written = 0usize;
+        let mut relations = 0usize;
+        let mut moved_ids: Vec<String> = Vec::with_capacity(total);
+        for step in found.chunks(REHOME_STEP) {
+            match self
+                .rehome_step(root_ctx, org_ctx, &root, step, &held, &mut present)
+                .await
+            {
+                Ok((nodes, edges)) => {
+                    written += nodes;
+                    relations += edges;
+                }
+                Err(e) => {
+                    // The steps before this one are whole: the organization
+                    // hears of them, and the next sweep moves the rest.
+                    if !moved_ids.is_empty() {
+                        self.notify
+                            .objects_changed(org_ctx, "*", &moved_ids, "rehome");
+                    }
+                    warn!(
+                        scope,
+                        moved = done,
+                        of = total,
+                        org = %org_ctx.subject_tenant_id(),
+                        error = %e,
+                        "studio-domain-model: rehome stopped; what moved stays moved, the next sweep moves the rest"
+                    );
+                    return Err(e);
+                }
+            }
+            moved_ids.extend(step.iter().map(|(id, ..)| id.clone()));
+            done += step.len();
+            info!(
+                scope,
+                moved = done,
+                of = total,
+                org = %org_ctx.subject_tenant_id(),
+                "studio-domain-model: rehome moved {done} of {total} objects"
+            );
+        }
+        let kinds = entities.join(",");
+        warn!(
+            scope,
+            objects = written,
+            relations,
+            types = %kinds,
+            org = %org_ctx.subject_tenant_id(),
+            "studio-domain-model: objects moved from the root's model into their organization's -- \
+             a project's records belong in its organization, so something wrote these to the root: \
+             a writer still taking its tenant from the caller (a platform administrator's home is \
+             the root), or writes from before the fix of 2026-11-24 on the first start after it"
+        );
+        // One event: it carries the count, not the ids.
+        self.notify
+            .objects_changed(org_ctx, "*", &moved_ids, "rehome");
+        Ok(written)
+    }
+
+    /// One step of [`Self::rehome_scope`]: the organization's copies of
+    /// `step` (where the root's wins), the relations of `step` whose both
+    /// ends the organization now holds, then the root's copies marked
+    /// deleted -- last, so a step that fails leaves its objects live in the
+    /// root for the next sweep. Answers the copies and relations written.
+    async fn rehome_step(
+        &self,
+        root_ctx: &SecurityContext,
+        org_ctx: &SecurityContext,
+        root: &Ontology,
+        step: &[(String, String, Value)],
+        held: &HashMap<String, Value>,
+        present: &mut std::collections::HashSet<String>,
+    ) -> anyhow::Result<(usize, usize)> {
+        let nodes: Vec<NodeUpsert> = step
             .iter()
             .filter(|(id, _, value)| super::rehome::root_copy_wins(value, held.get(id)))
             .map(|(id, entity, value)| NodeUpsert {
@@ -2015,61 +2145,86 @@ impl DomainModelService {
             })
             .collect();
         for chunk in nodes.chunks(EMBEDDED_BATCH) {
-            self.store.upsert_nodes(org_ctx, chunk).await?;
+            self.rehome_write(org_ctx, RehomeWrite::Nodes(chunk))
+                .await?;
         }
-        let ids: Vec<String> = found.iter().map(|(id, ..)| id.clone()).collect();
-        let moved: std::collections::HashSet<&str> = ids.iter().map(String::as_str).collect();
-        let edges: Vec<EdgeUpsert> = self
-            .store
-            .read_edges(root_ctx, &ids)
-            .await?
-            .into_iter()
-            .filter(|e| moved.contains(e.from.as_str()) && moved.contains(e.to.as_str()))
-            .map(|e| EdgeUpsert {
-                type_id: e.type_id,
-                from: e.from,
-                to: e.to,
-                payload: e.relation.as_ref().map(|r| json!({"name": r})),
-                discriminator: e.relation,
-            })
-            .collect();
-        for chunk in edges.chunks(TRUSTED_BATCH) {
-            self.store.upsert_edges(org_ctx, chunk).await?;
+        present.extend(step.iter().map(|(id, ..)| id.clone()));
+
+        let ids: Vec<String> = step.iter().map(|(id, ..)| id.clone()).collect();
+        let in_step: std::collections::HashSet<&str> = ids.iter().map(String::as_str).collect();
+        let edges: Vec<EdgeUpsert> = super::rehome::edges_to_copy(
+            self.store.read_edges(root_ctx, &ids).await?,
+            &in_step,
+            present,
+        )
+        .into_iter()
+        .map(|e| EdgeUpsert {
+            type_id: e.type_id,
+            from: e.from,
+            to: e.to,
+            payload: e.relation.as_ref().map(|r| json!({"name": r})),
+            discriminator: e.relation,
+        })
+        .collect();
+        for chunk in edges.chunks(MIGRATE_BATCH) {
+            self.rehome_write(org_ctx, RehomeWrite::Edges(chunk))
+                .await?;
         }
-        let gone: Vec<NodeUpsert> = found
-            .into_iter()
-            .map(|(id, entity, mut value)| {
+
+        let gone: Vec<NodeUpsert> = step
+            .iter()
+            .map(|(id, entity, value)| {
+                let mut value = value.clone();
                 if let Some(m) = value.as_object_mut() {
                     m.insert(super::store::DELETED_FIELD.to_string(), Value::Bool(true));
                 }
                 NodeUpsert {
-                    type_id: root.type_id_of(&entity),
-                    node_key: id,
+                    type_id: root.type_id_of(entity),
+                    node_key: id.clone(),
                     name: None,
                     payload: value,
                     expected_version: None,
                 }
             })
             .collect();
-        for chunk in gone.chunks(TRUSTED_BATCH) {
-            self.store
-                .upsert_nodes_keeping_vectors(root_ctx, chunk)
+        for chunk in gone.chunks(MIGRATE_BATCH) {
+            self.rehome_write(root_ctx, RehomeWrite::KeepingVectors(chunk))
                 .await?;
         }
-        let kinds = entities.join(",");
-        warn!(
-            scope,
-            objects = nodes.len(),
-            relations = edges.len(),
-            types = %kinds,
-            org = %org_ctx.subject_tenant_id(),
-            "studio-domain-model: objects moved from the root's model into their organization's -- \
-             a project's records belong in its organization, so something wrote these to the root: \
-             a writer still taking its tenant from the caller (a platform administrator's home is \
-             the root), or writes from before the fix of 2026-11-24 on the first start after it"
-        );
-        self.notify.objects_changed(org_ctx, "*", &ids, "rehome");
-        Ok(nodes.len())
+        Ok((nodes.len(), edges.len()))
+    }
+
+    /// One graph write of the rehome, tried again after a failure that may
+    /// have been only slow (a deadline, an outage): every write here is an
+    /// upsert of a fixed value, so a second one stores the same. A refusal
+    /// stored nothing and would be refused again.
+    async fn rehome_write(
+        &self,
+        ctx: &SecurityContext,
+        write: RehomeWrite<'_>,
+    ) -> anyhow::Result<()> {
+        let mut attempt = 1;
+        loop {
+            let result = match write {
+                RehomeWrite::Nodes(n) => self.store.upsert_nodes(ctx, n).await,
+                RehomeWrite::KeepingVectors(n) => {
+                    self.store.upsert_nodes_keeping_vectors(ctx, n).await
+                }
+                RehomeWrite::Edges(e) => self.store.upsert_edges(ctx, e).await,
+            };
+            match result {
+                Ok(_) => return Ok(()),
+                Err(e) if attempt < REHOME_WRITE_ATTEMPTS && !super::store::wrote_nothing(&e) => {
+                    warn!(
+                        attempt,
+                        error = %e,
+                        "studio-domain-model: a rehome write failed, trying it again"
+                    );
+                    attempt += 1;
+                }
+                Err(e) => return Err(e),
+            }
+        }
     }
 
     /// For a gear's batch write: the values its objects already hold in the
