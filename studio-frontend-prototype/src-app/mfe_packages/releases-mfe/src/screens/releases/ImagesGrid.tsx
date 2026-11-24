@@ -135,20 +135,22 @@ export function ImagesGrid({ build }: { build: IdeBuild }) {
     };
   }, [api, projectId, build.buildId, build.where]);
   // A Research build's images: what Research says of each, now.
-  const [research, setResearch] = useState<ResearchBuildImage[] | null | undefined>(undefined);
+  // Kept with the build it was read for: another build shows nothing until its own answer.
+  const researchKey = `${projectId}:${build.buildId}`;
+  const [researchRead, setResearchRead] = useState<{ key: string; items: ResearchBuildImage[] | null } | null>(null);
   useEffect(() => {
-    setResearch(undefined);
     if (build.where !== 'research') return;
     let live = true;
     api
       .researchBuildImages({ projectId, buildId: build.buildId })
       .fetch({ staleTime: 0 })
-      .then((page) => live && setResearch(page.items))
-      .catch(() => live && setResearch(null));
+      .then((page) => live && setResearchRead({ key: researchKey, items: page.items }))
+      .catch(() => live && setResearchRead({ key: researchKey, items: null }));
     return () => {
       live = false;
     };
-  }, [api, projectId, build.buildId, build.where]);
+  }, [api, projectId, build.buildId, build.where, researchKey]);
+  const research = researchRead?.key === researchKey ? researchRead.items : undefined;
   const rows = useMemo(
     () => (build.where === 'research' ? imageRows(build, [], research) : imageRows(build, records)),
     [build, records, research]
