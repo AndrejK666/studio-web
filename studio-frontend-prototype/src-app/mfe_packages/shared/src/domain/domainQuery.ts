@@ -243,11 +243,19 @@ export function attributesWrite({
   return { op: 'upsert', type, key: SELF_KEY, project_id: tenantId, value };
 }
 
-/** A stored value as text, for reading. */
-export function shownValue(v: unknown, yes = 'yes', no = 'no'): string {
+/** An RFC 3339 instant as the server stores one (`2026-11-19T07:08:10.16Z`). */
+const INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?$/;
+
+/** A stored value as text, for reading: an instant in the reader's own
+ *  date and time, not the wire format. */
+export function shownValue(v: unknown, yes = 'yes', no = 'no', locale?: string): string {
   if (v === null || v === undefined || v === '') return '—';
-  if (Array.isArray(v)) return v.map((x) => shownValue(x, yes, no)).join(', ');
+  if (Array.isArray(v)) return v.map((x) => shownValue(x, yes, no, locale)).join(', ');
   if (typeof v === 'boolean') return v ? yes : no;
   if (typeof v === 'object') return JSON.stringify(v);
+  if (typeof v === 'string' && INSTANT.test(v)) {
+    const at = new Date(v);
+    if (!Number.isNaN(at.getTime())) return at.toLocaleString(locale, { dateStyle: 'medium', timeStyle: 'short' });
+  }
   return String(v);
 }

@@ -100,6 +100,16 @@ describe('one object’s card', () => {
     expect(shownValue(true, 'да', 'нет')).toBe('да');
     expect(shownValue({ a: 1 })).toBe('{"a":1}');
   });
+
+  it('shows a stored instant as a date and time, and leaves other text alone', () => {
+    const at = '2026-11-19T07:08:10.166236682Z';
+    expect(shownValue(at, 'yes', 'no', 'en-GB')).toBe(
+      new Date(at).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })
+    );
+    expect(shownValue(at, 'yes', 'no', 'en-GB')).not.toContain('T07');
+    expect(shownValue('2026-11-19')).toBe('2026-11-19');
+    expect(shownValue('not-a-dateT')).toBe('not-a-dateT');
+  });
 });
 
 describe('the Attributes card', () => {

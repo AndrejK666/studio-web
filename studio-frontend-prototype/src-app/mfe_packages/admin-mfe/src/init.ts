@@ -5,11 +5,13 @@
  */
 
 import { createFrontX, apiRegistry, i18n, queryCacheShared } from '@gears-frontx/react';
-import { AccountsApiService, DomainModelApiService, authShared } from '@constructor-studio/mfe-shared';
+import { AccountsApiService, DomainModelApiService, PeopleApiService, authShared } from '@constructor-studio/mfe-shared';
 import { AdminApiService } from './api/AdminApiService';
 
 apiRegistry.register(AdminApiService);
 apiRegistry.register(AccountsApiService);
+// The organization's people: an Attributes field holding a person's id shows their name.
+apiRegistry.register(PeopleApiService);
 // The generic screens of the three levels: a type's objects and a tenant's attributes (ADR-0066).
 apiRegistry.register(DomainModelApiService);
 apiRegistry.initialize();

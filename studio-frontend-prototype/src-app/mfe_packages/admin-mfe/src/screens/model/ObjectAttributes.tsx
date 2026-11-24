@@ -17,10 +17,12 @@ import { Badge, Button, Card, CardContent, Input, NativeSelect, NativeSelectOpti
 import {
   AccountsApiService,
   DomainModelApiService,
+  PeopleApiService,
   attributesWrite,
   domainChanged,
   inputValue,
   openScreen,
+  orgPeople,
   readableFields,
   responseStatus,
   selfQuery,
@@ -63,6 +65,23 @@ export function ObjectAttributes({
   const [showEmpty, setShowEmpty] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const [name, setName] = useState(tenant.name);
+  /** The organization's people by id: a field holding a person's id shows their name. */
+  const [people, setPeople] = useState<ReadonlyMap<string, string>>(new Map());
+  useEffect(() => {
+    let live = true;
+    const api = apiRegistry.getService(PeopleApiService);
+    orgPeople(
+      orgId,
+      (id) => api.orgMembers(id),
+      () => api.myColleagues()
+    ).then(
+      (members) => live && setPeople(new Map(members.map((m) => [m.id.toLowerCase(), m.name]))),
+      () => undefined
+    );
+    return () => {
+      live = false;
+    };
+  }, [orgId]);
 
   // A project's name is not in what the shell publishes: read the tenant.
   useEffect(() => {
@@ -209,12 +228,20 @@ export function ObjectAttributes({
         title={t('model_attributes_title')}
         info={<>
           <p>{t('model_attributes_about', { level: t(`model_level_${level}`) })}</p>
-          {scopeSettings && <Button size="sm" variant="outline" onClick={() => openScreen(bridge, scopeSettings)}>
-            {t('model_open_settings')}
-          </Button>}
-          {model.canEdit && <Button size="sm" variant="outline" onClick={() => openScreen(bridge, '/admin/domain-model', `${type}-fields`)}>
-            {t('model_manage_fields')}
-          </Button>}
+          {(scopeSettings || model.canEdit) && (
+            <div className={styles.inline}>
+              {scopeSettings && (
+                <Button size="sm" variant="outline" onClick={() => openScreen(bridge, scopeSettings)}>
+                  {t('model_open_settings')}
+                </Button>
+              )}
+              {model.canEdit && (
+                <Button size="sm" variant="outline" onClick={() => openScreen(bridge, '/admin/domain-model', `${type}-fields`)}>
+                  {t('model_manage_fields')}
+                </Button>
+              )}
+            </div>
+          )}
         </>}
         status={<Badge variant="outline">{t('model_attributes_fields', { count: String(fields.length), type })}</Badge>}
         action={
@@ -276,6 +303,7 @@ export function ObjectAttributes({
                       key={f.name}
                       field={f}
                       value={valueOf(f)}
+                      people={people}
                       from={value?.[f.name] === undefined && f.name in facts ? t('model_from_tenant') : undefined}
                     />
                   ))}
@@ -322,8 +350,20 @@ export function ObjectAttributes({
   );
 }
 
-export function FieldRow({ field, value, from }: { field: ModelField; value: unknown; from?: string }) {
-  const { t } = useAdmin();
+export function FieldRow({
+  field,
+  value,
+  from,
+  people,
+}: {
+  field: ModelField;
+  value: unknown;
+  from?: string;
+  /** People by lower-cased id: a value that is one of their ids shows as their name. */
+  people?: ReadonlyMap<string, string>;
+}) {
+  const { t, language } = useAdmin();
+  const person = typeof value === 'string' ? people?.get(value.toLowerCase()) : undefined;
   return (
     <>
       <dt className={styles.sub} title={field.description || field.type}>
@@ -331,7 +371,11 @@ export function FieldRow({ field, value, from }: { field: ModelField; value: unk
         {field.required && ' *'}
       </dt>
       <dd className={own.value}>
-        {shownValue(value, t('model_yes'), t('model_no'))}
+        {person ? (
+          <span title={String(value)}>{person}</span>
+        ) : (
+          shownValue(value, t('model_yes'), t('model_no'), language)
+        )}
         {from && <span className={styles.sub}> · {from}</span>}
       </dd>
     </>
