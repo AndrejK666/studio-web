@@ -43,6 +43,8 @@ services:
   keycloak:
     image: quay.io/keycloak/keycloak:26.7@sha256:ff4257d0d64efbe99ed1ddfaf07765cc3c36dc7518bf8324d41961327f441c54
     container_name: studio-keycloak
+    # Comes back after a reboot like the backend that depends on it (2026-11-24).
+    restart: unless-stopped
     command: ["start-dev", "--import-realm"]
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: admin
@@ -170,6 +172,7 @@ services:
     build:
       context: studio-backend/docker/graph-postgres
     container_name: studio-graph-pg
+    restart: unless-stopped
     # The single instance for the whole assembly (Variant B). User/db renamed to
     # `studio` is the application owner. The backend bootstrap discovers and
     # creates any missing gear database from effective config on every start.
