@@ -35,7 +35,7 @@ interface MatchResultProps {
 /** A match as it goes and as it ends: its progress, its failure, or its report. */
 export const MatchResult: React.FC<MatchResultProps> = ({ run, providerName }) => {
   const t = useGearsText();
-  const names = { spec: run.spec, provider: providerName, model: run.model };
+  const names = { spec: run.spec, provider: providerName, models: run.models };
 
   if (run.phase === 'running') {
     return (

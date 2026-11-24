@@ -28,9 +28,10 @@ vi.mock('../../../../i18n', () => {
   };
 });
 
-const choice = { provider: 'litellm', model: 'glm-5.3-flash' };
+const choice = { provider: 'litellm' };
 const run = (more: Record<string, unknown>) => ({
-  ...choice,
+  provider: 'litellm',
+  models: 'glm-5.3-flash',
   spec: 'PRD.md',
   phase: 'running',
   done: 0,
@@ -62,11 +63,16 @@ beforeEach(() => {
 });
 
 describe('GearsSection', () => {
-  it('shows the chosen connection, its model and where requests go', () => {
+  it('shows the chosen connection and its fixed models, and where requests go', () => {
     render(<GearsSection projectId="p1" />);
     expect(screen.getByText('provider_litellm')).toBeTruthy();
-    expect(screen.getByText('glm-5.3-flash')).toBeTruthy();
-    expect(screen.getByText('sent_to litellm.ext.constr.dev')).toBeTruthy();
+    expect(screen.getByText(/models_used glm-5.3-flash/)).toBeTruthy();
+    expect(screen.getByText(/sent_to litellm.ext.constr.dev/)).toBeTruthy();
+  });
+
+  it('has one dropdown, for the connection, and none for a model', () => {
+    render(<GearsSection projectId="p1" />);
+    expect(screen.getAllByRole('combobox')).toHaveLength(1);
   });
 
   it('does not offer Constructor', () => {

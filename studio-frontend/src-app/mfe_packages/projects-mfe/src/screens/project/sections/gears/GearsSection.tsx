@@ -18,10 +18,14 @@ import {
 } from '@gears-frontx/ui-kit';
 import { useEverLoaded, useThemedRoot } from '@constructor-studio/mfe-shared';
 import { useGearsSectionTranslations, useGearsText } from '../../../../i18n';
-import { MATCH_PROVIDERS, providerFor, specTooLarge } from '../../../../model/gearsMatch';
+import {
+  MATCH_PROVIDERS,
+  modelsLabel,
+  providerFor,
+  specTooLarge,
+} from '../../../../model/gearsMatch';
 import {
   GEARS_MATCH_SLICE_KEY,
-  modelPicked,
   providerPicked,
   specCleared,
   specPicked,
@@ -42,7 +46,7 @@ export const GearsSection: React.FC<{ projectId: string }> = ({ projectId }) => 
   const [container, findThemedRoot] = useThemedRoot();
   const [fileProblem, setFileProblem] = useState<'spec_too_large' | 'spec_unreadable' | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
-  const ids = { provider: useId(), model: useId(), spec: useId() };
+  const ids = { provider: useId(), spec: useId() };
 
   if (!everLoaded && !error) return <SectionSkeleton />;
 
@@ -89,29 +93,12 @@ export const GearsSection: React.FC<{ projectId: string }> = ({ projectId }) => 
           <FieldDescription>{t('connection_hint')}</FieldDescription>
         </Field>
 
-        <Field>
-          <FieldLabel htmlFor={ids.model}>{t('model')}</FieldLabel>
-          <Select
-            value={choice.model}
-            modal={false}
-            disabled={running}
-            onValueChange={(next) => dispatch(modelPicked(next ?? ''))}
-          >
-            <SelectTrigger id={ids.model} className={styles.trigger}>
-              <SelectValue>{(selected) => String(selected)}</SelectValue>
-            </SelectTrigger>
-            <SelectContent container={container ?? undefined}>
-              {(provider?.models ?? []).map((model) => (
-                <SelectItem key={model} value={model}>
-                  {model}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <FieldDescription>{t('model_hint')}</FieldDescription>
-        </Field>
-
-        {provider && <p className={styles.muted}>{t('sent_to', { host: provider.host })}</p>}
+        {provider && (
+          <p className={styles.muted}>
+            {t('models_used', { models: modelsLabel(provider.code) })}{' '}
+            {t('sent_to', { host: provider.host })}
+          </p>
+        )}
 
         <Field data-invalid={fileProblem ? true : undefined}>
           <FieldLabel htmlFor={ids.spec}>{t('spec')}</FieldLabel>

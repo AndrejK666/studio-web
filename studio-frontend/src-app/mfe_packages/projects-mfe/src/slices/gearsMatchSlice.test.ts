@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import reducer, {
   matchRunning,
-  modelPicked,
   providerPicked,
   runFailed,
   runFinished,
@@ -15,17 +14,14 @@ const start = () => reducer(undefined, { type: '@@init' });
 const report = { requirements: [], recommended_gears: [] };
 
 describe('the Gears match slice', () => {
-  it('starts on LiteLLM and its default model, with no spec', () => {
-    expect(start().choice).toEqual({
-      provider: 'litellm',
-      model: 'glm-5.3-flash',
-    });
+  it('starts on LiteLLM, with no spec', () => {
+    expect(start().choice).toEqual({ provider: 'litellm' });
     expect(start().spec).toBeNull();
   });
 
-  it('switches connection and model, and picks and clears a spec', () => {
-    let state = reducer(reducer(start(), providerPicked('openai')), modelPicked('gpt-5.5'));
-    expect(state.choice).toEqual({ provider: 'openai', model: 'gpt-5.5' });
+  it('switches connection, and picks and clears a spec', () => {
+    let state = reducer(start(), providerPicked('openai'));
+    expect(state.choice).toEqual({ provider: 'openai' });
     state = reducer(state, specPicked({ name: 'PRD.md', content: '# PRD' }));
     expect(state.spec?.name).toBe('PRD.md');
     expect(reducer(state, specCleared()).spec).toBeNull();
@@ -36,7 +32,7 @@ describe('the Gears match slice', () => {
     state = reducer(state, runStarted('p1'));
     expect(state.runs.p1).toMatchObject({
       provider: 'litellm',
-      model: 'glm-5.3-flash',
+      models: 'glm-5.3-flash',
       spec: 'PRD.md',
       phase: 'running',
     });

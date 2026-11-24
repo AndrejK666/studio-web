@@ -1,9 +1,12 @@
 /**
- * The models a Gears match can run on, and the connection each belongs to.
+ * The connections a Gears match can run on, and the models each one uses.
+ *
+ * A person chooses the connection, never the models: each connection has one fixed combination, the
+ * one that was measured, and the matcher service owns it (`PROVIDER_MODELS` in its `request.py`).
+ * The list here only says what to show.
  *
  * Constructor's own connector is not offered: it is reachable only inside the VPN, which a deployed
- * Studio is not. Which of these two a deployment can use is the matcher service's decision; the
- * list here is what the picker offers until the service reports it (`GET /v1/providers`).
+ * Studio is not. Which of these two a deployment can use is the service's decision.
  */
 
 export type MatchProviderCode = 'litellm' | 'openai';
@@ -12,8 +15,8 @@ export interface MatchProvider {
   code: MatchProviderCode;
   /** The host the key is sent to, shown so a person knows where their data goes. */
   host: string;
-  models: readonly string[];
-  defaultModel: string;
+  /** The three models a run uses: candidates, candidates, checks. For display. */
+  models: readonly [string, string, string];
 }
 
 /** LiteLLM first: it needs no VPN and no OpenAI account, so it is the default. */
@@ -21,49 +24,36 @@ export const MATCH_PROVIDERS: readonly MatchProvider[] = [
   {
     code: 'litellm',
     host: 'litellm.ext.constr.dev',
-    // glm answers a whole-catalogue call in seconds; deepseek-v4.1-flash took 104 s for one and
-    // runs out of the matcher's 120 s, so it is last.
-    models: ['glm-5.3-flash', 'deepseek-v4.1-flash-1017', 'deepseek-v4.1-flash'],
-    defaultModel: 'glm-5.3-flash',
+    models: ['glm-5.3-flash', 'glm-5.3-flash', 'glm-5.3-flash'],
   },
   {
     code: 'openai',
     host: 'api.openai.com',
-    models: ['gpt-5.4', 'gpt-5.4-mini', 'gpt-5.5'],
-    defaultModel: 'gpt-5.4',
+    // The reasoning model in the second slot is what keeps the quality, and it makes a run slower.
+    models: ['gpt-5.4', 'gpt-5.5', 'gpt-5.4'],
   },
 ];
 
 export interface MatchChoice {
   provider: MatchProviderCode;
-  model: string;
 }
 
-export const DEFAULT_MATCH_CHOICE: MatchChoice = {
-  provider: MATCH_PROVIDERS[0].code,
-  model: MATCH_PROVIDERS[0].defaultModel,
-};
+export const DEFAULT_MATCH_CHOICE: MatchChoice = { provider: MATCH_PROVIDERS[0].code };
 
 export function providerFor(code: string): MatchProvider | undefined {
   return MATCH_PROVIDERS.find((provider) => provider.code === code);
 }
 
-/** Another connection starts on its own default model: a model id means nothing on another gateway. */
+/** A connection this page does not offer falls back to the default, so it cannot be sent. */
 export function chooseProvider(code: string): MatchChoice {
   const provider = providerFor(code);
-  return provider
-    ? { provider: provider.code, model: provider.defaultModel }
-    : DEFAULT_MATCH_CHOICE;
+  return provider ? { provider: provider.code } : DEFAULT_MATCH_CHOICE;
 }
 
-/** A model the connection does not list falls back to its default, so a stale choice cannot be sent. */
-export function chooseModel(current: MatchChoice, model: string): MatchChoice {
-  const provider = providerFor(current.provider);
-  if (!provider) return DEFAULT_MATCH_CHOICE;
-  return {
-    provider: provider.code,
-    model: provider.models.includes(model) ? model : provider.defaultModel,
-  };
+/** The models as a person reads them: each distinct one once, in order (`gpt-5.4 + gpt-5.5`). */
+export function modelsLabel(code: string): string {
+  const models = providerFor(code)?.models ?? [];
+  return Array.from(new Set(models)).join(' + ');
 }
 
 /** The spec a person chose to match: its name and its text. */
@@ -109,9 +99,9 @@ export async function runBody(spec: MatchSpec, choice: MatchChoice, product: str
         content: spec.content,
       },
     ],
+    // The connection only: the service decides the models, so a request cannot name one.
     options: {
       provider: choice.provider,
-      model: choice.model,
       max_calls: MATCH_MAX_CALLS,
       extract_max_calls: EXTRACT_MAX_CALLS,
     },

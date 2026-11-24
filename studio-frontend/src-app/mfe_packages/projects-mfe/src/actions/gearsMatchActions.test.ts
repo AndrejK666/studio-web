@@ -13,7 +13,7 @@ const job = {
   projectId: 'p1',
   projectName: 'Constructor Studio',
   spec: { name: 'PRD.md', content: '# PRD' },
-  choice: { provider: 'litellm' as const, model: 'glm-5.3-flash' },
+  choice: { provider: 'litellm' as const },
 };
 const noPause = () => Promise.resolve();
 const last = (actions: { payload?: unknown }[]) => actions[actions.length - 1]?.payload;
@@ -45,10 +45,8 @@ describe('startGearsMatch', () => {
     await startGearsMatch(dispatch, job, client, noPause);
     const [body, key] = submit.mock.calls[0];
     expect(body.product).toBe('constructor-studio');
-    expect(body.options).toMatchObject({
-      provider: 'litellm',
-      model: 'glm-5.3-flash',
-    });
+    expect(body.options).toMatchObject({ provider: 'litellm' });
+    expect(body.options).not.toHaveProperty('model');
     expect(key).toMatch(/^[0-9a-f-]{36}$/);
     expect(dispatched.map((a) => a.type.split('/').pop())).toEqual([
       'runStarted',

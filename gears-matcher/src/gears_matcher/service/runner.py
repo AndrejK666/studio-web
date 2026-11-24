@@ -22,7 +22,6 @@ from gears_matcher.judge.llm.run import (
 )
 from gears_matcher.judge.llm.run import (
     RunError,
-    default_model,
     load_client,
     provider_module,
 )
@@ -39,7 +38,7 @@ from gears_matcher.run import (
     verified_models,
 )
 from gears_matcher.service.errors import ProblemError, unprocessable
-from gears_matcher.service.request import PROVIDERS, RunRequest
+from gears_matcher.service.request import PROVIDER_MODELS, RunRequest
 
 log = logging.getLogger("gears_matcher.service")
 
@@ -134,14 +133,14 @@ class RealRunner:
         return chosen
 
     def _models(self, request: RunRequest) -> tuple[tuple[str, str, str], ModelFactory] | None:
-        """The run's own three models and the factory for them, when it chose a provider; `None`
-        for a run that takes the service's default. A client is built once per provider and model
-        and shared, like the default ones."""
+        """The three models of the provider the run chose and the factory for them; `None` for a run
+        that takes the service's default. A client is built once per provider and model and shared,
+        like the default ones."""
         if request.provider is None:
             return None
         provider = request.provider
         module = provider_module(provider)
-        model = request.model or default_model(provider, module)
+        models = PROVIDER_MODELS[provider]
 
         def factory(name: str) -> tuple[str, ModelClient]:
             with self._chosen_lock:
@@ -152,7 +151,7 @@ class RealRunner:
                     )
                 return self._chosen[(provider, name)]
 
-        return (model, model, model), factory
+        return models, factory
 
     def _check_provider(self, request: RunRequest) -> None:
         """A provider the service has no key for is refused before anything is stored or paid."""
@@ -244,18 +243,11 @@ class RealRunner:
     def _providers(self) -> list[dict[str, Any]]:
         """The providers a run may ask for, and whether this service holds a key for each."""
         out: list[dict[str, Any]] = []
-        for code in PROVIDERS:
-            module = provider_module(code) if code in KNOWN_PROVIDERS else None
-            if module is None:
+        for code, models in PROVIDER_MODELS.items():
+            if code not in KNOWN_PROVIDERS:
                 continue
-            configured = bool(os.environ.get(module.KEY_VARIABLE, "").strip())
-            out.append(
-                {
-                    "code": code,
-                    "configured": configured,
-                    "default_model": default_model(code, module),
-                }
-            )
+            configured = bool(os.environ.get(provider_module(code).KEY_VARIABLE, "").strip())
+            out.append({"code": code, "configured": configured, "models": list(models)})
         return out
 
 

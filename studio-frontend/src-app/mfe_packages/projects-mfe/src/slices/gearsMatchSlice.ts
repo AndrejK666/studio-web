@@ -7,8 +7,8 @@ import { createSlice, type ReducerPayload } from '@gears-frontx/react';
 import type { CoverageReport, RunState } from '../api/gearsMatcherClient';
 import {
   DEFAULT_MATCH_CHOICE,
-  chooseModel,
   chooseProvider,
+  modelsLabel,
   type MatchChoice,
   type MatchSpec,
 } from '../model/gearsMatch';
@@ -17,7 +17,8 @@ export type GearsRunPhase = 'running' | 'done' | 'failed';
 
 export interface GearsRun {
   provider: string;
-  model: string;
+  /** The models it runs on, as a person reads them. */
+  models: string;
   phase: GearsRunPhase;
   /** The spec's name, for the note. */
   spec: string;
@@ -57,7 +58,6 @@ interface Progress {
 const {
   slice,
   providerPicked,
-  modelPicked,
   specPicked,
   specCleared,
   runStarted,
@@ -71,9 +71,6 @@ const {
     providerPicked: (state: GearsMatchState, action: ReducerPayload<string>) => {
       state.choice = chooseProvider(action.payload);
     },
-    modelPicked: (state: GearsMatchState, action: ReducerPayload<string>) => {
-      state.choice = chooseModel(state.choice, action.payload);
-    },
     specPicked: (state: GearsMatchState, action: ReducerPayload<MatchSpec>) => {
       state.spec = action.payload;
     },
@@ -83,7 +80,8 @@ const {
     /** The run takes the choice and the spec as they are now; a later change does not rewrite it. */
     runStarted: (state: GearsMatchState, action: ReducerPayload<string>) => {
       state.runs[action.payload] = {
-        ...state.choice,
+        provider: state.choice.provider,
+        models: modelsLabel(state.choice.provider),
         phase: 'running',
         spec: state.spec?.name ?? '',
         done: 0,
@@ -137,7 +135,6 @@ export function matchRunning(state: GearsMatchState, projectId: string): boolean
 export const gearsMatchSlice = slice;
 export {
   providerPicked,
-  modelPicked,
   specPicked,
   specCleared,
   runStarted,

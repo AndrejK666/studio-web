@@ -3,8 +3,8 @@ import {
   DEFAULT_MATCH_CHOICE,
   MATCH_PROVIDERS,
   MAX_SPEC_BYTES,
-  chooseModel,
   chooseProvider,
+  modelsLabel,
   productId,
   providerFor,
   runBody,
@@ -19,36 +19,33 @@ describe('the connections a match can run on', () => {
     expect(providerFor('constructor')).toBeUndefined();
   });
 
-  it('starts on LiteLLM and its default model', () => {
-    expect(DEFAULT_MATCH_CHOICE).toEqual({
-      provider: 'litellm',
-      model: 'glm-5.3-flash',
-    });
+  it('starts on LiteLLM', () => {
+    expect(DEFAULT_MATCH_CHOICE).toEqual({ provider: 'litellm' });
   });
 
-  it('gives every connection a default that it lists', () => {
-    for (const provider of MATCH_PROVIDERS)
-      expect(provider.models).toContain(provider.defaultModel);
+  it('gives each connection one fixed combination of three models, the measured ones', () => {
+    expect(providerFor('litellm')?.models).toEqual([
+      'glm-5.3-flash',
+      'glm-5.3-flash',
+      'glm-5.3-flash',
+    ]);
+    expect(providerFor('openai')?.models).toEqual(['gpt-5.4', 'gpt-5.5', 'gpt-5.4']);
+  });
+
+  it('shows the models once each, in order', () => {
+    expect(modelsLabel('litellm')).toBe('glm-5.3-flash');
+    expect(modelsLabel('openai')).toBe('gpt-5.4 + gpt-5.5');
+    expect(modelsLabel('nope')).toBe('');
   });
 });
 
 describe('choosing', () => {
-  it('moves to another connection on its own default model', () => {
-    expect(chooseProvider('openai')).toEqual({
-      provider: 'openai',
-      model: 'gpt-5.4',
-    });
+  it('moves to another connection', () => {
+    expect(chooseProvider('openai')).toEqual({ provider: 'openai' });
   });
 
   it('ignores a connection it does not offer', () => {
     expect(chooseProvider('constructor')).toEqual(DEFAULT_MATCH_CHOICE);
-  });
-
-  it('keeps a model the connection lists and drops one it does not', () => {
-    expect(chooseModel(DEFAULT_MATCH_CHOICE, 'deepseek-v4.1-flash-1017').model).toBe(
-      'deepseek-v4.1-flash-1017'
-    );
-    expect(chooseModel(DEFAULT_MATCH_CHOICE, 'gpt-5.5')).toEqual(DEFAULT_MATCH_CHOICE);
   });
 });
 
@@ -76,10 +73,10 @@ describe('what is sent for a spec', () => {
     expect(specTooLarge('x'.repeat(MAX_SPEC_BYTES + 1))).toBe(true);
   });
 
-  it('builds the run with the chosen connection and model and a bounded budget', async () => {
+  it('builds the run with the chosen connection and a bounded budget', async () => {
     const body = await runBody(
       { name: 'PRD.md', content: '# PRD' },
-      { provider: 'litellm', model: 'glm-5.3-flash' },
+      { provider: 'litellm' },
       'studio'
     );
     expect(body.product).toBe('studio');
@@ -88,10 +85,9 @@ describe('what is sent for a spec', () => {
       content: '# PRD',
     });
     expect(body.documents[0].sha256).toHaveLength(64);
-    expect(body.options).toMatchObject({
-      provider: 'litellm',
-      model: 'glm-5.3-flash',
-    });
+    expect(body.options).toMatchObject({ provider: 'litellm' });
+    // A request cannot name a model: the service owns the combination.
+    expect(body.options).not.toHaveProperty('model');
     expect(body.options.max_calls).toBeLessThanOrEqual(400);
   });
 });

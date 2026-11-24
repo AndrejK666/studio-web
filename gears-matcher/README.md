@@ -57,8 +57,9 @@ public_connector_id = "..."
 # provider = "litellm"
 # litellm_api_key = "..."       # the gateway's key: ask its owner; a secret, kept only here
 # litellm_base_url = "..."      # optional, default https://litellm.ext.constr.dev/v1 (https only)
-# models = "glm-5.3-flash"      # one id for all three; glm-5.3-flash answers in seconds, while
-#                               # deepseek-v4.1-flash took 104 s for one call and times out
+# models = "glm-5.3-flash"      # one id for all three: the service's own default. A run that chooses
+#                               # litellm uses it too, fixed. (deepseek-v4.1-flash took 104 s for
+#                               # one call and times out, so it is not used.)
 
 [gears_rust]                   # used by `gears-service-prepare checkout`
 url = "https://github.com/constructorfabric/gears-rust.git"
@@ -73,12 +74,14 @@ Each value is also an environment variable (`GEARS_MATCHER_SECRET`, `LLM_CONNECT
 `LITELLM_API_KEY`, `GEARS_RUST_URL`, `GEARS_RUST_TOKEN`, `GEARS_MATCHER_DATABASE_URL`), and a variable set in the environment wins over the
 file. An unknown key in the file is refused, naming the key and never the value.
 
-**A run chooses its own connection.** `options.provider` (`litellm` or `openai`) and `options.model`
-in `POST /v1/runs` pick the connection and the one model for all three roles; without them a run takes
-the `provider` above. The service must hold that provider's key (`LITELLM_API_KEY` or
-`OPENAI_API_KEY`), else the run is refused with `422 provider_unavailable` before anything is stored.
-`constructor` is not a choice. `GET /v1/info` lists the providers and whether each has a key. The key
-is never sent in a request and never shown: it lives only in the service's config or environment.
+**A run chooses its own connection.** `options.provider` (`litellm` or `openai`) in `POST /v1/runs`
+picks the connection, and with it the three models the run uses: `litellm` runs `glm-5.3-flash` for all
+three, `openai` runs `gpt-5.4`, `gpt-5.5` and `gpt-5.4` (the combinations that were measured; a request
+cannot name a model). Without it a run takes the `provider` above. The service must hold that
+provider's key (`LITELLM_API_KEY` or `OPENAI_API_KEY`), else the run is refused with
+`422 provider_unavailable` before anything is stored. `constructor` is not a choice. `GET /v1/info`
+lists each provider, its models and whether it has a key. The key is never sent in a request and never
+shown: it lives only in the service's config or environment.
 
 The runs are in PostgreSQL (the service creates its table at start; the database is created by
 `gears-service-prepare database`, because the runtime role in a cluster cannot create one). The service
