@@ -22,26 +22,6 @@ vi.mock('@gears-frontx/react', async (importOriginal) => ({
   apiRegistry: {
     getService: () => ({
       catalog: {},
-      describe: ({ slug }: { slug: string }) => ({
-        fetch: () =>
-          Promise.resolve({
-            kit: { slug },
-            manifest: '.cf-studio-kit.toml',
-            contents: {
-              screens: [{ kind: 'tab', level: 'project', label: 'Tests', route: '/tests', slot: null }],
-              types: [],
-              rules: [],
-              functions: [],
-              services: [],
-              inbox: [],
-              mcp_tools: [{ name: 'kits_describe', description: 'what a kit brings' }],
-              permissions: { reads: ['studio-artifact-ingest runs'], writes: [], listens: [] },
-              material: [{ path: 'templates/', description: 'artifact templates' }],
-              kinds: ['PRD', 'ADR'],
-              docs: [],
-            },
-          }),
-      }),
     }),
   },
   useApiQuery: useApiQueryMock,
@@ -55,6 +35,25 @@ import { HomeScreen } from './HomeScreen';
 
 // The kit's DataGrid measures its table.
 stubResizeObserver();
+
+/** What the SDLC kit brings, as the catalogue answers it with `include=contents`. */
+const SDLC_DETAIL = {
+  kit: { slug: 'sdlc' },
+  manifest: '.cf-studio-kit.toml',
+  contents: {
+    screens: [{ kind: 'tab', level: 'project', label: 'Tests', route: '/tests', slot: null }],
+    types: [],
+    rules: [],
+    functions: [],
+    services: [],
+    inbox: [],
+    mcp_tools: [{ name: 'kits_describe', description: 'what a kit brings' }],
+    permissions: { reads: ['studio-artifact-ingest runs'], writes: [], listens: [] },
+    material: [{ path: 'templates/', description: 'artifact templates' }],
+    kinds: ['PRD', 'ADR'],
+    docs: [],
+  },
+};
 
 // Neutral fixture values — test-controlled, not tied to any template placeholder.
 const TEST_THEME = 'smoke-theme';
@@ -85,7 +84,7 @@ describe('HomeScreen', () => {
     useApiQueryMock.mockReturnValue({
       isLoading: false,
       isError: false,
-      data: { total: 1, items: [SDLC] },
+      data: { total: 1, items: [SDLC], details: [SDLC_DETAIL] },
     });
   });
 

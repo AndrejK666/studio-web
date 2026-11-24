@@ -32,6 +32,7 @@ import {
   errText,
   personLabel,
   useApi,
+  anyUnnamed,
   usePeople,
   useReleases,
   type PeopleNames,
@@ -133,7 +134,15 @@ export function DeployHistory({
   onChanged: (message: string) => void;
 }) {
   const { t, organizationId, projectId } = useReleases();
-  const people = usePeople([organizationId, projectId]);
+  const people = usePeople(
+    [organizationId, projectId],
+    anyUnnamed(
+      deployments.flatMap((d) => [
+        { id: d.requested_by, name: d.requested_by_name },
+        { id: d.decided_by, name: d.decided_by_name },
+      ])
+    )
+  );
   const [open, setOpen] = useState<string | null>(null);
   const { load, reloadBridge } = useLocalGridLoad(deployments, HISTORY_OPTIONS);
   const columns = useMemo<DataGridTableColumn<Deployment>[]>(

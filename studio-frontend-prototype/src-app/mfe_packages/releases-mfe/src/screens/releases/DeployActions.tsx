@@ -39,6 +39,7 @@ import {
   personLabel,
   relTime,
   useApi,
+  anyUnnamed,
   usePeople,
   useReleases,
 } from './parts';
@@ -96,7 +97,10 @@ export function PendingDecisions({ waiting, onChanged }: { waiting: Deployment[]
   const [error, setError] = useState<string | null>(null);
   const [declining, setDeclining] = useState<string | null>(null);
   const [reason, setReason] = useState('');
-  const people = usePeople([organizationId, projectId]);
+  const people = usePeople(
+    [organizationId, projectId],
+    anyUnnamed(waiting.map((d) => ({ id: d.requested_by, name: d.requested_by_name })))
+  );
   useEffect(() => {
     if (!organizationId) return;
     let live = true;

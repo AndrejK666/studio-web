@@ -1433,16 +1433,27 @@ impl IdentityService {
     /// see what had been attributed to them. Self-service needs it.
     pub async fn list_aliases(&self, user_id: &str) -> Result<Vec<AliasRecord>> {
         let mut out = self.store.aliases_of(user_id).await?;
-        out.sort_by(|a, b| {
-            let strength = |record: &AliasRecord| {
-                Confidence::parse(&record.confidence).map_or(0, Confidence::strength)
-            };
-            strength(b)
-                .cmp(&strength(a))
-                .then_with(|| a.kind.cmp(&b.kind))
-                .then_with(|| a.external_id.cmp(&b.external_id))
-        });
+        sort_aliases(&mut out);
         Ok(out)
+    }
+
+    /// Each of these people's attributed identities, in one query whatever
+    /// their number, each list in [`Self::list_aliases`]' order.
+    pub async fn aliases_of_people(
+        &self,
+        user_ids: &[String],
+    ) -> Result<HashMap<String, Vec<AliasRecord>>> {
+        let mut by_person: HashMap<String, Vec<AliasRecord>> = HashMap::new();
+        for alias in self.store.aliases_of_many(user_ids).await? {
+            by_person
+                .entry(alias.user_id.clone())
+                .or_default()
+                .push(alias);
+        }
+        for list in by_person.values_mut() {
+            sort_aliases(list);
+        }
+        Ok(by_person)
     }
 
     /// The caller says an external identity is theirs, with nothing behind it
@@ -2652,6 +2663,18 @@ impl IdentityService {
         memberships_changed();
         Ok(result)
     }
+}
+
+/// Strongest first, then by kind and id: the order every alias list is shown in.
+fn sort_aliases(out: &mut [AliasRecord]) {
+    out.sort_by(|a, b| {
+        let strength =
+            |record: &AliasRecord| Confidence::parse(&record.confidence).map_or(0, Confidence::strength);
+        strength(b)
+            .cmp(&strength(a))
+            .then_with(|| a.kind.cmp(&b.kind))
+            .then_with(|| a.external_id.cmp(&b.external_id))
+    });
 }
 
 impl IdentityService {

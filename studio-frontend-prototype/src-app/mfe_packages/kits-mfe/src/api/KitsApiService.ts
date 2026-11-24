@@ -58,6 +58,8 @@ export interface KitGearClaim {
 export interface CatalogPage {
   items: CatalogKit[];
   total: number;
+  /** With `include=contents`: each listed kit with what it brings, in the order of `items`. */
+  details?: KitDetail[] | null;
 }
 
 /** One installation (`InstalledKitDto`). */
@@ -283,7 +285,7 @@ export class KitsApiService extends BaseApiService {
   }
 
   /** The whole catalogue: the gear pages at 200, and holds far fewer. */
-  readonly catalog = this.protocol(RestEndpointProtocol).query<CatalogPage>('/catalog?limit=200');
+  readonly catalog = this.protocol(RestEndpointProtocol).query<CatalogPage>('/catalog?limit=200&include=contents');
 
   readonly describe = this.protocol(RestEndpointProtocol).queryWith<KitDetail, { slug: string }>(
     ({ slug }) => `/catalog/${encodeURIComponent(slug)}`

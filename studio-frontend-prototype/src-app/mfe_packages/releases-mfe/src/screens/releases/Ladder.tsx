@@ -14,7 +14,7 @@ import type { IdeBuild } from '../../model/builds';
 import { profilesBoundTo } from '../../model/project-deploys';
 import { versionOf, type LadderStep } from '../../model/releases';
 import { RungPlace, useDeployRequest } from './DeployActions';
-import { ErrorLine, personLabel, relTime, useApi, usePeople, useReleases } from './parts';
+import { ErrorLine, anyUnnamed, personLabel, relTime, useApi, usePeople, useReleases } from './parts';
 import styles from './ReleasesScreen.module.css';
 
 /** The chosen environment: where it is, what it still needs, which profile
@@ -38,7 +38,10 @@ export function EnvironmentDetail({ step: s, bindings }: { step: LadderStep; bin
   }, [api, projectId]);
   const e = s.environment;
   const profiles = profilesBoundTo(bindings, e.id);
-  const people = usePeople([organizationId, projectId]);
+  const people = usePeople(
+    [organizationId, projectId],
+    anyUnnamed(s.latest ? [{ id: s.latest.requested_by, name: s.latest.requested_by_name }] : [])
+  );
   return (
     <div className={styles.stack} data-ladder-detail={e.name}>
       <RungPlace step={s} connections={connections} />

@@ -260,6 +260,20 @@ pub struct OrganizationMemberDto {
     pub source: String,
     pub created_at_epoch_ms: i64,
     pub updated_at_epoch_ms: i64,
+    /// With `include=aliases`: the external identities attributed to the
+    /// member, strongest first, as `.../members/{user_id}/identities` lists
+    /// them, so a picker needs no request per member. Null otherwise.
+    pub aliases: Option<Vec<AliasDto>>,
+}
+
+/// `GET .../members`' query: what to answer with each member, and the page.
+#[derive(Debug, Default, serde::Deserialize)]
+pub struct MembersQuery {
+    /// `aliases`: each member's attributed identities too.
+    #[serde(default)]
+    pub include: Option<String>,
+    #[serde(flatten)]
+    pub page: crate::pagination::PageQuery,
 }
 
 #[derive(Debug)]
@@ -1544,8 +1558,13 @@ async fn list_organization_members(
     Extension(ctx): Extension<SecurityContext>,
     Extension(service): Extension<Option<Arc<IdentityService>>>,
     Path(org_id): Path<String>,
-    Query(page): Query<crate::pagination::PageQuery>,
+    Query(query): Query<MembersQuery>,
 ) -> ApiResult<JsonBody<OrganizationMemberListDto>> {
+    let page = query.page;
+    let with_aliases = query
+        .include
+        .as_deref()
+        .is_some_and(|i| i.split(',').any(|p| p.trim() == "aliases"));
     let service = configured(service)?;
     let org = parse_org(&org_id)?;
     require_org_authority(&ctx, &service, org, "people.view").await?;
@@ -1583,9 +1602,22 @@ async fn list_organization_members(
         .map(|(m, p)| (m.user_id.clone(), p.as_ref().and_then(|p| p.email.clone())))
         .collect();
     let mut emails_of = service.emails_of_people(&people).await.map_err(internal)?;
+    let mut aliases_of = if with_aliases {
+        let ids: Vec<String> = people.iter().map(|(id, _)| id.clone()).collect();
+        Some(service.aliases_of_people(&ids).await.map_err(internal)?)
+    } else {
+        None
+    };
     let mut items = Vec::with_capacity(rows.len());
     for (m, profile) in rows {
         let emails = emails_of.remove(&m.user_id).unwrap_or_default();
+        let aliases = aliases_of.as_mut().map(|of| {
+            of.remove(&m.user_id)
+                .unwrap_or_default()
+                .into_iter()
+                .map(alias_dto)
+                .collect()
+        });
         let described = directory.get(&m.user_id).cloned().unwrap_or_default();
         items.push(OrganizationMemberDto {
             display_name: profile.as_ref().and_then(|p| p.display_name.clone()),
@@ -1600,6 +1632,7 @@ async fn list_organization_members(
             source: m.source,
             created_at_epoch_ms: m.created_at_epoch_ms,
             updated_at_epoch_ms: m.updated_at_epoch_ms,
+            aliases,
         });
     }
     let (items, total) = crate::pagination::page_of(items, page);
@@ -2747,6 +2780,11 @@ pub fn register_routes(
         .authenticated()
         .require_license_features::<License>([])
         .path_param("org_id", "Organization tenant id")
+        .query_param(
+            "include",
+            false,
+            "`aliases`: each member's attributed identities too",
+        )
         .handler(list_organization_members)
         .json_response_with_schema::<OrganizationMemberListDto>(
             openapi,

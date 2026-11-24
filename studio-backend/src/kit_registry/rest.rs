@@ -106,6 +106,10 @@ pub struct KitListDto {
     /// Kits in the catalogue across every page, so a caller can show "N of M" and
     /// knows a next page exists exactly when `offset + items.len() < total`.
     pub total: u32,
+    /// With `include=contents`: what each kit of `items` brings, in the same
+    /// order, as `GET /catalog/{kit_slug}` answers it, so a list showing
+    /// every kit's contents needs no request per kit. Null otherwise.
+    pub details: Option<Vec<KitDetailDto>>,
 }
 
 /// A screen a kit brings (ADR-0068 §2).
@@ -755,6 +759,9 @@ pub struct CatalogueQuery {
     /// List this organization's own kits too.
     #[serde(default)]
     pub organization_id: Option<Uuid>,
+    /// `contents`: answer each listed kit's contents too (`details`).
+    #[serde(default)]
+    pub include: Option<String>,
     #[serde(flatten)]
     pub page: PageQuery,
 }
@@ -1666,18 +1673,39 @@ async fn catalogue(
         );
     }
     let bundles = service.bundles();
-    let items: Vec<KitDto> = library
-        .iter()
+    let listed: Vec<KitDetail> = library
+        .into_iter()
         .filter(|detail| {
             query
                 .shelf
                 .as_deref()
                 .is_none_or(|shelf| detail.kit.shelf == shelf)
         })
+        .collect();
+    let (listed, total) = page_of(listed, page);
+    let items: Vec<KitDto> = listed
+        .iter()
         .map(|detail| kit_dto(detail, &bundles, org))
         .collect();
-    let (items, total) = page_of(items, page);
-    Ok(Json(KitListDto { items, total }))
+    let with_contents = query
+        .include
+        .as_deref()
+        .is_some_and(|i| i.split(',').any(|p| p.trim() == "contents"));
+    let details = with_contents.then(|| {
+        listed
+            .into_iter()
+            .map(|detail| {
+                // A kit of the shared library names no organization, as `get_kit` answers it.
+                let grant = (detail.kit.shelf == "organization").then_some(org).flatten();
+                detail_dto(detail, &bundles, grant)
+            })
+            .collect()
+    });
+    Ok(Json(KitListDto {
+        items,
+        total,
+        details,
+    }))
 }
 
 async fn get_kit(
@@ -2621,6 +2649,12 @@ pub fn register_routes(
             "shelf",
             false,
             "Only this shelf: builtin, official or organization",
+            "string",
+        )
+        .query_param_typed(
+            "include",
+            false,
+            "`contents`: each listed kit's contents too (`details`)",
             "string",
         )
         .handler(catalogue)

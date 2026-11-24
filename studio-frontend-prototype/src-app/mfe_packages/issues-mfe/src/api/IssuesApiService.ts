@@ -14,7 +14,6 @@ import type { SpecModelBuildEstimate } from '../model/build-eta';
 import type { SpecModelBuild } from '../model/spec-model';
 import type {
   DocQualityRowList,
-  MemberIdentities,
   NewIssue,
   OrgMember,
   ReviewWrite,
@@ -100,9 +99,12 @@ export class IssuesApiService extends BaseApiService {
   readonly membersPage = this.protocol(RestEndpointProtocol).queryWith<
     { items?: OrgMember[]; total?: number },
     { orgId: string; offset: number }
-  >(({ orgId, offset }) => `/studio-user/v1/organizations/${e(orgId)}/members?${q({ offset: String(offset), limit: String(MAX_PAGE) })}`);
+  >(
+    ({ orgId, offset }) =>
+      `/studio-user/v1/organizations/${e(orgId)}/members?${q({ offset: String(offset), limit: String(MAX_PAGE), include: 'aliases' })}`
+  );
 
-  /** An organization's members, every page (`people.view`). */
+  /** An organization's members with their attributed identities, every page (`people.view`). */
   async orgMembers(orgId: string): Promise<OrgMember[]> {
     const items: OrgMember[] = [];
     for (let offset = 0; ; offset += MAX_PAGE) {
@@ -113,11 +115,6 @@ export class IssuesApiService extends BaseApiService {
       if (page.length === 0 || items.length >= total) return items;
     }
   }
-
-  readonly memberIdentities = this.protocol(RestEndpointProtocol).queryWith<
-    MemberIdentities,
-    { orgId: string; userId: string }
-  >(({ orgId, userId }) => `/studio-user/v1/organizations/${e(orgId)}/members/${e(userId)}/identities`);
 
   /* ── writes ── */
 

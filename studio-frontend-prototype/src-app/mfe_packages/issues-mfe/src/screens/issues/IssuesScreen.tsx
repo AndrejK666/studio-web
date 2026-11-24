@@ -190,18 +190,10 @@ function ProjectIssues({
     api
       .orgMembers(orgId)
       .then((members) =>
-        Promise.all(
-          members.slice(0, 50).map((m) =>
-            api
-              .memberIdentities({ orgId, userId: m.user_id })
-              .fetch({ staleTime: 0 })
-              .then((ids) => {
-                const gh = ids.aliases.find((a) => a.kind === 'github' && a.confidence !== 'suggested');
-                return gh ? { name: m.display_name || m.email || gh.external_id, login: gh.external_id } : null;
-              })
-              .catch(() => null)
-          )
-        )
+        members.map((m) => {
+          const gh = (m.aliases ?? []).find((a) => a.kind === 'github' && a.confidence !== 'suggested');
+          return gh ? { name: m.display_name || m.email || gh.external_id, login: gh.external_id } : null;
+        })
       )
       .then((list) => live && setPeople(list.filter((p): p is Person => !!p)))
       .catch(() => undefined);
