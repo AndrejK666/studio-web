@@ -135,6 +135,30 @@ services:
       research-emulator:
         condition: service_healthy
 
+  # Signing in with a GitLab account (keycloak/GITLAB_SSO.md): writes the
+  # realm's `gitlab` broker through the admin API once Keycloak answers, then
+  # exits. Optional: with no STUDIO_GITLAB_IDP_CLIENT_ID and _CLIENT_SECRET in
+  # .env it creates nothing (and switches a broker an earlier run wrote off).
+  # GITLAB_IDP_REMOVE=1 deletes it. The same script runs as a Job in the Helm
+  # chart.
+  keycloak-gitlab-idp:
+    image: quay.io/keycloak/keycloak:26.7@sha256:ff4257d0d64efbe99ed1ddfaf07765cc3c36dc7518bf8324d41961327f441c54
+    container_name: studio-keycloak-gitlab-idp
+    entrypoint: ["bash", "/scripts/gitlab-idp.sh"]
+    restart: "no"
+    environment:
+      KC_SERVER: http://keycloak:8080
+      KC_ADMIN_USER: admin
+      KC_ADMIN_PASSWORD: admin
+      GITLAB_IDP_BASE_URL: ${STUDIO_GITLAB_IDP_BASE_URL:-https://gitlab.com}
+      GITLAB_IDP_CLIENT_ID: ${STUDIO_GITLAB_IDP_CLIENT_ID:-}
+      GITLAB_IDP_CLIENT_SECRET: ${STUDIO_GITLAB_IDP_CLIENT_SECRET:-}
+    volumes:
+      - ./deploy/helm/studio-web/files/keycloak/gitlab-idp.sh:/scripts/gitlab-idp.sh:ro
+    depends_on:
+      keycloak:
+        condition: service_healthy
+
   # The Theia session image, as a service — so Compose builds it.
   #
   # It is not something the stack runs: the backend launches this image through
@@ -256,6 +280,9 @@ services:
       # screen says "identity directory is not configured".
       STUDIO_IDP_ADMIN_BASE_URL: ${STUDIO_IDP_ADMIN_BASE_URL:-http://keycloak:8080}
       STUDIO_IDP_ADMIN_SECRET: ${STUDIO_IDP_ADMIN_SECRET:-studio-admin-dev-secret}
+      # The GitLab keycloak-gitlab-idp brokers sign-ins from: where a GitLab
+      # sign-in's photo is looked up (studio-user.gitlab_url).
+      STUDIO_GITLAB_URL: ${STUDIO_GITLAB_IDP_BASE_URL:-https://gitlab.com}
       # Knowledge-graph embeddings (graph-storage gear). ONE provider per
       # deployment — switching it over a populated graph blocks vector search
       # until the graph is re-embedded, and the backend says so at boot.
@@ -517,6 +544,9 @@ services:
       # The sign-in screen offers Constructor where keycloak-constructor-idp
       # brokers it: the same issuer, so an empty one turns both off.
       STUDIO_CONSTRUCTOR_SIGN_IN: ${STUDIO_CONSTRUCTOR_IDP_ISSUER-http://research.localhost:8095/idp}
+      # GitLab where keycloak-gitlab-idp brokers it: it needs the secret, so
+      # an empty secret turns both off.
+      STUDIO_GITLAB_SIGN_IN: ${STUDIO_GITLAB_IDP_CLIENT_SECRET:+true}
     ports:
       - "127.0.0.1:8081:8080"   # nginx-unprivileged listens on 8080 inside
     depends_on:

@@ -639,6 +639,10 @@ gears:
       # is provisioned deliberately, never claimed by whoever signs in.
       platform_admins:
         - "00000000-0000-4000-8000-000000000a11"
+      # The GitLab the realm's `gitlab` broker signs people in from, where a
+      # GitLab sign-in's photo is looked up (keycloak/GITLAB_SSO.md). Compose
+      # passes STUDIO_GITLAB_IDP_BASE_URL; empty means gitlab.com.
+      gitlab_url: "${STUDIO_GITLAB_URL:-}"
 
   studio-credstore-pg:
     database:

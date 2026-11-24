@@ -10,6 +10,8 @@
  * Research, keycloak/CONSTRUCTOR_SSO.md) goes the same way beside it, but only
  * where the deployment says its realm brokers it (`env.constructorSignIn`):
  * a hint naming a broker the realm does not have ends on a Keycloak error page.
+ * GitLab (gitlab.com or a self-hosted one, keycloak/GITLAB_SSO.md) follows the
+ * same rule (`env.gitlabSignIn`).
  *
  * Lives in the light DOM with its own stylesheet: the art is literal colours
  * for the dark field in both themes (see LoginScreen.css).
@@ -45,6 +47,13 @@ const GitHubGlyph: React.FC = () => (
   </svg>
 );
 
+/** GitLab's tanuki, in the button's text colour like the GitHub mark. */
+const GitLabGlyph: React.FC = () => (
+  <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
+    <path d="m23.6 9.6-.03-.09-3.3-8.6a.86.86 0 0 0-.34-.41.88.88 0 0 0-1 .05.88.88 0 0 0-.29.45l-2.22 6.8H7.58L5.36 1a.86.86 0 0 0-.29-.45.88.88 0 0 0-1-.05.86.86 0 0 0-.34.41L.43 9.5l-.03.09a6.1 6.1 0 0 0 2.02 7.05l.01.01.03.02 5.02 3.76 2.49 1.88 1.51 1.14a1.02 1.02 0 0 0 1.23 0l1.51-1.14 2.49-1.88 5.05-3.78.01-.01a6.1 6.1 0 0 0 2.02-7.04z" />
+  </svg>
+);
+
 /** The Constructor mark: the symbol the screen's brand line shows. */
 const ConstructorGlyph: React.FC = () => (
   <img src={PRODUCT_MARK} alt="" width={16} height={16} aria-hidden="true" />
@@ -54,6 +63,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ sessionExpired, initia
   const { auth } = useFrontX();
   const t = useShellText();
   const constructorOffered = env.constructorSignIn;
+  const gitlabOffered = env.gitlabSignIn;
   const [error, setError] = useState<string | undefined>(
     initialError ?? (sessionExpired ? 'Session expired — please sign in again.' : undefined)
   );
@@ -83,6 +93,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ sessionExpired, initia
 
   const github = () => void run({ type: 'oauth', payload: { idpHint: 'github' } });
   const signInWithConstructor = () => void run({ type: 'oauth', payload: { idpHint: 'constructor' } });
+  const signInWithGitLab = () => void run({ type: 'oauth', payload: { idpHint: 'gitlab' } });
 
   const signIn = (event: React.FormEvent) => {
     event.preventDefault();
@@ -140,6 +151,19 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ sessionExpired, initia
     >
       <ConstructorGlyph />
       {t('login_constructor')}
+    </button>
+  ) : null;
+
+  const gitlabButton = gitlabOffered ? (
+    <button
+      type="button"
+      className="auth-provider"
+      title={t('login_gitlab_title')}
+      disabled={busy}
+      onClick={signInWithGitLab}
+    >
+      <GitLabGlyph />
+      {t('login_gitlab')}
     </button>
   ) : null;
 
@@ -245,6 +269,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ sessionExpired, initia
                   organization owner then invites you to its workspaces.
                 </p>
                 {githubButton}
+                {gitlabButton}
                 {constructorButton}
               </div>
             )}
@@ -275,6 +300,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ sessionExpired, initia
           <div className="auth-federated">
             <p className="auth-kicker">Or continue with</p>
             {githubButton}
+            {gitlabButton}
             {constructorButton}
           </div>
         </div>

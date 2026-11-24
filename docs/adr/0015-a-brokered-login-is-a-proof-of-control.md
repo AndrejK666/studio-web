@@ -20,6 +20,13 @@ Using a brokered login's stored tokens as a credential (a Research connection)
 is a separate claim this ADR does not make; that file sets out the proposal
 and its risks.
 
+Amendment 2026-11-24: the `gitlab` OIDC broker
+([`keycloak/GITLAB_SSO.md`](../../keycloak/GITLAB_SSO.md)) is a proof channel
+like `github`. Its alias is `gitlab:<username>`, the ID token's
+`preferred_username`; the link also keeps GitLab's numeric user id, which
+`studio-user` uses only to fetch the account's photo. As for `constructor`,
+`trustEmail` takes GitLab's `email_verified` as given.
+
 ## Table of Contents
 
 <!-- toc -->

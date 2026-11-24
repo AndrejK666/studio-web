@@ -148,5 +148,7 @@
   "sidebar_organizations": "Organizations",
   "sidebar_where": "Where you are",
   "login_constructor": "Constructor",
-  "login_constructor_title": "Constructor account (via Keycloak identity federation)"
+  "login_constructor_title": "Constructor account (via Keycloak identity federation)",
+  "login_gitlab": "GitLab",
+  "login_gitlab_title": "GitLab account (via Keycloak identity federation)"
 }

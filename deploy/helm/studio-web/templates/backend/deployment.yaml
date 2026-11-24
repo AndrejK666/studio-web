@@ -225,6 +225,13 @@ spec:
             # reads as null.
             - name: STUDIO_ORG_MAX_OWNED
               value: {{ .Values.backend.organizations.maxOwned | quote }}
+            # The GitLab the realm brokers sign-ins from: where studio-user
+            # looks a GitLab user's photo up (`studio-user.gitlab_url`). Unset,
+            # the gear asks gitlab.com.
+            {{- if and .Values.keycloak.gitlabIdp.enabled .Values.keycloak.gitlabIdp.baseUrl }}
+            - name: STUDIO_GITLAB_URL
+              value: {{ .Values.keycloak.gitlabIdp.baseUrl | quote }}
+            {{- end }}
             # Unset keeps the subject fixed in the realm files (ADR-0030). Set
             # only when given: the config keeps an empty variable as a value,
             # and an empty subject left shared sessions without an actor.

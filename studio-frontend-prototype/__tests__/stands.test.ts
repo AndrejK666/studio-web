@@ -117,4 +117,15 @@ describe('renderRuntimeEnv', () => {
       '"CONSTRUCTOR_SIGN_IN":"true"',
     );
   });
+
+  it('offers GitLab sign-in only when the stand says its realm brokers it', () => {
+    expect(renderRuntimeEnv(resolveStand({ STUDIO_STAND: 'local' }))).not.toContain('GITLAB_SIGN_IN');
+    expect(renderRuntimeEnv(resolveStand({ STUDIO_GITLAB_SIGN_IN: 'false' }))).not.toContain(
+      'GITLAB_SIGN_IN',
+    );
+    const script = renderRuntimeEnv(resolveStand({ STUDIO_GITLAB_SIGN_IN: 'True' }));
+    expect(script).toContain('"GITLAB_SIGN_IN":"true"');
+    // One broker's flag never turns on another's button.
+    expect(script).not.toContain('CONSTRUCTOR_SIGN_IN');
+  });
 });

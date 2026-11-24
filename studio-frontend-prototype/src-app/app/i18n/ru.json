@@ -150,5 +150,7 @@
   "sidebar_organizations": "Организации",
   "sidebar_where": "Где вы сейчас",
   "login_constructor": "Constructor",
-  "login_constructor_title": "Аккаунт Constructor (через федерацию удостоверений Keycloak)"
+  "login_constructor_title": "Аккаунт Constructor (через федерацию удостоверений Keycloak)",
+  "login_gitlab": "GitLab",
+  "login_gitlab_title": "Аккаунт GitLab (через федерацию удостоверений Keycloak)"
 }

@@ -18,6 +18,12 @@ github's has: the "hard-coded mapper is removed" step in §1 never happened in
 the realm. Studio's authentication refuses a token without a `tenant_id` claim,
 so no broker can drop that mapper until the claim stops being required.
 
+Amendment 2026-11-24: the `gitlab` broker (gitlab.com or a self-hosted
+GitLab, [`keycloak/GITLAB_SSO.md`](../../keycloak/GITLAB_SSO.md)) is held to
+§1 the same way: no role, group or membership, the sandbox `tenant_id` mapper
+only. Unlike `github` it has no admission check, so any account of the
+configured GitLab gets an identity and nothing else.
+
 ## Table of Contents
 
 <!-- toc -->
