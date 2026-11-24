@@ -666,6 +666,20 @@
     },
     {
       "method": "GET",
+      "path": "/studio-artifact-ingest/v1/outputs/{output_id}/content",
+      "operation_id": "studio_artifact_ingest.get_output_content",
+      "tag": "StudioArtifactIngest",
+      "summary": "One output's file, streamed through Studio",
+      "authenticated": true,
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-artifact-ingest/v1/outputs/{output_id}/download",
       "operation_id": "studio_artifact_ingest.get_output_download",
       "tag": "StudioArtifactIngest",
@@ -2522,6 +2536,23 @@
         "EnvironmentBuildDto"
       ],
       "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-environments/v1/builds/{build_id}/images",
+      "operation_id": "studio_environments.get_research_build_images",
+      "tag": "",
+      "summary": "What Constructor Research says of each image of a Research build, now",
+      "authenticated": true,
+      "responses": [
+        "ResearchImagesDto"
+      ],
+      "errors": [
+        "400",
         "401",
         "404",
         "500"
@@ -6737,6 +6768,25 @@
       "request": "StudioBuildRequest",
       "responses": [
         "BuildPlanDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-environments/v1/builds/{build_id}/deploy",
+      "operation_id": "studio_environments.run_built_images",
+      "tag": "",
+      "summary": "Deploy the images a Research build made, building nothing",
+      "authenticated": true,
+      "request": "DeployBuiltImagesRequest",
+      "responses": [
+        "EnvironmentDeploymentDto"
       ],
       "errors": [
         "400",

@@ -1,14 +1,10 @@
 /**
- * The project's path to running (#1050), on top of Releases (kit
- * `delivery` (Builds, releases & environments, ADR-0071 step 5)): Specs → Product → Build → Image → Environment →
- * Running, each with its state, why in plain words, what is missing as a
- * checklist, and one action. The server decides Product to Running
- * (`GET /project-path`); Specs is the size of the spec mapping's plan. A
- * failed step shows its cause and the actions that fix it (#1054). Product,
- * Builds and the rest of Releases stay for the detail.
+ * What Releases says of the project's path to running (#1050): an action as
+ * a button, a failure's cause with the actions that fix it (#1054), and a
+ * path step that is not done, under the release map's stage it belongs to.
+ * The server decides the steps (`GET /project-path`).
  */
 
-import { useState } from 'react';
 import { Badge, Button } from '@gears-frontx/ui-kit';
 import { useScreenAvailability } from '@constructor-studio/mfe-shared';
 import type { FailureCause, PathAction, PathCheck, PathStep, PathStepState } from '../../api/types';
@@ -107,60 +103,33 @@ function Checklist({ items, onIntent }: { items: PathCheck[]; onIntent: (intent:
   );
 }
 
-/** What the Specs step says: it is read here, not by the server. */
-function specsReason(t: ReturnType<typeof useReleases>['t'], step: PathStep, count: number | null): string {
-  if (step.state === 'later') return t('path_specs_unknown');
-  return count && count > 0 ? t.count('path_specs_some', count) : t('path_specs_none');
-}
-
-export function ProjectPathView({
-  steps,
-  current,
-  specsCount,
+/** One step of the path to running (#1050) under the stage it belongs to,
+ *  when it is not done: why, what is missing as a checklist, its cause and
+ *  its action. The release map replaced the path itself (2026-11-24); what it
+ *  said about a stage stays with the stage. */
+export function PathStepNote({
+  step,
   onIntent,
 }: {
-  steps: PathStep[];
-  current: string;
-  specsCount: number | null;
+  step: PathStep;
   onIntent: (intent: Intent, action: Partial<PathAction>) => void;
 }) {
   const { t } = useReleases();
-  const [picked, setPicked] = useState<string | null>(null);
-  const open = steps.find((s) => s.id === (picked ?? current)) ?? steps[0];
-  const reason = (s: PathStep) => (s.id === 'specs' ? specsReason(t, s, specsCount) : s.reason);
+  // Done, later or under way: the map and the stage say it already.
+  if (step.state === 'done' || step.state === 'later' || step.state === 'active') return null;
   return (
-    <section className={styles.card} data-project-path data-path-current={current}>
-      <h2 className={styles.cardTitle}>{t('path_title')}</h2>
-      <ol className={styles.path}>
-        {steps.map((s) => (
-          <li key={s.id}>
-            <button
-              type="button"
-              className={`${styles.pathStep} ${styles[`pathStep_${s.state}`] ?? ''}`}
-              aria-pressed={s.id === open?.id}
-              aria-current={s.id === current ? 'step' : undefined}
-              onClick={() => setPicked(s.id)}
-              data-path-step={s.id}
-              data-path-state={s.state}
-            >
-              <b>{t(`path_step_${s.id}`)}</b>
-              <Badge variant={STATE_BADGE[s.state]}>{t(`path_state_${s.state}`)}</Badge>
-            </button>
-          </li>
-        ))}
-      </ol>
-      {open && (
-        <div className={styles.stack} data-path-open={open.id}>
-          <p data-path-reason>{reason(open)}</p>
-          {open.checklist.length > 0 && <Checklist items={open.checklist} onIntent={onIntent} />}
-          {open.cause && <CauseView cause={open.cause} deploymentId={open.deployment_id} onIntent={onIntent} />}
-          {!open.cause && open.action && (
-            <div className={styles.row}>
-              <ActionButton action={open.action} deploymentId={open.deployment_id} onIntent={onIntent} />
-            </div>
-          )}
+    <div className={styles.pathNote} data-path-open={step.id} data-path-state={step.state}>
+      <span className={styles.chips}>
+        <Badge variant={STATE_BADGE[step.state]}>{t(`path_state_${step.state}`)}</Badge>
+        <span data-path-reason>{step.reason}</span>
+      </span>
+      {step.checklist.length > 0 && <Checklist items={step.checklist} onIntent={onIntent} />}
+      {step.cause && <CauseView cause={step.cause} deploymentId={step.deployment_id} onIntent={onIntent} />}
+      {!step.cause && step.action && (
+        <div className={styles.row}>
+          <ActionButton action={step.action} deploymentId={step.deployment_id} onIntent={onIntent} />
         </div>
       )}
-    </section>
+    </div>
   );
 }

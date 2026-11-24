@@ -15,6 +15,7 @@
 mod alias_policy;
 mod capacity;
 mod entity;
+mod gitlab_avatar;
 #[cfg(test)]
 mod grants_tests;
 mod inbox;
@@ -78,6 +79,12 @@ pub struct StudioUserConfig {
     /// nothing.
     #[serde(default)]
     pub service_account: ServiceAccount,
+
+    /// The GitLab the realm brokers sign-ins from, when it has a GitLab
+    /// identity provider (alias `gitlab`) that is not gitlab.com: where a
+    /// GitLab sign-in's photo is looked up. Unset means `https://gitlab.com`.
+    #[serde(default)]
+    pub gitlab_url: Option<String>,
 }
 
 /// The subject of Studio's service identity: the fixed id of the
@@ -984,6 +991,7 @@ impl RestApiCapability for StudioUserGear {
             let cfg = ctx
                 .config_or_default::<StudioUserConfig>()
                 .unwrap_or_default();
+            svc.set_gitlab_url(cfg.gitlab_url.clone());
             if let Some(join) = cfg.on_first_login.as_ref() {
                 if join.role == crate::access_config::ROLE_OWNER {
                     warn!(

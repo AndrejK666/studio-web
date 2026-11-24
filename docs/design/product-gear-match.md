@@ -354,6 +354,6 @@ live check of §9 is asked again, so the page shows the new models at once. A
 run already submitted keeps the settings it was submitted with.
 
 Keys are never settings: they stay in the service's own configuration
-(ADR-0075 §6); a provider whose key is not there is offered disabled, with
+(ADR-0076 §6); a provider whose key is not there is offered disabled, with
 the variable that is missing. Organization › Gears matcher shows the settings
 under the service's status, editable only where `may_change`.

@@ -37,6 +37,9 @@ struct Fake {
     deployment_enabled: bool,
     /// A service started fails instead of running.
     crashes: bool,
+    /// A service starting stays starting, as one whose container crashes
+    /// as it starts does.
+    stuck: bool,
     /// What each connection to a service's log is sent, in turn.
     service_logs: Vec<&'static str>,
     apps: Vec<Value>,
@@ -67,6 +70,7 @@ impl Default for Fake {
             image_blips: false,
             deployment_enabled: false,
             crashes: false,
+            stuck: false,
             service_logs: Vec::new(),
             apps: Vec::new(),
             services: BTreeMap::new(),
@@ -333,6 +337,7 @@ async fn handle(
                 // A service started is running at the next look, one
                 // stopped is stopped.
                 let next = match s["status"].as_str() {
+                    Some("starting") if f.stuck => "",
                     Some("starting") if f.crashes => "failed",
                     Some("starting") => "running",
                     Some("stopping") => "stopped",
@@ -433,7 +438,9 @@ async fn who_projects_and_hardware_are_read_with_the_members_token() {
         api.projects().await.unwrap(),
         [Project {
             id: "p1".into(),
-            name: "ML team".into()
+            name: "ML team".into(),
+            // Not in the list: read from the project itself.
+            deployment_enabled: Some(false),
         }]
     );
     assert!(
@@ -505,9 +512,11 @@ async fn a_refused_token_is_renewed_once_and_then_the_member_signs_in_again() {
 
     let renewed = api(&url).renewing(token_is("fresh"));
     assert_eq!(renewed.projects().await.unwrap()[0].id, "p1");
+    // The list, refused then renewed; then the project itself, for its
+    // Deployment setting the list does not carry -- with the renewed token.
     assert_eq!(
         seen.lock().unwrap().auth[1..],
-        ["Bearer t0ken", "Bearer fresh"]
+        ["Bearer t0ken", "Bearer fresh", "Bearer fresh"]
     );
 
     let stale = api(&url).renewing(token_is("stale"));
@@ -1086,4 +1095,188 @@ async fn a_12_mb_file_goes_up_in_three_parts_of_exactly_5_mib_each_but_the_last(
         .iter()
         .position(|c| c == &format!("PUT {DAV}src/model/weights.bin"));
     assert!(delete.is_some() && delete < first_put, "{:?}", f.calls);
+}
+
+fn bare(name: &str) -> ServiceBody {
+    ServiceBody {
+        name: name.into(),
+        image_id: "img-2".into(),
+        hardware_configuration_id: "cpu-s".into(),
+        volumes: vec![],
+        ports: vec![],
+        environment_variables: vec![],
+    }
+}
+
+fn app_with(services: &[(&str, &str)]) -> Fake {
+    let mut fake = Fake {
+        deployment_enabled: true,
+        ..Fake::default()
+    };
+    let ids: Vec<String> = services.iter().map(|(id, _)| (*id).to_owned()).collect();
+    fake.apps
+        .push(json!({ "id": "a1", "name": "shop-dev", "project_id": "p1",
+                           "created_at": "2026-10-29T00:00:00Z", "service_ids": ids }));
+    for (id, status) in services {
+        let name = id.trim_start_matches("s-");
+        fake.services
+            .insert((*id).into(), service(id, name, status, None));
+    }
+    fake
+}
+
+#[tokio::test]
+async fn a_service_that_stays_starting_is_made_again_not_waited_for_past_the_attempt() {
+    // studioweb-frontend on Research DEV (2026-11-24): crashing as it
+    // starts, it stayed `starting`, and each attempt waited on it until the
+    // queue's lease ran out.
+    let (url, seen) = serve(Fake {
+        stuck: true,
+        ..app_with(&[("s-web", "starting")])
+    })
+    .await;
+    let until = tokio::time::Instant::now() + Duration::from_millis(50);
+    let started = tokio::time::Instant::now();
+    let state = api(&url)
+        .put_services_until(
+            "p1",
+            "shop-dev",
+            &[bare("web")],
+            FAST,
+            until,
+            &AppDeploy::default(),
+            &quiet,
+        )
+        .await
+        .unwrap();
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "it did not wait"
+    );
+    assert!(!state.pending);
+    assert_eq!(state.services, [("web".to_owned(), "s-web".to_owned())]);
+    let f = seen.lock().unwrap();
+    assert!(
+        f.calls
+            .contains(&format!("DELETE {ACCOUNT}/services/s-web")),
+        "{:?}",
+        f.calls
+    );
+    let sent: Vec<&str> = f.bodies.iter().map(|(k, _)| k.as_str()).collect();
+    assert_eq!(sent, ["POST web", "START s-web"]);
+}
+
+#[tokio::test]
+async fn an_attempt_out_of_time_hands_the_services_left_to_the_next() {
+    let (url, seen) = serve(app_with(&[("s-web", "stopped"), ("s-db", "stopped")])).await;
+    let research = api(&url);
+    let past = tokio::time::Instant::now();
+    let first = research
+        .put_services_until(
+            "p1",
+            "shop-dev",
+            &[bare("web"), bare("db")],
+            FAST,
+            past,
+            &AppDeploy::default(),
+            &quiet,
+        )
+        .await
+        .unwrap();
+    assert!(first.pending, "nothing begun past the attempt's time");
+    assert!(first.services.is_empty());
+    // What the run keeps, read back by the next attempt.
+    let kept: AppDeploy = serde_json::from_value(serde_json::to_value(&first).unwrap()).unwrap();
+    assert_eq!(kept, first);
+    let earlier = AppDeploy {
+        services: vec![("web".into(), "s-web".into())],
+        ..kept
+    };
+    let far = tokio::time::Instant::now() + Duration::from_secs(60);
+    let second = research
+        .put_services_until(
+            "p1",
+            "shop-dev",
+            &[bare("web"), bare("db")],
+            FAST,
+            far,
+            &earlier,
+            &quiet,
+        )
+        .await
+        .unwrap();
+    assert!(!second.pending);
+    assert_eq!(second.services.len(), 2);
+    let f = seen.lock().unwrap();
+    let sent: Vec<&str> = f.bodies.iter().map(|(k, _)| k.as_str()).collect();
+    assert_eq!(
+        sent,
+        ["PATCH s-db", "START s-db"],
+        "web, put before, is not put again"
+    );
+}
+
+#[tokio::test]
+async fn a_service_that_fails_without_a_log_says_its_state_and_its_neighbours() {
+    let (url, _) = serve(Fake {
+        crashes: true,
+        deployment_enabled: true,
+        service_logs: vec![": keep-alive\n\n"],
+        ..Fake::default()
+    })
+    .await;
+    let e = api(&url)
+        .put_application("p1", "shop-dev", &[bare("web")], FAST, &quiet)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        e.starts_with(
+            "service web did not start in Constructor Research, which keeps no log of it; its \
+             state: failed"
+        ),
+        "{e}"
+    );
+}
+
+#[test]
+fn a_services_state_is_its_status_and_what_research_says_beside_it() {
+    let s: Service = serde_json::from_value(json!({
+        "id": "s1", "name": "api-gateway", "status": "failed", "link": null,
+        "image_id": "img", "volumes": [], "status_message": "Error",
+        "updated_at": "2026-11-24T10:41:26Z", "restarts": 7
+    }))
+    .unwrap();
+    assert_eq!(
+        s.state(),
+        "failed (restarts: 7, status_message: Error, updated_at: 2026-11-24T10:41:26Z)"
+    );
+    let plain: Service =
+        serde_json::from_value(json!({ "id": "s2", "name": "ui", "status": "starting" })).unwrap();
+    assert_eq!(plain.state(), "starting");
+}
+
+#[tokio::test]
+async fn a_call_research_never_answers_ends_instead_of_holding_the_run() {
+    let app = Router::new().fallback(|| async {
+        tokio::time::sleep(Duration::from_secs(30)).await;
+        "late"
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let research = ResearchApi::new(
+        reqwest::Client::new(),
+        &format!("{origin}{ACCOUNT}/"),
+        "t".into(),
+    )
+    .with_call_timeout(Duration::from_millis(200))
+    .with_net_retry(NetRetry {
+        tries: 0,
+        first: Duration::ZERO,
+    });
+    let started = tokio::time::Instant::now();
+    let e = research.service("s1").await.unwrap_err().to_string();
+    assert!(started.elapsed() < Duration::from_secs(5));
+    assert!(e.contains("did not answer within"), "{e}");
 }

@@ -240,6 +240,9 @@ fn sign_in_dto(state: SignInState, connection_id: Option<Uuid>) -> ResearchSignI
 pub struct MyResearchProjectDto {
     pub id: String,
     pub name: String,
+    /// The project's "Deployment" setting: off, Research refuses to build
+    /// images there. `None` where Research did not say.
+    pub deployment_enabled: Option<bool>,
 }
 
 #[derive(Debug)]
@@ -340,6 +343,7 @@ async fn list_my_research_projects(
         .map(|p| MyResearchProjectDto {
             id: p.id,
             name: p.name,
+            deployment_enabled: p.deployment_enabled,
         })
         .collect();
     Ok(Json(MyResearchProjectListDto {

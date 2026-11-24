@@ -235,17 +235,20 @@ const BuildStatusCell: React.FC<{ item: IdeBuild }> = ({ item: b }) => {
 };
 
 const BuildNameCell: React.FC<{ item: IdeBuild }> = ({ item: b }) => {
-  const { t, open } = useBuildCells();
+  const { open } = useBuildCells();
   const isOpen = open === b.id;
   return (
     <span data-product-build={b.buildId} data-product-build-open={isOpen || undefined}>
       <span className={styles.muted} aria-hidden="true">
         {isOpen ? '▾' : '▸'}{' '}
       </span>
-      <b>
-        {b.product ?? t('the_product')}
-        {b.profile ? <span className={styles.muted}> · {b.profile}</span> : null}
-      </b>
+      <code>{b.buildId}</code>{' '}
+      {b.product && (
+        <span className={styles.muted}>
+          {b.product}
+          {b.profile ? ` · ${b.profile}` : null}
+        </span>
+      )}
     </span>
   );
 };
@@ -285,7 +288,7 @@ const BUILD_OPTIONS = {
   search: (b: IdeBuild) => [b.product, b.profile, b.buildId, b.where, b.status, b.branch, b.shortSha, b.commit],
   compare: {
     status: byText<IdeBuild>((b) => b.status),
-    build: byText<IdeBuild>((b) => b.product),
+    build: byText<IdeBuild>((b) => b.buildId),
     where: byText<IdeBuild>((b) => b.where),
     when: byText<IdeBuild>((b) => b.startedAt),
   },

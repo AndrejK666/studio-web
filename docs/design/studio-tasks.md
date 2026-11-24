@@ -122,6 +122,30 @@ retried at worst fifteen minutes later, and its partition — one of eight —
 stays blocked until then. Work that needs longer is caught by the attempt cap
 and dead-lettered with that reason.
 
+#### Work longer than a lease hands over
+
+- [x] `p2` - **ID**: `cpt-studio-constraint-tasks-hand-over`
+
+Nothing renews a lease (`toolkit-db`'s outbox has no such call). Work that
+waits on something slower than fifteen minutes -- a gear match, a Research
+image build -- follows it for a bounded time per attempt, records what the
+next attempt needs (its own table, or the run's `result` through
+`TaskContext::progress_with`, which the next attempt reads as
+`TaskContext::recorded`), and returns `Retry`. Its handler asks for enough
+attempts to cover the work. `TaskContext::stop_requested` tells a person's
+cancel apart from a shutdown, which only hands over.
+
+#### A handler hears when the queue ends its run
+
+- [x] `p2` - **ID**: `cpt-studio-constraint-tasks-ended-by-queue`
+
+A run given up on (attempts that never reported back, or out of attempts)
+or cancelled ends without its handler saying so. The dispatcher calls
+`TaskHandler::ended_by_queue` then, so a gear that keeps a record of the
+work elsewhere -- a build's record -- closes it instead of leaving it
+`running`. `TaskQueue::run_by_key` finds a run by its idempotency key, for
+a gear that keyed it by its own record's id and reconciles on read.
+
 ## 3. Technical Architecture
 
 ### 3.1 Domain Model

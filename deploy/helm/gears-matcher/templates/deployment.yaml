@@ -3,7 +3,7 @@
   One replica, and `Recreate`: the claim is ReadWriteOnce, so the old Pod has to let go of it before
   the new one starts. A run a restart interrupts is queued again when the new Pod starts (the runs are
   in PostgreSQL), and its model replies are cached on the claim, so a rollout costs little. A second
-  replica would need runs claimed in the database and a cache that is not on this claim (ADR-0075).
+  replica would need runs claimed in the database and a cache that is not on this claim (ADR-0076).
 
   Init containers, all the same image:
   - `claim-owner` hands the claim's mount point to uid 10001: a Cinder claim ignores fsGroup (#854).

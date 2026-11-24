@@ -29,10 +29,10 @@ pub use super::driver::RemoteReleaseAsset;
 #[cfg(test)]
 pub use super::driver::RemoteReview;
 pub use super::driver::{
-    ConnectionAuth, ConnectorDriver, CreatedRepository, DownloadTarget, FileToWrite, NotifyMessage,
-    PullRequestThreads, RemoteBuildArtifact, RemoteComment, RemoteCommit, RemoteFile,
-    RemoteFileList, RemoteIssue, RemotePullRequest, RemoteRelease, RemoteWorkflowJob,
-    RemoteWorkflowRun,
+    ConnectionAuth, ConnectorDriver, CreatedRepository, DownloadNeedsProxy, DownloadTarget,
+    FileToWrite, NotifyMessage, PullRequestThreads, RemoteBuildArtifact, RemoteComment,
+    RemoteCommit, RemoteFile, RemoteFileList, RemoteIssue, RemotePullRequest, RemoteRelease,
+    RemoteWorkflowJob, RemoteWorkflowRun,
 };
 /// What another gear's test needs to stand in for a provider.
 #[cfg(test)]
@@ -44,7 +44,7 @@ pub use super::kubernetes::{
     BOOTSTRAP_FILE, BOOTSTRAP_RIGHTS, ClusterAccess, ClusterRight, NAMESPACE_RIGHTS, Readiness,
     ReadinessReport, cluster_readiness,
 };
-pub use super::references::{Mention, NumberRef, Relation, find as find_references};
+pub use super::references::{Mention, NumberRef, RefKind, Relation, find as find_references};
 pub use super::registry::{
     CatalogVersion, Oci, RegistryAccess, RegistryCatalog, TokenScopes, catalog_for, same_registry,
     token_scopes, too_broad,

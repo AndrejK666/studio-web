@@ -116,6 +116,14 @@ A new document under `docs/` goes into that index. `node scripts/check-docs.mjs`
 checks all of this and CI runs it.
 Update the README of a component when you change how it is built or run.
 
+**The platform release.** gears-rust and the Gearbox engine are pinned once, in
+[`platform-release.toml`](platform-release.toml)
+([ADR-0075](docs/adr/0075-one-platform-release-pins-gears-rust-and-gearbox.md)).
+Change a version there, never in a Dockerfile, a values file or `product.gdl`:
+`node scripts/platform-release.mjs --write` rewrites the derived pins, and
+`node scripts/check-platform-release.mjs`, which CI runs, fails when any of them
+disagrees.
+
 **Desktop Studio.** Changes to `theia/electron-app` or the desktop half of
 `theia/studio` follow [`docs/desktop-contributing.md`](docs/desktop-contributing.md);
 the first rule is that the web session must not notice.

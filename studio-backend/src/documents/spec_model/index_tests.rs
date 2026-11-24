@@ -342,3 +342,50 @@ fn a_line_citing_two_records_a_heading_or_a_checklist_id_is_no_candidate() {
     ];
     assert!(misattribution_candidates(&docs, 10).is_empty());
 }
+
+#[test]
+fn an_adr_in_the_repository_counts_though_nobody_typed_it() {
+    // Only ADR-0001 is a typed document; ADR-0047 is a file of the checkout
+    // whose binding was never settled. Citing it is not dangling, and a
+    // template's numbered example is no record.
+    let docs = [
+        doc("docs/adr/0001-a.md", "# A"),
+        doc("docs/design.md", "As ADR-0047 decided, and ADR-0007 too."),
+    ];
+    let found = run(
+        &docs,
+        &[
+            "docs/adr/0047-a-change.md",
+            "kits/templates/adr/0007-example.md",
+        ],
+    );
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].message.contains("ADR-0007"), "{found:?}");
+}
+
+#[test]
+fn a_template_placeholder_is_no_link() {
+    let docs = [doc(
+        "docs/design.md",
+        "**Location**: [{domain-model-file}]({path/to/domain-model})\n\
+         | E | [{file}]({path}) |\n\
+         - [x](feature-{slug}/)\n\
+         [gone](missing.md)",
+    )];
+    assert_eq!(
+        rules(&run(&docs, &[])),
+        vec![("reference.dangling", "[gone](missing.md)")]
+    );
+}
+
+#[test]
+fn a_document_kept_in_studio_has_no_place_to_resolve_relative_links_from() {
+    let docs = [doc(
+        "studio:f8345044-3c41-4eeb-a9da-07d11a666b5c",
+        "## Traceability\n\n- **PRD**: [PRD.md](./PRD.md)\n- [here](#nope)",
+    )];
+    assert_eq!(
+        rules(&run(&docs, &[])),
+        vec![("reference.dangling", "- [here](#nope)")]
+    );
+}

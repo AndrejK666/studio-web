@@ -150,7 +150,7 @@ pub struct Emulator {
     signer: oidc::Signer,
 }
 
-type Shared = Arc<Emulator>;
+pub(crate) type Shared = Arc<Emulator>;
 
 impl Emulator {
     pub fn new(cfg: Config) -> anyhow::Result<Shared> {
@@ -892,19 +892,34 @@ fn account(emu: &Shared, m: &str, rest: &[&str], headers: &HeaderMap, body: &Byt
             st.projects
                 .values()
                 .filter(|p| p.owner == user)
-                .map(|p| json!({ "id": p.id, "name": p.name, "archived": false, "multi_desk": true }))
+                .map(|p| {
+                    json!({
+                        "id": p.id, "name": p.name, "archived": false, "multi_desk": true,
+                        "deployment_enabled": p.deployment_enabled
+                    })
+                })
                 .collect(),
         ),
         // Studio reads a project before changing its applications, to turn its
-        // deployments on (`enable_deployment`); the emulator's are always on.
-        ("GET" | "PATCH", ["projects", p]) => match st.projects.get(*p).filter(|_| owns(&st, p)) {
-            Some(p) => axum::Json(json!({
-                "id": p.id, "name": p.name, "archived": false, "multi_desk": true,
-                "deployment_enabled": true
+        // deployments on (`enable_deployment`), and a `PATCH` sets the flag.
+        ("GET" | "PATCH", ["projects", p]) => {
+            if !owns(&st, p) {
+                return not_found("Project");
+            }
+            let Some(project) = st.projects.get_mut(*p) else {
+                return not_found("Project");
+            };
+            if m == "PATCH"
+                && let Some(on) = b["deployment_enabled"].as_bool()
+            {
+                project.deployment_enabled = on;
+            }
+            axum::Json(json!({
+                "id": project.id, "name": project.name, "archived": false, "multi_desk": true,
+                "deployment_enabled": project.deployment_enabled
             }))
-            .into_response(),
-            None => not_found("Project"),
-        },
+            .into_response()
+        }
         ("GET", ["projects", p, "hardware-configurations"]) => {
             if !owns(&st, p) {
                 return not_found("Project");
@@ -925,7 +940,13 @@ fn account(emu: &Shared, m: &str, rest: &[&str], headers: &HeaderMap, body: &Byt
             if !owns(&st, p) {
                 return not_found("Project");
             }
-            results(st.desks.values().filter(|d| d.project_id == *p).map(desk_json).collect())
+            results(
+                st.desks
+                    .values()
+                    .filter(|d| d.project_id == *p)
+                    .map(desk_json)
+                    .collect(),
+            )
         }
         ("POST", ["projects", p, "desks"]) => {
             if !owns(&st, p) {
@@ -935,7 +956,11 @@ fn account(emu: &Shared, m: &str, rest: &[&str], headers: &HeaderMap, body: &Byt
             if name.is_empty() {
                 return refusal(StatusCode::UNPROCESSABLE_ENTITY, "A desk needs a name");
             }
-            if st.desks.values().any(|d| d.project_id == *p && d.name == name) {
+            if st
+                .desks
+                .values()
+                .any(|d| d.project_id == *p && d.name == name)
+            {
                 return refusal(StatusCode::CONFLICT, "A desk with this name already exists");
             }
             let d = Desk {
@@ -949,7 +974,9 @@ fn account(emu: &Shared, m: &str, rest: &[&str], headers: &HeaderMap, body: &Byt
             st.desks.insert(d.id.clone(), d);
             axum::Json(out).into_response()
         }
-        (_, ["desks", d, ..]) if !st.desks.get(*d).is_some_and(|x| owns(&st, &x.project_id)) => not_found("Desk"),
+        (_, ["desks", d, ..]) if !st.desks.get(*d).is_some_and(|x| owns(&st, &x.project_id)) => {
+            not_found("Desk")
+        }
         ("GET", ["desks", d]) => axum::Json(desk_json(&st.desks[*d])).into_response(),
         ("POST", ["desks", d, "filesystem"]) => {
             let desk = st.desks.get_mut(*d).unwrap();
@@ -971,13 +998,34 @@ fn account(emu: &Shared, m: &str, rest: &[&str], headers: &HeaderMap, body: &Byt
         }
         ("POST", ["desks", d, "images"]) => {
             let desk = st.desks[*d].clone();
+            // As Research DEV answers a project whose Deployment is off.
+            if st
+                .projects
+                .get(&desk.project_id)
+                .is_some_and(|p| !p.deployment_enabled)
+            {
+                return refusal(
+                    StatusCode::BAD_REQUEST,
+                    "Invalid parameters: Deployment is not enabled for this project",
+                );
+            }
             if desk.status != "running" {
                 return refusal(StatusCode::CONFLICT, "The desk is not running");
             }
             let name = b["name"].as_str().unwrap_or("").to_owned();
-            let dockerfile = b["dockerfile"].as_str().unwrap_or("").trim_start_matches('/').to_owned();
-            if name.is_empty() || name.len() > 30 || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
-                return refusal(StatusCode::UNPROCESSABLE_ENTITY, "An image name is ASCII letters, digits and hyphens, at most 30");
+            let dockerfile = b["dockerfile"]
+                .as_str()
+                .unwrap_or("")
+                .trim_start_matches('/')
+                .to_owned();
+            if name.is_empty()
+                || name.len() > 30
+                || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+            {
+                return refusal(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "An image name is ASCII letters, digits and hyphens, at most 30",
+                );
             }
             let text = st
                 .files
@@ -1002,7 +1050,9 @@ fn account(emu: &Shared, m: &str, rest: &[&str], headers: &HeaderMap, body: &Byt
             axum::Json(out).into_response()
         }
         ("GET", ["images", i]) => match st.images.get(*i) {
-            Some(img) if owns(&st, &img.project_id) => axum::Json(image_json(img, now, t)).into_response(),
+            Some(img) if owns(&st, &img.project_id) => {
+                axum::Json(image_json(img, now, t)).into_response()
+            }
             _ => not_found("Image"),
         },
 
@@ -1010,7 +1060,13 @@ fn account(emu: &Shared, m: &str, rest: &[&str], headers: &HeaderMap, body: &Byt
             if !owns(&st, p) {
                 return not_found("Project");
             }
-            results(st.apps.values().filter(|a| a.project_id == *p).map(|a| app_json(emu, &st, a)).collect())
+            results(
+                st.apps
+                    .values()
+                    .filter(|a| a.project_id == *p)
+                    .map(|a| app_json(emu, &st, a))
+                    .collect(),
+            )
         }
         ("POST", ["projects", p, "applications"]) => {
             if !owns(&st, p) {
@@ -1018,10 +1074,20 @@ fn account(emu: &Shared, m: &str, rest: &[&str], headers: &HeaderMap, body: &Byt
             }
             let name = b["name"].as_str().unwrap_or("").trim().to_owned();
             if name.is_empty() {
-                return refusal(StatusCode::UNPROCESSABLE_ENTITY, "An application needs a name");
+                return refusal(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "An application needs a name",
+                );
             }
-            if st.apps.values().any(|a| a.project_id == *p && a.name == name) {
-                return refusal(StatusCode::CONFLICT, "An application with this name already exists");
+            if st
+                .apps
+                .values()
+                .any(|a| a.project_id == *p && a.name == name)
+            {
+                return refusal(
+                    StatusCode::CONFLICT,
+                    "An application with this name already exists",
+                );
             }
             let a = App {
                 id: new_id(),
@@ -1033,8 +1099,14 @@ fn account(emu: &Shared, m: &str, rest: &[&str], headers: &HeaderMap, body: &Byt
             st.apps.insert(a.id.clone(), a);
             axum::Json(out).into_response()
         }
-        (_, ["applications", a, ..]) if !st.apps.get(*a).is_some_and(|x| owns(&st, &x.project_id)) => not_found("Application"),
-        ("GET", ["applications", a]) => axum::Json(app_json(emu, &st, &st.apps[*a])).into_response(),
+        (_, ["applications", a, ..])
+            if !st.apps.get(*a).is_some_and(|x| owns(&st, &x.project_id)) =>
+        {
+            not_found("Application")
+        }
+        ("GET", ["applications", a]) => {
+            axum::Json(app_json(emu, &st, &st.apps[*a])).into_response()
+        }
         ("DELETE", ["applications", a]) => {
             st.apps.remove(*a);
             st.services.retain(|_, s| s.app_id != *a);
@@ -1053,8 +1125,15 @@ fn account(emu: &Shared, m: &str, rest: &[&str], headers: &HeaderMap, body: &Byt
                 since_ms: now,
                 ..s
             };
-            if st.services.values().any(|x| x.app_id == *a && x.name == s.name) {
-                return refusal(StatusCode::CONFLICT, "A service with this name already exists");
+            if st
+                .services
+                .values()
+                .any(|x| x.app_id == *a && x.name == s.name)
+            {
+                return refusal(
+                    StatusCode::CONFLICT,
+                    "A service with this name already exists",
+                );
             }
             let out = service_json(emu, &s);
             st.services.insert(s.id.clone(), s);
@@ -1097,7 +1176,10 @@ fn account(emu: &Shared, m: &str, rest: &[&str], headers: &HeaderMap, body: &Byt
         ("POST", ["services", s, verb]) if *verb == "start" || *verb == "restart" => {
             let svc = st.services.get_mut(*s).unwrap();
             if !matches!(svc.status.as_str(), "stopped" | "running" | "failed") {
-                return refusal(StatusCode::CONFLICT, &format!("The service is {}", svc.status));
+                return refusal(
+                    StatusCode::CONFLICT,
+                    &format!("The service is {}", svc.status),
+                );
             }
             svc.status = "starting".into();
             svc.since_ms = now;
@@ -1115,7 +1197,10 @@ fn account(emu: &Shared, m: &str, rest: &[&str], headers: &HeaderMap, body: &Byt
         }
         _ => refusal(
             StatusCode::NOT_FOUND,
-            &format!("{m} /api/platform-account/v1/{} is not a route Studio calls", rest.join("/")),
+            &format!(
+                "{m} /api/platform-account/v1/{} is not a route Studio calls",
+                rest.join("/")
+            ),
         )
         .into_response_marked(),
     }

@@ -756,3 +756,35 @@ fn an_overview_past_its_minute_is_read_again() {
     answers.put(ORG, ADA, 7);
     assert_eq!(answers.get(ORG, ADA), None);
 }
+
+/// The Workspaces tree's project rows say each project's phase, from the
+/// same rollup rows; a phase never moves the score.
+#[test]
+fn a_project_s_phase_reaches_its_health_and_never_scores() {
+    let rows = [
+        workspace(1, "W"),
+        project(11, "built", 1, |r| r.phase = Some("build".into())),
+        project(12, "none", 1, |_| {}),
+    ];
+    let health = workspace_health(
+        &rows,
+        &HealthInputs {
+            spend: None,
+            previous: None,
+            stuck: &BTreeMap::new(),
+            broken: &BTreeSet::new(),
+            now: datetime!(2026-10-19 12:00 UTC),
+        },
+    );
+    let phase = |name: &str| {
+        health[0]
+            .projects
+            .iter()
+            .find(|p| p.name == name)
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(phase("built").phase.as_deref(), Some("build"));
+    assert_eq!(phase("none").phase, None);
+    assert_eq!(phase("built").score, phase("none").score);
+}

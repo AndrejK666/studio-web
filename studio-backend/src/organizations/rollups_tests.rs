@@ -369,6 +369,7 @@ fn sources(counted: &Arc<Counted>) -> Sources {
         artifacts: Some(counted.clone()),
         signals: Some(counted.clone()),
         roster: None,
+        phases: None,
     }
 }
 
@@ -446,4 +447,76 @@ async fn a_workspace_is_counted_in_its_organization_whatever_the_callers_home() 
     let rows = sources(&counted).one_workspace(&admin, WS_1).await;
     assert_eq!(projects(&rows).len(), 5);
     assert_eq!(*counted.read_in.lock().unwrap(), vec![ORG]);
+}
+
+/// Project lifecycle's phases: asked once per workspace, in its organization.
+#[derive(Default)]
+struct Phases {
+    asked_in: std::sync::Mutex<Vec<Uuid>>,
+    fail: bool,
+}
+
+#[async_trait]
+impl crate::kit_registry::port::ProjectPhases for Phases {
+    async fn phases_in(
+        &self,
+        _: &SecurityContext,
+        org: Uuid,
+    ) -> anyhow::Result<Option<HashMap<Uuid, String>>> {
+        self.asked_in.lock().unwrap().push(org);
+        if self.fail {
+            anyhow::bail!("the model is not running");
+        }
+        // The organization's projects, a project of another workspace among
+        // them; the first project of WS_1 has no phase.
+        Ok(Some(HashMap::from([
+            (projects_of(WS_1)[1], "build".to_owned()),
+            (projects_of(WS_1)[2], "idea".to_owned()),
+            (projects_of(WS_2)[0], "run".to_owned()),
+        ])))
+    }
+}
+
+/// The projects list draws each project's phase from its row: no request per
+/// project, and none of its own.
+#[tokio::test]
+async fn a_project_row_carries_its_phase_read_once_for_the_workspace() {
+    let counted = Arc::new(Counted::default());
+    let phases = Arc::new(Phases::default());
+    let mut sources = sources(&counted);
+    sources.phases = Some(phases.clone());
+    let rows = sources.one_workspace(&ctx(), WS_1).await;
+    let phase = |n: usize| {
+        rows.iter()
+            .find(|r| r.id == projects_of(WS_1)[n])
+            .unwrap()
+            .phase
+            .clone()
+    };
+    assert_eq!(phase(0), None, "no phase is no phase");
+    assert_eq!(phase(1).as_deref(), Some("build"));
+    assert_eq!(phase(2).as_deref(), Some("idea"));
+    assert!(rows.iter().all(|r| r.id != projects_of(WS_2)[0]));
+    assert!(rows[0].phase.is_none(), "a workspace has no phase");
+    assert_eq!(
+        *phases.asked_in.lock().unwrap(),
+        vec![ORG],
+        "once, in the organization"
+    );
+}
+
+/// Phases that cannot be read cost the phase, not the row.
+#[tokio::test]
+async fn phases_that_cannot_be_read_leave_the_rest_of_the_row() {
+    let counted = Arc::new(Counted::default());
+    let mut sources = sources(&counted);
+    sources.phases = Some(Arc::new(Phases {
+        fail: true,
+        ..Phases::default()
+    }));
+    let rows = sources.one_workspace(&ctx(), WS_1).await;
+    for row in projects(&rows) {
+        assert_eq!(row.phase, None);
+        assert_eq!(row.specs.map(|s| s.specs), Some(1));
+    }
 }

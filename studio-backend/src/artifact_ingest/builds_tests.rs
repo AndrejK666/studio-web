@@ -281,6 +281,10 @@ fn a_studio_build_records_where_it_ran_and_the_end_keeps_it() {
             builder_image: Some("ghcr.io/acme/studio-backend:sha-1".into()),
             gearbox_version: None,
             source_commits: None,
+            image_keys: None,
+            deploys_to: None,
+            deployment_id: None,
+            deploy_failure: None,
         },
         ..start()
     };

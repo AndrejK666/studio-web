@@ -10,6 +10,7 @@
 import React, { useCallback, useLayoutEffect, useMemo, useRef } from 'react';
 import { Building2, Folder, FolderGit2 } from 'lucide-react';
 import {
+  Badge,
   Button,
   DataGridRowActionsPlugin,
   DataGridRowClickPlugin,
@@ -138,6 +139,25 @@ const Dash: React.FC = () => {
   return <NoData label={t('no_data')} />;
 };
 
+/** The lifecycle's phases, in order, and the badge each wears (as the workspace's projects list draws them). */
+const PHASE_VARIANTS: Readonly<Record<string, 'secondary' | 'info' | 'accent' | 'success'>> = {
+  idea: 'secondary',
+  discovery: 'info',
+  build: 'accent',
+  run: 'success',
+};
+
+/** A project row's phase (Project lifecycle), beside its name; a phase the lifecycle does not list, by its own name. */
+const ProjectPhase: React.FC<{ phase: string }> = ({ phase }) => {
+  const { t } = useWorkspaceCells();
+  const known = phase in PHASE_VARIANTS;
+  return (
+    <Badge variant={PHASE_VARIANTS[phase] ?? 'outline'} className={styles.phase} data-workspace-project-phase={phase}>
+      {known ? t(`phase_${phase}`) : phase}
+    </Badge>
+  );
+};
+
 const NameCell: React.FC<{ item: WorkspaceGridRow }> = ({ item }) => {
   const { t, stuckDays, onOpenProject } = useWorkspaceCells();
   if (item.kind === 'project') {
@@ -154,6 +174,7 @@ const NameCell: React.FC<{ item: WorkspaceGridRow }> = ({ item }) => {
               {item.project.name}
             </button>
           ) : <span className={styles.name}>{item.project.name}</span>}
+          {item.project.phase && <ProjectPhase phase={item.project.phase} />}
           <span className={styles.summary}>
             {reasons.length > 0 ? reasonLine(reasons, stuckDays) : t('project_fine')}
           </span>

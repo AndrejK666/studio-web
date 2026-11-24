@@ -1,4 +1,4 @@
-# The gears-matcher service (ADR-0075): runs the verified matcher on a specification by API. Called by
+# The gears-matcher service (ADR-0076): runs the verified matcher on a specification by API. Called by
 # the Studio backend, inside the cluster only (no ingress). A release of its own, beside Studio's
 # (`studio`), so Studio's deployments neither need nor touch it: .github/workflows/gears-matcher.yml
 # builds, publishes and deploys it.
@@ -70,7 +70,7 @@ limits:
   workers: 4               # runs executed at the same time on this Pod
   maxCalls: 400            # the per-run model-call bound: a request may lower it, never raise it
   maxExtractCalls: 100     # the same, for reading free-form documents
-  maxConcurrentRuns: ""    # empty: no cap (ADR-0075 §7)
+  maxConcurrentRuns: ""    # empty: no cap (ADR-0076 §7)
 
 resources:
   requests: { cpu: 250m, memory: 512Mi }

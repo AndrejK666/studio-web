@@ -13,7 +13,7 @@
 //!   change reaches every one of them.
 //!
 //! Keys are never settings: they stay in the service's own configuration
-//! (ADR-0075 §6), and nothing here takes or shows one. Who changed them is the
+//! (ADR-0076 §6), and nothing here takes or shows one. Who changed them is the
 //! caller, never what a client says.
 
 use std::sync::Arc;

@@ -50,9 +50,13 @@
   block-size: var(--icon-size-md);
 }
 
-/* Project lifecycle's phase, beside the project's name. */
+/* Project lifecycle's phase, in its own column; a project with none shows a muted dash. */
 .phase {
   flex: none;
+}
+
+.noPhase {
+  color: var(--muted-foreground);
 }
 
 .name {

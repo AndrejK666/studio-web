@@ -20,7 +20,7 @@ It is Python, unlike `studio-backend` beside it, and ships as its own image.
   (`schemas/service/matcher-service.openapi.yaml`).
 - `tests/` — the copied core's tests, and `test_run.py` for the library entry point, on a fake model.
 
-Decision: [ADR-0075](../docs/adr/0075-the-gears-matcher-runs-as-a-python-service-beside-the-backend.md);
+Decision: [ADR-0076](../docs/adr/0076-the-gears-matcher-runs-as-a-python-service-beside-the-backend.md);
 design: [studio-gears-matcher](../docs/design/studio-gears-matcher.md).
 
 ## Run the service

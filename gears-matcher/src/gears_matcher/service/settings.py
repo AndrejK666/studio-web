@@ -5,7 +5,7 @@ call bounds. The config file (`[llm] provider`, `[llm] models`, `GEARS_MATCHER_M
 `GEARS_MATCHER_MAX_EXTRACT_CALLS`) says what they are by default; an override, stored in the run
 store, replaces one or more of them until it is cleared. Studio sets an override from its portal.
 
-**Keys are never settings.** They stay in the config file, the operator's Secret (ADR-0075 §6): an
+**Keys are never settings.** They stay in the config file, the operator's Secret (ADR-0076 §6): an
 override may choose only a provider whose key the service already has (its client can be built,
 which sends nothing).
 

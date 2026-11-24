@@ -5,7 +5,9 @@
  * Specs draws its list (#1076): search, header sort, pages, the portal theme.
  * A click on a row opens what the deploy said under the list -- its reason,
  * its outcome with a crashed container's error -- and asks the cluster how
- * the release is now; a second click closes it.
+ * the release is now; a second click closes it. A deploy that installed
+ * something can be deployed again from there: a rollback to any earlier
+ * build is that (the release map's Deploy stage, 2026-11-24).
  */
 
 import React, { useCallback, useMemo, useState } from 'react';
@@ -21,6 +23,8 @@ import {
 import type { Deployment, DeploymentStatus } from '../../api/types';
 import { canReadStatus, shortCommit } from '../../model/environments';
 import { versionOf } from '../../model/releases';
+import { latestByEnvironment } from '../../model/project-deploys';
+import { useDeployRequest } from './DeployActions';
 import {
   ErrorLine,
   StateBadge,
@@ -120,7 +124,14 @@ const HistoryEmpty: React.FC = () => {
   );
 };
 
-export function DeployHistory({ deployments }: { deployments: Deployment[] }) {
+export function DeployHistory({
+  deployments,
+  onChanged,
+}: {
+  deployments: Deployment[];
+  /** A deploy asked again from here. */
+  onChanged: (message: string) => void;
+}) {
   const { t, organizationId, projectId } = useReleases();
   const people = usePeople([organizationId, projectId]);
   const [open, setOpen] = useState<string | null>(null);
@@ -178,6 +189,7 @@ export function DeployHistory({ deployments }: { deployments: Deployment[] }) {
             {opened.reason && <div className={styles.muted}>“{opened.reason}”</div>}
             {opened.outcome && <pre className={styles.outcome}>{opened.outcome}</pre>}
             {canReadStatus(opened) && <StatusButton key={opened.id} d={opened} />}
+            <DeployAgain key={`again-${opened.id}`} d={opened} deployments={deployments} onChanged={onChanged} />
           </div>
         </section>
       )}
@@ -236,6 +248,47 @@ function StatusButton({ d }: { d: Deployment }) {
           ))}
         </ul>
       )}
+    </div>
+  );
+}
+
+/** Deploy again what a deploy installed, where it installed it: a Research
+ *  deploy runs its build's images again (deploy-only), a cluster one installs
+ *  the same chart again. Not offered for what runs there now, a preview, a
+ *  take-out, or a deploy that did not succeed. */
+function DeployAgain({
+  d,
+  deployments,
+  onChanged,
+}: {
+  d: Deployment;
+  deployments: Deployment[];
+  onChanged: (message: string) => void;
+}) {
+  const { t } = useReleases();
+  const { busy, error, ask, askBuild } = useDeployRequest(onChanged);
+  const current = latestByEnvironment(deployments).get(d.environment_id);
+  const installed = d.state === 'succeeded' && (d.action ?? 'install') === 'install' && !d.preview;
+  if (!installed || current?.id === d.id) return null;
+  const version = versionOf(d) ?? d.product;
+  const what = t('what_deploy_to', { version, environment: d.environment_name });
+  return (
+    <div className={styles.row}>
+      <Button
+        size="sm"
+        variant="outline"
+        disabled={busy}
+        title={t('deploy_again_title', { environment: d.environment_name })}
+        onClick={() =>
+          void (d.research && d.build
+            ? askBuild({ id: d.environment_id, kind: 'research' }, d.build, what)
+            : ask({ environment_id: d.environment_id, redeploy_of: d.id }, what))
+        }
+        data-deploy-again={d.id}
+      >
+        {t('deploy_again', { version })}
+      </Button>
+      {error && <ErrorLine>{error}</ErrorLine>}
     </div>
   );
 }

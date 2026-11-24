@@ -29,7 +29,7 @@ And once, whatever the number of replicas:
 | Consumer | Ceiling | Where it is set |
 |---|---|---|
 | Keycloak | 10 | `keycloak.dbPoolMaxSize`, `deploy/helm/studio-web/values.yaml` |
-| gears-matcher (its own release, `deploy/helm/gears-matcher`) | 3 | `database.pool`, one replica only (ADR-0075) |
+| gears-matcher (its own release, `deploy/helm/gears-matcher`) | 3 | `database.pool`, one replica only (ADR-0076) |
 | backend-bootstrap Job | ~2 | transient, one pass per upgrade |
 | CloudNativePG + exporter | ~5 | the operator |
 | `superuser_reserved_connections` | 3 | PostgreSQL default |

@@ -125,6 +125,11 @@ impl Gear for StudioKitsGear {
             .register::<dyn port::KitPresence>(Arc::new(port::InstalledKits::new(Arc::clone(
                 &installer,
             ))) as Arc<dyn port::KitPresence>);
+        // Every project's phase, for the rows of studio-organizations' rollups.
+        ctx.client_hub()
+            .register::<dyn port::ProjectPhases>(Arc::new(port::InstalledKits::new(Arc::clone(
+                &installer,
+            ))) as Arc<dyn port::ProjectPhases>);
         // The kit-rename sweep (ADR-0071 §8): every installation and every
         // organization's model moved off the retired slugs, once after start.
         crate::model_sweep::register(Arc::new(sweep::KitRenameSweep(Arc::clone(&installer))));

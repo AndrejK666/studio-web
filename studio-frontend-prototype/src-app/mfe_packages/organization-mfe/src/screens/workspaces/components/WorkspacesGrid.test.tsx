@@ -51,6 +51,7 @@ const HEALTH: OrgWorkspace = {
       broken: false,
       score: 1,
       reasons: [{ kind: 'stuck', value: 2 }],
+      phase: 'build',
     },
     {
       id: 'p2',
@@ -145,6 +146,9 @@ describe('the workspaces grid', () => {
     fireEvent.click(toggle);
     await waitFor(() => expect(document.querySelector('[data-workspace-project="p1"]')).toBeTruthy());
     expect(document.querySelector('[data-workspace-project="p2"]')?.textContent).toContain('nothing wrong');
+    // Its phase beside its name (Project lifecycle), none where it has none.
+    expect(document.querySelector('[data-workspace-project="p1"] [data-workspace-project-phase="build"]')).toBeTruthy();
+    expect(document.querySelector('[data-workspace-project="p2"] [data-workspace-project-phase]')).toBeNull();
     // A workspace the overview has no projects for has nothing to open.
     expect(toggleOf('w2')).toBeNull();
   });

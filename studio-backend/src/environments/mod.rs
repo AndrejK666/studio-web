@@ -34,6 +34,7 @@
 //! are built and pushed before a deploy, by CI or by the desktop.
 
 pub(crate) mod build; // a product built by Studio in the organization's cluster (ADR-0048 §9)
+mod build_records; // a project's build records, kept in its organization's model
 mod database;
 mod deploy;
 mod failure; // why a build or a deploy failed, and the action that fixes it (#1054)
@@ -56,8 +57,13 @@ mod realm; // the Keycloak realm a product's own Keycloak imports // what a buil
 mod records; // the gear's own tables (ADR-0062)
 mod research; // building and running on Constructor Research (ADR-0049 §3, §4)
 mod research_app; // a rendered chart as a Constructor Research application (ADR-0049 §4)
+mod research_envs; // one Research environment per Research project (#1053)
+pub(crate) mod research_images; // what Research says of each image of a build, now
+mod research_keys; // what a Research image is made of, so an unchanged one is reused
+mod research_progress; // how far a Research build and deploy are, counted (#1053)
 mod rest;
 mod secret_needs; // the configuration secrets a product needs in an environment
+mod secret_preflight; // a secret the description reads: made, or the deploy refused
 mod service;
 mod store;
 mod workflow; // the build workflow proposed to a product's repository (ADR-0048)
@@ -207,6 +213,9 @@ impl RestApiCapability for StudioEnvironmentsGear {
         // A pipeline's manifest, read by studio-artifact-ingest, becomes image
         // records here too (ADR-0062 §4).
         images_sink::set(Arc::clone(&service));
+        // The Research environments the deploy dialog forked before #1053,
+        // merged once at start, per project, where nothing ran in them.
+        crate::model_sweep::register(Arc::new(service::ResearchMerges::new(Arc::clone(&service))));
         let router = rest::register_routes(router, openapi, service);
         // The write routes a kit claims answer KIT_NOT_INSTALLED without it
         // (ADR-0071 §4): studio-kits' one shared check.
@@ -220,4 +229,11 @@ impl RestApiCapability for StudioEnvironmentsGear {
         // caller's home tenant.
         Ok(router.layer(axum::Extension(access)))
     }
+}
+
+/// The code of the cause a Research build's failure `text` in `step` reads
+/// as: for a test elsewhere that makes a failure for real.
+#[cfg(test)]
+pub(crate) fn failure_code_for_tests(text: &str, step: &str) -> &'static str {
+    failure::explain(failure::Of::Build, text, Some(step), true).code
 }

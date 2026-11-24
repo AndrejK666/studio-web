@@ -79,6 +79,11 @@
   min-width: 0;
 }
 
+/* A project row's phase (Project lifecycle), under its name: as wide as its words. */
+.phase {
+  align-self: flex-start;
+}
+
 .summary {
   min-width: 0;
   font-size: var(--text-meta-size);

@@ -36,7 +36,6 @@ kit(
     tabs = [
         kit_tab(level = "workspace", label = "Project templates", route = "/project-templates"),
         kit_tab(level = "project", label = "Timeline", route = "/projects/timeline"),
-        kit_tab(level = "project", name = "phases", label = "Phases", shows = "project-lifecycle-phase"),
         kit_tab(level = "workspace", name = "ptypes", label = "Templates & phases", shows = "project-type"),
     ],
     inbox = [

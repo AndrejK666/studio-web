@@ -1,4 +1,4 @@
-"""Runs, their idempotency keys and their reports, in PostgreSQL (ADR-0075 §5).
+"""Runs, their idempotency keys and their reports, in PostgreSQL (ADR-0076 §5).
 
 A run row keeps what a caller can read (state, progress, usage, outcome, error, the provider and
 models it ran with), the report, and,

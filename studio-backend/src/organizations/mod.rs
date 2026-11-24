@@ -207,6 +207,10 @@ impl RestApiCapability for StudioOrganizationsGear {
                             &ClientScope::gts_id(crate::user_profile::IDENTITY_INSTANCE_ID),
                         )
                         .ok(),
+                    phases: ctx
+                        .client_hub()
+                        .get::<dyn crate::kit_registry::port::ProjectPhases>()
+                        .ok(),
                 })
             });
         if sources.is_none() {

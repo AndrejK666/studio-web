@@ -79,6 +79,34 @@ describe('LoginScreen', () => {
     );
   });
 
+  it('offers no GitLab button where the deployment does not broker it', () => {
+    window.__STUDIO_ENV__ = { CONSTRUCTOR_SIGN_IN: 'true' };
+    render(<LoginScreen />);
+    expect(screen.queryByRole('button', { name: /GitLab$/ })).toBeNull();
+  });
+
+  it('goes to GitLab through the IdP hint where the deployment brokers it', async () => {
+    window.__STUDIO_ENV__ = { GITLAB_SIGN_IN: 'true' };
+    render(<LoginScreen />);
+    const buttons = screen.getAllByRole('button', { name: /GitLab$/ });
+    // Beside GitHub on the panel; the "Create account" tab is not open.
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0].getAttribute('title')).toBe('GitLab account (via Keycloak identity federation)');
+    // GitLab's flag does not bring Constructor's button with it.
+    expect(screen.queryByRole('button', { name: /Constructor$/ })).toBeNull();
+    fireEvent.click(buttons[0]);
+    await waitFor(() =>
+      expect(mockAuth.login).toHaveBeenCalledWith({ type: 'oauth', payload: { idpHint: 'gitlab' } })
+    );
+  });
+
+  it('lists GitLab on the "Create account" tab too where the deployment brokers it', () => {
+    window.__STUDIO_ENV__ = { GITLAB_SIGN_IN: 'true' };
+    render(<LoginScreen />);
+    fireEvent.click(screen.getByRole('tab', { name: 'Create account' }));
+    expect(screen.getAllByRole('button', { name: /GitLab$/ })).toHaveLength(2);
+  });
+
   it('shows the session-expired notice', () => {
     render(<LoginScreen sessionExpired />);
     expect(screen.getByText(/Session expired/)).toBeTruthy();

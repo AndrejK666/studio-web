@@ -863,6 +863,7 @@ impl ConnectorDriver for GitHubDriver {
         }
         let user: GitHubUser = res.json().await?;
         Ok(DriverIdentity {
+            avatar_url: None,
             checks: Vec::new(),
             account: user.login,
             display_name: user.name,
@@ -1130,6 +1131,7 @@ impl ConnectorDriver for GitHubDriver {
                 RemoteComment {
                     id: c.id.to_string(),
                     target_number,
+                    target_is_pull_request: None,
                     author: c.user.map(|u| u.login),
                     body: c.body,
                     url: Some(c.html_url),
@@ -2182,6 +2184,7 @@ fn api_issue_ref(url: &str) -> Option<NumberRef> {
     Some(NumberRef {
         repo: Some(repo.to_string()),
         number: number.parse().ok()?,
+        ..Default::default()
     })
 }
 
@@ -2247,14 +2250,16 @@ mod tests {
             api_issue_ref("https://api.github.com/repos/constructorfabric/studio-web/issues/643"),
             Some(NumberRef {
                 repo: Some("constructorfabric/studio-web".into()),
-                number: 643
+                number: 643,
+                ..Default::default()
             })
         );
         assert_eq!(
             api_issue_ref("https://ghe.example/api/v3/repos/o/r/issues/7"),
             Some(NumberRef {
                 repo: Some("o/r".into()),
-                number: 7
+                number: 7,
+                ..Default::default()
             })
         );
         assert_eq!(

@@ -42,6 +42,7 @@ use uuid::Uuid;
 use crate::access_config::AccessConfig;
 use crate::artifact_ingest::port::{ArtifactCounter, ProjectSignalSource, ProjectSignals};
 use crate::documents::port::{DocumentCounter, ProjectDocumentCounts, SpecSummary};
+use crate::kit_registry::port::ProjectPhases;
 use crate::user_profile::{OrganizationRoster, RosterMember};
 
 /// Tenant type of a workspace, as account-management records it.
@@ -120,6 +121,10 @@ pub struct Rollup {
     /// configuration (a project) or settings (a workspace). `None` when none
     /// was chosen: a portal draws the one its kind implies.
     pub icon: Option<(String, String)>,
+    /// Projects only: the phase Project lifecycle has it in (`project.phase`
+    /// in the organization's model). `None` when it has none, the kit does
+    /// not apply, or the phases could not be read.
+    pub phase: Option<String>,
 }
 
 impl Rollup {
@@ -140,6 +145,7 @@ impl Rollup {
             signals: None,
             team: None,
             icon,
+            phase: None,
         }
     }
 }
@@ -157,6 +163,9 @@ pub struct Sources {
     /// studio-user's memberships: who belongs to the organization, which is
     /// what a project's team is counted from (ADR-0011 §2).
     pub roster: Option<Arc<dyn OrganizationRoster>>,
+    /// studio-kits' Project lifecycle: every project's phase, read once per
+    /// workspace's organization.
+    pub phases: Option<Arc<dyn ProjectPhases>>,
 }
 
 /// A parent tenant's team basis and its workspaces, `(id, name)`.
@@ -378,11 +387,26 @@ impl Sources {
                 None => HashMap::new(),
             }
         };
-        let (documents, findings, signals) = tokio::join!(documents, findings, signals);
+        // The organization's phases, one read for the workspace: the model
+        // answers every project of the organization, and the rows below keep
+        // the ones listed here.
+        let phases = async {
+            let source = self.phases.as_ref()?;
+            match source.phases_in(ctx, org).await {
+                Ok(phases) => phases,
+                Err(e) => {
+                    tracing::warn!(organization_id = %org, error = %e, "studio-organizations: the projects' phases could not be read");
+                    None
+                }
+            }
+        };
+        let (documents, findings, signals, phases) =
+            tokio::join!(documents, findings, signals, phases);
         ProjectCounts {
             documents,
             findings,
             signals,
+            phases: phases.unwrap_or_default(),
         }
     }
 
@@ -496,6 +520,7 @@ struct ProjectCounts {
     documents: HashMap<Uuid, ProjectDocumentCounts>,
     findings: HashMap<String, u32>,
     signals: HashMap<String, ProjectSignals>,
+    phases: HashMap<Uuid, String>,
 }
 
 /// One project's row, every part settled on its own: its counts out of what
@@ -541,6 +566,7 @@ fn project(
         signals,
         team,
         icon: icon_in(config.as_ref()),
+        phase: counts.phases.get(&project_id).cloned(),
     }
 }
 

@@ -27,6 +27,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseRelease } from "./platform-release.mjs";
 
 const args = Object.fromEntries(
   process.argv.slice(2).reduce((out, a, i, all) => (a.startsWith("--") ? [...out, [a.slice(2), all[i + 1]]] : out), []),
@@ -57,8 +58,10 @@ function engine(...rest) {
 // The engine must be the one the images pin. `gearbox --version` is `0.1.0`
 // for every commit, so a stale image looks current until it refuses a field
 // its gears use (an engine from before `maturity` says GBX0106 on every
-// gear.gdl here). The images record the commit beside the binary.
-const pinned = /^ARG STUDIO_GEARBOX_REF=(\S+)/m.exec(readFileSync(resolve(repo, "studio-backend/Dockerfile"), "utf8"))?.[1];
+// gear.gdl here). The images record the commit beside the binary; the pin is
+// platform-release.toml's (ADR-0075), which the images are written from.
+const release = parseRelease(readFileSync(resolve(repo, "platform-release.toml"), "utf8"));
+const pinned = release.gearbox?.ref;
 {
   const [prog, rest] = image
     ? ["docker", ["run", "--rm", "--entrypoint", "cat", image, "/usr/local/share/gearbox/REVISION"]]
@@ -211,4 +214,17 @@ try {
       ].join("\n"),
     ),
   );
+}
+
+// The engine wrote the local checkout as the `gears-rust` source; the file
+// names it at platform-release.toml's commit (ADR-0075), so a build fetches
+// the same corpus the catalogue reads. scripts/check-platform-release.mjs
+// holds it there.
+{
+  const file = resolve(repo, "product.gdl");
+  const text = readFileSync(file, "utf8");
+  const local = /source\(id = "gears-rust", at = path\("[^"]*"\)\)/;
+  if (!local.test(text)) throw new Error("product.gdl has no local gears-rust source to pin");
+  const { repo: url, commit } = release.gears_rust;
+  writeFileSync(file, text.replace(local, `source(id = "gears-rust", at = git(url = "${url}", rev = "${commit}"))`));
 }

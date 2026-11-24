@@ -110,6 +110,10 @@ impl ConnectorCategory {
 pub struct DriverIdentity {
     pub account: String,
     pub display_name: Option<String>,
+    /// The account's picture, when the provider serves one with the
+    /// identity (GitLab's `/user` does). Shown beside the account so a
+    /// person recognises it; never fetched by Studio itself.
+    pub avatar_url: Option<String>,
     /// What else the test looked at, beside the credential working: a
     /// cluster's rights the bootstrap manifest gives (ADR-0043). Reported,
     /// never a failed test. Empty for most providers.
@@ -356,6 +360,11 @@ pub struct RemoteComment {
     pub id: String,
     /// Number of the issue/PR this comment is on.
     pub target_number: i64,
+    /// Whether it is on a pull request (`Some(true)`) or an issue
+    /// (`Some(false)`), for a provider that numbers the two separately
+    /// (GitLab: issue 5 and merge request 5 are different items). `None`
+    /// where one sequence of numbers covers both, as on GitHub.
+    pub target_is_pull_request: Option<bool>,
     pub author: Option<String>,
     pub body: Option<String>,
     pub url: Option<String>,
@@ -468,6 +477,29 @@ pub enum DownloadTarget {
     BuildArtifact(i64),
     ReleaseAsset(i64),
 }
+
+/// Why a provider gives no download link for a file it does have: it serves
+/// the file itself rather than through a signed link (a GitLab with its
+/// artifacts on local storage). The caller then fetches it with
+/// [`ConnectorDriver::download`], on the connection's credential, and
+/// streams it on: the credential never reaches the browser.
+#[derive(Debug, Clone)]
+pub struct DownloadNeedsProxy {
+    pub provider: &'static str,
+}
+
+impl std::fmt::Display for DownloadNeedsProxy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} serves this file itself rather than through a signed link; Studio \
+             downloads it on the caller's behalf",
+            self.provider
+        )
+    }
+}
+
+impl std::error::Error for DownloadNeedsProxy {}
 
 /// One CI workflow of a repository: what the sync reads its runs by. Its
 /// name comes with every run.
@@ -933,6 +965,21 @@ pub trait ConnectorDriver: Send + Sync + 'static {
             "{} cannot hand out download links through this connection",
             self.display_name()
         ))
+    }
+
+    /// The file `target` names, as a response to read or stream: what a
+    /// server-side reader (a pipeline's manifest) and Studio's own download
+    /// route use, for a provider whose [`Self::download_link`] may answer
+    /// [`DownloadNeedsProxy`]. Defaulted to fetching the signed link, with no
+    /// credential, as it is meant to be fetched.
+    async fn download(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        target: DownloadTarget,
+    ) -> anyhow::Result<reqwest::Response> {
+        let url = self.download_link(auth, repo_full_path, target).await?;
+        Ok(reqwest::get(&url).await?.error_for_status()?)
     }
 
     /// The jobs of one CI run's latest attempt, by the provider's run id.

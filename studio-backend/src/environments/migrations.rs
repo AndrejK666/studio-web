@@ -12,7 +12,7 @@ pub struct Migrator;
 #[async_trait::async_trait]
 impl MigratorTrait for Migrator {
     fn migrations() -> Vec<Box<dyn MigrationTrait>> {
-        vec![Box::new(m0001::Migration)]
+        vec![Box::new(m0001::Migration), Box::new(m0002::Migration)]
     }
 }
 
@@ -134,6 +134,64 @@ CREATE TABLE IF NOT EXISTS studio_env_image_retention (
                      DROP TABLE IF EXISTS studio_env_namespaces; \
                      DROP TABLE IF EXISTS studio_env_project_slugs;",
                 )
+                .await?;
+            Ok(())
+        }
+    }
+}
+
+mod m0002 {
+    use toolkit_db::sea_orm_migration::prelude::*;
+    use toolkit_db::sea_orm_migration::sea_orm;
+    use toolkit_db::sea_orm_migration::sea_orm::ConnectionTrait;
+
+    const ONLY_POSTGRES: &str =
+        "studio-environments migrations: only PostgreSQL is supported (see the module docs)";
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m0002_studio_environments_merged"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if manager.get_database_backend() != sea_orm::DatabaseBackend::Postgres {
+                return Err(DbErr::Custom(ONLY_POSTGRES.to_owned()));
+            }
+            manager
+                .get_connection()
+                .execute_unprepared(
+                    r"
+-- A project's own Research environment removed into another for the same
+-- Research project (#1053): a link, an Inbox item or an open dialog that
+-- still names the removed one is taken to the one kept.
+CREATE TABLE IF NOT EXISTS studio_env_merged (
+    organization_id  UUID   NOT NULL,
+    project_id       UUID   NOT NULL,
+    removed_id       UUID   NOT NULL PRIMARY KEY,
+    kept_id          UUID   NOT NULL,
+    research_project TEXT   NOT NULL,
+    merged_at_ms     BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS studio_env_merged_by_project
+    ON studio_env_merged (organization_id, project_id);
+                    ",
+                )
+                .await?;
+            Ok(())
+        }
+
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if manager.get_database_backend() != sea_orm::DatabaseBackend::Postgres {
+                return Err(DbErr::Custom(ONLY_POSTGRES.to_owned()));
+            }
+            manager
+                .get_connection()
+                .execute_unprepared("DROP TABLE IF EXISTS studio_env_merged;")
                 .await?;
             Ok(())
         }

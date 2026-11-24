@@ -2462,6 +2462,7 @@ impl DocumentsService {
                 at: at.get(DOMAIN_DOC_PATH).cloned(),
             });
         let mut unread = Vec::new();
+        let rows = once_per_path(rows, |r| r.path.as_str());
         let documents: Vec<super::spec_model::SourceText> = rows
             .into_iter()
             .filter_map(|row| match by_path.remove(&row.path).flatten() {
@@ -4726,6 +4727,19 @@ fn plan_adoption(
     moves
 }
 
+/// One row per path, the first. Two sources of one project can hold the same
+/// path (a repository and its fork): each has its own binding, while the
+/// checkout listing keeps one text per path. That text is read once; the
+/// other bindings of the path are neither read again nor unread, or the
+/// model would say "the server's copy of the repository is missing" of a
+/// document it just read, and show its last reading a second time.
+fn once_per_path<T>(rows: Vec<T>, path: impl Fn(&T) -> &str) -> Vec<T> {
+    let mut seen = std::collections::HashSet::new();
+    rows.into_iter()
+        .filter(|row| seen.insert(path(row).to_owned()))
+        .collect()
+}
+
 fn rfc3339(t: OffsetDateTime) -> String {
     t.format(&Rfc3339).unwrap_or_default()
 }
@@ -5738,6 +5752,28 @@ mod tests {
         assert!(status.requirements[0].present);
         assert_eq!(status.requirements[0].analyses_outstanding, ["leak"]);
         assert!(!status.complete);
+    }
+}
+
+#[cfg(test)]
+mod once_per_path_tests {
+    use super::once_per_path;
+
+    #[test]
+    fn a_path_two_sources_share_is_read_once_and_never_unread() {
+        // The repository's binding and its fork's, then a document of one only.
+        let rows = vec![
+            ("docs/adr/0001-a.md", "upstream"),
+            ("docs/adr/0001-a.md", "fork"),
+            ("docs/design/x.md", "fork"),
+        ];
+        assert_eq!(
+            once_per_path(rows, |r| r.0),
+            vec![
+                ("docs/adr/0001-a.md", "upstream"),
+                ("docs/design/x.md", "fork")
+            ]
+        );
     }
 }
 

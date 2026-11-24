@@ -147,6 +147,17 @@ pub trait TaskQueue: Send + Sync + 'static {
     async fn retry(&self, _tenant: Uuid, _run: Uuid) -> anyhow::Result<()> {
         Err(anyhow::anyhow!("this queue cannot retry a run"))
     }
+
+    /// The run of `tenant` enqueued under `idempotency_key`, with its id:
+    /// how a gear that keyed its run by its own record's id finds the run
+    /// again (a build record says `running`; is its run still going?).
+    async fn run_by_key(
+        &self,
+        _tenant: Uuid,
+        _idempotency_key: &str,
+    ) -> anyhow::Result<Option<KeyedRun>> {
+        Ok(None)
+    }
 }
 
 #[async_trait]
@@ -181,6 +192,28 @@ impl TaskQueue for TaskService {
         TaskService::retry(self, &ctx, tenant, run)
             .await
             .map(|_| ())
+    }
+
+    async fn run_by_key(
+        &self,
+        tenant: Uuid,
+        idempotency_key: &str,
+    ) -> anyhow::Result<Option<KeyedRun>> {
+        match self
+            .find_by_idempotency_key(tenant, idempotency_key)
+            .await?
+        {
+            Some(row) => Ok(Some(KeyedRun {
+                id: row.id,
+                payload: row.payload,
+                view: RunView {
+                    state: RunState::parse(&row.state)?,
+                    result: row.result,
+                    last_error: row.last_error,
+                },
+            })),
+            None => Ok(None),
+        }
     }
 }
 
@@ -274,6 +307,15 @@ pub fn platform_schedules() -> Vec<PlatformSchedule> {
         cron: "17 3 * * *",
         payload: serde_json::json!({ "keep_days": 30 }),
     }]
+}
+
+/// A run found by its idempotency key ([`TaskQueue::run_by_key`]).
+#[derive(Debug, Clone)]
+pub struct KeyedRun {
+    pub id: Uuid,
+    /// What it was enqueued with.
+    pub payload: serde_json::Value,
+    pub view: RunView,
 }
 
 /// One run as another gear sees it. Deliberately not the entity: a consumer

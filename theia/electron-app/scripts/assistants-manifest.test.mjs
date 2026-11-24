@@ -66,7 +66,7 @@ test('versions the gearbox engine by its packaging and the revision theia/Docker
     assert.match(ref, /^[0-9a-f]{40}$/);
     const packaging = JSON.parse(readFileSync(join(theia, 'gearbox-engine', 'package.json'), 'utf8')).version;
     assert.equal(gearboxEngineVersion(packaging, ref), `${packaging}-${ref.slice(0, 7)}`);
-    assert.equal(gearboxRef('ARG STUDIO_GEARBOX_REF=3b64969f4ed01558d6e0697edc5cd5477e041cef\r\nRUN x'), '3b64969f4ed01558d6e0697edc5cd5477e041cef');
+    assert.equal(gearboxRef('ARG STUDIO_GEARBOX_DESKTOP_REF=3b64969f4ed01558d6e0697edc5cd5477e041cef\r\nRUN x'), '3b64969f4ed01558d6e0697edc5cd5477e041cef');
     assert.equal(
         gearboxEngineUrl('https://github.com/o/r/releases/download/', '0.1.0-3b64969', 'win32-x64'),
         'https://github.com/o/r/releases/download/gearbox-engine-v0.1.0-3b64969/constructorfabric.gearbox-engine-0.1.0-3b64969-win32-x64.vsix'

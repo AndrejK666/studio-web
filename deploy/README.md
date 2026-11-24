@@ -26,7 +26,7 @@ tags — no `latest`.
 
 ## The gears-matcher service
 
-The gears-matcher (ADR-0075, [`gears-matcher/`](../gears-matcher/README.md)) is a Python service the
+The gears-matcher (ADR-0076, [`gears-matcher/`](../gears-matcher/README.md)) is a Python service the
 backend calls inside the cluster. It is a Helm release of its own, `gears-matcher`, from
 [`helm/gears-matcher`](helm/gears-matcher/values.yaml), built, published and deployed by
 `.github/workflows/gears-matcher.yml`, never by Studio Delivery:

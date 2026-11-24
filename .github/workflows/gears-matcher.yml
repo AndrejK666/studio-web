@@ -1,6 +1,6 @@
 name: gears-matcher
 
-# The gears-matcher service (T9, ADR-0075; gears-matcher/, chart deploy/helm/gears-matcher/): a Python
+# The gears-matcher service (T9, ADR-0076; gears-matcher/, chart deploy/helm/gears-matcher/): a Python
 # component with a Helm release of its own, so it is tested, built and deployed here and not in Studio
 # Delivery, whose component detection, test jobs and releases are Rust- and portal-shaped. A Studio
 # deployment never touches it, and this workflow never touches Studio's release.

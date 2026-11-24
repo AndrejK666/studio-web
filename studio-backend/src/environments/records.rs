@@ -152,6 +152,35 @@ pub mod retention {
     impl ActiveModelBehavior for ActiveModel {}
 }
 
+pub mod merged {
+    use sea_orm::entity::prelude::*;
+    use toolkit_db::secure::Scopable;
+
+    #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel, Scopable)]
+    #[sea_orm(table_name = "studio_env_merged")]
+    #[secure(tenant_col = "organization_id", no_owner, no_type, no_resource)]
+    pub struct Model {
+        pub organization_id: Uuid,
+        pub project_id: Uuid,
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub removed_id: Uuid,
+        pub kept_id: Uuid,
+        pub research_project: String,
+        pub merged_at_ms: i64,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter)]
+    pub enum Relation {}
+
+    impl RelationTrait for Relation {
+        fn def(&self) -> RelationDef {
+            unreachable!("studio_env_merged has no relations")
+        }
+    }
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
 /// The namespace a project was given in one environment.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Assignment {
@@ -680,6 +709,72 @@ impl Records {
             .exec(&conn)
             .await?;
         Ok(())
+    }
+
+    /* ── Research environments merged into one (#1053) ── */
+
+    /// Record that `removed`, one of `project`'s own Research environments,
+    /// was merged into `kept`. Recording it again changes nothing.
+    pub async fn record_merge(
+        &self,
+        org: Uuid,
+        project: Uuid,
+        removed: Uuid,
+        kept: Uuid,
+        research_project: &str,
+    ) -> anyhow::Result<()> {
+        let made = merged::ActiveModel {
+            organization_id: ActiveValue::Set(org),
+            project_id: ActiveValue::Set(project),
+            removed_id: ActiveValue::Set(removed),
+            kept_id: ActiveValue::Set(kept),
+            research_project: ActiveValue::Set(research_project.to_owned()),
+            merged_at_ms: ActiveValue::Set(now_ms()),
+        };
+        let on_conflict = SecureOnConflict::<merged::Entity>::columns([merged::Column::RemovedId])
+            .update_columns([merged::Column::KeptId])?;
+        let conn = self.db.conn()?;
+        merged::Entity::insert(made)
+            .secure()
+            .scope_unchecked(&AccessScope::for_tenant(org))?
+            .on_conflict(on_conflict)
+            .exec(&conn)
+            .await?;
+        Ok(())
+    }
+
+    /// The environment `id` of `project` was merged into, following a merge
+    /// of the one kept too; `None` when it was never merged.
+    pub async fn merged_into(
+        &self,
+        org: Uuid,
+        project: Uuid,
+        id: Uuid,
+    ) -> anyhow::Result<Option<Uuid>> {
+        let conn = self.db.conn()?;
+        let mut at = id;
+        let mut seen = vec![id];
+        // A chain is short; a loop (which nothing writes) ends here too.
+        for _ in 0..8 {
+            let next = merged::Entity::find()
+                .secure()
+                .scope_with(&AccessScope::for_tenant(org))
+                .filter(
+                    Condition::all()
+                        .add(merged::Column::ProjectId.eq(project))
+                        .add(merged::Column::RemovedId.eq(at)),
+                )
+                .one(&conn)
+                .await?;
+            match next {
+                Some(m) if !seen.contains(&m.kept_id) => {
+                    seen.push(m.kept_id);
+                    at = m.kept_id;
+                }
+                _ => break,
+            }
+        }
+        Ok((at != id).then_some(at))
     }
 }
 

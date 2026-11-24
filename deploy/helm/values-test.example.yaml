@@ -112,6 +112,15 @@ keycloak:
     enabled: false
     issuer: https://dev-constructor.dev/idp
     clientId: constructor-studio
+  # Signing in with a GitLab account (keycloak/GITLAB_SSO.md). The secret is
+  # the vault key studio_gitlab-client-secret in studio-web-keycloak-vault;
+  # clientId is the GitLab OAuth application's Application ID, whose redirect
+  # URI is https://studio-test.cfabric.org/auth/realms/studio/broker/gitlab/endpoint.
+  # baseUrl also tells the backend where a GitLab user's photo is.
+  gitlabIdp:
+    enabled: false
+    baseUrl: https://gitlab.com
+    clientId: ""
 
 ingress:
   enabled: true

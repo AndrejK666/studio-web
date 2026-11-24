@@ -21,6 +21,7 @@ use super::preview::{self, PreviewRoute, SweepPayload};
 use super::readiness::{self, Role};
 use super::records::Records;
 use super::research;
+use super::research_envs;
 use super::store::{Store, service_context};
 use super::workflow;
 use super::{BINDINGS_METADATA_TYPE, DEPLOYMENTS_METADATA_TYPE, ENVIRONMENTS_METADATA_TYPE};
@@ -47,6 +48,17 @@ pub use pipeline_service::{BuildView, SecretKeys};
 #[path = "service_path.rs"]
 mod path_service;
 
+// One Research environment per Research project: the duplicates made
+// before merged at start (#1053).
+#[path = "service_research_envs.rs"]
+mod research_envs_service;
+pub use research_envs_service::ResearchMerges;
+
+// A Research build's record against its run, and a deploy of the images a
+// build made, building nothing.
+#[path = "service_research_builds.rs"]
+mod research_builds_service;
+
 /// The privilege that manages an organization's environments and decides
 /// about deploys to its protected ones (ADR-0043 §1, §3).
 pub const MANAGE_PRIVILEGE: &str = "environment.manage";
@@ -71,6 +83,20 @@ pub enum Refusal {
     Kit(crate::kit_registry::port::KitRefusal),
     /// 500.
     Internal(String),
+}
+
+impl Refusal {
+    /// The refusal in one line, its code first: what a run's summary and a
+    /// build's record say about a deploy it could not start.
+    pub fn line(&self) -> String {
+        match self {
+            Self::Forbidden(code) => format!("{code}: not allowed"),
+            Self::NotFound(_, why) | Self::Invalid(why) | Self::Unavailable(why) => why.clone(),
+            Self::Internal(why) => why.clone(),
+            Self::Precondition(code, why) | Self::Conflict(code, why) => format!("{code}: {why}"),
+            Self::Kit(k) => format!("{k:?}"),
+        }
+    }
 }
 
 impl From<anyhow::Error> for Refusal {
@@ -239,17 +265,35 @@ struct Config {
     /// Why an install is refused: a configuration secret and the
     /// description both set a field ([`super::gear_overrides::CONFLICT`]).
     conflict: Option<String>,
+    /// Why an install is refused: the description reads configuration
+    /// secrets nobody set ([`super::secret_preflight::SECRET_MISSING`]).
+    missing: Option<String>,
 }
 
 impl Config {
-    /// Refuse an install the configuration contradicts.
+    /// Refuse an install the configuration contradicts, or one that would
+    /// start services reading secrets nobody set.
     fn check(&self, action: DeploymentAction) -> Result<()> {
-        match (&self.conflict, action) {
-            (Some(why), DeploymentAction::Install) => Err(Refusal::Precondition(
+        if action != DeploymentAction::Install {
+            return Ok(());
+        }
+        if let Some(why) = &self.conflict {
+            return Err(Refusal::Precondition(
                 super::gear_overrides::CONFLICT,
                 why.clone(),
+            ));
+        }
+        self.check_secrets()
+    }
+
+    /// Refuse what would start services reading secrets nobody set.
+    fn check_secrets(&self) -> Result<()> {
+        match &self.missing {
+            Some(why) => Err(Refusal::Precondition(
+                super::secret_preflight::SECRET_MISSING,
+                why.clone(),
             )),
-            _ => Ok(()),
+            None => Ok(()),
         }
     }
 }
@@ -943,13 +987,17 @@ impl EnvironmentService {
         project: Uuid,
         id: Uuid,
     ) -> Result<Environment> {
-        if let Some(own) = self
-            .own_environments(ctx, project)
-            .await?
-            .into_iter()
-            .find(|e| e.id == id)
+        let own = self.own_environments(ctx, project).await?;
+        if let Some(env) = own.iter().find(|e| e.id == id) {
+            return Ok(env.clone());
+        }
+        // One merged into another for the same Research project (#1053): a
+        // link or an open dialog that still names it goes to the one kept.
+        if let Some(records) = self.records()
+            && let Ok(Some(kept)) = records.merged_into(org, project, id).await
+            && let Some(env) = own.iter().find(|e| e.id == kept)
         {
-            return Ok(own);
+            return Ok(env.clone());
         }
         let env = self.environment(ctx, org, id).await?;
         if !env.admits(project) {
@@ -1024,12 +1072,27 @@ impl EnvironmentService {
                             format!("the project has no environment {id} of its own"),
                         ));
                     }
+                    // One Research environment per Research project (#1053):
+                    // adding one for a Research project the project has one
+                    // for changes that one -- its hardware, its sign-in --
+                    // under its own name, whatever name was asked for.
+                    let mut input = input.clone();
+                    let id = match id {
+                        Some(id) => Some(id),
+                        None => research_envs::reused(&row.environments, &input).map(|had| {
+                            input.name.clone_from(&had.name);
+                            if input.description.trim().is_empty() {
+                                input.description.clone_from(&had.description);
+                            }
+                            had.id
+                        }),
+                    };
                     let env = model::checked_for_project(
                         &admitted,
                         &row.environments,
                         project,
                         id,
-                        input.clone(),
+                        input,
                         by.clone(),
                         at.clone(),
                     )?;
@@ -1601,9 +1664,11 @@ impl EnvironmentService {
 
     /// The project's configuration for a release of `build` in `env`: the
     /// bound profile's values, and the keys of its secrets there.
+    #[allow(clippy::too_many_arguments)]
     async fn project_config(
         &self,
         ctx: &SecurityContext,
+        org: Uuid,
         project: Uuid,
         env: &Environment,
         profile: &str,
@@ -1664,6 +1729,11 @@ impl EnvironmentService {
                 secret_keys.push(v);
             }
         }
+        // Every secret the description reads: made when the deployment owns
+        // it, else an install is refused without it.
+        let missing = self
+            .prepare_secrets(ctx, org, project, env, profile, &infra, &mut secret_keys)
+            .await?;
         let mut warnings: Vec<String> = infra
             .iter()
             .flat_map(|i| super::infra::issuer_warnings(&i.service, i.install, i.shared.as_ref()))
@@ -1695,7 +1765,103 @@ impl EnvironmentService {
             own: list.build,
             warnings,
             conflict,
+            missing,
         })
+    }
+
+    /// The configuration secrets the project's latest description reads in
+    /// `env` running `profile` ([`super::secret_preflight`]): each one the
+    /// deployment owns and nobody set is made and kept now, and added to
+    /// `secret_keys`; what is left unset is answered as the refusal an
+    /// install gets. Without a description there is nothing to read.
+    #[allow(clippy::too_many_arguments)]
+    async fn prepare_secrets(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        project: Uuid,
+        env: &Environment,
+        profile: &str,
+        infra: &[super::infra::InfraInstall],
+        secret_keys: &mut Vec<String>,
+    ) -> Result<Option<String>> {
+        use super::secret_preflight as preflight;
+        let Ok(products) = self.hub.get::<dyn crate::product::port::ProjectProducts>() else {
+            return Ok(None);
+        };
+        let text = match products.latest_description(ctx, project).await {
+            Ok(Some(d)) => d.text,
+            Ok(None) => return Ok(None),
+            Err(e) => {
+                tracing::warn!(%project, error = %format!("{e:#}"), "studio-environments: the description could not be read; its configuration secrets are not checked");
+                return Ok(None);
+            }
+        };
+        let needs = super::secret_needs::needs(Some(&text), profile, infra, secret_keys);
+        let owned = preflight::owned(&crate::product::port::gear_configs(&text));
+        let (make, refuse) = preflight::split(&needs, &owned);
+        for n in make {
+            self.make_config_secret(ctx, org, project, env.id, &n.key)
+                .await?;
+            secret_keys.push(n.key.clone());
+        }
+        Ok((!refuse.is_empty()).then(|| preflight::refusal_message(&env.name, &refuse)))
+    }
+
+    /// Keep a secret the deployment owns as the configuration secret `key`
+    /// of `project` in `environment`: the value credstore already holds
+    /// under it, else a new one. A value is never replaced.
+    async fn make_config_secret(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        project: Uuid,
+        environment: Uuid,
+        key: &str,
+    ) -> Result<()> {
+        let credstore = self
+            .hub
+            .get::<dyn credstore_sdk::CredStoreClientV1>()
+            .map_err(|_| {
+                Refusal::Unavailable("credstore is not available in this deployment".into())
+            })?;
+        let reference = model::config_secret_ref(project, environment, key);
+        let sref = credstore_sdk::SecretRef::new(&reference)
+            .map_err(|e| Refusal::Internal(format!("bad secret reference: {e}")))?;
+        let svc = self.service(org)?;
+        let kept = credstore
+            .get(&svc, &sref)
+            .await
+            .map_err(|e| Refusal::Unavailable(format!("credstore: {e}")))?;
+        if kept.is_none() {
+            credstore
+                .create(
+                    &svc,
+                    &sref,
+                    credstore_sdk::SecretValue::new(
+                        super::secret_preflight::new_value().into_bytes(),
+                    ),
+                    credstore_sdk::SharingMode::Tenant,
+                )
+                .await
+                .map_err(|e| {
+                    Refusal::Internal(format!("the secret {key} could not be stored: {e}"))
+                })?;
+        }
+        let entry = ConfigSecret {
+            environment_id: environment,
+            key: key.to_owned(),
+        };
+        self.store
+            .update::<BindingList, (), Refusal>(ctx, project, BINDINGS_METADATA_TYPE, |row| {
+                if !row.secrets.contains(&entry) {
+                    row.secrets.push(entry.clone());
+                }
+                Ok(())
+            })
+            .await??;
+        tracing::info!(%project, %environment, key, made = kept.is_none(), "studio-environments: a configuration secret the deployment owns is kept");
+        Ok(())
     }
 
     /// The configuration secrets in `secret_keys` that set a gear's config
@@ -1901,7 +2067,9 @@ impl EnvironmentService {
             && req.chart_ref.is_none()
             && let Some(build) = req.build.clone()
         {
-            req = self.what_build_published(ctx, project, &build, req).await?;
+            req = self
+                .what_build_published(ctx, org, project, &build, req)
+                .await?;
         }
         let product = Self::release_name(&req.product)?;
         let project_name = self.project_name(ctx, project).await?;
@@ -2021,7 +2189,7 @@ impl EnvironmentService {
                 .await?;
         }
         let mut config = self
-            .project_config(ctx, project, &env, &d.profile, d.build.as_deref())
+            .project_config(ctx, org, project, &env, &d.profile, d.build.as_deref())
             .await?;
         config.build_namespace = Some(place.build_namespace.clone());
         if d.action == DeploymentAction::Install {
@@ -2229,16 +2397,14 @@ impl EnvironmentService {
     async fn what_build_published(
         &self,
         ctx: &SecurityContext,
+        org: Uuid,
         project: Uuid,
         build_id: &str,
         req: DeployRequest,
     ) -> Result<DeployRequest> {
-        let builds = self
-            .hub
-            .get::<dyn crate::artifact_ingest::port::BuildRecords>()
-            .map_err(|_| {
-                Refusal::Unavailable("builds are not available in this deployment".into())
-            })?;
+        let builds = super::build_records::OrgBuilds::of(&self.hub, org).map_err(|_| {
+            Refusal::Unavailable("builds are not available in this deployment".into())
+        })?;
         let b = builds
             .build(ctx, &project.to_string(), build_id.trim())
             .await
@@ -2420,6 +2586,7 @@ impl EnvironmentService {
         product_file: Option<&str>,
         git_ref: Option<String>,
         dry_run: bool,
+        then_deploy: bool,
     ) -> Result<BuildAsked> {
         // A build is the code at a ref and a description revision (ADR-0053
         // §2): the latest revision Studio keeps, laid at its path. Without
@@ -2462,6 +2629,13 @@ impl EnvironmentService {
             .project_environment(ctx, org, project, environment)
             .await?;
         let research = env.kind == EnvironmentKind::Research;
+        if then_deploy && !research {
+            return Err(Refusal::Invalid(format!(
+                "'{}' is not a Constructor Research environment: only a build made in Research \
+                 deploys itself; deploy a cluster build from its record",
+                env.name
+            )));
+        }
         // How the project builds (ADR-0054 §7): on gears, or the
         // repository's own Dockerfiles and chart.
         let own = self
@@ -2627,6 +2801,7 @@ impl EnvironmentService {
                     git_ref,
                     namespace,
                     description,
+                    then_deploy,
                 )
                 .await
                 .map(BuildAsked::Started);
@@ -2805,6 +2980,10 @@ impl EnvironmentService {
             builder_image: Some(builder.image.clone()),
             gearbox_version: builder.gearbox_version.clone(),
             source_commits: None,
+            image_keys: None,
+            deploys_to: None,
+            deployment_id: None,
+            deploy_failure: None,
         };
         let payload = build::BuildPayload {
             build_id: build_id.clone(),
@@ -2827,7 +3006,7 @@ impl EnvironmentService {
             requested_by: Some(person.id),
             environment_id: Some(env.id),
             buildkit_image: build::buildkit_image(),
-            records_in: Some(ctx.subject_tenant_id()),
+            records_in: Some(org),
             description_revision,
             description_text: description.map(|d| d.text),
             connections_from: env.project_id,
@@ -2835,10 +3014,7 @@ impl EnvironmentService {
             source_refs: refs.git,
             strictness: Some(env.strictness().as_str().to_owned()),
         };
-        if let Ok(builds) = self
-            .hub
-            .get::<dyn crate::artifact_ingest::port::BuildRecords>()
-        {
+        if let Ok(builds) = super::build_records::OrgBuilds::of(&self.hub, org) {
             let mut running = crate::artifact_ingest::port::BuildOutcome::running(
                 &build_id,
                 &target.repo,
@@ -3117,6 +3293,7 @@ impl EnvironmentService {
         git_ref: Option<String>,
         application: String,
         description: Option<crate::product::port::DescriptionRevision>,
+        then_deploy: bool,
     ) -> Result<BuildStarted> {
         // A build is a project's: base, organization or the project's own kit.
         self.require_research_kit(ctx, project).await?;
@@ -3130,9 +3307,21 @@ impl EnvironmentService {
         // The build bakes in what the chart mounts, so it renders the chart
         // with the values the deploy will (ADR-0049 §3).
         let config = self
-            .project_config(ctx, project, env, &profile, None)
+            .project_config(ctx, org, project, env, &profile, None)
             .await?;
+        // Build and run: what the deploy would refuse is refused now, not
+        // after the build; what it takes from the member is kept for the run.
+        let then_deploy = if then_deploy {
+            config.check(DeploymentAction::Install)?;
+            Some(
+                self.research_basis(ctx, org, project, env, DeploymentAction::Install, "")
+                    .await?,
+            )
+        } else {
+            None
+        };
         let payload = research::ResearchBuildPayload {
+            then_deploy,
             namespace: application.clone(),
             values: config.values,
             secret_keys: config.secret_keys,
@@ -3147,20 +3336,24 @@ impl EnvironmentService {
             product_file,
             repo: repo.clone(),
             git_ref,
-            records_in: Some(ctx.subject_tenant_id()),
+            records_in: Some(org),
             description_revision: description.as_ref().map(|d| d.revision),
             description_text: description.map(|d| d.text),
             requested_by: Some(research::Requester::of(ctx)),
         };
-        if let Ok(builds) = self
-            .hub
-            .get::<dyn crate::artifact_ingest::port::BuildRecords>()
-        {
+        if let Ok(builds) = super::build_records::OrgBuilds::of(&self.hub, org) {
             let mut running = crate::artifact_ingest::port::BuildOutcome::running(
                 &build_id, &repo.repo, &profile,
             );
             running.r#where = Some("research".into());
             running.description_revision = payload.description_revision;
+            // Which environment it was for: a merge of duplicates keeps an
+            // environment a build went to (#1053).
+            running.place.environment_id = Some(env.id.to_string());
+            running.place.environment = Some(env.name.clone());
+            if payload.then_deploy.is_some() {
+                running.place.deploys_to = Some(env.id.to_string());
+            }
             builds
                 .record(ctx, &project.to_string(), &running)
                 .await
@@ -3193,29 +3386,72 @@ impl EnvironmentService {
         env: &Environment,
         req: DeployRequest,
     ) -> Result<Deployment> {
+        self.research_deploy_of(ctx, org, project, env, req, false)
+            .await
+    }
+
+    /// [`Self::request_research_deploy`]; `images_built` when the caller
+    /// found every image of the build built in Research, which lets a build
+    /// that failed after its images were asked for be deployed
+    /// ([`Self::deploy_built_images`]).
+    pub(super) async fn research_deploy_of(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        project: Uuid,
+        env: &Environment,
+        req: DeployRequest,
+        images_built: bool,
+    ) -> Result<Deployment> {
         if research_needs_kit(req.action) {
             self.require_research_kit(ctx, project).await?;
         }
-        let target = env.research.clone().ok_or_else(|| {
-            Refusal::Precondition(
-                "ENVIRONMENT_RESEARCH_UNUSABLE",
-                format!("environment '{}' names no Research project", env.name),
-            )
-        })?;
-        let build_id = match (req.redeploy_of, &req.build) {
-            (Some(earlier), _) => self
-                .deployment(ctx, org, earlier)
-                .await?
-                .build
-                .ok_or_else(|| Refusal::Invalid(format!("deployment {earlier} names no build")))?,
-            (None, Some(b)) => b.trim().to_owned(),
-            (None, None) if req.action == DeploymentAction::Uninstall => String::new(),
-            (None, None) => {
-                return Err(Refusal::Invalid(
-                    "a deploy to Constructor Research names a build made there".into(),
-                ));
-            }
+        let basis = self
+            .research_basis(ctx, org, project, env, req.action, &req.product)
+            .await?;
+        // The revision Studio keeps, as the build took it (ADR-0053 §2): the
+        // chart is rendered from it. An uninstall renders nothing.
+        let description = match (
+            req.action,
+            self.hub.get::<dyn crate::product::port::ProjectProducts>(),
+        ) {
+            (DeploymentAction::Install, Ok(products)) => products
+                .latest_description(ctx, project)
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::warn!(%project, error = %format!("{e:#}"), "studio-environments: the description revision could not be read; the deploy renders the checkout's");
+                    None
+                })
+                .map(|d| (d.revision, d.text)),
+            _ => None,
         };
+        self.research_deploy_with(
+            ctx,
+            org,
+            project,
+            env,
+            req,
+            images_built,
+            basis,
+            description,
+        )
+        .await
+    }
+
+    /// What a Research deploy takes from the member who asks for it: the
+    /// product's repository and description file, the project's name, who
+    /// they are and their own Research sign-in. Read as the member, when
+    /// they ask -- or when they ask for a build that deploys itself, which
+    /// keeps it for the run ([`research::ResearchBuildPayload::then_deploy`]).
+    pub(super) async fn research_basis(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        project: Uuid,
+        env: &Environment,
+        action: DeploymentAction,
+        product: &str,
+    ) -> Result<research::DeployBasis> {
         let files = self
             .hub
             .get::<dyn crate::product::port::ProjectFiles>()
@@ -3243,10 +3479,58 @@ impl EnvironmentService {
         let product_file = match self.saved_product_file(ctx, project).await {
             Ok(f) => f,
             // An uninstall reads no description: the product's own path does.
-            Err(_) if req.action == DeploymentAction::Uninstall => {
-                crate::product::port::product_gdl_path(req.product.trim())
+            Err(_) if action == DeploymentAction::Uninstall => {
+                crate::product::port::product_gdl_path(product.trim())
             }
             Err(e) => return Err(e),
+        };
+        let person = self.person(ctx).await;
+        Ok(research::DeployBasis {
+            environment_id: env.id,
+            repo,
+            product_file,
+            project_name: self.project_name(ctx, project).await?,
+            requested_by: person.id,
+            requested_by_name: person.name,
+            requester: research::Requester::of(ctx),
+            sign_in: self.own_research(ctx, org, Some(project)).await?,
+        })
+    }
+
+    /// The Research deploy `req` asks for, made of `basis` and the build's
+    /// record, as `ctx` reads the environment's and the project's records.
+    /// `description` is the revision and text the chart is rendered from.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) async fn research_deploy_with(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        project: Uuid,
+        env: &Environment,
+        req: DeployRequest,
+        images_built: bool,
+        basis: research::DeployBasis,
+        description: Option<(i64, String)>,
+    ) -> Result<Deployment> {
+        let target = env.research.clone().ok_or_else(|| {
+            Refusal::Precondition(
+                "ENVIRONMENT_RESEARCH_UNUSABLE",
+                format!("environment '{}' names no Research project", env.name),
+            )
+        })?;
+        let build_id = match (req.redeploy_of, &req.build) {
+            (Some(earlier), _) => self
+                .deployment(ctx, org, earlier)
+                .await?
+                .build
+                .ok_or_else(|| Refusal::Invalid(format!("deployment {earlier} names no build")))?,
+            (None, Some(b)) => b.trim().to_owned(),
+            (None, None) if req.action == DeploymentAction::Uninstall => String::new(),
+            (None, None) => {
+                return Err(Refusal::Invalid(
+                    "a deploy to Constructor Research names a build made there".into(),
+                ));
+            }
         };
 
         let mut images = Vec::new();
@@ -3254,12 +3538,9 @@ impl EnvironmentService {
         let mut profile = req.profile.trim().to_owned();
         let (mut commit, mut lock_hash) = (None, None);
         if req.action == DeploymentAction::Install {
-            let builds = self
-                .hub
-                .get::<dyn crate::artifact_ingest::port::BuildRecords>()
-                .map_err(|_| {
-                    Refusal::Unavailable("builds are not available in this deployment".into())
-                })?;
+            let builds = super::build_records::OrgBuilds::of(&self.hub, org).map_err(|_| {
+                Refusal::Unavailable("builds are not available in this deployment".into())
+            })?;
             let b = builds
                 .build(ctx, &project.to_string(), &build_id)
                 .await
@@ -3279,7 +3560,7 @@ impl EnvironmentService {
                     ),
                 ));
             }
-            if b.status != "passed" {
+            if b.status != "passed" && !(images_built && b.status != "running") {
                 return Err(Refusal::Precondition(
                     "BUILD_NOT_PASSED",
                     format!("build {build_id} is {}, not passed", b.status),
@@ -3299,29 +3580,13 @@ impl EnvironmentService {
             commit = b.commit;
             lock_hash = b.lock_hash;
         }
-        // The revision Studio keeps, as the build took it (ADR-0053 §2): the
-        // chart is rendered from it. An uninstall renders nothing.
-        let description = match (
-            req.action,
-            self.hub.get::<dyn crate::product::port::ProjectProducts>(),
-        ) {
-            (DeploymentAction::Install, Ok(products)) => products
-                .latest_description(ctx, project)
-                .await
-                .unwrap_or_else(|e| {
-                    tracing::warn!(%project, error = %format!("{e:#}"), "studio-environments: the description revision could not be read; the deploy renders the checkout's");
-                    None
-                }),
-            _ => None,
-        };
         let product = Self::release_name(&product)?;
-        let project_name = self.project_name(ctx, project).await?;
-        let namespace = model::namespace_for(&env.namespace_pattern, &project_name, &env.name)?;
-        let person = self.person(ctx).await;
+        let namespace =
+            model::namespace_for(&env.namespace_pattern, &basis.project_name, &env.name)?;
         let d = Deployment {
             id: Uuid::new_v4(),
             project_id: project,
-            project_name,
+            project_name: basis.project_name,
             environment_id: env.id,
             environment_name: env.name.clone(),
             profile: profile.clone(),
@@ -3337,8 +3602,8 @@ impl EnvironmentService {
             chart_ref: None,
             state: DeploymentState::Queued,
             run_id: None,
-            requested_by: person.id,
-            requested_by_name: person.name.unwrap_or_default(),
+            requested_by: basis.requested_by,
+            requested_by_name: basis.requested_by_name.unwrap_or_default(),
             requested_at: now(),
             decided_by: None,
             decided_by_name: None,
@@ -3351,21 +3616,21 @@ impl EnvironmentService {
             research: Some(research::ResearchDeploy {
                 research_project: target.project,
                 hardware: target.hardware,
-                repo,
-                product_file,
+                repo: basis.repo,
+                product_file: basis.product_file,
                 profile,
                 commit: commit.unwrap_or_default(),
-                requested_by: Some(research::Requester::of(ctx)),
-                sign_in: Some(self.own_research(ctx, org, Some(project)).await?),
-                description_revision: description.as_ref().map(|d| d.revision),
-                description_text: description.map(|d| d.text),
+                requested_by: Some(basis.requester),
+                sign_in: Some(basis.sign_in),
+                description_revision: description.as_ref().map(|d| d.0),
+                description_text: description.map(|d| d.1),
             }),
         };
         if d.action == DeploymentAction::Install {
             self.check_promoted(ctx, org, env, &d).await?;
         }
         let config = self
-            .project_config(ctx, project, env, &d.profile, d.build.as_deref())
+            .project_config(ctx, org, project, env, &d.profile, d.build.as_deref())
             .await?;
         self.submit(org, env, d, None, config).await
     }
@@ -3532,13 +3797,27 @@ impl EnvironmentService {
             // row whoever the administrator is.
             let svc = self.service(org)?;
             let config = match self
-                .project_config(&svc, d.project_id, &env, &d.profile, d.build.as_deref())
+                .project_config(
+                    &svc,
+                    org,
+                    d.project_id,
+                    &env,
+                    &d.profile,
+                    d.build.as_deref(),
+                )
                 .await
             {
                 Ok(c) => c,
                 Err(_) => {
-                    self.project_config(ctx, d.project_id, &env, &d.profile, d.build.as_deref())
-                        .await?
+                    self.project_config(
+                        ctx,
+                        org,
+                        d.project_id,
+                        &env,
+                        &d.profile,
+                        d.build.as_deref(),
+                    )
+                    .await?
                 }
             };
             config.check(d.action)?;
@@ -3604,6 +3883,11 @@ impl EnvironmentService {
                 && let Ok(Some(view)) = queue.run(org, run).await
             {
                 let state = match view.state {
+                    // Between two attempts (a Research deploy hands its
+                    // services' start over): still running, not back in line.
+                    crate::tasks::RunState::Queued if d.state == DeploymentState::Running => {
+                        DeploymentState::Running
+                    }
                     crate::tasks::RunState::Queued => DeploymentState::Queued,
                     crate::tasks::RunState::Running => DeploymentState::Running,
                     crate::tasks::RunState::Succeeded => DeploymentState::Succeeded,
@@ -3724,12 +4008,10 @@ impl EnvironmentService {
         project: Uuid,
         build_id: &str,
     ) -> Result<BuildLog> {
-        let records = self
-            .hub
-            .get::<dyn crate::artifact_ingest::port::BuildRecords>()
-            .map_err(|_| {
-                Refusal::Unavailable("builds are not available in this deployment".into())
-            })?;
+        let org = self.organization_of_project(ctx, project).await?;
+        let records = super::build_records::OrgBuilds::of(&self.hub, org).map_err(|_| {
+            Refusal::Unavailable("builds are not available in this deployment".into())
+        })?;
         let missing = || {
             Refusal::NotFound(
                 build_id.to_owned(),
@@ -3753,7 +4035,6 @@ impl EnvironmentService {
         if record.r#where.as_deref() == Some("research") {
             return Ok(research_build_log(&record));
         }
-        let org = self.organization_of_project(ctx, project).await?;
         let mut unreachable = None;
         let (admitted, own) = self.visible(ctx, org, project).await?;
         let ran_in = record.place.environment_id.clone();

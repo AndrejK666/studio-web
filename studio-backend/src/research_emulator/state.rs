@@ -88,6 +88,15 @@ pub struct Project {
     pub id: String,
     pub name: String,
     pub owner: String,
+    /// Research's "Deployment" setting of the project: off, it refuses to
+    /// build images ("Deployment is not enabled for this project"). On in
+    /// every project the emulator makes; a test turns it off with a `PATCH`.
+    #[serde(default = "on")]
+    pub deployment_enabled: bool,
+}
+
+fn on() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -324,6 +333,7 @@ impl State {
                     id: pid,
                     name: format!("{who}'s project"),
                     owner: id.clone(),
+                    deployment_enabled: true,
                 },
             );
         }

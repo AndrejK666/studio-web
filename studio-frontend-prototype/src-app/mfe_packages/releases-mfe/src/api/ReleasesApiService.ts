@@ -31,9 +31,9 @@ import type {
   DeployEnvironmentInput,
   DeploymentLogs,
   EnvironmentBuild,
-  MappingPlanSummary,
   MyResearchProjects,
   ProjectPath,
+  ResearchBuildImage,
   ResearchHardware,
   StudioBuildStarted,
 } from './types';
@@ -102,6 +102,12 @@ export class ReleasesApiService extends BaseApiService {
     { organizationId: string; id: string }
   >(({ organizationId, id }) => `${ENV}/deployments/${enc(id)}/logs?${org(organizationId)}`);
 
+  /** What Research says now of each image of a Research build (kept 30 s by the server). */
+  readonly researchBuildImages = this.protocol(RestEndpointProtocol).queryWith<
+    { items: ResearchBuildImage[]; total: number },
+    ProjectParams & { buildId: string }
+  >(({ projectId, buildId }) => `${ENV}/builds/${enc(buildId)}/images?${project(projectId)}`);
+
   /** One build as Studio keeps it, with its cause when it failed. */
   readonly build = this.protocol(RestEndpointProtocol).queryWith<EnvironmentBuild, ProjectParams & { buildId: string }>(
     ({ projectId, buildId }) => `${ENV}/builds/${enc(buildId)}?${project(projectId)}`
@@ -109,7 +115,10 @@ export class ReleasesApiService extends BaseApiService {
 
   /** Build the product in an environment: its cluster, or Constructor Research. */
   startBuild(projectId: string) {
-    return this.rest.mutation<StudioBuildStarted, { environment_id: string }>('POST', `${ENV}/builds?${project(projectId)}`);
+    return this.rest.mutation<StudioBuildStarted, { environment_id: string; then_deploy?: boolean }>(
+      'POST',
+      `${ENV}/builds?${project(projectId)}`
+    );
   }
 
   /** The caller's own Research projects (#1053); refused without the kit or a sign-in. */
@@ -130,11 +139,6 @@ export class ReleasesApiService extends BaseApiService {
     );
   }
 
-  /** What the project's specifications need (studio-spec-mapping): the Specs step reads its size. */
-  readonly specPlan = this.protocol(RestEndpointProtocol).queryWith<MappingPlanSummary, ProjectParams>(
-    ({ projectId }) => `/studio-spec-mapping/v1/plan?${project(projectId)}`
-  );
-
   /** The project's deploys, newest first. */
   readonly deployments = this.protocol(RestEndpointProtocol).queryWith<DeploymentList, ProjectParams>(
     ({ projectId }) => `${ENV}/deployments?${project(projectId)}`
@@ -143,6 +147,15 @@ export class ReleasesApiService extends BaseApiService {
   /** Ask for a deploy: queued, or waiting for an administrator in a protected environment. */
   createDeployment(projectId: string) {
     return this.rest.mutation<Deployment, DeploymentRequest>('POST', `${ENV}/deployments?${project(projectId)}`);
+  }
+
+  /** Deploy the images a Research build made, building nothing: continues a build that
+   *  failed after its images were asked for, or redeploys an earlier one. */
+  deployBuiltImages(projectId: string, buildId: string) {
+    return this.rest.mutation<Deployment, { environment_id: string }>(
+      'POST',
+      `${ENV}/builds/${enc(buildId)}/deploy?${project(projectId)}`
+    );
   }
 
   /** The organization's environments: read here only for `may_manage`, whether the caller decides deploys. */

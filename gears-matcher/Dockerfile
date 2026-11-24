@@ -1,4 +1,4 @@
-# The gears-matcher service (T9, ADR-0075): `gears-service` on port 8080.
+# The gears-matcher service (T9, ADR-0076): `gears-service` on port 8080.
 #
 # Build context is this folder:  docker build -t gears-matcher gears-matcher
 #

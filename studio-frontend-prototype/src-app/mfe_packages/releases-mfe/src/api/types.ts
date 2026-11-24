@@ -388,6 +388,9 @@ export interface RegistryOrphan {
 export interface ResearchProject {
   id: string;
   name: string;
+  /** The project's "Deployment" setting: off, Research refuses to build
+   *  images there. Absent where Research did not say, or an older backend. */
+  deployment_enabled?: boolean | null;
 }
 
 /** A hardware configuration of a Research project; a trial one Research ends by its rules. */
@@ -492,7 +495,7 @@ export interface PathCheck {
   action?: PathAction | null;
 }
 
-export type PathStepId = "specs" | "product" | "build" | "image" | "environment" | "running";
+export type PathStepId = "product" | "build" | "image" | "environment" | "running";
 export type PathStepState = "done" | "active" | "failed" | "blocked" | "next" | "later";
 
 export interface PathStep {
@@ -549,6 +552,18 @@ export interface StudioBuildStarted {
   namespace: string;
 }
 
+/** `GET /studio-environments/v1/builds/{id}/images`: one image of a Research build, as Research says it is now. */
+export interface ResearchBuildImage {
+  app: string;
+  image: string;
+  name?: string | null;
+  research_id?: string | null;
+  /** `unknown` when Research could not be asked. */
+  status: 'built' | 'building' | 'failed' | 'missing' | 'unknown';
+  /** Research's words: why it failed or is missing, or why it could not be asked. */
+  message?: string | null;
+}
+
 /** `GET /studio-environments/v1/builds/{id}`: one build as Studio keeps it. */
 export interface EnvironmentBuild {
   build_id: string;
@@ -557,17 +572,17 @@ export interface EnvironmentBuild {
   failure?: string | null;
   failure_step?: string | null;
   cause?: FailureCause | null;
+  /** What it built or asked Research to build, `(app, image)`. */
+  images?: { app: string; image: string }[];
+  /** Build and run: the environment it deploys itself to once built, then the deployment it started or why not. */
+  deploys_to?: string | null;
+  deployment_id?: string | null;
+  deploy_failure?: string | null;
 }
 
 /** The end of each container's log of a deployed release. */
 export interface DeploymentLogs {
   containers: ContainerLog[];
-}
-
-/** The plan the spec mapping reads from the project's documents: only its size is read here. */
-export interface MappingPlanSummary {
-  items: unknown[];
-  total: number;
 }
 
 /** A release as its cluster reports it now. */
@@ -766,6 +781,9 @@ export interface TaskRun {
   state: string;
   /** The phase the handler last reported; kept after it ends. */
   progress?: string | null;
+  /** What the run counted so far (a Research build's `progress`), then its
+   *  result; its shape is the task type's. */
+  result?: unknown;
   started_at?: string | null;
   finished_at?: string | null;
 }

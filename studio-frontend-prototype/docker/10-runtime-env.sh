@@ -28,6 +28,12 @@ js_escape() {
     ''|false|0) ;;
     *) echo "  CONSTRUCTOR_SIGN_IN: \"true\"," ;;
   esac
+  # GitLab likewise (keycloak/GITLAB_SSO.md): compose passes "true" exactly
+  # when keycloak-gitlab-idp has a client secret to write the broker with.
+  case "$(printf '%s' "${STUDIO_GITLAB_SIGN_IN:-}" | tr 'A-Z' 'a-z')" in
+    ''|false|0) ;;
+    *) echo "  GITLAB_SIGN_IN: \"true\"," ;;
+  esac
   echo "};"
 } > "$HTML_DIR/env.js"
 

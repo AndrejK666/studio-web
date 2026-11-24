@@ -103,6 +103,19 @@ fn text(v: &Value, key: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// The query [`KitInstaller::project_phases`] asks the organization's model:
+/// every project object (a kit's subtype of Project too, studio-web#1118)
+/// with a phase of the lifecycle, its tenant and the kit's fields.
+pub(crate) fn phases_query() -> Value {
+    let mut fields = vec!["tenant_id"];
+    fields.extend(FIELDS);
+    json!({
+        "type": "project",
+        "where": { "phase": { "_in": lifecycle().states } },
+        "fields": fields,
+    })
+}
+
 impl KitInstaller {
     /// The caller, acting in `project`'s organization: where the model is.
     pub(super) async fn org_ctx(
@@ -278,17 +291,8 @@ impl KitInstaller {
         let Some(port) = self.models() else {
             return Ok((true, Vec::new()));
         };
-        let mut fields = vec!["tenant_id"];
-        fields.extend(FIELDS);
         let (rows, _) = port
-            .query(
-                ctx,
-                json!({
-                    "type": "project",
-                    "where": { "phase": { "_in": lifecycle().states } },
-                    "fields": fields,
-                }),
-            )
+            .query(ctx, phases_query())
             .await
             .map_err(Refusal::Internal)?;
         let mut out: Vec<_> = rows

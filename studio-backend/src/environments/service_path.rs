@@ -95,10 +95,7 @@ impl EnvironmentService {
             Ok::<_, Refusal>((research_kit, research))
         };
         let builds = async {
-            match self
-                .hub
-                .get::<dyn crate::artifact_ingest::port::BuildRecords>()
-            {
+            match crate::environments::build_records::OrgBuilds::of(&self.hub, org) {
                 Ok(records) => records
                     .builds(ctx, &project.to_string(), PATH_BUILDS)
                     .await
@@ -134,7 +131,7 @@ impl EnvironmentService {
         let (research, builds, product_revision, deployments) =
             tokio::join!(research, builds, product_revision, deployments);
         let (research_kit, research) = research?;
-        let builds = builds?;
+        let builds = self.reconcile_research_builds(org, builds?).await;
         let product_revision: Option<i64> = product_revision?;
         let deployments = deployments?;
         // A product built before Studio kept its description is one.
@@ -192,7 +189,7 @@ impl EnvironmentService {
         let org = self.organization_of_project(ctx, project).await?;
         self.require_research_kit(ctx, project).await?;
         let sign_in = self.own_research(ctx, org, Some(project)).await?;
-        let projects = self
+        let mut projects = self
             .research_api(ctx, sign_in.tenant, sign_in.connection_id)
             .await?
             .projects()
@@ -200,6 +197,9 @@ impl EnvironmentService {
             .map_err(|e| {
                 Refusal::Precondition("ENVIRONMENT_RESEARCH_UNREACHABLE", format!("{e:#}"))
             })?;
+        // Where a build can go first: a project whose Deployment is off
+        // refuses to build images, and the picker shows it last, disabled.
+        projects.sort_by_key(|p| p.deployment_enabled == Some(false));
         Ok((sign_in.connection_id, projects))
     }
 

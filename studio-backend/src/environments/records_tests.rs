@@ -211,3 +211,28 @@ async fn a_retention_policy_is_kept_per_scope() {
         })
     );
 }
+
+#[tokio::test]
+async fn a_merged_research_environment_leads_to_the_one_kept_once_and_through_a_chain() {
+    let r = records().await;
+    let (org, project) = (Uuid::new_v4(), Uuid::new_v4());
+    let (a, b, c) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+    assert_eq!(r.merged_into(org, project, a).await.unwrap(), None);
+
+    r.record_merge(org, project, a, b, "rp-1").await.unwrap();
+    // A second sweep records the same merge: nothing changes.
+    r.record_merge(org, project, a, b, "rp-1").await.unwrap();
+    assert_eq!(r.merged_into(org, project, a).await.unwrap(), Some(b));
+    assert_eq!(r.merged_into(org, project, b).await.unwrap(), None);
+
+    // The one kept merged later in turn: the first leads to the last.
+    r.record_merge(org, project, b, c, "rp-1").await.unwrap();
+    assert_eq!(r.merged_into(org, project, a).await.unwrap(), Some(c));
+
+    // Another organization or project reads nothing of it.
+    assert_eq!(
+        r.merged_into(Uuid::new_v4(), project, a).await.unwrap(),
+        None
+    );
+    assert_eq!(r.merged_into(org, Uuid::new_v4(), a).await.unwrap(), None);
+}

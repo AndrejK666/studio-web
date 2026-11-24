@@ -1,4 +1,4 @@
-"""The service's config file: its keys and connection settings in one place (ADR-0075 §8).
+"""The service's config file: its keys and connection settings in one place (ADR-0076 §8).
 
 `GEARS_MATCHER_CONFIG` names a TOML file (in a deployment: one Secret, mounted read-only):
 

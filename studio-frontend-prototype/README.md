@@ -23,7 +23,7 @@ working starting point; what you build on top is yours.
 - **The MFE runtime, pre-wired** — screens are contributed by microfrontends and
   appear in the menu automatically; no central screen registry to maintain.
 - **Demo microfrontends** (`src-app/mfe_packages`, added separately via
-  [`frontx-template-mfe`](../template-mfe/README.md)) — `demo-mfe` (Hello World,
+  [`frontx-template-mfe`](.frontx/ai/@gears-frontx/frontx-template-mfe/workflows/add-mfe-package-workflow.md)) — `demo-mfe` (Hello World,
   Profile, Current Theme, UIKit Elements, Widgets Host), a minimal `_blank-mfe`
   to copy from, and two widget fixtures. A shell-only seed has zero MFEs; the
   host, build, and manifest pipeline all work with none present.
@@ -116,7 +116,7 @@ npm run dev:all
 A shell-only seed has no MFEs yet, so `dev:all` just runs the host, and
 `generate:mfe-manifests` writes an empty manifest set — both expected, not
 errors. Add MFE packages with `frontx add frontx-template-mfe` (see
-[`template-mfe`](../template-mfe/README.md)), then run `npm install` again —
+[`template-mfe`](.frontx/ai/@gears-frontx/frontx-template-mfe/workflows/add-mfe-package-workflow.md)), then run `npm install` again —
 `add` changes what the workspace glob matches, so the lock must be
 regenerated — before their preview ports (`:3001` demo, `:3099` blank,
 `:3201`/`:3202` widget fixtures) come up alongside the host.

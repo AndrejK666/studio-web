@@ -414,7 +414,7 @@ fn builtin_kits_name_their_icon_once() {
 fn a_model_says_its_types_fields_relations_and_tabs_by_model_id() {
     // project-lifecycle: its own `phase` with declared fields, types moved
     // out of the core (adopted by id, fields and relations as the core had
-    // them), fields on `project`, and tabs both declared and written.
+    // them), fields on `project`, and a tab it writes.
     let c = contents_of(&builtin_manifest("project-lifecycle").expect("compiled in"));
     let phase = c.types.iter().find(|t| t.id == "project-lifecycle-phase");
     let phase = phase.expect("a kit's own type is `<slug>-<name>`");
@@ -445,10 +445,12 @@ fn a_model_says_its_types_fields_relations_and_tabs_by_model_id() {
                 && f.name == "phase"
                 && f.origin == ORIGIN_KIT)
     );
-    // A declared tab names the kit's type by its model id; a `shows`
-    // relation the kit moved out of the core is a tab, not an edge.
+    // The phase is a field of the project, shown in the projects list and
+    // on its Overview: no project tab lists the `phase` type's objects
+    // (which nothing writes). A `shows` relation the kit moved out of the
+    // core is a tab, not an edge.
     assert!(
-        c.model
+        !c.model
             .tabs
             .iter()
             .any(|t| t.level == "project" && t.target == "project-lifecycle-phase")

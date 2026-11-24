@@ -136,6 +136,13 @@ impl Repository {
             .await
     }
 
+    /// The file itself, fetched through the connection
+    /// ([`ConnectorDriver::download`]): for a provider that gives no signed
+    /// link, Studio streams it on.
+    pub async fn download(&self, target: DownloadTarget) -> Result<reqwest::Response> {
+        self.driver.download(&self.auth, &self.repo, target).await
+    }
+
     /// One page of tag names.
     pub async fn tags(&self, page: u32, per_page: u32) -> Result<Vec<String>> {
         self.driver

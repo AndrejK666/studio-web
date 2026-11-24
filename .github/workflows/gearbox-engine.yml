@@ -3,8 +3,9 @@ name: Gearbox engine extension
 # The gearbox engine (gear catalogue, products, `.gdl`) as an extension a
 # desktop fetches on first start (theia/gearbox-engine), instead of inside the
 # installer. The engine is the constructorfabric/gearbox release the session
-# image uses: theia/Dockerfile's `gearbox` stage is the one pin, and names the
-# SHA-256 of each platform's archive (from that release's SHA256SUMS), so this
+# image uses unless platform-release.toml gives the desktop its own
+# ([gearbox_desktop]): theia/Dockerfile's `gearbox` stage carries both as
+# STUDIO_GEARBOX_DESKTOP_*, and names the SHA-256 of each platform's archive (from that release's SHA256SUMS), so this
 # only downloads, checks and packs; nothing is compiled.
 #
 # Each version -- theia/gearbox-engine/package.json's version plus the
@@ -14,8 +15,9 @@ name: Gearbox engine extension
 # revision in the Dockerfile is a new release; a change to the packaging alone
 # needs that package.json's version raised. A platform added later goes into
 # the release that is already there, beside the VSIXs it holds. A platform
-# whose SHA-256 the Dockerfile leaves empty has no archive in that engine
-# release; it is skipped, not failed, and stays in the matrix for the next one.
+# whose SHA-256 the Dockerfile leaves empty fails the run: the pins come from
+# platform-release.toml (ADR-0075), which names every desktop archive, and a
+# skipped platform used to leave the desktop on an older engine than the portal.
 #
 # A pull request builds it and keeps the VSIXs as artifacts. A push publishes
 # what the version's release is missing -- on the upstream that is main; a
@@ -73,10 +75,10 @@ jobs:
           # Read once, then search the text: no pipe for `grep -q` to close early.
           dockerfile=$(tr -d '\r' < theia/Dockerfile)
           pin() { sed -n "s/^ARG $1=//p" <<< "$dockerfile"; }
-          repo=$(pin STUDIO_GEARBOX_REPO)
-          release=$(pin STUDIO_GEARBOX_RELEASE)
-          engine_version=$(pin STUDIO_GEARBOX_VERSION)
-          ref=$(pin STUDIO_GEARBOX_REF)
+          repo=$(pin STUDIO_GEARBOX_DESKTOP_REPO)
+          release=$(pin STUDIO_GEARBOX_DESKTOP_RELEASE)
+          engine_version=$(pin STUDIO_GEARBOX_DESKTOP_VERSION)
+          ref=$(pin STUDIO_GEARBOX_DESKTOP_REF)
           if ! grep -q "^ARG ${{ matrix.sha256 }}=" <<< "$dockerfile"; then
             echo "::error::theia/Dockerfile no longer pins ${{ matrix.sha256 }}"
             exit 1
@@ -87,8 +89,8 @@ jobs:
             exit 1
           fi
           if [ -z "$sha256" ]; then
-            echo "::notice::$release has no ${{ matrix.target }} archive (${{ matrix.sha256 }} is empty); no engine for it this time"
-            echo "SKIP=true" >> "$GITHUB_ENV"
+            echo "::error::${{ matrix.sha256 }} is empty: $release would give the ${{ matrix.target }} desktop no engine. Pin a release that publishes it in platform-release.toml (node scripts/platform-release.mjs --fetch-sha256 --write)"
+            exit 1
           fi
           version="$(node -p "require('./theia/gearbox-engine/package.json').version")-${ref:0:7}"
           {
@@ -160,7 +162,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ref=$(sed -n 's/^ARG STUDIO_GEARBOX_REF=//p' theia/Dockerfile | tr -d '\r')
+          ref=$(sed -n 's/^ARG STUDIO_GEARBOX_DESKTOP_REF=//p' theia/Dockerfile | tr -d '\r')
           version="$(node -p "require('./theia/gearbox-engine/package.json').version")-${ref:0:7}"
           echo "ENGINE_VERSION=$version" >> "$GITHUB_ENV"
           echo "ENGINE_TAG=gearbox-engine-v$version" >> "$GITHUB_ENV"

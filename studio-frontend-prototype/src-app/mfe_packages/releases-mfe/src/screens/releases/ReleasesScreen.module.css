@@ -30,32 +30,6 @@
   min-width: 0;
 }
 
-.releaseFacts {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-4) var(--space-8, 2rem);
-  margin: 0;
-}
-
-.releaseFacts dt {
-  color: var(--muted-foreground);
-}
-
-.releaseFacts dd {
-  margin: var(--space-1) 0 0;
-  font-weight: 600;
-}
-
-.releaseLink {
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--primary);
-  font: inherit;
-  text-decoration: underline;
-  cursor: pointer;
-}
-
 .header {
   display: flex;
   flex-wrap: wrap;
@@ -225,17 +199,6 @@
   text-decoration: underline;
 }
 
-.clickable {
-  cursor: pointer;
-}
-
-.ladderActions {
-  display: inline-flex;
-  flex-wrap: nowrap;
-  justify-content: flex-end;
-  gap: var(--space-2);
-}
-
 .outcome,
 .log {
   margin: var(--space-1, 0.25rem) 0 0;
@@ -315,46 +278,6 @@
 
 /* The project's path to running (#1050): one row of steps, the current one
  * open under it with its reason, checklist and action. */
-.path {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
-  gap: var(--space-2);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.pathStep {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md, 8px);
-  background: var(--card);
-  text-align: start;
-  font: inherit;
-  color: inherit;
-  cursor: pointer;
-  min-width: 0;
-}
-
-.pathStep[aria-pressed='true'] {
-  border-color: var(--primary);
-  box-shadow: 0 0 0 1px var(--primary);
-}
-
-.pathStep_done {
-  background: color-mix(in srgb, var(--success, #16a34a) 10%, var(--card));
-}
-
-.pathStep_failed {
-  background: color-mix(in srgb, var(--destructive) 10%, var(--card));
-}
-
-.pathStep_blocked {
-  background: color-mix(in srgb, var(--warning, #b45309) 10%, var(--card));
-}
 
 .checklist {
   display: flex;
@@ -400,4 +323,687 @@
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--border);
   border-radius: var(--radius-md, 8px);
+}
+
+/* ── Deploy to… (#1053): compact, the Research target first, the
+   environments one row each in a scroll area of their own ── */
+
+.deployDialog {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-height: min(88vh, 52rem);
+  overflow: hidden;
+}
+
+@media (min-width: 640px) {
+  .deployDialog {
+    max-width: min(46rem, calc(100vw - 2rem));
+  }
+}
+
+.researchTarget {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  flex-shrink: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+  background: var(--card);
+}
+
+.researchForm {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+@media (max-width: 560px) {
+  .researchForm {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.researchLog {
+  max-height: 7.5rem;
+}
+
+.targetsSection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.targetsHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.targetSearch {
+  margin-left: auto;
+  width: min(16rem, 100%);
+}
+
+/* The list scrolls, the dialog does not: the Research run and every row's
+   Deploy stay in view. */
+.targetsScroll {
+  min-height: 3rem;
+  max-height: min(48vh, 26rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+}
+
+.targetList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.targetRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  min-height: 2.5rem;
+  padding: var(--space-1) var(--space-3);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.875rem;
+}
+
+.targetRow[data-deploy-target-focused] {
+  background: var(--accent);
+}
+
+.targetRow[data-deploy-target-quiet] {
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 2.25rem;
+  color: var(--muted-foreground);
+}
+
+.targetName {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.targetName b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.targetState,
+.targetAction {
+  display: flex;
+  justify-content: flex-end;
+  white-space: nowrap;
+}
+
+.targetError {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 560px) {
+  .targetRow {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .targetAction {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+}
+
+.foldLine {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: 2.5rem;
+  padding: var(--space-1) var(--space-3);
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: none;
+  color: var(--muted-foreground);
+  font: inherit;
+  font-size: 0.8125rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.foldLine:hover {
+  color: var(--foreground);
+  background: var(--muted);
+}
+
+.foldMark {
+  width: 1ch;
+}
+
+/* ── How far a Research build is (#1053) ── */
+
+.progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.progressTrack {
+  position: relative;
+  height: 0.375rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--muted);
+}
+
+.progressFill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--primary);
+  transition: width 0.4s ease;
+}
+
+.progressIndeterminate {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 35%;
+  border-radius: inherit;
+  background: var(--primary);
+  opacity: 0.7;
+  animation: progress-slide 1.4s ease-in-out infinite;
+}
+
+@keyframes progress-slide {
+  from {
+    transform: translateX(-100%);
+  }
+
+  to {
+    transform: translateX(290%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .progressIndeterminate {
+    animation: none;
+    width: 100%;
+    opacity: 0.35;
+  }
+}
+
+.progressSteps {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+}
+
+.progressSteps li {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.progressSteps li[data-progress-state='done'] {
+  color: var(--foreground);
+}
+
+.progressSteps li[data-progress-state='now'] {
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.progressStep {
+  display: grid;
+  grid-template-columns: minmax(6rem, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Where each environment runs: the Kubernetes and Constructor Research
+ * groups, each row's place, and the sections' own heads and empty states. */
+.sectionHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.groupText {
+  display: flex;
+  flex: 1 1 16rem;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.targetIcon {
+  flex-shrink: 0;
+}
+
+.targetCell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  max-width: 20rem;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.targetMain {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.emptyState {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md, 8px);
+}
+
+.emptyState p {
+  margin: 0;
+}
+
+.noProduct {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--warning, #b45309);
+  border-radius: var(--radius-md, 8px);
+  background: var(--card);
+  font-size: 0.875rem;
+}
+
+/* ── The release map: Build → Images → Environment → Deploy ── */
+
+.map {
+  min-width: 0;
+}
+
+.mapList {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mapItem {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+}
+
+/* The link from the node before: a line with an arrowhead, in the colour of
+   how far the release got there. */
+.mapLink {
+  position: relative;
+  flex: 0 0 var(--space-6);
+  align-self: center;
+  height: 2px;
+  background: var(--border);
+}
+
+.mapLink::after {
+  content: '';
+  position: absolute;
+  right: -1px;
+  top: -4px;
+  border-width: 5px 0 5px 7px;
+  border-style: solid;
+  border-color: transparent transparent transparent var(--border);
+}
+
+.mapLink[data-map-link-state='done'] {
+  background: var(--success);
+}
+
+.mapLink[data-map-link-state='done']::after {
+  border-left-color: var(--success);
+}
+
+.mapNode {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-top-width: 3px;
+  border-radius: var(--radius-lg, 12px);
+  background: var(--card);
+  color: var(--foreground);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mapNode:hover {
+  background: var(--card-hover, var(--accent));
+}
+
+.mapNode:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.mapNode[aria-selected='true'] {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 1px var(--primary);
+}
+
+.mapNode[data-map-state='done'] {
+  border-top-color: var(--success);
+}
+
+.mapNode[data-map-state='running'] {
+  border-top-color: var(--info);
+}
+
+.mapNode[data-map-state='failed'] {
+  border-top-color: var(--destructive);
+}
+
+.mapNode[data-map-state='blocked'] {
+  border-top-color: var(--warning);
+}
+
+.mapNode[aria-selected='true'][data-map-state] {
+  border-top-width: 3px;
+}
+
+.mapHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.mapMark {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 1.375rem;
+  height: 1.375rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.mapMark[data-map-mark='done'] {
+  border-color: var(--success);
+  background: var(--success-soft, var(--muted));
+  color: var(--success);
+}
+
+.mapMark[data-map-mark='failed'] {
+  border-color: var(--destructive);
+  background: color-mix(in srgb, var(--destructive) 14%, var(--card));
+  color: var(--destructive);
+}
+
+.mapMark[data-map-mark='blocked'] {
+  border-color: var(--warning);
+  background: var(--warning-soft, var(--muted));
+  color: var(--warning);
+}
+
+/* Running: a ring that turns. */
+.mapMark[data-map-mark='running'] {
+  border: 2px solid var(--info-soft, var(--muted));
+  border-top-color: var(--info);
+  background: transparent;
+  color: transparent;
+  animation: map-spin 0.9s linear infinite;
+}
+
+@keyframes map-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mapMark[data-map-mark='running'] {
+    animation: none;
+    border-color: var(--info);
+  }
+}
+
+.mapTitle {
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.mapState {
+  margin-left: auto;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.mapNode[data-map-state='failed'] .mapState {
+  color: var(--destructive);
+}
+
+.mapNode[data-map-state='running'] .mapState {
+  color: var(--info);
+}
+
+.mapNode[data-map-state='blocked'] .mapState {
+  color: var(--warning);
+}
+
+.mapNode[data-map-state='done'] .mapState {
+  color: var(--success);
+}
+
+.mapFact {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+
+.mapFactText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mapSub,
+.mapMore {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-size: 0.8125rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mapNode[data-map-state='failed'] .mapMore {
+  color: var(--destructive);
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.mapNode[data-map-state='blocked'] .mapMore {
+  color: var(--warning);
+  white-space: normal;
+}
+
+.mapUrl {
+  color: var(--primary);
+}
+
+/* Narrow: the nodes stack, the links turn down. */
+@media (max-width: 720px) {
+  .mapList {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .mapItem {
+    flex-direction: column;
+  }
+
+  .mapLink {
+    flex: 0 0 var(--space-4);
+    align-self: center;
+    width: 2px;
+    height: var(--space-4);
+  }
+
+  .mapLink::after {
+    top: auto;
+    right: -4px;
+    bottom: -1px;
+    border-width: 7px 5px 0 5px;
+    border-color: var(--border) transparent transparent transparent;
+  }
+
+  .mapLink[data-map-link-state='done']::after {
+    border-left-color: transparent;
+    border-top-color: var(--success);
+  }
+}
+
+/* ── A stage ── */
+
+.pathNote {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-left: 3px solid var(--info);
+  border-radius: var(--radius-md, 8px);
+  background: color-mix(in srgb, var(--info) 8%, var(--card));
+  font-size: 0.875rem;
+}
+
+.pathNote[data-path-state='failed'] {
+  border-left-color: var(--destructive);
+  background: color-mix(in srgb, var(--destructive) 8%, var(--card));
+}
+
+.pathNote[data-path-state='blocked'] {
+  border-left-color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 8%, var(--card));
+}
+
+/* The Deploy stage's plan: these images → that environment, then Deploy. */
+.plan {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: var(--space-2);
+}
+
+.planPart {
+  display: flex;
+  flex: 1 1 14rem;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+  background: var(--muted);
+  color: var(--foreground);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.planPart:hover {
+  border-color: var(--primary);
+}
+
+.planPart b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.planArrow {
+  align-self: center;
+  color: var(--muted-foreground);
+  font-size: 1.25rem;
+}
+
+.planGo {
+  display: flex;
+  align-items: center;
+}
+
+/* A stage's controls above its list: the build picker, its state, where it can go. */
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+
+.toolbarField {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.stackTight {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* The environment chosen for the deploy, in the shared grid. */
+tr:has([data-ladder-selected]) > td {
+  background: color-mix(in srgb, var(--primary) 7%, transparent);
+}
+
+/* A chip with a sentence in a grid cell: it wraps instead of running into the next column. */
+.wrapBadge {
+  max-width: 100%;
+  height: auto;
+  white-space: normal;
+  text-align: left;
 }

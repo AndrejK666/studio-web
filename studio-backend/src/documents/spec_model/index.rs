@@ -75,7 +75,8 @@ pub fn reference_findings(
     docs: &[SourceDoc<'_>],
     tree: &BTreeSet<String>,
 ) -> (ReferenceIndex, Vec<Finding>) {
-    let index = build_index(docs);
+    let mut index = build_index(docs);
+    index_tree_adrs(&mut index, tree);
     let anchors: BTreeMap<&str, BTreeSet<String>> =
         docs.iter().map(|d| (d.path, anchors_of(d.text))).collect();
     let families = id_families(&index);
@@ -145,11 +146,27 @@ pub fn build_index(docs: &[SourceDoc<'_>]) -> ReferenceIndex {
 /// The ADR a document is, when its file name is numbered and it lives in a
 /// directory called `adr` (any case, any depth) or the classifier typed it so.
 fn adr_of(doc: &SourceDoc<'_>) -> Option<Adr> {
-    let (dir, file) = doc.path.rsplit_once('/').unwrap_or(("", doc.path));
+    let typed = doc.doc_type.is_some_and(|t| t.eq_ignore_ascii_case("adr"));
+    let (namespace, number) = numbered_record(doc.path, typed)?;
+    Some(Adr {
+        namespace,
+        number,
+        path: doc.path.to_string(),
+        title: doc
+            .text
+            .lines()
+            .find_map(|l| l.strip_prefix("# ").map(|t| t.trim().to_string())),
+        status: adr_status(doc.text),
+    })
+}
+
+/// The directory and number of a record at `path`: a numbered file name in a
+/// directory called `adr` (any case, any depth), or anywhere when `typed`.
+fn numbered_record(path: &str, typed: bool) -> Option<(String, u32)> {
+    let (dir, file) = path.rsplit_once('/').unwrap_or(("", path));
     let in_adr_dir = dir
         .split('/')
         .any(|seg| seg.eq_ignore_ascii_case("adr") || seg.eq_ignore_ascii_case("adrs"));
-    let typed = doc.doc_type.is_some_and(|t| t.eq_ignore_ascii_case("adr"));
     if !(in_adr_dir || typed) {
         return None;
     }
@@ -161,17 +178,39 @@ fn adr_of(doc: &SourceDoc<'_>) -> Option<Adr> {
     if digits.is_empty() || digits.len() > 5 {
         return None;
     }
-    let number = digits.parse().ok()?;
-    Some(Adr {
-        namespace: dir.to_string(),
-        number,
-        path: doc.path.to_string(),
-        title: doc
-            .text
-            .lines()
-            .find_map(|l| l.strip_prefix("# ").map(|t| t.trim().to_string())),
-        status: adr_status(doc.text),
-    })
+    Some((dir.to_string(), digits.parse().ok()?))
+}
+
+/// The records the repositories hold but nobody typed yet: an ADR exists
+/// whether or not its binding was settled in the Specs tab, so a citation of
+/// it is not dangling. Only their number and place are known — no title or
+/// status, so they never stand as the cited side of a misattribution.
+fn index_tree_adrs(index: &mut ReferenceIndex, tree: &BTreeSet<String>) {
+    let known: BTreeSet<String> = index.adrs.iter().map(|a| a.path.clone()).collect();
+    let mut added = false;
+    for path in tree {
+        if known.contains(path)
+            || !path.to_ascii_lowercase().ends_with(".md")
+            || super::is_template_path(path)
+        {
+            continue;
+        }
+        if let Some((namespace, number)) = numbered_record(path, false) {
+            index.adrs.push(Adr {
+                namespace,
+                number,
+                path: path.clone(),
+                title: None,
+                status: None,
+            });
+            added = true;
+        }
+    }
+    if added {
+        index
+            .adrs
+            .sort_by(|a, b| (&a.namespace, a.number).cmp(&(&b.namespace, b.number)));
+    }
 }
 
 /// The status an ADR states, in any of the forms seen: front matter
@@ -474,8 +513,18 @@ fn check_links(
     anchors: &BTreeMap<&str, BTreeSet<String>>,
     out: &mut Vec<Finding>,
 ) {
+    // A document kept in Studio has no place in the repository yet: a
+    // relative link in it was written against wherever it came from.
+    let in_repository = !doc.path.starts_with("studio:");
     for target in link_targets(line.text) {
         if target.contains("://") || target.starts_with("mailto:") || target.starts_with('<') {
+            continue;
+        }
+        // `[{file}]({path})`: a blank a template leaves to fill, not a link.
+        if is_placeholder(&target) {
+            continue;
+        }
+        if !in_repository && !target.starts_with('#') {
             continue;
         }
         let (file, anchor) = target.split_once('#').unwrap_or((target.as_str(), ""));
@@ -524,6 +573,14 @@ fn check_links(
             );
         }
     }
+}
+
+/// A target still in a template's braces: `{path}`, `{path/to/api-spec}`,
+/// `feature-{slug}/`.
+fn is_placeholder(target: &str) -> bool {
+    target
+        .find('{')
+        .is_some_and(|open| target[open..].contains('}'))
 }
 
 /// Every `](target)` on a line, the target as written.

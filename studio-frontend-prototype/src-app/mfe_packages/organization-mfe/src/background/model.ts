@@ -90,3 +90,21 @@ export function headline(run: TaskRun): string {
 export function finished(run: TaskRun): boolean {
   return run.state === 'succeeded' || run.state === 'failed' || run.state === 'cancelled';
 }
+
+/** How far a running run is, where its handler counts (a Research build,
+ *  #1053: `result.progress` with its step among its steps and, within the
+ *  step, files, bytes or images done of total). The step and the whole way's
+ *  share, 0..1; `null` for a run that does not count. */
+export function runProgress(run: TaskRun): { step: string; share: number } | null {
+  if (run.state !== 'running') return null;
+  const p = run.result?.progress as Record<string, unknown> | undefined;
+  if (!p || typeof p !== 'object' || typeof p.step !== 'string' || !Array.isArray(p.steps) || p.steps.length === 0) return null;
+  const index = p.steps.indexOf(p.step);
+  if (index < 0) return null;
+  const part = (k: string): number | null => {
+    const c = p[k] as { done?: unknown; total?: unknown } | undefined;
+    return c && typeof c.done === 'number' && typeof c.total === 'number' && c.total > 0 ? Math.min(1, c.done / c.total) : null;
+  };
+  const within = part('bytes') ?? part('files') ?? part('images') ?? 0;
+  return { step: p.step, share: Math.min(1, (index + within) / p.steps.length) };
+}

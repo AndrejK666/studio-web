@@ -303,6 +303,9 @@ pub struct IdentityDto {
     /// Account the credential belongs to, as reported by the provider.
     pub account: String,
     pub display_name: Option<String>,
+    /// The account's picture, when the provider reports one.
+    #[serde(default)]
+    pub avatar_url: Option<String>,
     /// What else the test looked at: for a cluster, each right the bootstrap
     /// manifest gives (ADR-0043). Reported only; the test passed regardless.
     #[serde(default)]
@@ -365,6 +368,9 @@ pub struct ConnectionTestDto {
     /// Account the credential belongs to, as reported by the provider.
     pub account: String,
     pub display_name: Option<String>,
+    /// The account's picture, when the provider reports one.
+    #[serde(default)]
+    pub avatar_url: Option<String>,
     /// See [`IdentityDto::checks`].
     #[serde(default)]
     pub checks: Vec<ConnectionTestCheckDto>,
@@ -678,6 +684,7 @@ fn to_test_dto(
         connection: to_dto(c, mine, viewed),
         account: id.account,
         display_name: id.display_name,
+        avatar_url: id.avatar_url,
         checks: id.checks.into_iter().map(check_dto).collect(),
     }
 }
@@ -850,6 +857,7 @@ async fn probe_connection(
     Ok(Json(IdentityDto {
         account: identity.account,
         display_name: identity.display_name,
+        avatar_url: identity.avatar_url,
         checks: identity.checks.into_iter().map(check_dto).collect(),
     }))
 }

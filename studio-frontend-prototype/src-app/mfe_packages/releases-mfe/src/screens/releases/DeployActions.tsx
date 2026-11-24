@@ -18,10 +18,9 @@ import type {
   DeployEnvironment,
   EnvironmentBinding,
 } from '../../api/types';
-import type { IdeBuild } from '../../model/builds';
+import { buildRefusalText, type IdeBuild } from '../../model/builds';
 import { STATE_LABELS, shortCommit, stateTone } from '../../model/environments';
 import {
-  deployableBuilds,
   expiresIn,
   isSecretKey,
   lifetimeLabel,
@@ -29,9 +28,6 @@ import {
   parseValues,
   previewLifetimes,
   previewNameFor,
-  promotionGap,
-  rollbackTarget,
-  runsNow,
   valuesText,
 } from '../../model/project-deploys';
 import type { LadderStep } from '../../model/releases';
@@ -60,247 +56,39 @@ export function useDeployRequest(onChanged: (message: string) => void) {
   const api = useApi();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const ask = async (body: DeploymentRequest, what: string): Promise<boolean> => {
+  const send = async (request: () => Promise<Deployment>, what: string): Promise<Deployment | null> => {
     setBusy(true);
     setError(null);
     try {
-      const d = await api.createDeployment(projectId).fetch(body);
+      const d = await request();
       onChanged(t(d.state === 'awaiting_approval' ? 'asked_waits' : 'asked_queued', { what }));
-      return true;
+      return d;
     } catch (e) {
-      setError(errText(e));
-      return false;
+      setError(buildRefusalText(e, errText));
+      return null;
     } finally {
       setBusy(false);
     }
   };
-  return { busy, error, ask };
-}
-
-/** Deploy one published build to an environment the project may deploy to:
- *  the action under a build of Releases' builds. */
-export function DeployBuildTo({
-  build,
-  environments,
-  deployments,
-  onChanged,
-}: {
-  build: IdeBuild;
-  environments: DeployEnvironment[];
-  deployments: Deployment[];
-  onChanged: (message: string) => void;
-}) {
-  const { t } = useReleases();
-  // Only where this build can go: a Research environment runs only what
-  // Research built, the others only a published chart -- the same rule the
-  // ladder picks builds by, so the two never offer different things.
-  const takers = environments.filter((e) => deployableBuilds([build], e).length > 0);
-  const [envId, setEnvId] = useState(takers[0]?.id ?? '');
-  const { busy, error, ask } = useDeployRequest(onChanged);
-  const envName = (id: string) => environments.find((e) => e.id === id)?.name ?? id;
-  const env = takers.find((e) => e.id === envId);
-  const gap = env ? promotionGap(env, build, deployments, envName) : null;
-  if (takers.length === 0) return null;
-  return (
-    <div className={styles.row} data-deploy-build-to>
-      <NativeSelect value={envId} onChange={(e) => setEnvId(e.target.value)} aria-label={t('environment')}>
-        {takers.map((e) => (
-          <NativeSelectOption key={e.id} value={e.id}>
-            {e.name}
-          </NativeSelectOption>
-        ))}
-      </NativeSelect>
-      <Button
-        size="sm"
-        disabled={busy || !env || !!gap}
-        title={gap ?? undefined}
-        onClick={() =>
-          env &&
-          void ask(
-            { environment_id: env.id, build: build.buildId },
-            t('what_deploy_to', { version: build.chartVersion ?? build.buildId, environment: env.name })
-          )
-        }
-      >
-        {t('deploy')}
-      </Button>
-      {gap && <span className={styles.warn}>{gap}</span>}
-      {error && <ErrorLine>{error}</ErrorLine>}
-    </div>
-  );
-}
-
-/** Deploy a build, roll back, uninstall: one environment's actions, with the
- *  deploys there that wait for a decision. */
-export function EnvironmentActions({
-  env,
-  latest,
-  deployments,
-  builds,
-  envName,
-  onChanged,
-}: {
-  env: DeployEnvironment;
-  latest: Deployment | undefined;
-  deployments: Deployment[];
-  builds: IdeBuild[];
-  envName: (id: string) => string;
-  onChanged: (message: string) => void;
-}) {
-  const { t, language } = useReleases();
-  const [picking, setPicking] = useState(false);
-  // The build a preview is being asked for, if any: its name and lifetime
-  // are set in a line under it.
-  const [previewing, setPreviewing] = useState<string | null>(null);
-  const [uninstalling, setUninstalling] = useState(false);
-  const request = useDeployRequest(onChanged);
-  const { busy, error } = request;
-  const candidates = deployableBuilds(builds, env);
-  const back = rollbackTarget(deployments, env.id);
-  const previews = env.kind !== 'research' && !!env.previews;
-  // A deploy that waits for a decision is decided before another is asked:
-  // a second request would only wait beside it.
-  const waiting = deployments.filter((d) => d.environment_id === env.id && d.state === 'awaiting_approval');
-  const ask = async (body: DeploymentRequest, what: string) => {
-    const ok = await request.ask(body, what);
-    if (ok) {
-      setPicking(false);
-      setPreviewing(null);
-      setUninstalling(false);
-    }
-    return ok;
-  };
-  return (
-    <div className={styles.stack} data-environment-actions={env.name}>
-      {waiting.length > 0 && <PendingDecisions waiting={waiting} onChanged={onChanged} />}
-      <div className={styles.row}>
-        <Button
-          size="sm"
-          disabled={busy || waiting.length > 0}
-          title={waiting.length > 0 ? t('decide_first') : undefined}
-          onClick={() => setPicking((v) => !v)}
-          aria-expanded={picking}
-          data-deploy-pick-open
-        >
-          {t('deploy_a_build')}
-        </Button>
-        {back && (
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={busy}
-            title={t('rollback_title', { when: relTime(back.requested_at, language) })}
-            onClick={() =>
-              void ask(
-                { environment_id: env.id, redeploy_of: back.id },
-                t('what_rollback', { version: back.chart_version ?? back.build ?? t('the_earlier_build') })
-              )
-            }
-            data-deploy-rollback
-          >
-            {t('roll_back')}
-          </Button>
-        )}
-        {runsNow(latest) && latest && (
-          <Button size="sm" variant="destructive" disabled={busy} onClick={() => setUninstalling(true)} data-deploy-uninstall>
-            {t('uninstall')}
-          </Button>
-        )}
-      </div>
-      {uninstalling && latest && (
-        <Confirm
-          title={t('uninstall_title', { product: latest.product, environment: env.name })}
-          body={t('uninstall_body')}
-          confirmLabel={t('uninstall')}
-          busy={busy}
-          error={error}
-          onCancel={() => setUninstalling(false)}
-          onConfirm={() =>
-            void ask(
-              { environment_id: env.id, product: latest.product, profile: latest.profile, action: 'uninstall' },
-              t('uninstall')
-            )
-          }
-        />
-      )}
-      {picking && (
-        <div className={styles.pick} data-build-picker>
-          {candidates.length === 0 ? (
-            isResearch(env) ? (
-              <div className={styles.row} data-research-no-build>
-                <Badge variant="warning">{t('no_research_build')}</Badge>
-              </div>
-            ) : (
-              <p className={styles.muted}>{t('no_published_chart')}</p>
-            )
-          ) : (
-            <ul className={styles.rows}>
-              {candidates.slice(0, 8).map((b) => {
-                const gap = promotionGap(env, b, deployments, envName);
-                return (
-                  <li key={b.id} className={styles.wrapRow}>
-                    <div className={styles.grow}>
-                      <b>{b.chartVersion ?? b.buildId}</b> <span className={styles.muted}>{b.where}</span>{' '}
-                      {b.commit && <code>{shortCommit(b.commit)}</code>}{' '}
-                      <span className={styles.muted}>{relTime(b.finishedAt ?? b.startedAt ?? '', language)}</span>
-                      {gap && <div className={styles.warn}>{gap}</div>}
-                    </div>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={busy || !!gap}
-                      onClick={() =>
-                        void ask(
-                          { environment_id: env.id, build: b.buildId },
-                          t('what_deploy', { version: b.chartVersion ?? b.buildId })
-                        )
-                      }
-                      data-deploy-build={b.buildId}
-                    >
-                      {t('deploy')}
-                    </Button>
-                    {previews && (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        disabled={busy}
-                        aria-expanded={previewing === b.buildId}
-                        title={t('preview_title', { environment: env.name })}
-                        onClick={() => setPreviewing((v) => (v === b.buildId ? null : b.buildId))}
-                        data-preview-build={b.buildId}
-                      >
-                        {t('preview')}
-                      </Button>
-                    )}
-                    {previews && previewing === b.buildId && (
-                      <PreviewForm
-                        build={b}
-                        most={env.previews?.ttl_hours ?? 72}
-                        busy={busy}
-                        onCancel={() => setPreviewing(null)}
-                        onStart={(name, ttl) =>
-                          void ask(
-                            { environment_id: env.id, build: b.buildId, preview: { name: name || undefined, ttl_hours: ttl } },
-                            t('what_preview', { version: b.chartVersion ?? b.buildId, environment: env.name })
-                          )
-                        }
-                      />
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </div>
-      )}
-      {error && !uninstalling && <ErrorLine>{error}</ErrorLine>}
-    </div>
-  );
+  const ask = async (body: DeploymentRequest, what: string): Promise<boolean> =>
+    (await send(() => api.createDeployment(projectId).fetch(body), what)) !== null;
+  /** Deploy a build's images to an environment by the route its kind takes:
+   *  a cluster installs the build's published chart; Constructor Research
+   *  runs the images it built, building nothing (deploy-only). */
+  const askBuild = (env: Pick<DeployEnvironment, 'id' | 'kind'>, buildId: string, what: string) =>
+    send(
+      () =>
+        isResearch(env)
+          ? api.deployBuiltImages(projectId, buildId).fetch({ environment_id: env.id })
+          : api.createDeployment(projectId).fetch({ environment_id: env.id, build: buildId }),
+      what
+    );
+  return { busy, error, ask, askBuild };
 }
 
 /** The deploys to one environment that wait for an administrator, decided
  *  where they were asked. Whoever may not decide sees who does. */
-function PendingDecisions({ waiting, onChanged }: { waiting: Deployment[]; onChanged: (message: string) => void }) {
+export function PendingDecisions({ waiting, onChanged }: { waiting: Deployment[]; onChanged: (message: string) => void }) {
   const { t, language, organizationId, projectId } = useReleases();
   const api = useApi();
   const [mayDecide, setMayDecide] = useState(false);
@@ -401,7 +189,7 @@ function PendingDecisions({ waiting, onChanged }: { waiting: Deployment[]; onCha
 /** A preview's name and how long it lives, asked in a line under its build.
  *  The server checks both again: the name's characters, the environment's
  *  most hours. */
-function PreviewForm({
+export function PreviewForm({
   build,
   most,
   busy,

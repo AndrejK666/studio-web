@@ -694,6 +694,30 @@ keycloak:
     resources:
       requests: { cpu: 50m, memory: 256Mi }
       limits: { cpu: 500m, memory: 512Mi }
+  # Signing in with a GitLab account, on gitlab.com or a self-hosted GitLab:
+  # the realm's `gitlab` broker (keycloak/GITLAB_SSO.md). `enabled` renders a
+  # post-install / post-upgrade Job that runs files/keycloak/gitlab-idp.sh in
+  # the Keycloak image: it reads <baseUrl>/.well-known/openid-configuration
+  # and writes the broker, or switches it off when the base URL, the client id
+  # or the vault key `studio_gitlab-client-secret` is missing. The secret
+  # stays in the vault Secret above; the broker stores only
+  # ${vault.gitlab-client-secret}. The same `baseUrl` goes to the backend as
+  # `studio-user.gitlab_url`, where a GitLab sign-in's photo is looked up.
+  # Keycloak must reach the GitLab's discovery, token, JWKS and userinfo
+  # endpoints from the cluster, or the Job fails the release.
+  gitlabIdp:
+    enabled: false
+    baseUrl: "https://gitlab.com"   # or a self-hosted GitLab's external URL
+    clientId: ""           # the GitLab OAuth application's Application ID
+    displayName: "GitLab"
+    # The tenant_id a new GitLab user gets: Studio refuses a token without
+    # one. The sandbox tenant, as the github broker's mapper sets.
+    tenantId: "00000000-0000-0000-0000-000000000002"
+    # How long the Job waits for Keycloak to accept the admin sign-in.
+    waitSeconds: 600
+    resources:
+      requests: { cpu: 50m, memory: 256Mi }
+      limits: { cpu: 500m, memory: 512Mi }
   # IdP host ingress: cert-manager annotations + TLS come from the override.
   ingress:
     annotations: {}

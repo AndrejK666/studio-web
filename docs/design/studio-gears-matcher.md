@@ -9,7 +9,7 @@ owner: studio-team
 - [ ] `p1` - **ID**: `cpt-studio-design-gears-matcher`
 
 The design of the gears-matcher service. The decision to build it this way is
-[ADR-0075](../adr/0075-the-gears-matcher-runs-as-a-python-service-beside-the-backend.md). The code is
+[ADR-0076](../adr/0076-the-gears-matcher-runs-as-a-python-service-beside-the-backend.md). The code is
 [`gears-matcher/`](../../gears-matcher/), and its contract is
 [`matcher-service.openapi.yaml`](../../gears-matcher/schemas/service/matcher-service.openapi.yaml).
 It sits beside `studio-spec-mapping` ([design](studio-spec-mapping.md)), which matches by words and stays
@@ -77,7 +77,7 @@ resend with the same key.
 - [ ] `p2` - **ID**: `cpt-studio-constraint-gears-matcher-store`
 
 Runs, keys and reports are kept in PostgreSQL, in a database of the service's own (`gears_matcher`) on the
-Studio cluster, as the backend's runtime role (ADR-0075 section 5). It is still one replica: a run executes
+Studio cluster, as the backend's runtime role (ADR-0076 section 5). It is still one replica: a run executes
 in the Pod that accepted it, and the reply cache is on a ReadWriteOnce claim.
 
 ## 3. Technical Architecture
@@ -92,7 +92,7 @@ in the Pod that accepted it, and the reply cache is on a ReadWriteOnce claim.
   counted and may be billed.
 - **Size.** A request over a limit is refused whole with `413`; the body is read and discarded first so the
   caller sees the answer, not a dropped connection.
-- **Run settings** (`GET`/`PUT /v1/settings`, ADR-0075 §6 addendum): the provider, the three models and the
+- **Run settings** (`GET`/`PUT /v1/settings`, ADR-0076 §6 addendum): the provider, the three models and the
   call bounds. The config file says what they are; an override in the run store (one row, a version a
   write must name) replaces any of them until it is cleared. A provider is offered only when its key is in
   the config file. An override that can no longer be used is set aside at start and `problem` says why.
@@ -125,9 +125,9 @@ The service runs: `gears-service` serves the contract on top of the library entr
 runs, and has been called over HTTP with the real catalogue and the real models. The image builds and runs,
 and the chart renders and validates. Not built yet: the backend's client, the compare view and the pilot
 tracking; and nothing is deployed to a cluster, so the chart has not run on one. Each is a later pull
-request (ADR-0075, phases).
+request (ADR-0076, phases).
 
 ## 5. Traceability
 
-- **ADRs**: [ADR-0075](../adr/0075-the-gears-matcher-runs-as-a-python-service-beside-the-backend.md)
+- **ADRs**: [ADR-0076](../adr/0076-the-gears-matcher-runs-as-a-python-service-beside-the-backend.md)
 - **Related design**: [studio-spec-mapping](studio-spec-mapping.md)

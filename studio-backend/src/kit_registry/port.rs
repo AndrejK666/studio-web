@@ -11,6 +11,9 @@
 //!   decision 5: `KIT_NOT_INSTALLED`). studio-environments asks for the
 //!   Constructor Research kit ([`CONSTRUCTOR_RESEARCH_KIT`]), studio-product
 //!   for the Gears matcher kit ([`GEARS_MATCHER_KIT`]).
+//! - [`ProjectPhases`]: every project's phase in an organization (Project
+//!   lifecycle) -- what studio-organizations' rollups carry on a project's
+//!   row, so the projects list shows it without a request per row.
 
 use std::sync::Arc;
 
@@ -28,6 +31,8 @@ pub(crate) use super::manifest::{
     KitManifest, PROJECT_CREATION_STEPS, project_type_kit, project_type_kits,
 };
 pub use super::owners::{KitOwners, MarkOn, Rehome};
+#[cfg(test)]
+pub(crate) use super::phase::phases_query as project_phases_query;
 pub(crate) use super::project_types::OrgProjectType;
 use super::service::KitRegistryService;
 pub use super::service::{CONSTRUCTOR_RESEARCH_KIT, GEARS_MATCHER_KIT, SPEC_MAPPING_KIT};
@@ -315,5 +320,39 @@ impl KitPresence for InstalledKits {
             }
         }
         Ok(out)
+    }
+}
+
+/// Every project's phase in an organization: the projects of
+/// [`super::phase::SLUG`]'s lifecycle (`project.phase`, ADR-0068 §7).
+#[async_trait]
+pub trait ProjectPhases: Send + Sync + 'static {
+    /// The phase of each project of `org` that has one, by project id; `None`
+    /// where Project lifecycle does not apply to `org`. The caller acts in
+    /// `org` and has been shown to reach it.
+    async fn phases_in(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+    ) -> anyhow::Result<Option<std::collections::HashMap<Uuid, String>>>;
+}
+
+#[async_trait]
+impl ProjectPhases for InstalledKits {
+    async fn phases_in(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+    ) -> anyhow::Result<Option<std::collections::HashMap<Uuid, String>>> {
+        let (installed, rows) = self
+            .installer
+            .project_phases(ctx, org)
+            .await
+            .map_err(|refusal| anyhow::anyhow!("the phases could not be read: {refusal:?}"))?;
+        Ok(installed.then(|| {
+            rows.into_iter()
+                .filter_map(|(project, phase, _, _)| Some((project.parse().ok()?, phase)))
+                .collect()
+        }))
     }
 }
