@@ -212,6 +212,36 @@ async fn prepare(
 }
 
 /// The prepared chart rendered as `release` in `namespace` with `values`.
+/// The values `helm template` gets: Studio's own keys taken out. A database
+/// image rides in the values under `studio-database-<host>`
+/// ([`research_app::database_key`]) so the deploy can give the database
+/// service its image; the generated chart's schema allows no such key and
+/// `helm template` refuses it ("Additional property studio-database-postgres
+/// is not allowed", Research DEV, 2026-11-24).
+fn chart_values(values: &serde_json::Value) -> serde_json::Value {
+    let mut out = values.clone();
+    if let Some(map) = out.as_object_mut() {
+        map.retain(|k, _| !k.starts_with("studio-database-"));
+    }
+    out
+}
+
+#[cfg(test)]
+mod chart_values_tests {
+    #[test]
+    fn database_images_stay_out_of_the_chart_values() {
+        let v = serde_json::json!({
+            "api-gateway": {"image": {"repository": "r", "tag": "t"}},
+            "studio-database-postgres": {"image": "x"},
+        });
+        let out = super::chart_values(&v);
+        assert!(out.get("studio-database-postgres").is_none());
+        assert!(out.get("api-gateway").is_some());
+        // The values the deploy keeps for the services are not touched.
+        assert!(v.get("studio-database-postgres").is_some());
+    }
+}
+
 async fn render(
     tree: &Tree,
     release: &str,
@@ -221,7 +251,7 @@ async fn render(
     let file = tree
         .work
         .join(format!("values-{}.json", Uuid::new_v4().simple()));
-    tokio::fs::write(&file, serde_json::to_vec(values)?).await?;
+    tokio::fs::write(&file, serde_json::to_vec(&chart_values(values))?).await?;
     let out = tokio::process::Command::new(super::deploy::helm_binary())
         .args([
             "template",
