@@ -72,5 +72,13 @@
   "scaffold_with_pr": "открыть пул-реквест",
   "scaffold_needs_repo": "нужен репозиторий гиров: проекта или организации (Components)",
   "copy": "Копировать",
-  "partial_plan_kit": "план по спецификациям — он приходит с китом Spec mapping (Организация › Киты)"
+  "partial_plan_kit": "план по спецификациям — он приходит с китом Spec mapping (Организация › Киты)",
+  "services_by_commit": "сервисы по коммиту {commits}",
+  "services_computed": "вычислено {ago} назад",
+  "services_computing": "вычисляется…",
+  "services_failed": "последнее вычисление не удалось: {why}",
+  "services_never": "ещё не вычислено",
+  "services_refresh": "Вычислить сервисы заново по последней синхронизации",
+  "code_by_commit": "код по коммиту {commits}",
+  "code_refresh": "Сравнить код заново"
 }

@@ -18,6 +18,7 @@ fn declared() -> BTreeSet<(String, String)> {
     needs.extend(crate::artifact_ingest::declared_types());
     needs.extend(crate::documents::declared_types());
     needs.extend(crate::components_catalog::declared_types());
+    needs.extend(crate::organizations::declared_view_types());
     needs.extend(crate::product::declared_types());
     needs.extend(crate::reports::declared_types());
     for kinds in [

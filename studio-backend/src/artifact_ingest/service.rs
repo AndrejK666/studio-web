@@ -3696,6 +3696,64 @@ impl super::port::ArtifactFiles for IngestService {
             })
             .collect())
     }
+
+    async fn open_pull_files(
+        &self,
+        ctx: &SecurityContext,
+        scope: &str,
+    ) -> anyhow::Result<Vec<super::port::OpenPullFiles>> {
+        let pulls = self.list_in_scope(ctx, Some("pull_request"), scope).await?;
+        let open: HashMap<String, (String, i64)> = pulls
+            .into_iter()
+            .filter(|n| {
+                n.value
+                    .get("state")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|s| s.eq_ignore_ascii_case("open"))
+            })
+            .filter_map(|n| {
+                let repo = n.value.get("repo")?.as_str()?.to_owned();
+                let number = n.value.get("number")?.as_i64()?;
+                Some((n.instance_id, (repo, number)))
+            })
+            .collect();
+        if open.is_empty() {
+            return Ok(Vec::new());
+        }
+        let repos = super::port::ArtifactFiles::repo_paths(self, ctx, scope).await?;
+        let paths: HashMap<String, String> = self
+            .graph
+            .files_in_scope(ctx, scope)
+            .await?
+            .into_iter()
+            .map(|f| (f.node_id, f.path))
+            .collect();
+        // The tenant's relations, narrowed here: a background derivation
+        // reads this, never a request.
+        let mut changed: HashMap<&str, Vec<String>> = HashMap::new();
+        for edge in self.graph.list_relations(ctx).await? {
+            if edge.type_id != gts::REL_MODIFIES || !open.contains_key(&edge.from) {
+                continue;
+            }
+            if let (Some((id, _)), Some(path)) =
+                (open.get_key_value(&edge.from), paths.get(&edge.to))
+            {
+                changed.entry(id.as_str()).or_default().push(path.clone());
+            }
+        }
+        let mut out: Vec<super::port::OpenPullFiles> = open
+            .iter()
+            .filter_map(|(id, (repo, number))| {
+                Some(super::port::OpenPullFiles {
+                    repo: repos.get(repo)?.clone(),
+                    number: *number,
+                    paths: changed.remove(id.as_str()).unwrap_or_default(),
+                })
+            })
+            .collect();
+        out.sort_by(|a, b| a.repo.cmp(&b.repo).then(a.number.cmp(&b.number)));
+        Ok(out)
+    }
 }
 
 /// Whether a clone volume can be written: a probe file is created and
@@ -3765,6 +3823,23 @@ impl super::port::RepoFileReader for IngestService {
         repo_full_path: &str,
     ) -> anyhow::Result<Vec<(String, String)>> {
         IngestService::read_synced_clone(self, secret_ref, repo_full_path).await
+    }
+
+    fn checkout_dir(&self, workspace_id: &str, repo_dir: &str) -> Option<PathBuf> {
+        self.shared_checkout_dir(Some(workspace_id), Some(repo_dir))
+            .filter(|d| d.join(".git").exists())
+    }
+
+    async fn checkout_history(
+        &self,
+        workspace_id: &str,
+        repo_dir: &str,
+        max: usize,
+    ) -> anyhow::Result<Option<super::port::CheckoutHistory>> {
+        let Some(dir) = self.shared_checkout_dir(Some(workspace_id), Some(repo_dir)) else {
+            return Ok(None);
+        };
+        history_of(dir, max).await
     }
 
     async fn read_repo_listing(
@@ -3866,6 +3941,25 @@ async fn revision_of(dir: PathBuf) -> Option<super::port::GitRevision> {
     .await
     .ok()
     .flatten()
+}
+
+/// A checkout's history ([`git_checkout::log_with_files`]) off the async
+/// runtime. `None` when the directory is not a git checkout.
+async fn history_of(
+    dir: PathBuf,
+    max: usize,
+) -> anyhow::Result<Option<super::port::CheckoutHistory>> {
+    tokio::task::spawn_blocking(move || {
+        let commit = git_checkout::head_commit(&dir)?;
+        let commits = git_checkout::log_with_files(&dir, max)?;
+        Some(super::port::CheckoutHistory {
+            commit,
+            commits,
+            shallow: git_checkout::is_shallow(&dir),
+        })
+    })
+    .await
+    .map_err(|e| anyhow!("history read did not finish: {e}"))
 }
 
 /// [`git_checkout::read_text_file`] off the async runtime.

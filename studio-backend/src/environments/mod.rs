@@ -215,6 +215,11 @@ impl RestApiCapability for StudioEnvironmentsGear {
         // The Research environments the deploy dialog forked before #1053,
         // merged once at start, per project, where nothing ran in them.
         crate::model_sweep::register(Arc::new(service::ResearchMerges::new(Arc::clone(&service))));
+        // A project's deployments, for its status (studio-organizations).
+        ctx.client_hub()
+            .register::<dyn port::ProjectDeployments>(Arc::new(port::DeploymentsPort(Arc::clone(
+                &service,
+            ))));
         let router = rest::register_routes(router, openapi, service);
         // The write routes a kit claims answer KIT_NOT_INSTALLED without it
         // (ADR-0071 §4): studio-kits' one shared check.

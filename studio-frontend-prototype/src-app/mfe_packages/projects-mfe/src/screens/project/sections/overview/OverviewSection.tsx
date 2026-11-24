@@ -29,6 +29,7 @@ import React, { useState } from 'react';
 import { apiRegistry, useApiQuery, useMfeBridge } from '@gears-frontx/react';
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Skeleton } from '@gears-frontx/ui-kit';
 import {
+  DerivedViewStrip,
   errorMessage,
   isRunEnding,
   KitContentSlot,
@@ -93,6 +94,20 @@ export const OverviewSection: React.FC<{
   const open = (route: string | null) => {
     if (route) openScreen(bridge, route);
   };
+  /** ↻: compute the status now, then show it. */
+  const [recomputing, setRecomputing] = useState(false);
+  const recompute = () => {
+    setRecomputing(true);
+    apiRegistry
+      .getService(ProjectStatusApiService)
+      .freshStatus({ projectId })
+      .fetch({ staleTime: 0 })
+      .catch(() => undefined)
+      .finally(() => {
+        setRecomputing(false);
+        void read.refetch();
+      });
+  };
 
   if (loading || read.isLoading) {
     return (
@@ -123,6 +138,22 @@ export const OverviewSection: React.FC<{
     <>
       {/* Project lifecycle's phase, only where the kit applies. */}
       <PhaseChip projectId={projectId} t={t} />
+      {read.data.computed_at && (
+        <p className={styles.muted} data-status-computed>
+          <DerivedViewStrip
+            view={{ status: recomputing ? 'computing' : 'ready', computed_at: read.data.computed_at, inputs: [] }}
+            onRefresh={recompute}
+            labels={{
+              byCommit: (commits) => commits,
+              computed: (ago) => t('status_computed', { ago }),
+              computing: t('status_computing'),
+              failed: (why) => why,
+              never: '',
+              refresh: t('status_refresh'),
+            }}
+          />
+        </p>
+      )}
       {/* What the project's type says to do next, until done or dismissed. */}
       <NextSteps
         projectId={projectId}

@@ -839,7 +839,32 @@ impl RepoEnricher {
     }
 
     /// Every blob and tree path at the ref, and whether GitHub cut it short.
+    ///
+    /// With a checkout, `git ls-tree` of it: the server's own clone answers,
+    /// never the provider, and the blob shas key the caches as the API's did.
     async fn tree(&self, src: &Repository) -> Result<RemoteFileList> {
+        if let Some(dir) = &self.checkout {
+            let dir = dir.clone();
+            let listed = tokio::task::spawn_blocking(move || {
+                crate::connectors::sdk::git_checkout::ls_tree(&dir)
+            })
+            .await
+            .context("listing the checkout")?;
+            if let Some(files) = listed {
+                return Ok(RemoteFileList {
+                    files: files
+                        .into_iter()
+                        .map(|(path, sha, size)| crate::connectors::sdk::RemoteFile {
+                            path,
+                            sha,
+                            is_dir: false,
+                            size,
+                        })
+                        .collect(),
+                    truncated: false,
+                });
+            }
+        }
         src.tree()
             .await
             .map_err(|e| anyhow!("git tree {}: {e:#}", self.repo))

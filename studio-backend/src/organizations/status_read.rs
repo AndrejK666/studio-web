@@ -2,17 +2,21 @@
 //!
 //! The organization's own counts come from this gear in process (the
 //! project's rollup and its line of the organization's health). The rest is
-//! the other gears' answers, read through their REST routes as the caller
-//! (`crate::mcp::sdk::Api`), the reads the portal made: the same checks
-//! apply, so the status shows a caller no more than those routes would. A
-//! read that fails is `None`, which the status words as not known.
+//! the other gears' answers, read in process through their ports -- the same
+//! reads their routes make -- as this gear's service identity in the
+//! project's organization: the status is computed in the background and kept
+//! (`status_view.rs`), with no reader's credentials. A read that fails is
+//! `None`, which the status words as not known.
 
 use serde_json::Value;
+
+use toolkit::client_hub::ClientHub;
+use toolkit_security::SecurityContext;
+use uuid::Uuid;
 
 use super::status::{
     BuildFacts, Deploy, FindingFacts, ModelFacts, PathFacts, ProductFacts, Pull, SpecQueues,
 };
-use crate::mcp::sdk::Api;
 
 /// CI runs read for the last build, newest first.
 const RUNS: u32 = 50;
@@ -31,45 +35,13 @@ fn text(v: &Value) -> Option<String> {
     v.as_str().filter(|s| !s.is_empty()).map(str::to_string)
 }
 
-/// `GET /studio-documents/v1/spec-rows`: its three queues.
-pub fn spec_queues(rows: &Value) -> SpecQueues {
-    let n = |q: &str| {
-        rows["sources"]["counts"]
-            .as_array()
-            .and_then(|cs| cs.iter().find(|c| c["queue"] == q))
-            .map_or(0, |c| u32_of(&c["count"]))
-    };
+/// The spec rows' three queues, from their `(queue, count)`.
+pub fn spec_queues(counts: &[(String, u32)]) -> SpecQueues {
+    let n = |q: &str| counts.iter().find(|(k, _)| k == q).map_or(0, |(_, c)| *c);
     SpecQueues {
         bound: n("bound"),
         needs_review: n("needs-review"),
         not_scanned: n("not-scanned"),
-    }
-}
-
-/// `GET /studio-documents/v1/project-domain-model`.
-pub fn model_facts(model: &Value) -> ModelFacts {
-    let documents = model["documents"].as_array();
-    ModelFacts {
-        documents: len_of(&model["documents"]),
-        extracted: documents.map_or(0, |ds| {
-            u32::try_from(ds.iter().filter(|d| d["state"] == "extracted").count())
-                .unwrap_or(u32::MAX)
-        }),
-        facts: len_of(&model["facts"]),
-        running: model["build"]["running"].as_bool().unwrap_or(false),
-    }
-}
-
-/// `GET /studio-documents/v1/project-domain-model/findings`: those nobody decided.
-pub fn finding_facts(findings: &Value) -> FindingFacts {
-    let open: Vec<&Value> = findings["items"]
-        .as_array()
-        .map(|is| is.iter().filter(|f| f["decision"].is_null()).collect())
-        .unwrap_or_default();
-    FindingFacts {
-        open: u32::try_from(open.len()).unwrap_or(u32::MAX),
-        high: u32::try_from(open.iter().filter(|f| f["severity"] == "high").count())
-            .unwrap_or(u32::MAX),
     }
 }
 
@@ -188,33 +160,27 @@ pub fn deploys(page: &Value) -> Vec<Deploy> {
         .collect()
 }
 
-/// `GET /studio-artifact-ingest/v1/open-pull-requests`.
-pub fn pulls(page: &Value) -> Vec<Pull> {
-    page["items"]
-        .as_array()
-        .into_iter()
-        .flatten()
+/// The open pull requests as the signals read them.
+pub fn pulls(open: &[crate::artifact_ingest::port::OpenPull]) -> Vec<Pull> {
+    open.iter()
         .map(|p| Pull {
-            draft: p["draft"].as_bool().unwrap_or(false),
-            waiting: text(&p["waiting"]).unwrap_or_default(),
-            waiting_on: p["waiting_on"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|w| {
-                    w["display_name"]
-                        .as_str()
-                        .map(str::trim)
-                        .filter(|n| !n.is_empty())
-                        .map(str::to_string)
-                        .or_else(|| text(&w["login"]))
-                })
-                .collect(),
-            days_since_update: p["days_since_update"]
-                .as_u64()
-                .map(|d| u32::try_from(d).unwrap_or(u32::MAX)),
+            draft: p.waiting == "draft",
+            waiting: p.waiting.clone(),
+            waiting_on: p.waiting_on.clone(),
+            days_since_update: p.days_since_update,
         })
         .collect()
+}
+
+/// A CI run as `build_facts` reads a node's value.
+fn run_value(r: &crate::artifact_ingest::port::CiRun) -> Value {
+    serde_json::json!({"value": {
+        "branch": r.branch,
+        "status": r.status,
+        "conclusion": r.conclusion,
+        "sha": r.sha,
+        "created_at": r.created_at,
+    }})
 }
 
 /// The reads of the path and the other gears' signals, side by side.
@@ -224,60 +190,97 @@ pub struct Read {
     pub deployments: Option<Vec<Deploy>>,
 }
 
-/// Every page of open pull requests is not needed: the first 200 hold what
-/// a status counts on any project a person can read in one sitting.
-const PULLS_PAGE: u32 = 200;
+/// The service identity this gear reads a project's status with: its own
+/// principal, scoped to the project's organization (`org`).
+pub fn service_ctx(org: Uuid) -> anyhow::Result<SecurityContext> {
+    SecurityContext::builder()
+        .subject_id(super::logo::SERVICE_SUBJECT_ID)
+        .subject_type("service")
+        .subject_tenant_id(org)
+        .token_scopes(vec!["*".to_owned()])
+        .build()
+        .map_err(|e| anyhow::anyhow!("studio-organizations: cannot build a service context: {e}"))
+}
 
-pub async fn read(api: &Api, project: &str, repositories: Option<u32>) -> Read {
-    let q = |pairs: &[(&str, String)]| -> Vec<(String, String)> {
-        pairs
-            .iter()
-            .map(|(k, v)| ((*k).to_string(), v.clone()))
-            .collect()
+/// Every read of the path and the signals, side by side, through the other
+/// gears' ports, as `ctx`.
+pub async fn read(hub: &ClientHub, ctx: &SecurityContext, project: Uuid) -> Read {
+    use crate::artifact_ingest::port::{DeliveryEvidence, OpenPullRequests};
+    let scope = project.to_string();
+    let documents = async {
+        let port = hub
+            .get::<dyn crate::documents::port::ProjectStatusFacts>()
+            .ok()?;
+        port.status_facts(ctx, project).await.ok()
     };
-    let p = project.to_string();
-    let by_project = q(&[("project_id", p.clone())]);
-    let product_path = format!("/studio-product/v1/projects/{project}/product");
-    let runs_query = q(&[
-        ("type", "workflow_run".into()),
-        ("scope", p.clone()),
-        ("sort", "updated".into()),
-        ("limit", RUNS.to_string()),
-    ]);
-    let deploys_query = q(&[("project", p.clone())]);
-    let pulls_query = q(&[("project_id", p.clone()), ("limit", PULLS_PAGE.to_string())]);
-    let (rows, model, findings, product, runs, deployments, open) = tokio::join!(
-        api.get("/studio-documents/v1/spec-rows", &by_project),
-        api.get("/studio-documents/v1/project-domain-model", &by_project),
-        api.get(
-            "/studio-documents/v1/project-domain-model/findings",
-            &by_project
+    let product = async {
+        let port = hub
+            .get::<dyn crate::product::port::ProjectProducts>()
+            .ok()?;
+        let record = port.product_record(ctx, &scope).await.ok()?;
+        let page = match record {
+            Some(value) => serde_json::json!({"nodes": [{"value": value}]}),
+            None => serde_json::json!({"nodes": []}),
+        };
+        Some(product_facts(&page))
+    };
+    let runs = async {
+        let port = hub.get::<dyn DeliveryEvidence>().ok()?;
+        let mut runs = port.ci_runs(ctx, &scope).await.ok()?;
+        // The newest by update, as the route's `sort=updated&limit=50`.
+        runs.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        runs.truncate(RUNS as usize);
+        let nodes: Vec<Value> = runs.iter().map(run_value).collect();
+        Some(build_facts(&serde_json::json!({ "nodes": nodes })))
+    };
+    let deployments = async {
+        let port = hub
+            .get::<dyn crate::environments::port::ProjectDeployments>()
+            .ok()?;
+        port.deployments_page(ctx, project)
+            .await
+            .ok()
+            .map(|page| deploys(&page))
+    };
+    let open = async {
+        let port = hub.get::<dyn OpenPullRequests>().ok()?;
+        port.open_pulls(ctx, &scope).await.ok().map(|o| pulls(&o))
+    };
+    let (documents, product, build, deployments, pulls) =
+        tokio::join!(documents, product, runs, deployments, open);
+    let (specs, model, findings) = match documents {
+        Some(d) => (
+            d.queues.as_deref().map(spec_queues),
+            d.model.map(|m| ModelFacts {
+                documents: m.documents,
+                extracted: m.extracted,
+                facts: m.facts,
+                running: m.running,
+            }),
+            d.findings.map(|f| FindingFacts {
+                open: f.open,
+                high: f.high,
+            }),
         ),
-        api.get(&product_path, &[]),
-        api.get("/studio-artifact-ingest/v1/nodes", &runs_query),
-        api.get("/studio-environments/v1/deployments", &deploys_query),
-        api.get(
-            "/studio-artifact-ingest/v1/open-pull-requests",
-            &pulls_query
-        ),
-    );
+        None => (None, None, None),
+    };
     Read {
         path: PathFacts {
-            repositories,
+            repositories: None,
             // Which repositories a sync read needs their graph nodes matched
             // to the config by connection and path; not read here.
             synced: None,
-            specs: rows.ok().as_ref().map(spec_queues),
-            model: model.ok().as_ref().map(model_facts),
-            findings: findings.ok().as_ref().map(finding_facts),
+            specs,
+            model,
+            findings,
             // What the product is, proposed from the facts, is still the
             // portal's (product-kind.ts): the path leaves that step out.
             kind: None,
-            product: product.ok().as_ref().map(product_facts),
-            build: runs.ok().as_ref().map(build_facts),
+            product,
+            build,
         },
-        deployments: deployments.ok().as_ref().map(deploys),
-        pulls: open.ok().as_ref().map(pulls),
+        deployments,
+        pulls,
     }
 }
 
@@ -288,33 +291,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_path_reads_what_each_route_answers() {
-        let rows = json!({"sources": {"counts": [
-            {"queue": "bound", "count": 74}, {"queue": "needs-review", "count": 1},
-            {"queue": "all", "count": 90}]}});
+    fn the_path_reads_what_each_port_answers() {
+        let counts = vec![
+            ("bound".to_owned(), 74),
+            ("needs-review".to_owned(), 1),
+            ("all".to_owned(), 90),
+        ];
         assert_eq!(
-            spec_queues(&rows),
+            spec_queues(&counts),
             SpecQueues {
                 bound: 74,
                 needs_review: 1,
                 not_scanned: 0
             }
         );
-        let model = json!({"build": {"running": true},
-            "documents": [{"state": "extracted"}, {"state": "pending"}], "facts": [{}, {}, {}]});
-        assert_eq!(
-            model_facts(&model),
-            ModelFacts {
-                documents: 2,
-                extracted: 1,
-                facts: 3,
-                running: true
-            }
-        );
-        let findings = json!({"items": [
-            {"severity": "high", "decision": null}, {"severity": "low", "decision": null},
-            {"severity": "high", "decision": "dismissed"}]});
-        assert_eq!(finding_facts(&findings), FindingFacts { open: 2, high: 1 });
         assert_eq!(
             product_facts(&json!({"nodes": []})),
             ProductFacts::default()
@@ -356,11 +346,15 @@ mod tests {
 
     #[test]
     fn pulls_and_deployments_read_as_the_signals_need() {
-        let page = json!({"items": [{"draft": false, "waiting": "review",
-            "waiting_on": [{"login": "ann", "display_name": " Ann "}, {"login": "bob", "display_name": null}],
-            "days_since_update": 9}]});
-        let p = &pulls(&page)[0];
-        assert_eq!(p.waiting_on, ["Ann", "bob"]);
+        let open = vec![crate::artifact_ingest::port::OpenPull {
+            waiting: "draft".into(),
+            waiting_on: vec!["ann".into()],
+            days_since_update: Some(9),
+            ..Default::default()
+        }];
+        let p = &pulls(&open)[0];
+        assert!(p.draft);
+        assert_eq!(p.waiting_on, ["ann"]);
         assert_eq!(p.days_since_update, Some(9));
         let page = json!({"items": [{"state": "failed", "environment_name": "dev",
             "requested_at": "2026-11-01T00:00:00Z", "decided_at": null, "reason": ""}]});

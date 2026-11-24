@@ -18,6 +18,7 @@ mod connectors; // source connectors: driver plugins + tenant connection catalog
 mod credstore_pg; // persistent credstore value store (issue #66)
 mod data_places; // where each gear keeps its records, as the architecture page shows it
 mod database_bootstrap; // config-discovered PostgreSQL provisioning + migrations
+mod derived_view; // what a gear computes from a project's synced repositories, kept until they move
 mod documents; // document management: types + templates + section-checklist validation
 mod domain_model; // store the Studio domain model as GTS types in the graph; create/extend objects
 mod environments; // studio-environments: an organization's deployment environments and deploys (ADR-0043)

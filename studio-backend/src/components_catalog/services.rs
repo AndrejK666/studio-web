@@ -201,41 +201,6 @@ pub struct Readiness {
     pub reasons: Vec<String>,
 }
 
-/// The files each open pull request changes, from the open-pull-requests query's
-/// answer, and whether that is all of them: false when there are more open
-/// pull requests than one page, or a pull request with more files than one.
-/// A count made from a partial answer is a lower bound, and says so.
-pub fn open_pull_files(answer: &serde_json::Value) -> (Vec<Vec<String>>, bool) {
-    let pulls = answer.pointer("/data/repository/pullRequests");
-    let more = |v: Option<&serde_json::Value>| {
-        v.and_then(|p| p.pointer("/pageInfo/hasNextPage"))
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false)
-    };
-    let nodes: Vec<serde_json::Value> = pulls
-        .and_then(|p| p.get("nodes"))
-        .and_then(serde_json::Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let mut partial = more(pulls);
-    let files = nodes
-        .iter()
-        .map(|pr| {
-            partial |= more(pr.get("files"));
-            pr.pointer("/files/nodes")
-                .and_then(serde_json::Value::as_array)
-                .map(|f| {
-                    f.iter()
-                        .filter_map(|x| x.get("path").and_then(serde_json::Value::as_str))
-                        .map(str::to_string)
-                        .collect()
-                })
-                .unwrap_or_default()
-        })
-        .collect();
-    (files, !partial)
-}
-
 /// More open pull requests than this and "can I take it now?" is "ask first".
 pub const BUSY_PULLS: usize = 3;
 /// Untouched for longer than this, and nobody may be left who knows it.

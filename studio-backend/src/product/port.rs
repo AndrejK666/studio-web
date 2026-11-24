@@ -52,6 +52,18 @@ pub trait ProjectProducts: Send + Sync + 'static {
         project_id: &str,
     ) -> anyhow::Result<Option<Vec<String>>>;
 
+    /// The project's product record as stored (`gears`, `last_preview`,
+    /// `written`, ...); `None` before anything was picked. What a project's
+    /// status reads in process. The route laying a repository's own
+    /// product.gdl over it is not applied here.
+    async fn product_record(
+        &self,
+        _ctx: &SecurityContext,
+        _project_id: &str,
+    ) -> anyhow::Result<Option<Value>> {
+        Ok(None)
+    }
+
     /// Where the Product step last committed the product's description:
     /// its path in the repository, and the branch, `None` when it went onto
     /// the repository's own. `None` before it was ever written. A build that
@@ -155,6 +167,17 @@ impl ProjectProducts for super::service::ProductService {
             .get_project_product(ctx, project_id)
             .await?
             .and_then(|n| picks_of(&n.value)))
+    }
+
+    async fn product_record(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+    ) -> anyhow::Result<Option<Value>> {
+        Ok(self
+            .get_project_product(ctx, project_id)
+            .await?
+            .map(|n| n.value))
     }
 
     async fn saved_description(

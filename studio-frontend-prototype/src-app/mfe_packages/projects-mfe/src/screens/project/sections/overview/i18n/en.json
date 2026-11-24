@@ -30,5 +30,8 @@
   "next_title": "Next steps for this {type}",
   "next_open": "Open",
   "next_dismiss": "Dismiss",
-  "next_dismiss_failed": "The step was not dismissed: {error}"
+  "next_dismiss_failed": "The step was not dismissed: {error}",
+  "status_computed": "computed {ago} ago",
+  "status_computing": "computing…",
+  "status_refresh": "Compute the status again now"
 }

@@ -142,6 +142,27 @@ pub trait RepoFileReader: Send + Sync + 'static {
         None
     }
 
+    /// Where the checkout [`Self::read_repo_files`] reads is on this
+    /// server's disk, for a gear that reads it with git itself (`ls-tree`,
+    /// manifests) rather than through the provider. `None` when there is
+    /// none -- the default.
+    fn checkout_dir(&self, _workspace_id: &str, _repo_dir: &str) -> Option<std::path::PathBuf> {
+        None
+    }
+
+    /// The history of the checkout [`Self::read_repo_files`] reads: the
+    /// newest `max` commits of its `HEAD`, each with the files it changed.
+    /// Local git only, never the provider. `None` when there is no such
+    /// checkout -- the default, for a reader that keeps none.
+    async fn checkout_history(
+        &self,
+        _workspace_id: &str,
+        _repo_dir: &str,
+        _max: usize,
+    ) -> anyhow::Result<Option<CheckoutHistory>> {
+        Ok(None)
+    }
+
     /// One text file of the checkout [`Self::read_repo_files`] reads, by its
     /// repo-relative `path`. `None` when the checkout does not hold it as text.
     ///
@@ -174,6 +195,21 @@ pub trait RepoFileReader: Send + Sync + 'static {
             .find_map(|(p, text)| (p == path).then_some(text)))
     }
 }
+
+/// What a checkout on the server says of its own history
+/// ([`RepoFileReader::checkout_history`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CheckoutHistory {
+    /// The full SHA of `HEAD`: what the history was read at.
+    pub commit: String,
+    /// Newest first.
+    pub commits: Vec<LoggedCommit>,
+    /// The checkout holds only part of its history (a `--depth` clone): an
+    /// author missing here may only be missing from the clone.
+    pub shallow: bool,
+}
+
+pub(crate) use crate::connectors::sdk::git_checkout::LoggedCommit;
 
 /// Where a checkout stands in its repository's history.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -337,9 +373,35 @@ pub trait ArtifactFiles: Send + Sync + 'static {
         ctx: &toolkit_security::SecurityContext,
         scope: &str,
     ) -> anyhow::Result<std::collections::HashMap<String, String>>;
+
+    /// Every open pull request the sync kept in `scope`, with the files it
+    /// changes as the sync linked them (`modifies`): what is open against a
+    /// directory, answered from what was synced rather than asked of the
+    /// provider. An `Err` means it is UNKNOWN.
+    async fn open_pull_files(
+        &self,
+        _ctx: &toolkit_security::SecurityContext,
+        _scope: &str,
+    ) -> anyhow::Result<Vec<OpenPullFiles>> {
+        anyhow::bail!("open pull requests' files are not offered here")
+    }
+}
+
+/// One open pull request and the files it changes ([`ArtifactFiles::open_pull_files`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct OpenPullFiles {
+    /// `owner/repo`.
+    pub repo: String,
+    pub number: i64,
+    /// Repo-relative paths of the files the sync linked it to: those it
+    /// changes that the repository's listing holds.
+    pub paths: Vec<String>,
 }
 
 pub use super::activity::{ProjectSignals, ReviewSummary};
+
+/// Being told that a repository's sync finished (`synced.rs`).
+pub use super::synced::{RepositorySynced, SyncedRepository, on_repository_synced};
 
 /// What a project's row in the projects table says about its review and its
 /// sources: open findings, open comments, pull requests over a window and the

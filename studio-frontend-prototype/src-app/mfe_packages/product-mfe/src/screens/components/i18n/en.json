@@ -72,5 +72,13 @@
   "scaffold_with_pr": "open a pull request",
   "scaffold_needs_repo": "needs a gear repository: the project's or the organization's (Components)",
   "copy": "Copy",
-  "partial_plan_kit": "the spec plan, which comes with the Spec mapping kit (Organization › Kits)"
+  "partial_plan_kit": "the spec plan, which comes with the Spec mapping kit (Organization › Kits)",
+  "services_by_commit": "services by commit {commits}",
+  "services_computed": "computed {ago} ago",
+  "services_computing": "computing…",
+  "services_failed": "the last computation failed: {why}",
+  "services_never": "not computed yet",
+  "services_refresh": "Compute the services again from the last sync",
+  "code_by_commit": "code by commit {commits}",
+  "code_refresh": "Compare the code again"
 }

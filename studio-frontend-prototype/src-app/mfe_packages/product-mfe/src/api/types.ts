@@ -67,6 +67,10 @@ export interface Conformance {
   total: number;
   unexplained: { name: string; declares: string[] }[];
   gearbox: ProductChange[];
+  /** The commit of the server's clone of each repository read; empty when read through the provider. */
+  code_commits?: { repo: string; commit: string }[];
+  /** When the comparison was made (a kept answer carries its first time). */
+  computed_at?: string | null;
 }
 
 /** One catalogue source, as the sync takes it and the server keeps it. */

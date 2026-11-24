@@ -634,9 +634,133 @@ pub fn read_text_file(dir: &Path, rel: &str) -> Option<String> {
     std::fs::read(&path).ok().map(utf8)
 }
 
+/// One commit of a checkout's history, with the files it changed.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LoggedCommit {
+    pub sha: String,
+    pub author_name: Option<String>,
+    pub author_email: Option<String>,
+    /// RFC 3339.
+    pub committed_at: Option<String>,
+    /// Repo-relative paths, `/`-separated.
+    pub paths: Vec<String>,
+}
+
+/// The newest `max` non-merge commits of `HEAD` in a checkout already on
+/// disk, newest first, each with the files it changed: one local `git log`,
+/// no network and no credentials. `None` when the directory is not a
+/// checkout or git cannot read it. Blocking -- call under `spawn_blocking`.
+///
+/// A shallow checkout answers only the commits it holds; [`is_shallow`]
+/// tells a caller that the history is cut.
+pub fn log_with_files(dir: &Path, max: usize) -> Option<Vec<LoggedCommit>> {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args([
+            "log",
+            "--no-merges",
+            "--no-renames",
+            "-n",
+            &max.max(1).to_string(),
+            "--format=%x1e%H%x1f%an%x1f%ae%x1f%cI",
+            "--name-only",
+            "HEAD",
+        ])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())?;
+    Some(parse_log(&String::from_utf8_lossy(&out.stdout)))
+}
+
+/// Every file of `HEAD` in a checkout already on disk, as `(path, blob sha,
+/// size)`: `git ls-tree`, what a provider's tree listing answers, read from
+/// the clone. `None` when the directory is not a checkout. Blocking.
+pub fn ls_tree(dir: &Path) -> Option<Vec<(String, String, Option<i64>)>> {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["ls-tree", "-r", "-l", "-z", "HEAD"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())?;
+    Some(parse_ls_tree(&String::from_utf8_lossy(&out.stdout)))
+}
+
+/// `git ls-tree -r -l -z` read: `<mode> <type> <sha> <size>\t<path>\0`.
+fn parse_ls_tree(text: &str) -> Vec<(String, String, Option<i64>)> {
+    text.split('\0')
+        .filter_map(|entry| {
+            let (meta, path) = entry.split_once('\t')?;
+            let mut f = meta.split_whitespace();
+            let (_mode, kind, sha, size) = (f.next()?, f.next()?, f.next()?, f.next()?);
+            (kind == "blob").then(|| (path.to_owned(), sha.to_owned(), size.parse().ok()))
+        })
+        .collect()
+}
+
+/// Whether a checkout holds only part of its history (`--depth`). Blocking.
+pub fn is_shallow(dir: &Path) -> bool {
+    Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["rev-parse", "--is-shallow-repository"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .is_some_and(|o| String::from_utf8_lossy(&o.stdout).trim() == "true")
+}
+
+/// [`log_with_files`]'s output, read: records start with `\x1e`, the header
+/// fields are split by `\x1f`, and the changed files follow one per line.
+fn parse_log(text: &str) -> Vec<LoggedCommit> {
+    let nonempty = |s: &str| Some(s.trim().to_owned()).filter(|s| !s.is_empty());
+    text.split('\x1e')
+        .filter_map(|record| {
+            let mut lines = record.lines();
+            let header = lines.next()?;
+            let mut fields = header.split('\x1f');
+            let sha = nonempty(fields.next()?)?;
+            Some(LoggedCommit {
+                sha,
+                author_name: fields.next().and_then(nonempty),
+                author_email: fields.next().and_then(nonempty),
+                committed_at: fields.next().and_then(nonempty),
+                paths: lines.filter_map(nonempty).collect(),
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_tree_listing_keeps_blobs_with_their_sha_and_size() {
+        let text = "100644 blob aaa     120\tsrc/a.rs\x00040000 tree bbb       -\tsrc\0\
+                    160000 commit ccc       -\tvendor/x\x00100644 blob ddd 7\tname with space.md\0";
+        assert_eq!(
+            parse_ls_tree(text),
+            vec![
+                ("src/a.rs".to_owned(), "aaa".to_owned(), Some(120)),
+                ("name with space.md".to_owned(), "ddd".to_owned(), Some(7)),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_log_with_files_is_read_commit_by_commit() {
+        let text = "\x1eaaa\x1fAnn\x1fann@x.io\x1f2026-11-20T10:00:00+01:00\n\nsrc/a.rs\nREADME.md\n\
+                    \x1ebbb\x1fBob\x1f\x1f2026-11-19T10:00:00Z\n\n";
+        let log = parse_log(text);
+        assert_eq!(log.len(), 2);
+        assert_eq!(log[0].sha, "aaa");
+        assert_eq!(log[0].author_email.as_deref(), Some("ann@x.io"));
+        assert_eq!(log[0].paths, vec!["src/a.rs", "README.md"]);
+        assert_eq!(log[1].author_email, None);
+        assert!(log[1].paths.is_empty());
+    }
 
     /// A source pinned to a deleted branch is told apart from a fetch that
     /// failed for any other reason: the portal says "branch gone" for it.

@@ -11,11 +11,23 @@
  *
  * The joins below (plan × product × code × services × registry) are a backend
  * candidate: one route that answers "what is this project made of?".
+ *
+ * The services are what the backend computed when the project's
+ * repositories were last synced (a derived view): read in milliseconds, with
+ * the commit and time they were computed at and ↻ to compute them again. The
+ * code's conformance (capabilities → conformance, seconds) no longer holds
+ * the list back: the rows show first and its column fills in when it comes.
  */
 
 import { useEffect, useMemo, useState } from 'react';
 import { Skeleton } from '@gears-frontx/ui-kit';
-import { openScreen, violationOfType } from '@constructor-studio/mfe-shared';
+import {
+  DerivedViewStrip,
+  openScreen,
+  useDerivedViewPoll,
+  violationOfType,
+  type DerivedViewState,
+} from '@constructor-studio/mfe-shared';
 import { GridFailed } from '@constructor-studio/mfe-shared/grid';
 import { productApi } from '../../api/client';
 import type { Conformance, PlanRow } from '../../api/types';
@@ -42,11 +54,12 @@ const ORGANIZATION_COMPONENTS_ROUTE = '/components';
 
 interface Read {
   plan: PlanRow[];
-  code: Conformance | null;
   picks: string[];
   /** The product's last commit and change, which its deploys are read against. */
   productAt: ProductAt;
   services: ProjectComponent[];
+  /** What the services were computed from and when; null when not said. */
+  servicesView: DerivedViewState | null;
   /** The gears the project's own code declares, from the registry. */
   own: OwnGear[];
   /** What could not be read, each as its sentence's key; the rest still shows. */
@@ -75,11 +88,37 @@ function useRunning(projectId: string): Running[] | null {
   return running;
 }
 
-/** Plan × product × services × code × registry: what the inventory is drawn from.
+/** The code's conformance to the declared capabilities: two reads one after
+ *  the other, seconds, so read beside the list rather than before it. */
+function readCode(projectId: string, workspaceId: string | null, refresh = false): Promise<Conformance> {
+  return Promise.all([
+    productApi.declaredCapabilities(projectId),
+    workspaceId ? productApi.capabilities(workspaceId) : Promise.resolve({ items: [] }),
+  ]).then(([declared, vocab]) =>
+    productApi.conformance(
+      projectId,
+      declared.items.map((c) => c.key),
+      vocab.items ?? [],
+      refresh
+    )
+  );
+}
+
+/** The code's comparison as a derived view: which commits of the server's clones, and when. */
+function codeView(code: Conformance | null | undefined): DerivedViewState | null {
+  if (!code?.computed_at) return null;
+  return {
+    status: 'ready',
+    computed_at: code.computed_at,
+    inputs: (code.code_commits ?? []).map((c) => ({ source: c.repo, commit: c.commit })),
+  };
+}
+
+/** Plan × product × services × registry: what the inventory is drawn from.
  *  What could not be read is said in `partial` (as keys); only the plan is required. */
-async function readInventory(projectId: string, workspaceId: string | null): Promise<Read> {
+async function readInventory(projectId: string): Promise<Read> {
   const partial: string[] = [];
-  const [plan, product, services, code, registry] = await Promise.all([
+  const [plan, product, services, registry] = await Promise.all([
     // The plan is the Spec mapping kit's (ADR-0074): without it the plan's
     // part of the list is left out and said so, and the rest still shows.
     productApi.projectPlan(projectId).catch((e: unknown) => {
@@ -95,21 +134,6 @@ async function readInventory(projectId: string, workspaceId: string | null): Pro
       partial.push('partial_services');
       return null;
     }),
-    Promise.all([
-      productApi.declaredCapabilities(projectId),
-      workspaceId ? productApi.capabilities(workspaceId) : Promise.resolve({ items: [] }),
-    ])
-      .then(([declared, vocab]) =>
-        productApi.conformance(
-          projectId,
-          declared.items.map((c) => c.key),
-          vocab.items ?? []
-        )
-      )
-      .catch(() => {
-        partial.push('partial_code');
-        return null;
-      }),
     // Every gear the project's code declares, whether a capability offers
     // it or not; the plan only names the ones its documents ask for.
     productApi.componentRegistry({ project_id: projectId }).catch(() => {
@@ -119,10 +143,10 @@ async function readInventory(projectId: string, workspaceId: string | null): Pro
   ]);
   return {
     plan: plan.items,
-    code,
     picks: product?.gears ?? [],
     productAt: { commit: product?.written?.commit_sha, updatedAt: product?.updated_at },
     services: services?.items ?? [],
+    servicesView: services?.view ?? null,
     own: ownGearsOf(registry?.items ?? [], projectId),
     partial,
   };
@@ -133,6 +157,8 @@ export function ProjectComponentsInventory({ onOpenProduct }: { onOpenProduct?: 
   const { t } = useComponentsTranslations();
   const [read, setRead] = useState<Read | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** The code's conformance: undefined while read, null when it could not be. */
+  const [code, setCode] = useState<Conformance | null | undefined>(undefined);
   const [scaffold, setScaffold] = useState<PlanRow | null>(null);
   const [opened, setOpened] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -141,6 +167,8 @@ export function ProjectComponentsInventory({ onOpenProduct }: { onOpenProduct?: 
   const [entities, setEntities] = useState<Entity[] | null>(null);
   /** Bumped to read again. */
   const [round, setRound] = useState(0);
+  /** Bumped to compare the code again (↻ on its line). */
+  const [codeRound, setCodeRound] = useState(0);
   const openProduct = onOpenProduct ?? (() => openTab(bridge, 'product'));
 
   useEffect(() => {
@@ -181,14 +209,48 @@ export function ProjectComponentsInventory({ onOpenProduct }: { onOpenProduct?: 
 
   useEffect(() => {
     let live = true;
-    readInventory(projectId, workspaceId).then(
+    readInventory(projectId).then(
       (r) => live && setRead(r),
       (e: unknown) => live && setError(errText(e))
     );
     return () => {
       live = false;
     };
-  }, [projectId, workspaceId, round]);
+  }, [projectId, round]);
+
+  // Beside the list, not before it: the rows show without the code's column.
+  useEffect(() => {
+    let live = true;
+    // A read again keeps the last answer until the new one comes.
+    readCode(projectId, workspaceId, codeRound > 0).then(
+      (c) => live && setCode(c),
+      () => live && setCode(null)
+    );
+    return () => {
+      live = false;
+    };
+  }, [projectId, workspaceId, round, codeRound]);
+
+  /** Read the services again (a computation running, or asked for). */
+  const rereadServices = () => {
+    productApi
+      .projectComponents(projectId)
+      .then((s) =>
+        setRead((r) => (r ? { ...r, services: s.items, servicesView: s.view ?? null } : r))
+      )
+      .catch(() => undefined);
+  };
+  useDerivedViewPoll(read?.servicesView, rereadServices);
+  /** ↻: compute the services again from what the syncs stored. */
+  const recompute = () => {
+    setRead((r) =>
+      r && r.servicesView ? { ...r, servicesView: { ...r.servicesView, status: 'computing' } } : r
+    );
+    productApi
+      .refreshProjectComponents(projectId)
+      .then(rereadServices)
+      .catch(rereadServices);
+  };
   /** Read it all again: Retry, and a scaffold dialog closed. */
   const reload = () => {
     setError(null);
@@ -204,8 +266,9 @@ export function ProjectComponentsInventory({ onOpenProduct }: { onOpenProduct?: 
         row.unbuilt ||
         (rowCoverage(row, read.picks).cover === 'open' && !row.candidates.some((c) => c.built === 'built'))
       );
-    return inventory(read.plan, read.code, read.picks, read.services, needsGear, read.own);
-  }, [read]);
+    return inventory(read.plan, code ?? null, read.picks, read.services, needsGear, read.own);
+  }, [read, code]);
+  const partial = read ? [...read.partial, ...(code === null ? ['partial_code'] : [])] : [];
 
   const stateOf = (r: InventoryRow): string =>
     r.service
@@ -273,9 +336,41 @@ export function ProjectComponentsInventory({ onOpenProduct }: { onOpenProduct?: 
       <p className={styles.lead}>
         <b>{t('lead_title')}</b> {t('lead_body')}
       </p>
-      {read && read.partial.length > 0 && (
+      {read?.servicesView && (
+        <p className={styles.muted} data-inventory-services-view>
+          <DerivedViewStrip
+            view={read.servicesView}
+            onRefresh={recompute}
+            labels={{
+              byCommit: (commits) => t('services_by_commit', { commits }),
+              computed: (ago) => t('services_computed', { ago }),
+              computing: t('services_computing'),
+              failed: (why) => t('services_failed', { why }),
+              never: t('services_never'),
+              refresh: t('services_refresh'),
+            }}
+          />
+        </p>
+      )}
+      {codeView(code) && (
+        <p className={styles.muted} data-inventory-code-view>
+          <DerivedViewStrip
+            view={codeView(code)}
+            onRefresh={() => setCodeRound((r) => r + 1)}
+            labels={{
+              byCommit: (commits) => t('code_by_commit', { commits }),
+              computed: (ago) => t('services_computed', { ago }),
+              computing: t('services_computing'),
+              failed: (why) => t('services_failed', { why }),
+              never: t('services_never'),
+              refresh: t('code_refresh'),
+            }}
+          />
+        </p>
+      )}
+      {partial.length > 0 && (
         <p className={styles.muted} data-inventory-partial>
-          {t('partial', { what: read.partial.map((k) => t(k)).join('; ') })}
+          {t('partial', { what: partial.map((k) => t(k)).join('; ') })}
         </p>
       )}
       {error ? (

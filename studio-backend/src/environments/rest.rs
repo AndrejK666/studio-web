@@ -52,6 +52,33 @@ impl LicenseFeature for License {}
 #[derive(Clone)]
 pub struct Environments(pub Arc<EnvironmentService>);
 
+/// [`super::port::ProjectDeployments`]: the deployments page, in process.
+pub struct DeploymentsPort(pub Arc<EnvironmentService>);
+
+#[async_trait::async_trait]
+impl super::port::ProjectDeployments for DeploymentsPort {
+    async fn deployments_page(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+    ) -> anyhow::Result<serde_json::Value> {
+        let org = self
+            .0
+            .organization_of_project(ctx, project)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        let items = self
+            .0
+            .deployments(ctx, org, Some(project), None)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        Ok(serde_json::to_value(DeploymentListDto {
+            total: total(items.len()),
+            items: items.into_iter().map(deployment_dto).collect(),
+        })?)
+    }
+}
+
 fn problem(r: Refusal) -> CanonicalError {
     match r {
         Refusal::Forbidden(reason) => StudioEnvironmentsError::permission_denied()

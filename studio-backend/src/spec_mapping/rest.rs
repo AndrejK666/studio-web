@@ -360,10 +360,14 @@ pub struct ConformanceRequest {
     /// Capabilities answered by the deployment profile, as for `/plan`.
     #[serde(default)]
     pub nonfunctional: Vec<String>,
+    /// Compare again even when the same question was answered at the same
+    /// commits of the server's clones (the screen's ↻).
+    #[serde(default)]
+    pub refresh: bool,
 }
 
 /// A component the code depends on.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[toolkit_macros::api_dto(response)]
 pub struct ImplementerDto {
     pub name: String,
@@ -372,7 +376,7 @@ pub struct ImplementerDto {
 }
 
 /// One capability the specs declare, and whether the code has it.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[toolkit_macros::api_dto(response)]
 pub struct ConformanceRowDto {
     pub capability: String,
@@ -387,7 +391,7 @@ pub struct ConformanceRowDto {
 }
 
 /// A component the code uses that no declared capability accounts for.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[toolkit_macros::api_dto(response)]
 pub struct UnexplainedDto {
     pub name: String,
@@ -397,7 +401,7 @@ pub struct UnexplainedDto {
 }
 
 /// Spec against code, for one project.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[toolkit_macros::api_dto(response)]
 pub struct ConformanceDto {
     /// The repository read (`owner/name`).
@@ -413,6 +417,65 @@ pub struct ConformanceDto {
     /// it would have to add for them to resolve, and what cannot run. Empty
     /// when the engine is not configured or has nothing to say.
     pub gearbox: Vec<EngineChangeDto>,
+    /// The commit of the server's clone of each repository the code was read
+    /// from; empty when it was read through the provider.
+    #[serde(default)]
+    pub code_commits: Vec<CodeCommitDto>,
+    /// When this comparison was made: an answer kept for the same question
+    /// at the same commits carries the time it was first made.
+    #[serde(default)]
+    pub computed_at: Option<String>,
+}
+
+/// A repository the code was read from, and the commit of the server's clone.
+#[derive(Debug, Clone)]
+#[toolkit_macros::api_dto(response)]
+pub struct CodeCommitDto {
+    /// `owner/name`.
+    pub repo: String,
+    pub commit: String,
+}
+
+/// Comparisons kept by (organization, project, commits of the clones, the
+/// question): the code at a commit does not change, so the same question is
+/// answered again from here. The catalogue and the engine can move, so an
+/// answer lives at most this long.
+const CONFORMANCE_TTL: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
+type KeptConformance = (std::time::Instant, ConformanceDto);
+
+fn kept_conformance()
+-> &'static std::sync::Mutex<std::collections::HashMap<String, KeptConformance>> {
+    static KEPT: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, KeptConformance>>,
+    > = std::sync::OnceLock::new();
+    KEPT.get_or_init(Default::default)
+}
+
+/// The key an answer is kept under; `None` when the code is not read from
+/// clones (then nothing says it is unchanged).
+fn conformance_key(
+    org: &SecurityContext,
+    req: &ConformanceRequest,
+    commits: &[(String, String)],
+) -> Option<String> {
+    use std::hash::{Hash, Hasher};
+    if commits.is_empty() {
+        return None;
+    }
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    format!(
+        "{:?}|{:?}|{:?}|{:?}|{:?}",
+        req.capabilities, req.terms, req.contracts, req.decisions, req.nonfunctional
+    )
+    .hash(&mut h);
+    Some(format!(
+        "{}|{}|{:?}|{:x}",
+        org.subject_tenant_id(),
+        req.project_id.trim(),
+        commits,
+        h.finish()
+    ))
 }
 
 // ── The documents against the product ─────────────────────────────────────
@@ -625,7 +688,7 @@ fn mapping_decision_dto(id: String, v: &Value) -> MappingDecisionDto {
 }
 
 /// A change the Gearbox engine would make to the code's own set of gears.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[toolkit_macros::api_dto(response)]
 pub struct EngineChangeDto {
     /// Crate name.
@@ -1093,18 +1156,58 @@ async fn list_project_requirements(
 }
 
 /// `POST /conformance`: what the specs ask for, against what the code is made of.
+///
+/// The code is read from the server's clones of the project's repositories
+/// when there are any (never the provider), and the answer is kept by the
+/// commits it was read at ([`conformance_key`]): asked again at the same
+/// commits it is answered at once, with the time it was made.
 async fn create_conformance_report(
     OrgCtx(org): OrgCtx,
     Extension(ports): Extension<Ports>,
     Json(req): Json<ConformanceRequest>,
 ) -> ApiResult<JsonBody<ConformanceDto>> {
-    let project_id = req.project_id.trim();
-    if Uuid::parse_str(project_id).is_err() {
+    let project_id = req.project_id.trim().to_owned();
+    if Uuid::parse_str(&project_id).is_err() {
         return Err(invalid(
             "project_id",
             format!("`{project_id}` is not a uuid"),
         ));
     }
+    let catalog = ports.catalog()?;
+    let commits = catalog.project_code_commits(&org, &project_id).await;
+    let key = conformance_key(&org, &req, &commits);
+    if let (Some(key), false) = (&key, req.refresh)
+        && let Ok(kept) = kept_conformance().lock()
+        && let Some((at, dto)) = kept.get(key)
+        && at.elapsed() < CONFORMANCE_TTL
+    {
+        return Ok(Json(dto.clone()));
+    }
+    let mut dto = conformance_report(&org, &ports, req).await?;
+    dto.code_commits = commits
+        .into_iter()
+        .map(|(repo, commit)| CodeCommitDto { repo, commit })
+        .collect();
+    dto.computed_at = Some(crate::derived_view::now_rfc3339());
+    if let Some(key) = key
+        && let Ok(mut kept) = kept_conformance().lock()
+    {
+        kept.retain(|_, (at, _)| at.elapsed() < CONFORMANCE_TTL);
+        if kept.len() < 512 {
+            kept.insert(key, (std::time::Instant::now(), dto.clone()));
+        }
+    }
+    Ok(Json(dto))
+}
+
+/// The comparison itself, read now.
+async fn conformance_report(
+    org: &SecurityContext,
+    ports: &Ports,
+    req: ConformanceRequest,
+) -> ApiResult<ConformanceDto> {
+    let org = org.clone();
+    let project_id = req.project_id.trim();
     let catalog = ports.catalog()?;
     let registry = ports.registry();
     // The code, the catalogue and the registry are independent reads, asked
@@ -1259,14 +1362,16 @@ async fn create_conformance_report(
     };
 
     let total = u32::try_from(items.len()).unwrap_or(u32::MAX);
-    Ok(Json(ConformanceDto {
+    Ok(ConformanceDto {
         repo,
         components_in_code: in_code,
         items,
         total,
         unexplained,
         gearbox,
-    }))
+        code_commits: Vec::new(),
+        computed_at: None,
+    })
 }
 
 /// `POST /decisions`: record a member's decision on one mapping.

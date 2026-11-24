@@ -509,6 +509,10 @@ pub struct ProjectComponentListDto {
     /// collection, so `items` stays the one array of the envelope.
     #[serde(default)]
     pub unreadable: UnreadableProjectSourcesDto,
+    /// What `items` were computed from and when; null in a deployment
+    /// without the domain model.
+    #[serde(default)]
+    pub view: Option<ProjectComponentsViewDto>,
 }
 
 /// The sources a read of a project's repositories left out.
@@ -543,211 +547,231 @@ pub struct ProjectScopeQuery {
     pub project_id: String,
 }
 
-/// How many components one call reads the history of.
-const COMPONENT_HISTORY_MAX: usize = 25;
-
-const OPEN_PULL_FILES_QUERY: &str = r#"
-query($owner: String!, $name: String!) {
-  repository(owner: $owner, name: $name) {
-    pullRequests(states: OPEN, first: 50) {
-      pageInfo { hasNextPage }
-      nodes { files(first: 100) { pageInfo { hasNextPage } nodes { path } } }
-    }
-  }
+/// What the listing was computed from and when (`crate::derived_view`): the
+/// screen says "by commit … · computed …" and offers to compute it again.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ProjectComponentsViewDto {
+    /// `computing` (queued or running; `items` are the last computation's),
+    /// `ready`, or `failed` (`error` says why; `items` are the one before).
+    pub status: String,
+    /// When `items` were computed; null before the first computation.
+    pub computed_at: Option<String>,
+    /// When the computation now running was asked for.
+    pub requested_at: Option<String>,
+    pub error: Option<String>,
+    /// Each repository read, and the commit of the server's clone it was
+    /// read at.
+    pub inputs: Vec<ProjectComponentsInputDto>,
 }
-"#;
 
-fn bot(login: &str) -> bool {
-    let a = login.to_ascii_lowercase();
-    a.ends_with("[bot]") || a.ends_with("-bot") || a == "github-actions" || a.contains("dependabot")
+/// One repository a listing was computed from.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ProjectComponentsInputDto {
+    /// `owner/repo`.
+    pub source: String,
+    /// The commit of the server's clone its history was read at; null when
+    /// the server has no clone of it.
+    pub commit: Option<String>,
+    /// What could not be read from it, and why.
+    pub note: Option<String>,
+}
+
+impl From<&crate::derived_view::ViewState> for ProjectComponentsViewDto {
+    fn from(s: &crate::derived_view::ViewState) -> Self {
+        Self {
+            status: match s.status {
+                crate::derived_view::ViewStatus::Computing => "computing",
+                crate::derived_view::ViewStatus::Ready => "ready",
+                crate::derived_view::ViewStatus::Failed => "failed",
+            }
+            .to_owned(),
+            computed_at: s.computed_at.clone(),
+            requested_at: s.requested_at.clone(),
+            error: s.error.clone(),
+            inputs: s
+                .inputs
+                .iter()
+                .map(|i| ProjectComponentsInputDto {
+                    source: i.source.clone(),
+                    commit: i.commit.clone(),
+                    note: i.note.clone(),
+                })
+                .collect(),
+        }
+    }
+}
+
+/// The project a request names, once the caller is shown to reach it.
+async fn readable_project(
+    catalog: &Catalog,
+    ctx: &SecurityContext,
+    access: Option<&crate::org_scope::OrgAccess>,
+    raw: &str,
+) -> ApiResult<Uuid> {
+    catalogue_levels_routes::project_ctx(catalog, ctx, access, raw).await?;
+    Uuid::parse_str(raw.trim()).map_err(|_| {
+        StudioComponentsCatalogError::invalid_argument()
+            .with_field_violation("project_id", "must be a UUID".to_owned(), "INVALID")
+            .create()
+    })
+}
+
+/// Queue a computation of the project's components and say so on its state.
+async fn queue_project_components(
+    catalog: &Catalog,
+    ctx: &SecurityContext,
+    port: &dyn crate::domain_model::port::DomainObjects,
+    project: Uuid,
+) -> anyhow::Result<Uuid> {
+    let run = crate::derived_view::request(
+        &catalog.hub,
+        ctx,
+        ctx.subject_tenant_id(),
+        &super::project_components::VIEW,
+        project,
+    )
+    .await?;
+    super::project_components::VIEW
+        .mark_computing(port, ctx, project)
+        .await?;
+    Ok(run)
+}
+
+fn view_failed(e: anyhow::Error) -> CanonicalError {
+    CanonicalError::internal(format!("{e:#}")).create()
 }
 
 /// The services and applications a project's repositories hold beyond its
 /// gears, each with who changed it, what is open against it, and whether it
-/// is ready to be taken.
+/// is ready to be taken: as computed when its repositories were last synced
+/// (`project_components.rs`), never read from the provider here.
 async fn list_project_components(
     OrgCtx(ctx): OrgCtx,
     Extension(catalog): Extension<Catalog>,
+    access: Option<Extension<crate::org_scope::OrgAccess>>,
     Query(query): Query<ProjectScopeQuery>,
 ) -> ApiResult<JsonBody<ProjectComponentListDto>> {
-    use super::services::{Facts, detect, readiness};
-    let project = uuid::Uuid::parse_str(query.project_id.trim()).map_err(|_| {
-        StudioComponentsCatalogError::invalid_argument()
-            .with_field_violation("project_id", "must be a UUID".to_owned(), "INVALID")
-            .create()
-    })?;
-    let Some(connectors) = catalog.service.connector_service() else {
-        return Ok(Json(ProjectComponentListDto {
-            items: Vec::new(),
-            total: 0,
-            repos: 0,
-            unreadable: UnreadableProjectSourcesDto::default(),
-        }));
+    let project = readable_project(
+        &catalog,
+        &ctx,
+        access.as_ref().map(|a| &a.0),
+        &query.project_id,
+    )
+    .await?;
+    let empty = |view: Option<ProjectComponentsViewDto>| ProjectComponentListDto {
+        items: Vec::new(),
+        total: 0,
+        repos: 0,
+        unreadable: UnreadableProjectSourcesDto::default(),
+        view,
     };
-    let now = time::OffsetDateTime::now_utc();
-    let mut items = Vec::new();
-    let mut repos_read = 0u32;
-    let mut history_left = COMPONENT_HISTORY_MAX;
-    let project_id = project.to_string();
-    let (sources, mut skipped) = catalog
-        .service
-        .source_repos_checked(&ctx, &project_id)
-        .await;
-    for source in sources {
-        let branch = (!source.branch.trim().is_empty()).then(|| source.branch.clone());
-        let repo = match crate::connectors::sdk::Repository::open(
-            &connectors,
-            &ctx,
-            source.tenant,
-            source.connection_id,
-            "github",
-            &source.repo,
-            branch.as_deref(),
-        )
+    let Some(port) = crate::derived_view::port(&catalog.hub) else {
+        return Ok(Json(empty(None)));
+    };
+    let view = &super::project_components::VIEW;
+    crate::derived_view::ensure_types(port.as_ref(), &ctx, view)
         .await
-        {
-            Ok(repo) => repo,
-            Err(e) => {
-                skipped.push(super::service::SkippedSource::new(
-                    &project_id,
-                    &source.repo,
-                    format!("{e:#}"),
-                ));
-                continue;
+        .map_err(view_failed)?;
+    let (state, rows) = view
+        .read(port.as_ref(), &ctx, project)
+        .await
+        .map_err(view_failed)?;
+    let now = time::OffsetDateTime::now_utc();
+    // Never computed, or a computation whose run was lost: queue one. The
+    // answer is what is kept meanwhile, and says it is being computed.
+    let state = match state {
+        Some(s) if !s.lost(now) => s,
+        _ => {
+            queue_project_components(&catalog, &ctx, port.as_ref(), project)
+                .await
+                .map_err(view_failed)?;
+            match view.read(port.as_ref(), &ctx, project).await {
+                Ok((Some(s), _)) => s,
+                _ => return Ok(Json(empty(None))),
             }
-        };
-        let tree = match repo.tree().await {
-            Ok(tree) => tree,
-            Err(e) => {
-                skipped.push(super::service::SkippedSource::new(
-                    &project_id,
-                    &source.repo,
-                    format!("its files could not be listed: {e:#}"),
-                ));
-                continue;
-            }
-        };
-        repos_read += 1;
-        let paths: Vec<String> = tree
-            .files
-            .into_iter()
-            .filter(|f| !f.is_dir)
-            .map(|f| f.path)
-            .collect();
-        let gear_dirs: std::collections::BTreeSet<String> = paths
-            .iter()
-            .filter(|p| p.ends_with("gear.gdl") || p.ends_with("gear.toml"))
-            .map(|p| {
-                p.rsplit_once('/')
-                    .map_or(String::new(), |(d, _)| d.to_string())
-            })
-            .collect();
-        let found = detect(&source.repo, &paths, &gear_dirs);
-        // Open pull requests, once per repository: which files each changes,
-        // and whether that is all of them.
-        let (open_files, all_read): (Vec<Vec<String>>, bool) =
-            match (source.repo.split_once('/'), source.connection_id) {
-                (Some((owner, name)), Some(connection_id)) => {
-                    match connectors
-                        .driver_and_auth(&ctx, source.tenant, connection_id)
-                        .await
-                    {
-                        Ok((driver, auth, _)) => driver
-                            .graphql(
-                                &auth,
-                                &serde_json::json!({
-                                    "query": OPEN_PULL_FILES_QUERY,
-                                    "variables": { "owner": owner, "name": name },
-                                }),
-                            )
-                            .await
-                            .map_or((Vec::new(), true), |a| super::services::open_pull_files(&a)),
-                        Err(_) => (Vec::new(), true),
-                    }
-                }
-                _ => (Vec::new(), true),
-            };
-        for f in found {
-            let prefix = if f.dir.is_empty() {
-                String::new()
-            } else {
-                format!("{}/", f.dir)
-            };
-            let open_pulls = open_files
-                .iter()
-                .filter(|files| files.iter().any(|p| p.starts_with(&prefix)))
-                .count();
-            let (owners, last_change) = if history_left > 0 {
-                history_left -= 1;
-                let commits = repo
-                    .history(if f.dir.is_empty() { "." } else { &f.dir }, 30)
-                    .await
-                    .unwrap_or_default();
-                let mut counts: std::collections::BTreeMap<String, usize> =
-                    std::collections::BTreeMap::new();
-                for c in &commits {
-                    if let Some(who) = c
-                        .author
-                        .clone()
-                        .or(c.author_name.clone())
-                        .filter(|w| !bot(w))
-                    {
-                        *counts.entry(who).or_default() += 1;
-                    }
-                }
-                let mut owners: Vec<(String, usize)> = counts.into_iter().collect();
-                owners.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-                let last = commits
-                    .iter()
-                    .filter_map(|c| c.committed_at.clone().or(c.created_at.clone()))
-                    .max();
-                (owners.into_iter().map(|(w, _)| w).collect::<Vec<_>>(), last)
-            } else {
-                (Vec::new(), None)
-            };
-            let days = last_change.as_deref().and_then(|t| {
-                time::OffsetDateTime::parse(t, &time::format_description::well_known::Rfc3339)
-                    .ok()
-                    .map(|at| (now - at).whole_days())
-            });
-            let r = readiness(&Facts {
-                days_since_change: days,
-                authors: owners.len(),
-                open_pulls,
-                open_pulls_partial: !all_read,
-                has_tests: f.has_tests,
-                has_readme: f.has_readme,
-                has_contract: !f.contracts.is_empty(),
-            });
-            items.push(ProjectComponentDto {
-                repo: source.repo.clone(),
-                dir: f.dir,
-                name: f.name,
-                kind: f.kind,
-                manifests: f.manifests,
-                contracts: f.contracts,
-                has_tests: f.has_tests,
-                has_readme: f.has_readme,
-                owners: owners.into_iter().take(3).collect(),
-                last_change,
-                open_pulls: u32::try_from(open_pulls).unwrap_or(u32::MAX),
-                open_pulls_partial: !all_read,
+        }
+    };
+    let detail: super::project_components::Detail =
+        serde_json::from_value(state.detail.clone()).unwrap_or_default();
+    let mut kept: Vec<super::project_components::StoredComponent> = rows
+        .into_iter()
+        .filter_map(|r| serde_json::from_value(r).ok())
+        .collect();
+    kept.sort_by(|a, b| a.repo.cmp(&b.repo).then(a.dir.cmp(&b.dir)));
+    let items: Vec<ProjectComponentDto> = kept
+        .into_iter()
+        .map(|c| {
+            let r = c.readiness(now);
+            ProjectComponentDto {
+                repo: c.repo,
+                dir: c.dir,
+                name: c.name,
+                kind: c.kind,
+                manifests: c.manifests,
+                contracts: c.contracts,
+                has_tests: c.has_tests,
+                has_readme: c.has_readme,
+                owners: c.owners,
+                last_change: c.last_change,
+                open_pulls: c.open_pulls,
+                open_pulls_partial: c.open_pulls_partial,
                 readiness: r.signal.to_string(),
                 reasons: r.reasons,
-            });
-        }
-    }
+            }
+        })
+        .collect();
     Ok(Json(ProjectComponentListDto {
         total: u32::try_from(items.len()).unwrap_or(u32::MAX),
         items,
-        repos: repos_read,
+        repos: detail.repos,
         unreadable: UnreadableProjectSourcesDto {
-            sources: skipped
+            sources: detail
+                .unreadable
                 .into_iter()
-                .map(UnreadableProjectSourceDto::from)
+                .map(|u| UnreadableProjectSourceDto {
+                    source: u.source,
+                    reason: u.reason,
+                })
                 .collect(),
         },
+        view: Some(ProjectComponentsViewDto::from(&state)),
     }))
+}
+
+/// Compute a project's components again from what its syncs stored.
+async fn refresh_project_components(
+    OrgCtx(ctx): OrgCtx,
+    Extension(catalog): Extension<Catalog>,
+    access: Option<Extension<crate::org_scope::OrgAccess>>,
+    Query(query): Query<ProjectScopeQuery>,
+) -> ApiResult<(StatusCode, JsonBody<CatalogSyncEnqueued>)> {
+    let project = readable_project(
+        &catalog,
+        &ctx,
+        access.as_ref().map(|a| &a.0),
+        &query.project_id,
+    )
+    .await?;
+    let port = crate::derived_view::port(&catalog.hub).ok_or_else(|| {
+        CanonicalError::service_unavailable()
+            .with_detail("the domain model is not available in this deployment")
+            .create()
+    })?;
+    crate::derived_view::ensure_types(port.as_ref(), &ctx, &super::project_components::VIEW)
+        .await
+        .map_err(view_failed)?;
+    let run = queue_project_components(&catalog, &ctx, port.as_ref(), project)
+        .await
+        .map_err(view_failed)?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(CatalogSyncEnqueued {
+            run_id: run.to_string(),
+            status: "queued".to_string(),
+        }),
+    ))
 }
 
 async fn list_gears(
@@ -3997,13 +4021,17 @@ pub fn register_routes(
         .operation_id("studio_components_catalog.list_project_components")
         .summary("The services and applications in a project's repositories beyond its gears")
         .description(
-            "Reads the project's repositories through its connections and finds every \
-             component a build tool declares that is not a gear (go.mod, pyproject.toml, \
-             pom.xml, package.json, Cargo.toml, Dockerfile, Helm chart), with its contract \
-             files, tests and README, the people who changed it most (from the history, not \
-             typed in), its open pull requests, and a `ready` / `caution` / `not_ready` \
-             signal with every reason (issue #739). History is read for at most 25 \
-             components a call.",
+            "Every component a build tool declares in the project's repositories that is \
+             not a gear (go.mod, pyproject.toml, pom.xml, package.json, Cargo.toml, \
+             Dockerfile, Helm chart), with its contract files, tests and README, the people \
+             who changed it most (from the history, not typed in), its open pull requests, \
+             and a `ready` / `caution` / `not_ready` signal with every reason (issue #739). \
+             Computed when a repository of the project is synced, from what the sync \
+             stored and the server's clone of the repository, and kept: this reads the \
+             kept result and never the provider. `view` says what it was computed from \
+             (each repository and its commit) and when; a project never computed is \
+             queued here and answers `view.status: computing` with no items. \
+             `POST /project-components/refresh` computes it again.",
         )
         .tag("StudioComponentsCatalog")
         .authenticated()
@@ -4018,7 +4046,37 @@ pub fn register_routes(
         )
         .error_400(openapi)
         .error_401(openapi)
+        .error_404(openapi)
         .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::post("/studio-components-catalog/v1/project-components/refresh")
+        .operation_id("studio_components_catalog.refresh_project_components")
+        .summary("Compute a project's components again from what its syncs stored")
+        .description(
+            "Queues a `components.project-components` run that derives the project's \
+             components from its synced files and pull requests and the server's clone \
+             of each repository, never the provider, and keeps them for \
+             `GET /project-components`. A run already waiting is joined. Answers 202 with \
+             the `run_id` to follow at `GET /studio-tasks/v1/runs/{run_id}`; the \
+             listing's `view.status` reads `computing` until it ends.",
+        )
+        .tag("StudioComponentsCatalog")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param(crate::org_scope::PARAM, false, crate::org_scope::PARAM_DOC)
+        .query_param("project_id", true, "The project")
+        .handler(refresh_project_components)
+        .json_response_with_schema::<CatalogSyncEnqueued>(
+            openapi,
+            StatusCode::ACCEPTED,
+            "Computation queued",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
         .register(router, openapi);
 
     let router = OperationBuilder::get("/studio-components-catalog/v1/components")

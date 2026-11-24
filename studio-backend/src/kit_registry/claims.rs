@@ -53,6 +53,14 @@ pub const CORE_GEAR_TYPES: &[(&str, &str)] = &[
         "connections are the shell's Sources",
     ),
     ("kit-installation", "the kit library and the installer"),
+    (
+        "project-status",
+        "the project Overview's status, kept by the shell (status_view.rs)",
+    ),
+    (
+        "project-status-view",
+        "when the project Overview's status was computed",
+    ),
     ("tenant-document", "every gear's settings document"),
     (
         "record-chunk",
