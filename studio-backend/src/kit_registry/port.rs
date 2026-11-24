@@ -163,7 +163,7 @@ impl ProjectKitRequests for KitRequests {
                 Refusal::Forbidden(reason) => {
                     anyhow::anyhow!("refused ({reason}): the run may only type its own new project")
                 }
-                other => anyhow::anyhow!("{other:?}"),
+                other => anyhow::anyhow!("{other}"),
             })
     }
 
@@ -171,7 +171,7 @@ impl ProjectKitRequests for KitRequests {
         self.installer
             .project_types(organization)
             .await
-            .map_err(|failure| anyhow::anyhow!("{failure:?}"))
+            .map_err(|failure| anyhow::anyhow!("{failure}"))
     }
 
     async fn requested(
@@ -280,7 +280,7 @@ impl KitPresence for InstalledKits {
         } else {
             self.installer.installed(ctx, tenant).await
         }
-        .map_err(|refusal| anyhow::anyhow!("the installed kits could not be read: {refusal:?}"))?;
+        .map_err(|refusal| anyhow::anyhow!("the installed kits could not be read: {refusal}"))?;
         // A retired slug applies where every kit it resolves to does
         // (ADR-0071 §8), for a gear that still asks by it.
         Ok(super::aliases::with_retired(&installed.effective)
@@ -299,7 +299,7 @@ impl KitPresence for InstalledKits {
         } else {
             self.installer.installed(ctx, tenant).await
         }
-        .map_err(|refusal| anyhow::anyhow!("the installed kits could not be read: {refusal:?}"))?;
+        .map_err(|refusal| anyhow::anyhow!("the installed kits could not be read: {refusal}"))?;
         let mut out = Vec::new();
         for k in &installed.effective {
             let manifest = if k.shelf == super::service::SHELF_ORGANIZATION {
@@ -348,7 +348,7 @@ impl ProjectPhases for InstalledKits {
             .installer
             .project_phases(ctx, org)
             .await
-            .map_err(|refusal| anyhow::anyhow!("the phases could not be read: {refusal:?}"))?;
+            .map_err(|refusal| anyhow::anyhow!("the phases could not be read: {refusal}"))?;
         Ok(installed.then(|| {
             rows.into_iter()
                 .filter_map(|(project, phase, _, _)| Some((project.parse().ok()?, phase)))

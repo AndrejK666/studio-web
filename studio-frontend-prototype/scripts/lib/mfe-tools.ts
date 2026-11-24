@@ -8,6 +8,7 @@
 import { spawn } from 'child_process';
 import { existsSync, readdirSync, readFileSync } from 'fs';
 import { join } from 'path';
+import { completeExposeCssIn } from './expose-css.js';
 
 export const MFE_PACKAGES_DIR = join(process.cwd(), 'src-app/mfe_packages');
 const VITE_CLI = join(process.cwd(), 'node_modules', 'vite', 'bin', 'vite.js');
@@ -76,14 +77,17 @@ export async function buildMfesSequentially(mfes: MfeInfo[]): Promise<void> {
   }
   for (const mfe of mfes) {
     await new Promise<void>((resolve, reject) => {
-      const proc = spawn(process.execPath, [VITE_CLI, 'build'], {
+      // --manifest: Vite's chunk graph, from which every expose's CSS is completed below.
+      const proc = spawn(process.execPath, [VITE_CLI, 'build', '--manifest'], {
         stdio: 'inherit',
         cwd: join(MFE_PACKAGES_DIR, mfe.name),
       });
       proc.on('error', reject);
       proc.on('exit', (code) => {
-        if (code === 0) resolve();
-        else reject(new Error(`MFE build failed for ${mfe.name} with exit code ${code}`));
+        if (code === 0) {
+          completeExposeCssIn(join(MFE_PACKAGES_DIR, mfe.name, 'dist'));
+          resolve();
+        } else reject(new Error(`MFE build failed for ${mfe.name} with exit code ${code}`));
       });
     });
   }

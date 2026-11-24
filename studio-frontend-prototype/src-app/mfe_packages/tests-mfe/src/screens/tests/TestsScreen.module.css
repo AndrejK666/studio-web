@@ -151,7 +151,25 @@
   min-width: 15rem;
 }
 
+.branch {
+  display: block;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.branchBadge {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
 .commit {
+  display: block;
+  min-width: 0;
   max-width: 24rem;
   overflow: hidden;
   text-overflow: ellipsis;

@@ -150,6 +150,8 @@ export interface OrgMember {
   user_id: string;
   display_name?: string | null;
   email?: string | null;
+  /** With `include=aliases`: the identities attributed to the member, strongest first. */
+  aliases?: PersonAlias[] | null;
 }
 
 export interface PersonAlias {
@@ -157,11 +159,6 @@ export interface PersonAlias {
   external_id: string;
   /** suggested | claimed | confirmed */
   confidence: string;
-}
-
-export interface MemberIdentities {
-  user_id: string;
-  aliases: PersonAlias[];
 }
 
 export interface NewIssue {

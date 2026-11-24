@@ -143,11 +143,19 @@ export function personLabel(
   return t('unknown_user_id', { id: who.replace(/-/g, '').slice(0, 4) });
 }
 
+/** Whether any of these people is shown without the name the server
+ *  recorded with them: only then are the user lists worth asking. */
+export function anyUnnamed(people: readonly { id?: string | null; name?: string | null }[]): boolean {
+  return people.some((p) => !!p.id?.trim() && !p.name?.trim());
+}
+
 /** The names the tenants' user lists give, merged (the organization's and
- *  the project's); a failed ask is no names, not an error. */
-export function usePeople(tenantIds: readonly (string | null | undefined)[]): PeopleNames {
+ *  the project's); a failed ask is no names, not an error. Asked only when
+ *  `needed`: a deploy carries its requester's name, so only older records
+ *  without one need the identity provider's lists. */
+export function usePeople(tenantIds: readonly (string | null | undefined)[], needed = true): PeopleNames {
   const api = useApi();
-  const key = [...new Set(tenantIds.filter((x): x is string => !!x))].sort().join(',');
+  const key = needed ? [...new Set(tenantIds.filter((x): x is string => !!x))].sort().join(',') : '';
   const [names, setNames] = useState<PeopleNames>(new Map());
   useEffect(() => {
     if (!key) return;

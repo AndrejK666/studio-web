@@ -212,6 +212,52 @@ impl From<anyhow::Error> for Refusal {
     }
 }
 
+/// A sentence a person reads where the refusal is not answered as an HTTP
+/// problem: a run's step line, an Inbox item, another gear's error. The REST
+/// answer stays `rest::refused`, with the codes a client branches on.
+impl std::fmt::Display for Refusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Forbidden(KIT_ADMIN_REQUIRED) => {
+                f.write_str("only an administrator of the organization may change its kits")
+            }
+            Self::Forbidden(reason) => write!(f, "not allowed ({reason})"),
+            Self::Invalid(why) => f.write_str(why),
+            Self::NotFound(slug, detail) => write!(f, "{detail}: `{slug}`"),
+            Self::BaseKit(slug) => write!(
+                f,
+                "`{slug}` is a base kit, installed by the platform for every organization"
+            ),
+            Self::OrganizationKit(slug) => {
+                write!(f, "`{slug}` is installed by the project's organization")
+            }
+            Self::NotAProjectKit(slug) => {
+                write!(f, "`{slug}` does not name `project` among its levels")
+            }
+            Self::SlugTaken(slug) => write!(f, "`{slug}` is a kit of Studio's own library"),
+            Self::KitInstalled(slug) => {
+                write!(f, "`{slug}` is installed for the organization")
+            }
+            Self::ModelConflict(detail) | Self::NoSuchTransition(detail) => f.write_str(detail),
+            Self::ModelKitNotForProject(slug) => write!(
+                f,
+                "`{slug}` brings a model, which is the organization's, not one project's"
+            ),
+            Self::KitNotInstalled(kit) => write!(f, "the kit `{kit}` is not installed here"),
+            Self::Precondition(_, detail, _) => f.write_str(detail),
+            Self::RequiresKits { kit, missing } => write!(
+                f,
+                "`{kit}` requires {}, which do not apply here",
+                missing.join(", ")
+            ),
+            Self::RequiredBy { kit, by } => {
+                write!(f, "{} still require `{kit}`", by.join(", "))
+            }
+            Self::Internal(error) => write!(f, "{error:#}"),
+        }
+    }
+}
+
 /// The 403 reasons.
 pub const PLATFORM_ADMIN_REQUIRED: &str = "PLATFORM_ADMIN_REQUIRED";
 pub const KIT_ADMIN_REQUIRED: &str = "KIT_ADMIN_REQUIRED";

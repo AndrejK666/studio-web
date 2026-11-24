@@ -133,32 +133,16 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
   const [tick, setTick] = useState(0);
   const [busy, setBusy] = useState<string | null>(null);
   const [problem, setProblem] = useState<{ slug: string; text: string } | null>(null);
-  /** What is inside each kit, read once per catalogue: null = could not be read. */
-  const [details, setDetails] = useState<Record<string, KitDetail | null>>({});
+  /** What is inside each kit, answered with the catalogue (`include=contents`):
+   *  null = the catalogue said nothing about it. */
+  const details: Record<string, KitDetail | null> = useMemo(() => {
+    const known = new Map((catalog.data?.details ?? []).map((d) => [d.kit.slug, d]));
+    return Object.fromEntries(library.map((k) => [k.slug, known.get(k.slug) ?? null]));
+  }, [catalog.data, library]);
   const [selected, setSelected] = useState<string | null>(null);
-  const slugs = library.map((k) => k.slug).join(',');
   const detailOf = (slug: string): KitDetail | null =>
     shelf.find((d) => d.kit.slug === slug) ?? details[slug] ?? null;
   const onShelf = (slug: string) => shelf.some((d) => d.kit.slug === slug);
-
-  useEffect(() => {
-    if (!slugs) return;
-    let alive = true;
-    void Promise.all(
-      slugs.split(',').map((slug) =>
-        api
-          .describe({ slug })
-          .fetch()
-          .then(
-            (d) => [slug, d] as const,
-            () => [slug, null] as const
-          )
-      )
-    ).then((pairs) => alive && setDetails(Object.fromEntries(pairs)));
-    return () => {
-      alive = false;
-    };
-  }, [api, slugs]);
 
   useEffect(() => {
     if (!orgId) return;

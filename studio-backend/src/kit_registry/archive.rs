@@ -199,7 +199,7 @@ fn refusal_text(r: &Refusal) -> String {
     match r {
         Refusal::Invalid(why) => why.clone(),
         Refusal::Internal(e) => format!("{e:#}"),
-        other => format!("{other:?}"),
+        other => other.to_string(),
     }
 }
 

@@ -102,7 +102,16 @@ const RunWorkflowCell: React.FC<{ item: CiRun }> = ({ item }) => {
 };
 
 const RunBranchCell: React.FC<{ item: CiRun }> = ({ item }) =>
-  item.branch ? <Badge variant="secondary">{item.branch}</Badge> : <RunDash />;
+  item.branch ? (
+    // A long branch name ends in an ellipsis inside its column instead of running over the commit.
+    <span className={styles.branch} title={item.branch}>
+      <Badge variant="secondary" className={styles.branchBadge}>
+        {item.branch}
+      </Badge>
+    </span>
+  ) : (
+    <RunDash />
+  );
 
 const RunCommitCell: React.FC<{ item: CiRun }> = ({ item }) => (
   <span className={styles.commit} title={item.title ?? undefined}>
