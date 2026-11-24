@@ -404,6 +404,42 @@ pub fn explain(of: Of, text: &str, step: Option<&str>, research: bool) -> Failur
         );
     }
 
+    // The network between Studio and Research failed (a refused or broken
+    // connection, a request that could not be sent): asked again a few
+    // times already, so a later try is the action. Before the cluster's
+    // cause below, which "did not answer" would otherwise read as.
+    if research
+        && has(
+            text,
+            &[
+                "constructor research could not be reached",
+                "error sending request",
+                "constructor research (",
+            ],
+        )
+        && has(
+            text,
+            &[
+                "could not be reached",
+                "cannot be reached",
+                "did not answer",
+                "error sending request",
+                "connection refused",
+                "connection reset",
+                "timed out",
+            ],
+        )
+    {
+        return cause(
+            "RESEARCH_UNAVAILABLE",
+            "Constructor Research could not be reached; try again.".to_owned(),
+            vec![
+                FailureAction::new("retry", retry_label),
+                FailureAction::new("open_log", "Open the log"),
+            ],
+        );
+    }
+
     // Research's own services refused while running (a desk's file storage
     // with "no healthy upstream", a gateway's 502/503/504): nothing in the
     // product or in Studio is wrong, and nothing here fixes it but time or
@@ -752,6 +788,26 @@ mod tests {
         assert_eq!(u.code, "UNKNOWN");
         assert_eq!(u.lines, ["helm said no"]);
         assert_eq!(u.actions[0].kind, "open_log");
+    }
+
+    #[test]
+    fn a_network_blip_on_the_way_to_research_is_research_unavailable_not_unknown() {
+        // The stand, 2026-11-23: a poll of an image build that never left.
+        for text in [
+            "Constructor Research (the image's state) at dev-constructor.dev did not answer:              error sending request for url (https://dev-constructor.dev/api/platform-account/v1/images/x)",
+            "Constructor Research could not be reached at dev-constructor.dev (the image's              state), asked again and again; try again in a while: error sending request",
+        ] {
+            let c = explain(Of::Build, text, Some("images"), true);
+            assert_eq!(c.code, "RESEARCH_UNAVAILABLE", "{text}");
+            assert_eq!(
+                c.summary,
+                "Constructor Research could not be reached; try again."
+            );
+            assert_eq!(c.actions[0].kind, "retry");
+        }
+        // A cluster build's own "did not answer" stays the cluster's.
+        let cluster = explain(Of::Build, "the cluster did not answer: x", None, false);
+        assert_eq!(cluster.code, "CLUSTER_UNREACHABLE");
     }
 
     #[test]

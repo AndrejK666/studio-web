@@ -26,6 +26,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context as _, anyhow, bail};
 use async_trait::async_trait;
@@ -37,16 +38,18 @@ use uuid::Uuid;
 
 use super::build::{self, RepoRef};
 use super::research_app::{self, Application, Inputs};
+use super::research_keys::{self, Laid};
 use super::research_progress::Reporter;
 use crate::connectors::sdk::research::{
-    ImageBuild, Measured, Pace, Renew, ResearchApi, Service, Watched,
+    AppDeploy, Built, DeskBuild, Followed, HandOver, ImageBuild, Measured, Pace, Renew,
+    ResearchApi, Service, Watched,
 };
 use crate::tasks::sdk::{TaskContext, TaskHandler, TaskOutcome};
 
 pub const BUILD_TASK_TYPE: &str = "environments.research.build";
 
 /// Where in the build context Studio lays out what an image carries.
-const OVERLAY_DIR: &str = "studio-research";
+pub(super) const OVERLAY_DIR: &str = "studio-research";
 
 /// The member a Research run acts for: whose sign-in it reads, in the tenant
 /// they asked in (where their personal connection's token was stored).
@@ -352,6 +355,9 @@ fn write(path: &Path, text: &str) -> anyhow::Result<()> {
     std::fs::write(path, text).with_context(|| format!("{} could not be written", path.display()))
 }
 
+/// The images to build, each one's bake, and where each was laid out.
+type LaidOut = (Vec<ImageBuild>, BTreeMap<String, String>, Vec<Laid>);
+
 /// What a build lays out for Research in `root` (the uploaded folder): per
 /// image a Dockerfile in its context folder -- Research builds with the
 /// Dockerfile's folder as the context -- with what the chart mounts and runs
@@ -363,7 +369,7 @@ fn lay_out(
     images: &[BuildImage],
     app: &Application,
     database_image: &str,
-) -> anyhow::Result<(Vec<ImageBuild>, BTreeMap<String, String>)> {
+) -> anyhow::Result<LaidOut> {
     let rel = |p: &Path| -> anyhow::Result<String> {
         Ok(p.strip_prefix(root)
             .map_err(|_| anyhow!("{} is outside the uploaded tree", p.display()))?
@@ -372,6 +378,7 @@ fn lay_out(
     };
     let mut builds = Vec::new();
     let mut bakes = BTreeMap::new();
+    let mut laid = Vec::new();
     for i in images {
         let pending = format!("{}/{}:build", research_app::PENDING_IMAGE, i.app);
         let spec = app.services.iter().find(|s| s.image == pending);
@@ -416,6 +423,11 @@ fn lay_out(
             name: research_app::image_name(&i.name),
             dockerfile: rel(&dockerfile)?,
         });
+        laid.push(Laid {
+            key: i.app.clone(),
+            context: context.clone(),
+            dockerfile: dockerfile.clone(),
+        });
         bakes.insert(
             i.app.clone(),
             spec.map(|s| s.bake()).unwrap_or_else(|| "none".into()),
@@ -436,9 +448,14 @@ fn lay_out(
             name: research_app::image_name(&format!("studio-db-{}", db.name)),
             dockerfile: rel(&dockerfile)?,
         });
+        laid.push(Laid {
+            key: key.clone(),
+            context: dir.clone(),
+            dockerfile: dockerfile.clone(),
+        });
         bakes.insert(key, db.bake());
     }
-    Ok((builds, bakes))
+    Ok((builds, bakes, laid))
 }
 
 /// Research builds images with buildah, which enforces fully qualified
@@ -591,6 +608,120 @@ pub struct ResearchBuildPayload {
     pub database_image: Option<String>,
 }
 
+/// How long one attempt of a build may take before it stops starting an
+/// upload: an upload begun before then ends well inside the run queue's
+/// fifteen-minute lease.
+const UPLOAD_BY: Duration = Duration::from_secs(8 * 60);
+
+/// How long one attempt follows the image builds before it hands them to
+/// the next attempt (the way a gear match does), inside the lease.
+const FOLLOW_FOR: Duration = Duration::from_secs(12 * 60);
+
+/// Attempts a build gets: the desk's start and a wait for another build
+/// holding it, then `Pace::RESEARCH.build_for` (90 minutes) of image builds,
+/// twelve minutes an attempt, with room for attempts a restart cut short.
+/// The build's own deadlines end it long before an attempt cap would.
+const BUILD_ATTEMPTS: i16 = 30;
+
+/// What the prepared tree said, kept once the images are asked for: a later
+/// attempt follows them without preparing anything again.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Made {
+    pub product: String,
+    pub commit: String,
+    #[serde(default)]
+    pub lock_hash: Option<String>,
+    /// Each image's [`research_app::ServiceSpec::bake`], by its key.
+    #[serde(default)]
+    pub bakes: BTreeMap<String, String>,
+    /// Each image's content key ([`research_keys::image_keys`]).
+    #[serde(default)]
+    pub keys: BTreeMap<String, String>,
+}
+
+/// What a Research build keeps on its run between attempts, under
+/// `resume` in the run's result.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Resume {
+    #[serde(default)]
+    pub made: Option<Made>,
+    #[serde(default)]
+    pub desk: DeskBuild,
+}
+
+impl Resume {
+    /// What an earlier attempt of this run left; nothing on a first one (or
+    /// a run from before builds were resumable).
+    fn of(recorded: Option<&serde_json::Value>) -> Self {
+        recorded
+            .and_then(|r| r.get("resume"))
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default()
+    }
+
+    /// The images Research has for this build so far, as a record names
+    /// them: each one asked for, built or not -- a build that failed after
+    /// they were asked for keeps them, and may be deployed once they are
+    /// all built ([`super::EnvironmentService::deploy_built_images`]).
+    fn images(&self) -> Vec<(String, String)> {
+        let Some(made) = &self.made else {
+            return Vec::new();
+        };
+        self.desk
+            .images
+            .iter()
+            .map(|b| {
+                let bake = made.bakes.get(&b.key).cloned().unwrap_or_default();
+                (
+                    b.key.clone(),
+                    research_app::image_reference(&bake, &b.name, &b.id),
+                )
+            })
+            .collect()
+    }
+
+    /// The record of this build ended as `status` (`failed`, `cancelled`)
+    /// for `why`, with what it had made.
+    fn ended(
+        &self,
+        p: &ResearchBuildPayload,
+        status: &str,
+        why: &str,
+        step: &str,
+    ) -> crate::artifact_ingest::port::BuildOutcome {
+        let mut out = crate::artifact_ingest::port::BuildOutcome::failed(
+            &p.build_id,
+            &p.repo.repo,
+            &p.profile,
+            why,
+            step,
+        );
+        out.status = status.to_owned();
+        out.images = self.images();
+        if let Some(made) = &self.made {
+            out.product = Some(made.product.clone());
+            out.commit = Some(made.commit.clone());
+            out.lock_hash.clone_from(&made.lock_hash);
+            out.place.image_keys = research_keys::keys_field(&made.keys);
+        }
+        out
+    }
+}
+
+/// How one attempt of a build ended.
+enum Went {
+    Built(Box<crate::artifact_ingest::port::BuildOutcome>),
+    /// Not finished: the next attempt goes on from this.
+    Later(Resume),
+}
+
+/// Why a build failed: its step, the words, and what it had made.
+struct Stopped {
+    step: String,
+    why: String,
+    resume: Resume,
+}
+
 pub struct ResearchBuildTask {
     hub: Arc<ClientHub>,
 }
@@ -606,16 +737,7 @@ impl ResearchBuildTask {
         p: &ResearchBuildPayload,
         outcome: crate::artifact_ingest::port::BuildOutcome,
     ) {
-        let outcome = crate::artifact_ingest::port::BuildOutcome {
-            r#where: Some("research".into()),
-            description_revision: outcome.description_revision.or(p.description_revision),
-            ..outcome
-        };
-        if let Err(e) =
-            build::record_outcome(&self.hub, ctx, p.records_in, p.project_id, outcome).await
-        {
-            tracing::warn!(build = %p.build_id, error = %e, "studio-environments: a Research build could not be recorded");
-        }
+        record_research(&self.hub, ctx, p, outcome).await;
     }
 
     async fn step(
@@ -636,15 +758,79 @@ impl ResearchBuildTask {
         self.record(&ctx.security, p, running).await;
     }
 
+    /// The images earlier builds of the project made from the same inputs,
+    /// that Research still has built: by key, what this build reuses.
+    async fn reusable(
+        &self,
+        ctx: &TaskContext,
+        api: &ResearchApi,
+        p: &ResearchBuildPayload,
+        keys: &BTreeMap<String, String>,
+        report: &Reporter<'_>,
+    ) -> Vec<Built> {
+        let Ok(records) = self
+            .hub
+            .get::<dyn crate::artifact_ingest::port::BuildRecords>()
+        else {
+            return Vec::new();
+        };
+        let there = match p.records_in {
+            Some(t) if t != ctx.security.subject_tenant_id() => {
+                match super::store::service_context(t) {
+                    Ok(c) => c,
+                    Err(_) => return Vec::new(),
+                }
+            }
+            _ => ctx.security.clone(),
+        };
+        let earlier = records
+            .builds(&there, &p.project_id.to_string(), REUSE_LOOKS_AT)
+            .await
+            .unwrap_or_default();
+        let mut found: BTreeMap<String, Built> = BTreeMap::new();
+        for (app, image) in reuse_candidates(&p.build_id, keys, &earlier) {
+            if found.contains_key(&app) {
+                continue;
+            }
+            // Research's word, not the record's: built, and still there.
+            if matches!(api.image(&image.id).await, Ok(i) if i.build_status == "done") {
+                found.insert(
+                    app.clone(),
+                    Built {
+                        key: app,
+                        name: image.name,
+                        id: image.id,
+                    },
+                );
+            }
+        }
+        for b in found.values() {
+            report
+                .say(format!(
+                    "{} is unchanged since an earlier build: reusing its image {}",
+                    b.key, b.name
+                ))
+                .await;
+        }
+        found.into_values().collect()
+    }
+
     async fn build(
         &self,
         ctx: &TaskContext,
         p: &ResearchBuildPayload,
-    ) -> Result<crate::artifact_ingest::port::BuildOutcome, (String, String)> {
+        resume: Resume,
+        hand_over: HandOver,
+    ) -> Result<Went, Stopped> {
         use crate::artifact_ingest::port::BuildOutcome;
-        let fail = |step: &str| {
-            let step = step.to_owned();
-            move |e: anyhow::Error| (step, format!("{e:#}"))
+        let mut resume = resume;
+        let stop = |step: &str, resume: &Resume| {
+            let (step, resume) = (step.to_owned(), resume.clone());
+            move |e: anyhow::Error| Stopped {
+                step,
+                why: format!("{e:#}"),
+                resume,
+            }
         };
         let sign_in = p.sign_in.unwrap_or(SignIn {
             tenant: p.organization_id,
@@ -658,93 +844,238 @@ impl ResearchBuildTask {
             p.requested_by.as_ref(),
         )
         .await
-        .map_err(fail("start"))?;
+        .map_err(stop("start", &resume))?;
 
         let report = Reporter::new(ctx);
-        self.step(ctx, &report, p, "prepare").await;
-        let tree = prepare(
-            &self.hub,
-            &ctx.security,
-            &p.repo,
-            p.git_ref.clone(),
-            p.description_text
-                .clone()
-                .filter(|t| !t.trim().is_empty())
-                .map(|t| (p.description_revision, t)),
-            &p.product_file,
-            &p.profile,
-        )
-        .await
-        .map_err(fail("prepare"))?;
-        let apps = std::fs::read_to_string(tree.work.join("apps"))
-            .map_err(|e| fail("prepare")(e.into()))?;
-        let images = build_images(&apps, &tree.work).map_err(fail("prepare"))?;
-
-        // The chart as the deploy will render it: what each image carries.
-        let release = tree.prepared.product.clone();
-        let values = build_values(p.values.as_ref(), &images, &p.secret_keys, &release);
-        let rendered = render(&tree, &release, &p.namespace, &values)
+        // The tree, while the images are not all asked for yet: prepared
+        // again by every attempt that still needs it.
+        let mut tree = None;
+        let mut builds = Vec::new();
+        if !resume.desk.submitted {
+            self.step(ctx, &report, p, "prepare").await;
+            let prepared = prepare(
+                &self.hub,
+                &ctx.security,
+                &p.repo,
+                p.git_ref.clone(),
+                p.description_text
+                    .clone()
+                    .filter(|t| !t.trim().is_empty())
+                    .map(|t| (p.description_revision, t)),
+                &p.product_file,
+                &p.profile,
+            )
             .await
-            .map_err(fail("prepare"))?;
-        let database_image = p
-            .database_image
-            .clone()
-            .unwrap_or_else(|| super::database::DEFAULT_IMAGE.to_owned());
-        let any_secret = |_: &str, _: &str| Some(String::new());
-        let no_password = |_: &str| String::new();
-        let app = research_app::application_of(
-            &rendered,
-            &Inputs {
-                hardware: None,
-                secret: &any_secret,
-                database_password: &no_password,
-                database_image: &database_image,
-                namespace: &p.namespace,
-            },
-        )
-        .map_err(|e| fail("prepare")(e.into()))?;
-        let root = tree.work.join("repo");
-        let (builds, bakes) =
-            lay_out(&tree.work, &root, &images, &app, &database_image).map_err(fail("prepare"))?;
+            .map_err(stop("prepare", &resume))?;
+            let apps = std::fs::read_to_string(prepared.work.join("apps"))
+                .map_err(|e| stop("prepare", &resume)(e.into()))?;
+            let images = build_images(&apps, &prepared.work).map_err(stop("prepare", &resume))?;
+
+            // The chart as the deploy will render it: what each image carries.
+            let release = prepared.prepared.product.clone();
+            let values = build_values(p.values.as_ref(), &images, &p.secret_keys, &release);
+            let rendered = render(&prepared, &release, &p.namespace, &values)
+                .await
+                .map_err(stop("prepare", &resume))?;
+            let database_image = p
+                .database_image
+                .clone()
+                .unwrap_or_else(|| super::database::DEFAULT_IMAGE.to_owned());
+            let any_secret = |_: &str, _: &str| Some(String::new());
+            let no_password = |_: &str| String::new();
+            let app = research_app::application_of(
+                &rendered,
+                &Inputs {
+                    hardware: None,
+                    secret: &any_secret,
+                    database_password: &no_password,
+                    database_image: &database_image,
+                    namespace: &p.namespace,
+                },
+            )
+            .map_err(|e| stop("prepare", &resume)(e.into()))?;
+            let root = prepared.work.join("repo");
+            let (all, bakes, laid) = lay_out(&prepared.work, &root, &images, &app, &database_image)
+                .map_err(stop("prepare", &resume))?;
+            let keys = {
+                let (laid, salt) = (laid.clone(), p.research_project.clone());
+                tokio::task::spawn_blocking(move || research_keys::image_keys(&laid, &salt))
+                    .await
+                    .map_err(|e| stop("prepare", &resume)(e.into()))?
+                    .map_err(stop("prepare", &resume))?
+            };
+            resume.made = Some(Made {
+                product: prepared.prepared.product.clone(),
+                commit: prepared.prepared.commit.clone(),
+                lock_hash: prepared.prepared.lock_hash.clone(),
+                bakes,
+                keys: keys.clone(),
+            });
+            // An image whose inputs an earlier build had, built: not again.
+            if resume.desk.images.is_empty() {
+                let reused = self.reusable(ctx, &api, p, &keys, &report).await;
+                resume.desk = DeskBuild {
+                    waiting_since: resume.desk.waiting_since,
+                    started_desk: resume.desk.started_desk,
+                    desk: resume.desk.desk.clone(),
+                    ..DeskBuild::reusing(reused)
+                };
+            }
+            let reused: std::collections::BTreeSet<&str> =
+                resume.desk.images.iter().map(|b| b.key.as_str()).collect();
+            builds = all
+                .into_iter()
+                .filter(|b| !reused.contains(b.key.as_str()))
+                .collect();
+            tree = Some((prepared, root));
+        }
 
         // The build record's step stays `images` from here: the desk and the
         // upload are where Research builds them. The bar counts them apart.
         self.step(ctx, &report, p, "images").await;
+        let made = resume.made.clone();
         let progress = |m: String| -> BoxFuture<'_, ()> { Box::pin(report.say(m)) };
         let measure = |m: Measured| -> BoxFuture<'_, ()> { Box::pin(report.measured(m)) };
+        let checkpoint = |d: &DeskBuild| -> BoxFuture<'_, ()> {
+            let kept = Resume {
+                made: made.clone(),
+                desk: d.clone(),
+            };
+            let value = serde_json::to_value(&kept).unwrap_or_default();
+            Box::pin(report.checkpoint(value))
+        };
         let cancelled = || ctx.cancel.is_cancelled();
-        let built = api
-            .build_in_desk_measured(
+        let went = api
+            .desk_build(
                 &p.research_project,
-                &root,
+                tree.as_ref().map(|(_, root)| root.as_path()),
                 &p.build_id,
                 &builds,
+                resume.desk.clone(),
                 Pace::RESEARCH,
+                hand_over,
                 &progress,
                 &measure,
+                &checkpoint,
                 &cancelled,
             )
             .await
-            .map_err(fail("images"))?;
-        Ok(BuildOutcome {
+            .map_err(stop("images", &resume))?;
+        drop(tree);
+        let built = match went {
+            Followed::Built(built) => built,
+            Followed::Later(desk) => {
+                resume.desk = desk;
+                report
+                    .checkpoint(serde_json::to_value(&resume).unwrap_or_default())
+                    .await;
+                // Stopped by a person, not by a shutdown: let the desk go.
+                if ctx.cancelled() && ctx.stop_requested().await {
+                    api.end_desk_build(&resume.desk, &p.build_id, Pace::RESEARCH)
+                        .await;
+                    return Err(Stopped {
+                        step: "images".into(),
+                        why: "the build was cancelled".into(),
+                        resume,
+                    });
+                }
+                return Ok(Went::Later(resume));
+            }
+        };
+        let made = resume.made.clone().unwrap_or_default();
+        Ok(Went::Built(Box::new(BuildOutcome {
             build_id: p.build_id.clone(),
             status: "passed".into(),
-            product: Some(tree.prepared.product.clone()),
+            product: Some(made.product.clone()),
             profile: Some(p.profile.clone()),
             repository: Some(p.repo.repo.clone()),
-            commit: Some(tree.prepared.commit.clone()),
-            lock_hash: tree.prepared.lock_hash.clone(),
+            commit: Some(made.commit.clone()),
+            lock_hash: made.lock_hash.clone(),
             images: built
                 .into_iter()
                 .map(|b| {
-                    let bake = bakes.get(&b.key).cloned().unwrap_or_default();
+                    let bake = made.bakes.get(&b.key).cloned().unwrap_or_default();
                     let reference = research_app::image_reference(&bake, &b.name, &b.id);
                     (b.key, reference)
                 })
                 .collect(),
+            place: crate::artifact_ingest::port::BuildPlace {
+                image_keys: research_keys::keys_field(&made.keys),
+                ..Default::default()
+            },
             ..BuildOutcome::default()
-        })
+        })))
     }
+}
+
+/// How many of a project's latest builds a build looks at for images to
+/// reuse.
+const REUSE_LOOKS_AT: usize = 20;
+
+/// The images of `earlier` builds (newest first) made from what build
+/// `build_id`'s images are made of (`keys`): for each image, every earlier
+/// one with the same key, newest first. Whether Research still has one
+/// built is asked of Research.
+pub(super) fn reuse_candidates(
+    build_id: &str,
+    keys: &BTreeMap<String, String>,
+    earlier: &[crate::artifact_ingest::port::BuildRecord],
+) -> Vec<(String, research_app::ImageRef)> {
+    let mut out = Vec::new();
+    for r in earlier
+        .iter()
+        .filter(|r| r.build_id != build_id && r.r#where.as_deref() == Some("research"))
+    {
+        let theirs = research_keys::keys_of(r.place.image_keys.as_deref());
+        for (app, reference) in &r.images {
+            let same = keys.get(app).is_some_and(|k| theirs.get(app) == Some(k));
+            if let (true, Some(image)) = (same, research_app::image_ref(reference)) {
+                out.push((app.clone(), image));
+            }
+        }
+    }
+    out
+}
+
+/// Record `outcome` of the Research build `p` on the project.
+pub(super) async fn record_research(
+    hub: &Arc<ClientHub>,
+    ctx: &SecurityContext,
+    p: &ResearchBuildPayload,
+    outcome: crate::artifact_ingest::port::BuildOutcome,
+) {
+    let outcome = crate::artifact_ingest::port::BuildOutcome {
+        r#where: Some("research".into()),
+        description_revision: outcome.description_revision.or(p.description_revision),
+        ..outcome
+    };
+    if let Err(e) = build::record_outcome(hub, ctx, p.records_in, p.project_id, outcome).await {
+        tracing::warn!(build = %p.build_id, error = %e, "studio-environments: a Research build could not be recorded");
+    }
+}
+
+/// What a build whose run ended without it -- given up on by the queue,
+/// cancelled, out of attempts -- records: failed (or cancelled), saying
+/// Studio stopped following it, with the images it had asked for.
+pub(super) fn ended_without_run(
+    p: &ResearchBuildPayload,
+    recorded: Option<&serde_json::Value>,
+    cancelled: bool,
+    reason: &str,
+) -> crate::artifact_ingest::port::BuildOutcome {
+    let resume = Resume::of(recorded);
+    if cancelled {
+        return resume.ended(p, "cancelled", "the build was cancelled", "images");
+    }
+    resume.ended(
+        p,
+        "failed",
+        &format!(
+            "Studio stopped following the build in Constructor Research: {reason}. Research may \
+             still finish its images; build again, or deploy these images once they are built"
+        ),
+        "images",
+    )
 }
 
 #[async_trait]
@@ -754,7 +1085,7 @@ impl TaskHandler for ResearchBuildTask {
     }
 
     fn max_attempts(&self) -> i16 {
-        1
+        BUILD_ATTEMPTS
     }
 
     async fn run(&self, ctx: &TaskContext) -> TaskOutcome {
@@ -766,10 +1097,16 @@ impl TaskHandler for ResearchBuildTask {
                 ));
             }
         };
-        match self.build(ctx, &p).await {
-            Ok(outcome) => {
+        let resume = Resume::of(ctx.recorded.as_ref());
+        let now = tokio::time::Instant::now();
+        let hand_over = HandOver {
+            upload_by: now + UPLOAD_BY,
+            follow_until: now + FOLLOW_FOR,
+        };
+        match self.build(ctx, &p, resume, hand_over).await {
+            Ok(Went::Built(outcome)) => {
                 let images = outcome.images.len();
-                self.record(&ctx.security, &p, outcome).await;
+                self.record(&ctx.security, &p, *outcome).await;
                 TaskOutcome::done_with(
                     format!(
                         "Constructor Research built {images} image(s) of {}",
@@ -778,18 +1115,41 @@ impl TaskHandler for ResearchBuildTask {
                     serde_json::json!({}),
                 )
             }
-            Err((step, why)) => {
-                let failed = crate::artifact_ingest::port::BuildOutcome::failed(
-                    &p.build_id,
-                    &p.repo.repo,
-                    &p.profile,
-                    &why,
-                    &step,
+            Ok(Went::Later(resume)) if ctx.attempt >= self.max_attempts() => {
+                let why = format!(
+                    "Constructor Research had not built every image after {} attempts",
+                    ctx.attempt
                 );
-                self.record(&ctx.security, &p, failed).await;
+                let ended = resume.ended(&p, "failed", &why, "images");
+                self.record(&ctx.security, &p, ended).await;
+                TaskOutcome::Failed(why)
+            }
+            // Handed over: the run goes on in its next attempt, from what
+            // this one kept. A shutdown hands over the same way.
+            Ok(Went::Later(_)) => TaskOutcome::Retry(
+                "still building in Constructor Research; the next attempt follows it".into(),
+            ),
+            Err(Stopped { step, why, resume }) => {
+                let status = if ctx.cancelled() && ctx.stop_requested().await {
+                    "cancelled"
+                } else {
+                    "failed"
+                };
+                let ended = resume.ended(&p, status, &why, &step);
+                self.record(&ctx.security, &p, ended).await;
                 TaskOutcome::Failed(why)
             }
         }
+    }
+
+    /// The queue gave up on the run (or it was cancelled before it could
+    /// say so): the build's record must not say `running` for ever.
+    async fn ended_by_queue(&self, ended: &crate::tasks::sdk::EndedByQueue<'_>) {
+        let Ok(p) = serde_json::from_value::<ResearchBuildPayload>(ended.payload.clone()) else {
+            return;
+        };
+        let outcome = ended_without_run(&p, ended.recorded, ended.cancelled, ended.reason);
+        record_research(&self.hub, ended.security, &p, outcome).await;
     }
 }
 
@@ -952,13 +1312,50 @@ fn service_bodies(
     Ok((bodies, notes))
 }
 
+/// What a deploy keeps on its run between attempts, under `resume`: once
+/// its services are put, a later attempt only follows them.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeployResume {
+    #[serde(default)]
+    pub app: AppDeploy,
+    /// What the person should know beside, said when it ends.
+    #[serde(default)]
+    pub notes: Vec<String>,
+}
+
+/// How one attempt of a deploy ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Deployed {
+    /// Where the product opens, in words.
+    Done(String),
+    /// The services are not all running yet (or the run was stopped): the
+    /// next attempt follows them from what this one kept.
+    Later,
+}
+
+/// How long one attempt of a deploy follows its services before it hands
+/// them to the next, inside the queue's lease (with the minute the
+/// readiness watch takes after).
+const DEPLOY_FOLLOW_FOR: Duration = Duration::from_secs(11 * 60);
+
 /// Install `p` into its Research environment; where the product opens.
 pub async fn deploy(
     hub: &Arc<ClientHub>,
     ctx: &TaskContext,
     p: &super::deploy::DeployPayload,
     r: &ResearchDeploy,
-) -> anyhow::Result<String> {
+) -> anyhow::Result<Deployed> {
+    let follow_until = tokio::time::Instant::now() + DEPLOY_FOLLOW_FOR;
+    deploy_until(hub, ctx, p, r, follow_until).await
+}
+
+async fn deploy_until(
+    hub: &Arc<ClientHub>,
+    ctx: &TaskContext,
+    p: &super::deploy::DeployPayload,
+    r: &ResearchDeploy,
+    follow_until: tokio::time::Instant,
+) -> anyhow::Result<Deployed> {
     let sign_in = r.sign_in.unwrap_or(SignIn {
         tenant: p.organization_id,
         connection_id: p.connection_id,
@@ -981,16 +1378,115 @@ pub async fn deploy(
         {
             Some(app) => {
                 api.delete_application(&app.id).await?;
-                Ok(format!("{} removed from Constructor Research", p.namespace))
+                Ok(Deployed::Done(format!(
+                    "{} removed from Constructor Research",
+                    p.namespace
+                )))
             }
-            None => Ok(format!(
+            None => Ok(Deployed::Done(format!(
                 "{} was not in Constructor Research: nothing to remove",
                 p.namespace
-            )),
+            ))),
         };
     }
 
     let report = Reporter::new(ctx);
+    let mut resume: DeployResume = super::research_progress::resumed(ctx)
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default();
+    if resume.app.application.is_none() {
+        resume = put(hub, ctx, p, r, &api, &report).await?;
+        report
+            .checkpoint(serde_json::to_value(&resume).unwrap_or_default())
+            .await;
+    } else {
+        report
+            .say("following the services an earlier attempt started".to_owned())
+            .await;
+        report.step("deploy").await;
+    }
+    // A stop (a person's, or a shutdown) ends the attempt here; the run
+    // says which.
+    let followed = tokio::select! {
+        f = api.follow_start(&resume.app, Pace::RESEARCH, follow_until, &progress) => f?,
+        () = ctx.cancel.cancelled() => None,
+    };
+    let Some(running) = followed else {
+        return Ok(Deployed::Later);
+    };
+    let notes = resume.notes;
+    let links = running.links();
+    let at = if links.is_empty() {
+        "no public address".to_owned()
+    } else {
+        links.join(", ")
+    };
+    let noted = if notes.is_empty() {
+        String::new()
+    } else {
+        format!(" (note: {})", notes.join("; "))
+    };
+    // Running is not ready, and a container that crashes is replaced with
+    // its log: for a minute, ask the public links and follow every log.
+    report
+        .say(
+            "watching the services for a minute: whether their public addresses answer and \
+             whether they restart"
+                .to_owned(),
+        )
+        .await;
+    report.step("ready").await;
+    let until = tokio::time::Instant::now() + Pace::RESEARCH.ready_for;
+    let (silent, watched) = tokio::join!(
+        api.unanswered(&running, Pace::RESEARCH),
+        futures_util::future::join_all(running.services.iter().map(|s| api.watch_log(
+            &s.id,
+            until,
+            std::time::Duration::from_secs(2)
+        ))),
+    );
+    let watched: BTreeMap<&str, Watched> = running
+        .services
+        .iter()
+        .map(|s| s.id.as_str())
+        .zip(watched)
+        .collect();
+    let mut seen = Vec::new();
+    for s in &running.services {
+        if let Some(w) = watched.get(s.id.as_str())
+            && w.restarts > 0
+        {
+            seen.push(restarted(&s.name, w));
+        }
+    }
+    for s in &silent {
+        let log = watched
+            .get(s.id.as_str())
+            .and_then(|w| last_lines(&w.lines));
+        seen.push(not_answering(s, log));
+    }
+    let watch = if seen.is_empty() {
+        String::new()
+    } else {
+        format!(". After it started: {}", seen.join("; "))
+    };
+    Ok(Deployed::Done(format!(
+        "{} runs in Constructor Research: {at}{noted}{watch}",
+        p.namespace
+    )))
+}
+
+/// The first half of a deploy: the product prepared at the build's commit,
+/// its chart rendered, and the application's services put and started.
+async fn put(
+    hub: &Arc<ClientHub>,
+    ctx: &TaskContext,
+    p: &super::deploy::DeployPayload,
+    r: &ResearchDeploy,
+    api: &ResearchApi,
+    report: &Reporter<'_>,
+) -> anyhow::Result<DeployResume> {
+    let progress = |m: String| -> BoxFuture<'_, ()> { Box::pin(ctx.progress(m)) };
     report
         .say(format!(
             "preparing {} at {}",
@@ -1079,8 +1575,8 @@ pub async fn deploy(
     for note in &notes {
         ctx.progress(note.clone()).await;
     }
-    let running = api
-        .put_application(
+    let app = api
+        .put_services(
             &r.research_project,
             &p.namespace,
             &bodies,
@@ -1088,65 +1584,7 @@ pub async fn deploy(
             &progress,
         )
         .await?;
-    let links = running.links();
-    let at = if links.is_empty() {
-        "no public address".to_owned()
-    } else {
-        links.join(", ")
-    };
-    let noted = if notes.is_empty() {
-        String::new()
-    } else {
-        format!(" (note: {})", notes.join("; "))
-    };
-    // Running is not ready, and a container that crashes is replaced with
-    // its log: for a minute, ask the public links and follow every log.
-    report
-        .say(
-            "watching the services for a minute: whether their public addresses answer and \
-             whether they restart"
-                .to_owned(),
-        )
-        .await;
-    report.step("ready").await;
-    let until = tokio::time::Instant::now() + Pace::RESEARCH.ready_for;
-    let (silent, watched) = tokio::join!(
-        api.unanswered(&running, Pace::RESEARCH),
-        futures_util::future::join_all(running.services.iter().map(|s| api.watch_log(
-            &s.id,
-            until,
-            std::time::Duration::from_secs(2)
-        ))),
-    );
-    let watched: BTreeMap<&str, Watched> = running
-        .services
-        .iter()
-        .map(|s| s.id.as_str())
-        .zip(watched)
-        .collect();
-    let mut seen = Vec::new();
-    for s in &running.services {
-        if let Some(w) = watched.get(s.id.as_str())
-            && w.restarts > 0
-        {
-            seen.push(restarted(&s.name, w));
-        }
-    }
-    for s in &silent {
-        let log = watched
-            .get(s.id.as_str())
-            .and_then(|w| last_lines(&w.lines));
-        seen.push(not_answering(s, log));
-    }
-    let watch = if seen.is_empty() {
-        String::new()
-    } else {
-        format!(". After it started: {}", seen.join("; "))
-    };
-    Ok(format!(
-        "{} runs in Constructor Research: {at}{noted}{watch}",
-        p.namespace
-    ))
+    Ok(DeployResume { app, notes })
 }
 
 /// The last twenty of `lines`, one string; `None` for none.
@@ -1430,7 +1868,7 @@ spec:
             context: "repo".into(),
         }];
         let app = shop("studio-research-pending/shop:build");
-        let (builds, bakes) =
+        let (builds, bakes, _) =
             lay_out(&work, &work.join("repo"), &images, &app, "postgres:18").unwrap();
         let read = |p: &str| std::fs::read_to_string(work.join(p)).unwrap();
         let dockerfile = read("repo/studio-shop.dockerfile");

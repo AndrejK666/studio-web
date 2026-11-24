@@ -357,5 +357,6 @@
   "research_build_state_passed": "built",
   "research_build_state_cancelled": "cancelled",
   "research_build_state_unknown": "unknown",
-  "research_build_state_failed": "failed"
+  "research_build_state_failed": "failed",
+  "research_deploy_built": "Deploy these images"
 }

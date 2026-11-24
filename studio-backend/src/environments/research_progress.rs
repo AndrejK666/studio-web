@@ -105,11 +105,26 @@ impl Meter {
     }
 }
 
-/// A run's progress: its text lines, and the counts beside them.
+/// A run's progress: its text lines, and the counts beside them -- and,
+/// under `resume`, what a later attempt of the run goes on from. Each
+/// update replaces the run's `result`, so the counts and the resume state
+/// always go out together.
 pub struct Reporter<'a> {
     ctx: &'a TaskContext,
     line: Mutex<String>,
     meter: Mutex<Meter>,
+    resume: Mutex<Option<Value>>,
+    /// The last step and count that went out, for a checkpoint to repeat.
+    last: Mutex<(&'static str, Option<Measured>)>,
+}
+
+/// What an earlier attempt of the run left under `resume` in its result.
+pub fn resumed(ctx: &TaskContext) -> Option<Value> {
+    ctx.recorded
+        .as_ref()
+        .and_then(|r| r.get("resume"))
+        .filter(|v| !v.is_null())
+        .cloned()
 }
 
 impl<'a> Reporter<'a> {
@@ -118,7 +133,35 @@ impl<'a> Reporter<'a> {
             ctx,
             line: Mutex::new(String::new()),
             meter: Mutex::new(Meter::default()),
+            resume: Mutex::new(resumed(ctx)),
+            last: Mutex::new(("prepare", None)),
         }
+    }
+
+    /// Keep `resume` on the run now: what a later attempt goes on from.
+    pub async fn checkpoint(&self, resume: Value) {
+        if let Ok(mut r) = self.resume.lock() {
+            *r = Some(resume);
+        }
+        let (step, m) = self.last.lock().map(|l| *l).unwrap_or(("prepare", None));
+        let line = self.line.lock().map(|l| l.clone()).unwrap_or_default();
+        let line = if line.is_empty() {
+            step.to_owned()
+        } else {
+            line
+        };
+        let detail = self.with_resume(detail(step, m));
+        self.ctx.progress_with(line, detail).await;
+    }
+
+    fn with_resume(&self, mut detail: Value) -> Value {
+        if let (Some(resume), Some(map)) = (
+            self.resume.lock().ok().and_then(|r| r.clone()),
+            detail.as_object_mut(),
+        ) {
+            map.insert("resume".into(), resume);
+        }
+        detail
     }
 
     /// A text line: the run's phase, the log under the bar.
@@ -148,6 +191,9 @@ impl<'a> Reporter<'a> {
         if !due {
             return;
         }
+        if let Ok(mut last) = self.last.lock() {
+            *last = (step, m);
+        }
         // The phase stays the last line said: the count goes beside it.
         let line = self.line.lock().map(|l| l.clone()).unwrap_or_default();
         let line = if line.is_empty() {
@@ -155,7 +201,9 @@ impl<'a> Reporter<'a> {
         } else {
             line
         };
-        self.ctx.progress_with(line, detail(step, m)).await;
+        self.ctx
+            .progress_with(line, self.with_resume(detail(step, m)))
+            .await;
     }
 }
 

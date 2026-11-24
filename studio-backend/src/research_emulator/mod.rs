@@ -150,7 +150,7 @@ pub struct Emulator {
     signer: oidc::Signer,
 }
 
-type Shared = Arc<Emulator>;
+pub(crate) type Shared = Arc<Emulator>;
 
 impl Emulator {
     pub fn new(cfg: Config) -> anyhow::Result<Shared> {

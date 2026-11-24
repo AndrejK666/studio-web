@@ -54,6 +54,11 @@ mod path_service;
 mod research_envs_service;
 pub use research_envs_service::ResearchMerges;
 
+// A Research build's record against its run, and a deploy of the images a
+// build made, building nothing.
+#[path = "service_research_builds.rs"]
+mod research_builds_service;
+
 /// The privilege that manages an organization's environments and decides
 /// about deploys to its protected ones (ADR-0043 §1, §3).
 pub const MANAGE_PRIVILEGE: &str = "environment.manage";
@@ -2831,6 +2836,7 @@ impl EnvironmentService {
             builder_image: Some(builder.image.clone()),
             gearbox_version: builder.gearbox_version.clone(),
             source_commits: None,
+            image_keys: None,
         };
         let payload = build::BuildPayload {
             build_id: build_id.clone(),
@@ -3223,6 +3229,23 @@ impl EnvironmentService {
         env: &Environment,
         req: DeployRequest,
     ) -> Result<Deployment> {
+        self.research_deploy_of(ctx, org, project, env, req, false)
+            .await
+    }
+
+    /// [`Self::request_research_deploy`]; `images_built` when the caller
+    /// found every image of the build built in Research, which lets a build
+    /// that failed after its images were asked for be deployed
+    /// ([`Self::deploy_built_images`]).
+    pub(super) async fn research_deploy_of(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        project: Uuid,
+        env: &Environment,
+        req: DeployRequest,
+        images_built: bool,
+    ) -> Result<Deployment> {
         if research_needs_kit(req.action) {
             self.require_research_kit(ctx, project).await?;
         }
@@ -3309,7 +3332,7 @@ impl EnvironmentService {
                     ),
                 ));
             }
-            if b.status != "passed" {
+            if b.status != "passed" && !(images_built && b.status != "running") {
                 return Err(Refusal::Precondition(
                     "BUILD_NOT_PASSED",
                     format!("build {build_id} is {}, not passed", b.status),
@@ -3634,6 +3657,11 @@ impl EnvironmentService {
                 && let Ok(Some(view)) = queue.run(org, run).await
             {
                 let state = match view.state {
+                    // Between two attempts (a Research deploy hands its
+                    // services' start over): still running, not back in line.
+                    crate::tasks::RunState::Queued if d.state == DeploymentState::Running => {
+                        DeploymentState::Running
+                    }
                     crate::tasks::RunState::Queued => DeploymentState::Queued,
                     crate::tasks::RunState::Running => DeploymentState::Running,
                     crate::tasks::RunState::Succeeded => DeploymentState::Succeeded,

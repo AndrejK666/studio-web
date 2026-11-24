@@ -612,11 +612,15 @@ pub struct BuildPlace {
     /// The commit of each source the build fetched, `id=commit` comma
     /// separated (ADR-0060 §3): what a dev build took from each branch.
     pub source_commits: Option<String>,
+    /// What each image of a Research build was made from, `app=key` comma
+    /// separated: a later build whose image has the same key reuses it
+    /// rather than building it again.
+    pub image_keys: Option<String>,
 }
 
 impl BuildPlace {
     /// The keys a build's node keeps these under, with their values.
-    pub fn fields(&self) -> [(&'static str, Option<&str>); 9] {
+    pub fn fields(&self) -> [(&'static str, Option<&str>); 10] {
         [
             ("environment_id", self.environment_id.as_deref()),
             ("environment", self.environment.as_deref()),
@@ -627,6 +631,7 @@ impl BuildPlace {
             ("builder_image", self.builder_image.as_deref()),
             ("gearbox_version", self.gearbox_version.as_deref()),
             ("source_commits", self.source_commits.as_deref()),
+            ("image_keys", self.image_keys.as_deref()),
         ]
     }
 
@@ -643,6 +648,7 @@ impl BuildPlace {
             builder_image: text("builder_image"),
             gearbox_version: text("gearbox_version"),
             source_commits: text("source_commits"),
+            image_keys: text("image_keys"),
         }
     }
 }

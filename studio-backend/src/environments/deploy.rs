@@ -40,6 +40,14 @@ mod infra_install;
 /// Task type. A wire contract: stored on every queued run.
 pub const TASK_TYPE: &str = "environments.deploy";
 
+/// Attempts a cluster deploy gets: a cluster that did not answer gets one
+/// more try; a chart the cluster refused will refuse again, so `run` says
+/// Failed for that.
+const CLUSTER_ATTEMPTS: i16 = 2;
+
+/// Attempts a Research deploy gets (see [`DeployTask::max_attempts`]).
+const RESEARCH_ATTEMPTS: i16 = 6;
+
 /// How long `helm upgrade --wait` waits for the release to come up. Under the
 /// task lease (15 minutes), so a slow rollout fails as itself rather than as a
 /// lost lease.
@@ -249,10 +257,12 @@ impl TaskHandler for DeployTask {
         TASK_TYPE
     }
 
-    /// Two: a cluster that did not answer gets one more try; a chart the
-    /// cluster refused will refuse again, so `run` says Failed for that.
+    /// A Research deploy hands its services' start over from attempt to
+    /// attempt (`research::deploy`): enough for Research's fifteen minutes
+    /// of start and the readiness watch, with room for an attempt a restart
+    /// cut short. A cluster deploy still gets two (`CLUSTER_ATTEMPTS`).
     fn max_attempts(&self) -> i16 {
-        2
+        RESEARCH_ATTEMPTS
     }
 
     async fn run(&self, ctx: &TaskContext) -> TaskOutcome {
@@ -265,10 +275,35 @@ impl TaskHandler for DeployTask {
             }
         };
         if let Some(research) = &payload.research {
+            use super::research::Deployed;
             return match super::research::deploy(&self.hub, ctx, &payload, research).await {
-                Ok(at) => TaskOutcome::done_with(at.clone(), serde_json::json!({ "output": at })),
+                Ok(Deployed::Done(at)) => {
+                    TaskOutcome::done_with(at.clone(), serde_json::json!({ "output": at }))
+                }
+                Ok(Deployed::Later) if ctx.cancelled() && ctx.stop_requested().await => {
+                    TaskOutcome::Failed("the deploy was cancelled".into())
+                }
+                Ok(Deployed::Later) if ctx.attempt >= self.max_attempts() => {
+                    TaskOutcome::Failed(format!(
+                        "the services had not all started in Constructor Research after {}                          attempts",
+                        ctx.attempt
+                    ))
+                }
+                // Handed over, or a shutdown: the next attempt follows the
+                // services this one started.
+                Ok(Deployed::Later) => TaskOutcome::Retry(
+                    "the services are still starting in Constructor Research; the next attempt                      follows them"
+                        .into(),
+                ),
                 Err(e) => TaskOutcome::Failed(format!("{e:#}")),
             };
+        }
+        // A cluster deploy that outlived its two attempts: given up on as
+        // before the Research deploy needed more.
+        if ctx.attempt > CLUSTER_ATTEMPTS {
+            return TaskOutcome::Failed(format!(
+                "the deploy did not finish in {CLUSTER_ATTEMPTS} attempts"
+            ));
         }
         ctx.progress("reading the cluster's access").await;
         let (reader, from) = match super::build::connection_reader(
@@ -308,6 +343,9 @@ impl TaskHandler for DeployTask {
             .await;
         let client = match access.client().await {
             Ok(client) => client,
+            Err(e) if ctx.attempt >= CLUSTER_ATTEMPTS => {
+                return TaskOutcome::Failed(format!("{e:#}"));
+            }
             Err(e) => return TaskOutcome::Retry(format!("{e:#}")),
         };
         if let Err(e) = ensure_namespace(&client, &payload).await {

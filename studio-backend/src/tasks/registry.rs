@@ -168,6 +168,14 @@ impl TaskContext {
         (SyncReporter { tx }, drain)
     }
 
+    /// Whether a person asked this run to stop -- read from the run, unlike
+    /// [`Self::cancelled`], which a shutdown of the process trips too. A
+    /// handler that can go on in a later attempt hands over on a shutdown
+    /// and stops for good only when this says so.
+    pub async fn stop_requested(&self) -> bool {
+        self.progress.stop_requested(self.tenant, self.run_id).await
+    }
+
     /// Whether somebody has asked this run to stop.
     ///
     /// A long-running handler should check this between units of work and
@@ -252,6 +260,37 @@ pub(super) trait ProgressSink: Send + Sync + 'static {
     /// whatever is there alone, so a phase line does not erase counts an
     /// earlier one reported.
     async fn set(&self, tenant: Uuid, run_id: Uuid, phase: String, detail: Option<Value>);
+
+    /// Whether the run's cancel flag is set. Here because the sink is the
+    /// one handle a context has on its run's row.
+    async fn stop_requested(&self, _tenant: Uuid, _run_id: Uuid) -> bool {
+        false
+    }
+}
+
+/// A run the queue ended without its handler saying so: given up on after
+/// attempts that never reported back, out of attempts, or cancelled.
+pub struct EndedByQueue<'a> {
+    #[allow(
+        dead_code,
+        reason = "contract surface: a handler's diagnostics name the run's tenant"
+    )]
+    pub tenant: Uuid,
+    #[allow(
+        dead_code,
+        reason = "contract surface: which run ended, for a handler's own record"
+    )]
+    pub run_id: Uuid,
+    /// What the run was enqueued with.
+    pub payload: &'a Value,
+    /// What the run had recorded: its last progress detail.
+    pub recorded: Option<&'a Value>,
+    /// `true` when somebody cancelled it; `false` when it failed.
+    pub cancelled: bool,
+    /// Why, in words.
+    pub reason: &'a str,
+    /// The worker's identity in the run's tenant.
+    pub security: &'a SecurityContext,
 }
 
 /// One kind of background work.
@@ -281,6 +320,13 @@ pub trait TaskHandler: Send + Sync + 'static {
     fn max_attempts(&self) -> i16 {
         super::DEFAULT_MAX_ATTEMPTS
     }
+
+    /// The queue ended a run of this type without this handler saying how
+    /// it ended (see [`EndedByQueue`]). A handler that keeps a record of its
+    /// own work elsewhere -- a build's record that says `running` -- closes
+    /// it here, so the record never outlives the run. Called at most once
+    /// per ending, best-effort; must tolerate a record already closed.
+    async fn ended_by_queue(&self, _ended: &EndedByQueue<'_>) {}
 }
 
 /// The process-wide task-type → handler map.

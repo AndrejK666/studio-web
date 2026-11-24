@@ -134,7 +134,7 @@ impl EnvironmentService {
         let (research, builds, product_revision, deployments) =
             tokio::join!(research, builds, product_revision, deployments);
         let (research_kit, research) = research?;
-        let builds = builds?;
+        let builds = self.reconcile_research_builds(org, builds?).await;
         let product_revision: Option<i64> = product_revision?;
         let deployments = deployments?;
         // A product built before Studio kept its description is one.

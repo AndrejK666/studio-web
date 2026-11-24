@@ -365,5 +365,6 @@
   "research_build_state_passed": "собрана",
   "research_build_state_cancelled": "отменена",
   "research_build_state_unknown": "неизвестно",
-  "research_build_state_failed": "упала"
+  "research_build_state_failed": "упала",
+  "research_deploy_built": "Развернуть эти образы"
 }

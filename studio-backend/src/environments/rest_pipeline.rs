@@ -170,7 +170,30 @@ fn keys_dto(k: SecretKeys) -> ConfigSecretKeysDto {
     }
 }
 
+/// Deploy the images a build made, building nothing.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct DeployBuiltImagesRequest {
+    /// The Constructor Research environment to deploy them to.
+    pub environment_id: Uuid,
+}
+
 /* ── Handlers ── */
+
+async fn deploy_built_images(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(envs): Extension<Environments>,
+    Path(build_id): Path<String>,
+    Query(q): Query<ProjectQuery>,
+    Json(body): Json<DeployBuiltImagesRequest>,
+) -> ApiResult<(StatusCode, JsonBody<EnvironmentDeploymentDto>)> {
+    let d = envs
+        .0
+        .deploy_built_images(&ctx, q.project_id, &build_id, body.environment_id)
+        .await
+        .map_err(problem)?;
+    Ok((StatusCode::ACCEPTED, Json(deployment_dto(d))))
+}
 
 async fn get_build(
     Extension(ctx): Extension<SecurityContext>,
@@ -243,6 +266,32 @@ pub fn register(mut router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .handler(get_build)
         .json_response_with_schema::<EnvironmentBuildDto>(openapi, StatusCode::OK, "The build")
         .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::post("/studio-environments/v1/builds/{build_id}/deploy")
+        .operation_id("studio_environments.run_built_images")
+        .summary("Deploy the images a Research build made, building nothing")
+        .description(
+            "For `?project_id=`: deploy build `build_id`'s images to the Constructor Research              environment `environment_id` without preparing, uploading or building anything.              Continues a build that failed after its images were asked for, once Research has              built them all; redeploys, or rolls back to, an earlier build. Every image must be              built and still in Research (read with the caller's own sign-in), else 400              `RESEARCH_IMAGES_NOT_READY` names the ones that are not; a build still running,              or one that never asked for an image, is refused the same way. Answers 202 with              the deployment.",
+        )
+        .tag(TAG)
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("build_id", "Build id")
+        .query_param_typed("project_id", true, "The project", "string")
+        .json_request::<DeployBuiltImagesRequest>(openapi, "Where to deploy them")
+        .handler(deploy_built_images)
+        .json_response_with_schema::<EnvironmentDeploymentDto>(
+            openapi,
+            StatusCode::ACCEPTED,
+            "Accepted",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
         .error_404(openapi)
         .error_500(openapi)
         .error_503(openapi)
