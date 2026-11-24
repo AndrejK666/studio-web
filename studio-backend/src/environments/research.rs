@@ -132,7 +132,13 @@ pub async fn api(
         let (hub, ctx) = (Arc::clone(&hub), ctx.clone());
         Box::pin(async move { Ok(token(hub, &ctx, org, connection_id).await?.1) })
     });
-    Ok(ResearchApi::new(reqwest::Client::new(), &root, first).renewing(renew))
+    // A call that hangs ends (each call's own timeout, a connect's here)
+    // rather than holding a run past the queue's lease.
+    let http = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(15))
+        .build()
+        .unwrap_or_default();
+    Ok(ResearchApi::new(http, &root, first).renewing(renew))
 }
 
 /// A product prepared on this server, in a folder removed with it.
@@ -1426,6 +1432,12 @@ pub enum Deployed {
 /// readiness watch takes after).
 const DEPLOY_FOLLOW_FOR: Duration = Duration::from_secs(11 * 60);
 
+/// Past this in an attempt no further service is put: the rest is handed to
+/// the next attempt, so preparing and putting never outlast the lease. A
+/// call to Research ends within a minute (`research_api::CALL_TIMEOUT`),
+/// and a service that will not settle is not waited for past it.
+const DEPLOY_PUT_BY: Duration = Duration::from_secs(9 * 60);
+
 /// Install `p` into its Research environment; where the product opens.
 pub async fn deploy(
     hub: &Arc<ClientHub>,
@@ -1433,8 +1445,8 @@ pub async fn deploy(
     p: &super::deploy::DeployPayload,
     r: &ResearchDeploy,
 ) -> anyhow::Result<Deployed> {
-    let follow_until = tokio::time::Instant::now() + DEPLOY_FOLLOW_FOR;
-    deploy_until(hub, ctx, p, r, follow_until).await
+    let now = tokio::time::Instant::now();
+    deploy_until(hub, ctx, p, r, now + DEPLOY_PUT_BY, now + DEPLOY_FOLLOW_FOR).await
 }
 
 async fn deploy_until(
@@ -1442,6 +1454,7 @@ async fn deploy_until(
     ctx: &TaskContext,
     p: &super::deploy::DeployPayload,
     r: &ResearchDeploy,
+    put_by: tokio::time::Instant,
     follow_until: tokio::time::Instant,
 ) -> anyhow::Result<Deployed> {
     let sign_in = r.sign_in.unwrap_or(SignIn {
@@ -1482,11 +1495,14 @@ async fn deploy_until(
     let mut resume: DeployResume = super::research_progress::resumed(ctx)
         .and_then(|v| serde_json::from_value(v).ok())
         .unwrap_or_default();
-    if resume.app.application.is_none() {
-        resume = put(hub, ctx, p, r, &api, &report).await?;
+    if resume.app.application.is_none() || resume.app.pending {
+        resume = put(hub, ctx, p, r, &api, &report, put_by, &resume).await?;
         report
             .checkpoint(serde_json::to_value(&resume).unwrap_or_default())
             .await;
+        if resume.app.pending {
+            return Ok(Deployed::Later);
+        }
     } else {
         report
             .say("following the services an earlier attempt started".to_owned())
@@ -1565,7 +1581,9 @@ async fn deploy_until(
 }
 
 /// The first half of a deploy: the product prepared at the build's commit,
-/// its chart rendered, and the application's services put and started.
+/// its chart rendered, and the application's services put and started --
+/// those `earlier` has not put, and none begun after `put_by`.
+#[allow(clippy::too_many_arguments)]
 async fn put(
     hub: &Arc<ClientHub>,
     ctx: &TaskContext,
@@ -1573,6 +1591,8 @@ async fn put(
     r: &ResearchDeploy,
     api: &ResearchApi,
     report: &Reporter<'_>,
+    put_by: tokio::time::Instant,
+    earlier: &DeployResume,
 ) -> anyhow::Result<DeployResume> {
     let progress = |m: String| -> BoxFuture<'_, ()> { Box::pin(ctx.progress(m)) };
     report
@@ -1664,11 +1684,13 @@ async fn put(
         ctx.progress(note.clone()).await;
     }
     let app = api
-        .put_services(
+        .put_services_until(
             &r.research_project,
             &p.namespace,
             &bodies,
             Pace::RESEARCH,
+            put_by,
+            &earlier.app,
             &progress,
         )
         .await?;

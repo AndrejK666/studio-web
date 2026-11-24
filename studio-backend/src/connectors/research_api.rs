@@ -160,6 +160,8 @@ pub struct ResearchApi {
     renew: Option<Renew>,
     dav_retry: DavRetry,
     net_retry: NetRetry,
+    /// How long one call may take ([`CALL_TIMEOUT`]).
+    call_timeout: Duration,
 }
 
 /// How a call that did not reach Research is asked again: `tries` more
@@ -187,8 +189,30 @@ fn unreachable(what: &str, url: &str, e: &reqwest::Error) -> anyhow::Error {
         .ok()
         .and_then(|u| u.host_str().map(str::to_owned))
         .unwrap_or_else(|| url.to_owned());
+    if e.is_timeout() {
+        return anyhow!(
+            "{NOT_REACHED} at {host} ({what}): it did not answer within {} s, asked again and \
+             again; try again in a while",
+            CALL_TIMEOUT.as_secs()
+        );
+    }
     anyhow!("{NOT_REACHED} at {host} ({what}), asked again and again; try again in a while: {e}")
 }
+
+/// How long one call to Research may take, its answer read: a call that
+/// hangs ends here, as a call that did not get through, rather than holding
+/// a run past the queue's lease (a deploy sat on "changing service
+/// studioweb-frontend" for over ten minutes, Research DEV, 2026-11-24).
+pub const CALL_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// How long one upload of a file part may take.
+pub const UPLOAD_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+
+/// How long a deploy waits for a service that is starting or stopping
+/// before it changes it anyway: a service that crashes as it starts stays
+/// `starting`, and waiting for it to settle held a deploy's attempt past
+/// the queue's lease, again and again.
+pub const SERVICE_SETTLE_FOR: Duration = Duration::from_secs(2 * 60);
 
 /// Whether sending `method` twice changes nothing more than sending it once.
 fn idempotent(method: &reqwest::Method) -> bool {
@@ -347,6 +371,53 @@ pub struct Service {
     /// The public address of its first port exposed to the internet.
     #[serde(default)]
     pub link: Option<String>,
+    /// Whatever else Research says of it: what [`Self::state`] shows when a
+    /// service fails without a log.
+    #[serde(flatten)]
+    pub other: BTreeMap<String, serde_json::Value>,
+}
+
+impl Service {
+    /// The service's state as Research said it last, in one line: its
+    /// status and every short fact beside it that is not its definition
+    /// (Research keeps no events, and no log of a container that never
+    /// started).
+    pub fn state(&self) -> String {
+        const DEFINITION: [&str; 6] = [
+            "image_id",
+            "hardware_configuration_id",
+            "volumes",
+            "ports",
+            "environment_variables",
+            "application_id",
+        ];
+        let facts: Vec<String> = self
+            .other
+            .iter()
+            .filter(|(k, _)| !DEFINITION.contains(&k.as_str()))
+            .filter_map(|(k, v)| {
+                let text = match v {
+                    serde_json::Value::String(s) if !s.trim().is_empty() => s.trim().to_owned(),
+                    serde_json::Value::Number(n) => n.to_string(),
+                    serde_json::Value::Bool(b) => b.to_string(),
+                    _ => return None,
+                };
+                let text: String = text.chars().take(200).collect();
+                Some(format!("{k}: {text}"))
+            })
+            .take(8)
+            .collect();
+        let status = if self.status.is_empty() {
+            "no status"
+        } else {
+            self.status.as_str()
+        };
+        if facts.is_empty() {
+            status.to_owned()
+        } else {
+            format!("{status} ({})", facts.join(", "))
+        }
+    }
 }
 
 /// The body of `POST /applications/{a}/services` and of its `PATCH`.
@@ -518,6 +589,10 @@ pub struct AppDeploy {
     /// When every service must run (Unix seconds).
     #[serde(default)]
     pub start_until: Option<u64>,
+    /// Not every service is put yet: the attempt's time ran out between
+    /// two, and the next one puts the rest.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pending: bool,
 }
 
 /// Where a desk build hands what the next attempt needs, each time it
@@ -725,7 +800,15 @@ impl ResearchApi {
             renew: None,
             dav_retry: DavRetry::RESEARCH,
             net_retry: NetRetry::RESEARCH,
+            call_timeout: CALL_TIMEOUT,
         }
+    }
+
+    /// End each call after `timeout` (tests make it short).
+    #[cfg(test)]
+    pub fn with_call_timeout(mut self, timeout: Duration) -> Self {
+        self.call_timeout = timeout;
+        self
     }
 
     /// Ask WebDAV calls again by `retry` (tests make it fast).
@@ -878,9 +961,9 @@ impl ResearchApi {
                 req = req.header(*name, value);
             }
             req = match &body {
-                Body::Empty => req,
-                Body::Json(v) => req.json(v),
-                Body::Bytes(b) => req.body(b.to_vec()),
+                Body::Empty => req.timeout(self.call_timeout),
+                Body::Json(v) => req.json(v).timeout(self.call_timeout),
+                Body::Bytes(b) => req.body(b.to_vec()).timeout(UPLOAD_TIMEOUT),
             };
             let res = match req.send().await {
                 Ok(res) => res,
@@ -2405,12 +2488,42 @@ impl ResearchApi {
     /// The first half of a deploy: application `name` of `project` made to
     /// have exactly `services`, each created or changed and (re)started.
     /// What [`Self::follow_start`] follows, in this attempt or a later one.
+    /// In one go: a deploy puts them by [`Self::put_services_until`].
+    #[cfg(test)]
     pub async fn put_services(
         &self,
         project: &str,
         name: &str,
         services: &[ServiceBody],
         pace: Pace,
+        progress: Progress<'_>,
+    ) -> anyhow::Result<AppDeploy> {
+        let far = tokio::time::Instant::now() + Duration::from_secs(30 * 24 * 60 * 60);
+        self.put_services_until(
+            project,
+            name,
+            services,
+            pace,
+            far,
+            &AppDeploy::default(),
+            progress,
+        )
+        .await
+    }
+
+    /// [`Self::put_services`] inside an attempt that ends at `until`: past
+    /// it, no further service is begun and the state comes back `pending`,
+    /// for the next attempt to go on from (`earlier`, whose services are not
+    /// put again). No wait inside outlasts `until`.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn put_services_until(
+        &self,
+        project: &str,
+        name: &str,
+        services: &[ServiceBody],
+        pace: Pace,
+        until: tokio::time::Instant,
+        earlier: &AppDeploy,
         progress: Progress<'_>,
     ) -> anyhow::Result<AppDeploy> {
         self.enable_deployment(project).await?;
@@ -2426,21 +2539,37 @@ impl ResearchApi {
             .iter()
             .map(|s| (s.name.clone(), s.clone()))
             .collect();
-        let mut ids = Vec::new();
+        let mut ids: Vec<(String, String)> = Vec::new();
         for body in services {
+            // Put by an earlier attempt: kept as it is.
+            if let Some((n, id)) = earlier.services.iter().find(|(n, _)| *n == body.name) {
+                existing.remove(&body.name);
+                ids.push((n.clone(), id.clone()));
+                continue;
+            }
+            if tokio::time::Instant::now() >= until {
+                progress(format!(
+                    "{} of {} service(s) put; the next attempt puts the rest",
+                    ids.len(),
+                    services.len()
+                ))
+                .await;
+                return Ok(AppDeploy {
+                    application: Some(app.id),
+                    services: ids,
+                    start_until: None,
+                    pending: true,
+                });
+            }
             match existing.remove(&body.name) {
                 // Changed while stopped, as Research's own deployment MCP
                 // does: a running service would take the change half-way.
                 Some(s) => {
                     progress(format!("changing service {}", body.name)).await;
-                    self.settled(&s.id, pace).await?;
-                    if self.service(&s.id).await?.status == "running" {
-                        self.stop_service(&s.id).await?;
-                        self.settled(&s.id, pace).await?;
-                    }
-                    self.patch_service(&app.id, &s.id, body).await?;
-                    self.start_service(&s.id).await?;
-                    ids.push((body.name.clone(), s.id));
+                    let id = self
+                        .change_service(&app.id, &s, body, pace, until, progress)
+                        .await?;
+                    ids.push((body.name.clone(), id));
                 }
                 None => {
                     progress(format!("creating service {}", body.name)).await;
@@ -2461,7 +2590,64 @@ impl ResearchApi {
             application: Some(app.id),
             services: ids,
             start_until: Some(unix_now() + pace.start_for.as_secs()),
+            pending: false,
         })
+    }
+
+    /// Change service `s` of application `app` to `body` and start it: its
+    /// id afterwards. One that stays starting or stopping (a container that
+    /// crashes as it starts stays `starting`) is not waited for past
+    /// [`SERVICE_SETTLE_FOR`] or `until`: without volumes it is made again,
+    /// with volumes it is changed as it is, which keeps their data.
+    #[allow(clippy::too_many_arguments)]
+    async fn change_service(
+        &self,
+        app: &str,
+        s: &Service,
+        body: &ServiceBody,
+        pace: Pace,
+        until: tokio::time::Instant,
+        progress: Progress<'_>,
+    ) -> anyhow::Result<String> {
+        let settle_by =
+            until.min(tokio::time::Instant::now() + SERVICE_SETTLE_FOR.min(pace.start_for));
+        let mut now = self.settled(&s.id, pace, settle_by).await?;
+        if now.status == "running" {
+            self.stop_service(&s.id).await?;
+            now = self.settled(&s.id, pace, settle_by).await?;
+        }
+        if !matches!(now.status.as_str(), "starting" | "stopping") {
+            self.patch_service(app, &s.id, body).await?;
+            self.start_service(&s.id).await?;
+            return Ok(s.id.clone());
+        }
+        if body.volumes.is_empty() {
+            progress(format!(
+                "service {} stayed {}: removing it and making it again",
+                body.name,
+                now.state()
+            ))
+            .await;
+            self.delete_service(&s.id).await?;
+            let made = self.create_service(app, body).await?;
+            self.start_service(&made.id).await?;
+            return Ok(made.id);
+        }
+        progress(format!(
+            "service {} stayed {}: changing it as it is, which keeps its volumes",
+            body.name,
+            now.state()
+        ))
+        .await;
+        self.patch_service(app, &s.id, body).await?;
+        if let Err(e) = self.start_service(&s.id).await {
+            progress(format!(
+                "service {} was not started again ({e:#}): Research starts it with the change",
+                body.name
+            ))
+            .await;
+        }
+        Ok(s.id.clone())
     }
 
     /// Wait for the services `state` put to run: the application once they
@@ -2490,14 +2676,18 @@ impl ResearchApi {
                     "running" => running += 1,
                     "failed" => {
                         let tail = self.service_log_tail(id, 20).await.ok().flatten();
-                        bail!(
-                            "service {svc} did not start in Constructor Research{}",
-                            tail.map(|t| format!(
-                                "; its last log lines:
-{t}"
-                            ))
-                            .unwrap_or_default()
-                        )
+                        let others = self.others_state(ids, id).await;
+                        match tail {
+                            Some(t) => bail!(
+                                "service {svc} did not start in Constructor Research{others}; its \
+                                 last log lines:\n{t}"
+                            ),
+                            None => bail!(
+                                "service {svc} did not start in Constructor Research, which keeps \
+                                 no log of it; its state: {}{others}",
+                                s.state()
+                            ),
+                        }
                     }
                     _ => {}
                 }
@@ -2512,16 +2702,45 @@ impl ResearchApi {
                         waiting.push(n.as_str());
                     }
                 }
+                let mut states = Vec::new();
+                for (n, id) in ids {
+                    match self.service(id).await {
+                        Ok(s) if s.status == "running" => {}
+                        Ok(s) => states.push(format!("{n}: {}", s.state())),
+                        Err(e) => states.push(format!("{n}: unreadable ({e:#})")),
+                    }
+                }
                 bail!(
-                    "{} did not start in Constructor Research within {} minutes",
+                    "{} did not start in Constructor Research within {} minutes; as Research \
+                     says now: {}",
                     waiting.join(", "),
-                    pace.start_for.as_secs() / 60
+                    pace.start_for.as_secs() / 60,
+                    states.join("; ")
                 );
             }
             if tokio::time::Instant::now() >= follow_until {
                 return Ok(None);
             }
             tokio::time::sleep(pace.poll).await;
+        }
+    }
+
+    /// The state of every service in `ids` but `failed` that is not
+    /// running, as a clause: what a failure says beside its own (a portal
+    /// that cannot reach its gateway fails because the gateway does).
+    async fn others_state(&self, ids: &[(String, String)], failed: &str) -> String {
+        let mut out = Vec::new();
+        for (n, id) in ids.iter().filter(|(_, id)| id != failed) {
+            if let Ok(s) = self.service(id).await
+                && s.status != "running"
+            {
+                out.push(format!("{n} is {}", s.state()));
+            }
+        }
+        if out.is_empty() {
+            String::new()
+        } else {
+            format!(" (beside it, {})", out.join("; "))
         }
     }
 
@@ -2557,19 +2776,27 @@ impl ResearchApi {
         }
     }
 
-    /// Wait while a service is starting or stopping: Research stops only a
-    /// running service, and starts only a stopped or failed one.
-    async fn settled(&self, service: &str, pace: Pace) -> anyhow::Result<()> {
-        let until = tokio::time::Instant::now() + pace.start_for;
+    /// Wait while a service is starting or stopping, until `by` at the
+    /// latest: Research stops only a running service, and starts only a
+    /// stopped or failed one. The service as last read.
+    async fn settled(
+        &self,
+        service: &str,
+        pace: Pace,
+        by: tokio::time::Instant,
+    ) -> anyhow::Result<Service> {
         loop {
             let s = self.service(service).await?;
-            if !matches!(s.status.as_str(), "starting" | "stopping") {
-                return Ok(());
+            if !matches!(s.status.as_str(), "starting" | "stopping")
+                || tokio::time::Instant::now() >= by
+            {
+                return Ok(s);
             }
-            if tokio::time::Instant::now() >= until {
-                bail!("service {} stayed {} too long", s.name, s.status);
-            }
-            tokio::time::sleep(pace.poll).await;
+            tokio::time::sleep(
+                pace.poll
+                    .min(by.saturating_duration_since(tokio::time::Instant::now())),
+            )
+            .await;
         }
     }
 }
