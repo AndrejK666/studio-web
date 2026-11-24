@@ -162,11 +162,6 @@ pub fn deploys(page: &Value) -> Vec<Deploy> {
         .collect()
 }
 
-/// The open pull requests as the signals read them.
-pub fn pulls(open: &[crate::artifact_ingest::port::OpenPull]) -> Vec<Pull> {
-    named_pulls(open, &BTreeMap::new())
-}
-
 /// The open pull requests with whom each waits on said as "Name (login)" when
 /// the login is a confirmed account of one of the organization's people, else
 /// as the login alone.
@@ -486,7 +481,7 @@ mod tests {
             days_since_update: Some(9),
             ..Default::default()
         }];
-        let p = &pulls(&open)[0];
+        let p = &named_pulls(&open, &BTreeMap::new())[0];
         assert!(p.draft);
         assert_eq!(p.waiting_on, ["ann"]);
         assert_eq!(p.days_since_update, Some(9));

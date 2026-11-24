@@ -163,9 +163,7 @@ impl EnvironmentService {
                 .product_record(ctx, &project.to_string())
                 .await
                 .ok()?;
-            Some(crate::organizations::status_read::product_record_facts(
-                record.as_ref(),
-            ))
+            Some(crate::organizations::product_record_facts(record.as_ref()))
         };
         let ci = async {
             let evidence = self
@@ -173,7 +171,7 @@ impl EnvironmentService {
                 .get::<dyn crate::artifact_ingest::port::DeliveryEvidence>()
                 .ok()?;
             let runs = evidence.ci_runs(ctx, &project.to_string()).await.ok()?;
-            Some(crate::organizations::status_read::last_build(runs))
+            Some(crate::organizations::last_build(runs))
         };
         let (research, builds, product_revision, deployments, record, ci) =
             tokio::join!(research, builds, product_revision, deployments, record, ci);

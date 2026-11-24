@@ -595,7 +595,7 @@ spec:
         .unwrap();
         assert!(why.starts_with("namespace shop-dev lacks"), "{why}");
         assert!(why.contains("secret shop-db (GEARS_PG_PASSWORD)"), "{why}");
-        assert!(why.contains("Postgres 'postgres' (2 database(s))"), "{why}");
+        assert!(why.contains("Postgres 'postgres' (2 databases)"), "{why}");
         assert!(
             why.contains("set its database to the product's own"),
             "{why}"

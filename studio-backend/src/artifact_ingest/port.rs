@@ -148,14 +148,6 @@ pub trait RepoFileReader: Send + Sync + 'static {
         None
     }
 
-    /// Where the checkout [`Self::read_repo_files`] reads is on this
-    /// server's disk, for a gear that reads it with git itself (`ls-tree`,
-    /// manifests) rather than through the provider. `None` when there is
-    /// none -- the default.
-    fn checkout_dir(&self, _workspace_id: &str, _repo_dir: &str) -> Option<std::path::PathBuf> {
-        None
-    }
-
     /// The history of the checkout [`Self::read_repo_files`] reads: the
     /// newest `max` commits of its `HEAD`, each with the files it changed.
     /// Local git only, never the provider. `None` when there is no such
@@ -260,15 +252,6 @@ pub struct SourceCheckout {
     pub layout: CheckoutLayout,
 }
 
-/// One entry of [`SourceCheckout::ls_tree`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TreeEntry {
-    pub path: String,
-    /// The blob's sha.
-    pub sha: String,
-    pub size: Option<i64>,
-}
-
 impl SourceCheckout {
     /// Look at what is on disk at `dir`: `None` when it is not a checkout.
     /// Blocking.
@@ -318,23 +301,6 @@ impl SourceCheckout {
         .await
         .ok()
         .flatten()
-    }
-
-    /// Every file at the synced commit.
-    pub async fn ls_tree(&self) -> anyhow::Result<Vec<TreeEntry>> {
-        let (dir, rev) = (self.dir.clone(), self.commit.clone());
-        let listed = tokio::task::spawn_blocking(move || {
-            crate::connectors::sdk::git_checkout::ls_tree_at(&dir, &rev)
-        })
-        .await
-        .map_err(|e| anyhow::anyhow!("the checkout listing did not finish: {e}"))?
-        .ok_or_else(|| {
-            anyhow::anyhow!("{} could not be listed at {}", self.full_path, self.commit)
-        })?;
-        Ok(listed
-            .into_iter()
-            .map(|(path, sha, size)| TreeEntry { path, sha, size })
-            .collect())
     }
 
     /// The newest `max` commits up to the synced commit that touched `path`

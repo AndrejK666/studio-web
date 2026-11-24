@@ -38,6 +38,9 @@ pub mod sdk;
 mod service;
 pub(crate) mod status;
 pub(crate) mod status_read;
+/// What the project path (`crate::project_path`) reads of a product record and
+/// of CI runs, the same way the project status does.
+pub use status_read::{last_build, product_record_facts};
 mod status_view; // a project's status kept, computed again in the background
 
 /// The types the kept project status needs in the model, for the kits' claims test.

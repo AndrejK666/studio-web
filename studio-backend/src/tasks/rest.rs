@@ -323,7 +323,7 @@ async fn get_run(
     Query(q): Query<ScopeQuery>,
 ) -> ApiResult<JsonBody<RunDto>> {
     let svc = tasks.get()?;
-    let (_, row) = find_run(&tasks, &svc, &ctx, q.tenant, id).await?;
+    let (_, row) = find_run(&tasks, svc, &ctx, q.tenant, id).await?;
     Ok(Json(to_dto(row)))
 }
 
@@ -334,7 +334,7 @@ async fn cancel_run(
     Query(q): Query<ScopeQuery>,
 ) -> ApiResult<(StatusCode, JsonBody<RunDto>)> {
     let svc = tasks.get()?;
-    let (tenant, _) = find_run(&tasks, &svc, &ctx, q.tenant, id).await?;
+    let (tenant, _) = find_run(&tasks, svc, &ctx, q.tenant, id).await?;
     let row = svc.cancel(&ctx, tenant, id).await.map_err(|e| {
         StudioTasksError::failed_precondition()
             .with_precondition_violation(id.to_string(), format!("{e:#}"), "TASK_CANCEL_REFUSED")
@@ -352,7 +352,7 @@ async fn retry_run(
     Query(q): Query<ScopeQuery>,
 ) -> ApiResult<(StatusCode, JsonBody<RunDto>)> {
     let svc = tasks.get()?;
-    let (tenant, _) = find_run(&tasks, &svc, &ctx, q.tenant, id).await?;
+    let (tenant, _) = find_run(&tasks, svc, &ctx, q.tenant, id).await?;
     let row = svc.retry(&ctx, tenant, id).await.map_err(|e| {
         StudioTasksError::failed_precondition()
             .with_precondition_violation(id.to_string(), format!("{e:#}"), "TASK_RETRY_REFUSED")

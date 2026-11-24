@@ -58,7 +58,7 @@ pub enum Shown {
     NotReached,
     /// Nothing kept yet.
     Nothing,
-    Kept(ViewState, Value),
+    Kept(Box<ViewState>, Value),
 }
 
 /// The kept status of `project` for a caller who `reaches` it (checked by
@@ -76,7 +76,9 @@ pub async fn read_for(
     crate::derived_view::ensure_types(port, ctx, &VIEW).await?;
     let (state, rows) = VIEW.read(port, ctx, project).await?;
     Ok(match (state, rows.into_iter().next()) {
-        (Some(state), Some(row)) if state.computed_at.is_some() => Shown::Kept(state, row),
+        (Some(state), Some(row)) if state.computed_at.is_some() => {
+            Shown::Kept(Box::new(state), row)
+        }
         _ => Shown::Nothing,
     })
 }

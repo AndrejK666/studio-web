@@ -4051,7 +4051,7 @@ pub fn register_routes(
         .register(router, openapi);
 
     let router = OperationBuilder::post("/studio-components-catalog/v1/project-components/refresh")
-        .operation_id("studio_components_catalog.refresh_project_components")
+        .operation_id("studio_components_catalog.enqueue_project_components")
         .summary("Compute a project's components again from what its syncs stored")
         .description(
             "Queues a `components.project-components` run that derives the project's \

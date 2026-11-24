@@ -4219,11 +4219,6 @@ impl super::port::RepoFileReader for IngestService {
         IngestService::read_synced_clone(self, secret_ref, repo_full_path).await
     }
 
-    fn checkout_dir(&self, workspace_id: &str, repo_dir: &str) -> Option<PathBuf> {
-        self.shared_checkout_dir(Some(workspace_id), Some(repo_dir))
-            .filter(|d| d.join(".git").exists())
-    }
-
     async fn checkout_history(
         &self,
         workspace_id: &str,

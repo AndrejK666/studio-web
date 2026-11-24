@@ -181,7 +181,7 @@ pub fn tools() -> Vec<Tool> {
                 )
             },
             effect: Effect::Write,
-            experimental: false,
+            experimental: true,
             run: Run::Post {
                 path: "/studio-product/v1/product-check-runs",
                 query: &["project_id"],
