@@ -922,5 +922,6 @@
   "prof_github_unavailable": "В этой организации личные подключения GitHub недоступны.",
   "prof_connect_github": "Подключить личный аккаунт GitHub",
   "int_add_personal": "Добавить личное подключение",
-  "int_add_for_org": "Добавить подключение для {organization}"
+  "int_add_for_org": "Добавить подключение для {organization}",
+  "help_label": "Об этой вкладке"
 }

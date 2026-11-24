@@ -19,6 +19,14 @@
   background: transparent;
 }
 
+/* A model tab: the shared page frame pads its own body and scrolls it. */
+.screen.framed {
+  display: block;
+  height: 100%;
+  min-height: 0;
+  padding: 0;
+}
+
 .skeleton {
   height: 12rem;
 }

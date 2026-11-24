@@ -44,7 +44,8 @@ import {
 import { releaseSources } from '../../model/source-roles';
 import { shortCommit } from '../../model/screen-previews';
 import { useProductTranslations } from '../../i18n';
-import { errText, openTab, PageHeader, Segmented, StatusChip, useScope, type Tone } from '../common';
+import { PageLoading, ProjectPage } from '@constructor-studio/mfe-shared/page';
+import { errText, openTab, Segmented, StatusChip, useScope, type Tone } from '../common';
 import { ProjectComponentsInventory } from '../components/ProjectComponentsInventory';
 import { ProductBackend } from './configurator/ProductBackend';
 import { ProductFlow } from './flow/ProductFlow';
@@ -206,68 +207,72 @@ export function ProductPage() {
   ];
 
   return (
-    <>
-      <div data-product-header>
-        <PageHeader
-          title={summary?.id ?? t('title')}
-          info={
-            <>
-              <p>{t('info_what')}</p>
-              <p>{t('info_verdict')}</p>
-            </>
-          }
-          status={
-            readError ? (
-              <span className={styles.error} data-product-summary>
-                {t('read_failed', { error: readError })}
-              </span>
-            ) : !summary || !header ? (
-              <span className={styles.muted}>{t('reading')}</span>
-            ) : (
-              <span data-product-summary className={styles.row}>
-                {header.verdict ? (
-                  <StatusChip
-                    tone={header.verdict.tone}
-                    data-product-verdict={header.verdict.tone}
-                    title={summary.preview ? t('warnings', { count: String(summary.preview.warnings) }) : undefined}
-                    onClick={header.verdict.tone === 'danger' ? () => act('fix') : undefined}
-                  >
-                    {header.verdict.text}
-                  </StatusChip>
-                ) : (
-                  <span className={styles.muted}>{t('no_product')}</span>
-                )}
-                {header.kept && (
-                  <StatusChip tone="neutral" data-product-kept="">
-                    {header.kept}
-                  </StatusChip>
-                )}
-                {summary.saved?.prUrl && (
-                  <a href={summary.saved.prUrl} target="_blank" rel="noreferrer">
-                    {t('pull_request')}
-                  </a>
-                )}
-                {header.verdict?.tone === 'danger' &&
-                  cloneFailures.map((c) => (
-                    <span key={c.full_path} className={styles.error} data-product-clone-failure={c.full_path}>
-                      {c.cause === 'branch_not_found' && c.detail
-                        ? t('source_branch_gone', { repository: c.full_path, branch: c.detail })
-                        : t('source_clone_failed', { repository: c.full_path, cause: c.cause_text ?? '' })}
-                    </span>
-                  ))}
-              </span>
-            )
-          }
-          actions={
-            header && (
-              <Button type="button" onClick={() => act(header.action)} data-product-action={header.action}>
-                {t(ACTION_KEY[header.action])}
-                {header.action === 'build' ? ' →' : ''}
-              </Button>
-            )
-          }
-        />
-      </div>
+    <ProjectPage
+      title={t('title')}
+      help={
+        <>
+          <p>{t('info_what')}</p>
+          <p>{t('info_verdict')}</p>
+        </>
+      }
+      helpLabel={t('help_label')}
+      chips={
+        <span data-product-header className={styles.row}>
+          {summary?.id && (
+            <StatusChip tone="neutral" title={t('product_id')} data-product-id="">
+              {summary.id}
+            </StatusChip>
+          )}
+          {readError ? (
+            <span className={styles.error} data-product-summary>
+              {t('read_failed', { error: readError })}
+            </span>
+          ) : !summary || !header ? null : (
+            <span data-product-summary className={styles.row}>
+              {header.verdict ? (
+                <StatusChip
+                  tone={header.verdict.tone}
+                  data-product-verdict={header.verdict.tone}
+                  title={summary.preview ? t('warnings', { count: String(summary.preview.warnings) }) : undefined}
+                  onClick={header.verdict.tone === 'danger' ? () => act('fix') : undefined}
+                >
+                  {header.verdict.text}
+                </StatusChip>
+              ) : (
+                <span className={styles.muted}>{t('no_product')}</span>
+              )}
+              {header.kept && (
+                <StatusChip tone="neutral" data-product-kept="">
+                  {header.kept}
+                </StatusChip>
+              )}
+              {summary.saved?.prUrl && (
+                <a href={summary.saved.prUrl} target="_blank" rel="noreferrer">
+                  {t('pull_request')}
+                </a>
+              )}
+              {header.verdict?.tone === 'danger' &&
+                cloneFailures.map((c) => (
+                  <span key={c.full_path} className={styles.error} data-product-clone-failure={c.full_path}>
+                    {c.cause === 'branch_not_found' && c.detail
+                      ? t('source_branch_gone', { repository: c.full_path, branch: c.detail })
+                      : t('source_clone_failed', { repository: c.full_path, cause: c.cause_text ?? '' })}
+                  </span>
+                ))}
+            </span>
+          )}
+        </span>
+      }
+      actions={
+        header && (
+          <Button type="button" onClick={() => act(header.action)} data-product-action={header.action}>
+            {t(ACTION_KEY[header.action])}
+            {header.action === 'build' ? ' →' : ''}
+          </Button>
+        )
+      }
+    >
+      {!summary && !readError && <PageLoading label={t('reading')} blocks={1} />}
       <AssemblyPanel round={round} onChanged={() => setRound((r) => r + 1)} />
       {/* What the product is comes first: Studio proposes it from the specs
           and a member confirms it (product-kind.ts). */}
@@ -308,7 +313,7 @@ export function ProductPage() {
         <ProductBackend />
       </div>
       {section === 'frontend' && <ProductFrontend onChanged={() => setRound((r) => r + 1)} />}
-    </>
+    </ProjectPage>
   );
 }
 

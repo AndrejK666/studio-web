@@ -10,7 +10,7 @@
   justify-content: space-between;
   gap: var(--space-4);
   flex-wrap: wrap;
-  padding: var(--space-3);
+  padding-block-end: var(--space-3);
   border-bottom: var(--border-width) solid var(--border);
 }
 
@@ -76,5 +76,5 @@
 }
 
 .upload {
-  margin: var(--space-3) var(--space-3) 0;
+  margin: var(--space-3) 0 0;
 }

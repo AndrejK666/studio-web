@@ -237,5 +237,7 @@
   "contents_rules": "Правила",
   "contents_functions": "Функции",
   "inherited_from_platform": "Унаследовано от платформы",
-  "inherited_from_organization": "Унаследовано от организации {organization}"
+  "inherited_from_organization": "Унаследовано от организации {organization}",
+  "help_label": "Об этой вкладке",
+  "loading": "Загрузка…"
 }

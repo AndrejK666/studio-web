@@ -1,8 +1,8 @@
 /**
  * What every part of the Project domain model tab shares: where it is mounted, the
  * gear's own words for a refusal, and the prototype's small UI pieces
- * (`ui-standard.tsx`: StatusChip, PageHeader, EmptyState, InfoPopover,
- * KpiTile) drawn with the UI kit.
+ * (`ui-standard.tsx`: StatusChip, EmptyState, InfoPopover, KpiTile) drawn
+ * with the UI kit. The tab's header is the shared `ProjectPage`.
  */
 
 import React, { createContext, useContext, type ReactNode } from 'react';
@@ -20,6 +20,7 @@ import {
   PopoverTrigger,
 } from '@gears-frontx/ui-kit';
 import { errorMessage, refusalText } from '@constructor-studio/mfe-shared';
+import { PageLoading } from '@constructor-studio/mfe-shared/page';
 import { factKey, type FactReview } from '../../model/review-state';
 import type { SpecModelFact } from '../../model/spec-model';
 import styles from './common.module.css';
@@ -85,32 +86,6 @@ export function StatusChip({
     <button type="button" className={styles.chipButton} onClick={onClick} title={title} {...rest}>
       {badge}
     </button>
-  );
-}
-
-/** A page's title, its explanation, a status line and its actions (the prototype's PageHeader). */
-export function PageHeader({
-  title,
-  info,
-  status,
-  actions,
-}: {
-  title: ReactNode;
-  info?: ReactNode;
-  status?: ReactNode;
-  actions?: ReactNode;
-}) {
-  return (
-    <header className={styles.pageHeader}>
-      <div className={styles.pageHeaderMain}>
-        <div className={styles.row}>
-          <h2 className={styles.pageTitle}>{title}</h2>
-          {info && <InfoPopover>{info}</InfoPopover>}
-        </div>
-        {status && <div className={styles.row}>{status}</div>}
-      </div>
-      {actions && <div className={styles.row}>{actions}</div>}
-    </header>
   );
 }
 
@@ -212,9 +187,9 @@ export function Segmented<T extends string>({
   );
 }
 
-/** A loading line (the prototype's `.empty`). */
-export function Loading({ children }: { children: ReactNode }) {
-  return <p className={styles.muted}>{children}</p>;
+/** A read still out: the shared loading state, `children` said to a screen reader. */
+export function Loading({ children }: { children: string }) {
+  return <PageLoading label={children} />;
 }
 
 /** A failure in the gear's words (the prototype's `.error`). */

@@ -41,5 +41,6 @@
   "methods_from_one": "Methods from the {kits} kit included.",
   "methods_from_many": "Methods from the {kits} kits included.",
   "methods_unread": "Not read: {kits}.",
-  "methods_failed": "The kits' methods were not read: {error}"
+  "methods_failed": "The kits' methods were not read: {error}",
+  "help_label": "About this tab"
 }

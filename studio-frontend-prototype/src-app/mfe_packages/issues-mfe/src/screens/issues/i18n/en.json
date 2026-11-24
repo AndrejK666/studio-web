@@ -90,5 +90,6 @@
   "no_github_logins": "No member has a GitHub login on their profile yet.",
   "open_issue": "Open the issue",
   "opening": "Opening…",
-  "cancel": "Cancel"
+  "cancel": "Cancel",
+  "help_label": "About this tab"
 }

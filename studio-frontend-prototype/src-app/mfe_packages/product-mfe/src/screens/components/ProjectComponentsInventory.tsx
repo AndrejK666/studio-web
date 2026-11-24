@@ -16,6 +16,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Skeleton } from '@gears-frontx/ui-kit';
 import { openScreen, violationOfType } from '@constructor-studio/mfe-shared';
+import { ProjectPage } from '@constructor-studio/mfe-shared/page';
 import { GridFailed } from '@constructor-studio/mfe-shared/grid';
 import { productApi } from '../../api/client';
 import type { Conformance, PlanRow } from '../../api/types';
@@ -128,7 +129,14 @@ async function readInventory(projectId: string, workspaceId: string | null): Pro
   };
 }
 
-export function ProjectComponentsInventory({ onOpenProduct }: { onOpenProduct?: () => void }) {
+/** `framed`: the Components tab's own page, its lead behind the title's "?"; bare inside Product. */
+export function ProjectComponentsInventory({
+  onOpenProduct,
+  framed = false,
+}: {
+  onOpenProduct?: () => void;
+  framed?: boolean;
+}) {
   const { projectId, workspaceId, bridge, container } = useScope();
   const { t } = useComponentsTranslations();
   const [read, setRead] = useState<Read | null>(null);
@@ -268,11 +276,14 @@ export function ProjectComponentsInventory({ onOpenProduct }: { onOpenProduct?: 
   const explained = expanded ? rows?.find((r) => r.key === expanded) : undefined;
   const candidate = opened ? rows?.find((r) => r.key === opened && r.role === 'could') : undefined;
 
-  return (
+  const lead = (
+    <p className={framed ? undefined : styles.lead}>
+      <b>{t('lead_title')}</b> {t('lead_body')}
+    </p>
+  );
+  const body = (
     <section className={styles.inventory} data-project-components>
-      <p className={styles.lead}>
-        <b>{t('lead_title')}</b> {t('lead_body')}
-      </p>
+      {!framed && lead}
       {read && read.partial.length > 0 && (
         <p className={styles.muted} data-inventory-partial>
           {t('partial', { what: read.partial.map((k) => t(k)).join('; ') })}
@@ -327,5 +338,11 @@ export function ProjectComponentsInventory({ onOpenProduct }: { onOpenProduct?: 
         />
       )}
     </section>
+  );
+  if (!framed) return body;
+  return (
+    <ProjectPage title={t('title')} help={lead} helpLabel={t('help_label')}>
+      {body}
+    </ProjectPage>
   );
 }

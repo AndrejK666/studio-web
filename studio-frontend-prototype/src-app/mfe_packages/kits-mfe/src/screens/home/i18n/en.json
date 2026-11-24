@@ -237,5 +237,7 @@
   "contents_rules": "Rules",
   "contents_functions": "Functions",
   "inherited_from_platform": "Inherited from Platform",
-  "inherited_from_organization": "Inherited from {organization}"
+  "inherited_from_organization": "Inherited from {organization}",
+  "help_label": "About this tab",
+  "loading": "Loading…"
 }

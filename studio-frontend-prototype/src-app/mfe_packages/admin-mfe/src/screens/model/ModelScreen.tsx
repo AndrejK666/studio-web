@@ -24,10 +24,10 @@ import {
   type DomainModel,
   type TabLevel,
 } from '@constructor-studio/mfe-shared';
-import { ErrorLine, errText, useAdmin } from '../admin/common';
+import { PageEmpty, PageError, PageLoading, ProjectPage } from '@constructor-studio/mfe-shared/page';
+import { errText, useAdmin } from '../admin/common';
 import { ObjectAttributes } from './ObjectAttributes';
 import { TypeObjects } from './TypeObjects';
-import styles from '../admin/Admin.module.css';
 
 /** The level a generic screen extension stands for, from its id; null for any other screen. */
 export function modelLevelOf(extensionId: string | undefined | null): TabLevel | null {
@@ -79,8 +79,8 @@ export function ModelScreen({ level, section }: { level: TabLevel; section: stri
   const { org, loading } = useOrganization();
   const workspace = useSharedProperty<unknown>(STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE);
   const project = useSharedProperty<unknown>(STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT);
-  if (loading) return <p className={styles.muted}>{t('reading')}</p>;
-  if (!org) return <p className={styles.muted}>{t('no_org')}</p>;
+  if (loading) return <ModelState title={null} loading={t('reading')} />;
+  if (!org) return <ModelState title={t('model_attributes_title')} empty={t('no_org')} />;
 
   // The tenant the level is, and its name when the shell says it.
   const tenant =
@@ -93,7 +93,7 @@ export function ModelScreen({ level, section }: { level: TabLevel; section: stri
         : typeof project === 'string' && project
           ? { id: project, name: '' }
           : null;
-  if (!tenant) return <p className={styles.muted}>{t('model_no_place')}</p>;
+  if (!tenant) return <ModelState title={t('model_attributes_title')} empty={t('model_no_place')} />;
   return <Screen key={`${org.id}:${tenant.id}`} orgId={org.id} level={level} tenant={tenant} section={section} />;
 }
 
@@ -110,8 +110,10 @@ function Screen({
 }) {
   const { t } = useAdmin();
   const { model, error, reload } = useModel(orgId);
-  if (error) return <ErrorLine>{t('model_unreadable', { error })}</ErrorLine>;
-  if (!model) return <p className={styles.muted}>{t('reading')}</p>;
+  if (error) {
+    return <ModelState title={t('model_attributes_title')} error={t('model_unreadable', { error })} onRetry={reload} />;
+  }
+  if (!model) return <ModelState title={null} loading={t('reading')} />;
   const tab = genericTabName(section);
   if (tab !== null) {
     return (
@@ -127,4 +129,28 @@ function Screen({
     );
   }
   return <ObjectAttributes orgId={orgId} model={model} level={level} tenant={tenant} onModelChanged={reload} />;
+}
+
+/** A model tab before it has its model: read, nothing to show, or a failed read. */
+function ModelState({
+  title,
+  loading,
+  empty,
+  error,
+  onRetry,
+}: {
+  title: string | null;
+  loading?: string;
+  empty?: string;
+  error?: string;
+  onRetry?: () => void;
+}) {
+  const { t } = useAdmin();
+  return (
+    <ProjectPage title={title} busy={title === null}>
+      {loading && <PageLoading label={loading} />}
+      {empty && <PageEmpty title={empty} />}
+      {error && <PageError message={error} retry={t('retry')} onRetry={onRetry} />}
+    </ProjectPage>
+  );
 }

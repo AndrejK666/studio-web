@@ -14,7 +14,6 @@
 
 import React, { useMemo } from 'react';
 import { useSharedProperty, type ChildMfeBridge } from '@gears-frontx/react';
-import { Skeleton } from '@gears-frontx/ui-kit';
 import {
   STUDIO_SHARED_PROPERTY_CONTEXT_ORGANIZATION,
   STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT,
@@ -24,7 +23,8 @@ import {
 } from '@constructor-studio/mfe-shared';
 import { setOrganization } from './api/ProductApiService';
 import { useMatchTranslations } from './i18n';
-import { PageHeader, ScopeContext, type Scope } from './screens/common';
+import { PageEmpty, PageLoading, ProjectPage } from '@constructor-studio/mfe-shared/page';
+import { ScopeContext, type Scope } from './screens/common';
 import { GearMatchSection } from './screens/product/match/GearMatchSection';
 import { GearsMatcherSettings } from './screens/matcher/GearsMatcherSettings';
 import styles from './screens/product.module.css';
@@ -64,21 +64,22 @@ export const GearsMatcherRoot: React.FC<{ bridge: ChildMfeBridge }> = ({ bridge 
 
   return (
     <div ref={containerRef} className={styles.screen} data-theme={dataTheme} data-gears-matcher-view={view}>
-      {loading ? (
-        <Skeleton className={styles.skeleton} />
-      ) : view === 'gears-matcher' ? (
-        orgId ? (
-          <GearsMatcherSettings key={orgId} orgId={orgId} bridge={bridge} language={language} />
-        ) : (
-          <Skeleton className={styles.skeleton} />
-        )
+      {loading || (view === 'gears-matcher' && !orgId) ? (
+        <ProjectPage title={null} busy>
+          <PageLoading />
+        </ProjectPage>
+      ) : view === 'gears-matcher' && orgId ? (
+        <GearsMatcherSettings key={orgId} orgId={orgId} bridge={bridge} language={language} />
       ) : !scope ? (
-        <p className={styles.muted}>{t('no_project')}</p>
+        <ProjectPage title={t('title')}>
+          <PageEmpty title={t('no_project')} />
+        </ProjectPage>
       ) : (
         <ScopeContext.Provider value={scope}>
-          <PageHeader title={t('title')} />
-          {/* Keyed by the scope: another project is another read, from nothing. */}
-          <GearMatchSection key={`${projectId}:${orgId ?? ''}`} />
+          <ProjectPage title={t('title')}>
+            {/* Keyed by the scope: another project is another read, from nothing. */}
+            <GearMatchSection key={`${projectId}:${orgId ?? ''}`} />
+          </ProjectPage>
         </ScopeContext.Provider>
       )}
     </div>

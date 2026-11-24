@@ -6,51 +6,14 @@
 
 .screen {
   --font-sans: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  min-height: 100%;
-  padding: var(--space-6);
   color: var(--foreground);
+  height: 100%;
+  min-height: 0;
 }
 
 /* The kit's theme.css paints `[data-theme]`; the shell's screen keeps its own. */
 .screen[data-theme] {
   background: transparent;
-}
-
-.skeleton {
-  height: 12rem;
-}
-
-.header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-3);
-}
-
-.title {
-  margin: 0;
-  font-size: var(--text-heading-1-size);
-  line-height: var(--text-heading-1-line-height);
-  font-weight: var(--text-heading-1-weight);
-}
-
-.chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-}
-
-.grow {
-  flex: 1;
-}
-
-.about {
-  margin: 0;
-  max-width: 60rem;
-  color: var(--muted-foreground);
 }
 
 .muted {

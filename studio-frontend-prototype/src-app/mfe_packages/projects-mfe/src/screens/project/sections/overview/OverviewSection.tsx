@@ -207,7 +207,6 @@ function StatusView({
           </Button>
         </div>
       </div>
-      <p className={styles.about}>{t('about')}</p>
 
       <PathStrip steps={status.path} t={t} open={open} reach={reach} />
 

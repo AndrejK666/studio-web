@@ -111,7 +111,8 @@ describe('blank-mfe lifecycle', () => {
     // The key-echoing translation mock makes the placeholder's i18n keys
     // directly assertable.
     expect(await screen.findByText('title')).toBeTruthy();
-    expect(screen.getByText('description_platform')).toBeTruthy();
+    // The scope's description is the help behind the title's "?".
+    expect(screen.getByRole('button', { name: 'help_label' })).toBeTruthy();
     // The catalogue read answered nothing here: the library says it is empty.
     expect(screen.getByText('empty')).toBeTruthy();
   });

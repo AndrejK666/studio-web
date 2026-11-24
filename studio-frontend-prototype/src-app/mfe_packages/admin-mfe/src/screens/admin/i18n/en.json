@@ -896,5 +896,6 @@
   "prof_github_unavailable": "Personal GitHub connections are unavailable in this organization.",
   "prof_connect_github": "Connect a personal GitHub account",
   "int_add_personal": "Add personal connection",
-  "int_add_for_org": "Add connection for {organization}"
+  "int_add_for_org": "Add connection for {organization}",
+  "help_label": "About this tab"
 }

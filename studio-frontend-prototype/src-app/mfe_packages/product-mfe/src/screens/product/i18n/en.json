@@ -36,5 +36,8 @@
   "roles_pinned": "pinned {commit}",
   "roles_not_saved": "not saved",
   "source_branch_gone": "The source {repository} names the branch {branch}, which no longer exists: connect the repository again on a branch that exists (Sources).",
-  "source_clone_failed": "The source {repository} could not be cloned: {cause}"
+  "source_clone_failed": "The source {repository} could not be cloned: {cause}",
+  "help_label": "About this tab",
+  "product_id": "The product's id",
+  "components_title": "Components"
 }

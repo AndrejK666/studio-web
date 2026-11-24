@@ -2,7 +2,8 @@
  * What every screen of the Product kit shares: where it is mounted (the
  * project, its workspace and organization, the bridge), the gear's own words
  * for a refusal, and the prototype's small UI pieces (`ui-standard.tsx`:
- * StatusChip, PageHeader, EmptyState) drawn with the UI kit.
+ * StatusChip, EmptyState) drawn with the UI kit. A tab's header is the
+ * shared `ProjectPage`.
  */
 
 import React, { createContext, useContext, type ReactNode } from 'react';
@@ -99,30 +100,6 @@ export function StatusChip({
     <button type="button" className={styles.chipButton} onClick={onClick} title={title} {...rest}>
       {badge}
     </button>
-  );
-}
-
-/** A page's title, its explanation, a status line and its actions (the prototype's PageHeader). */
-export function PageHeader({
-  title,
-  info,
-  status,
-  actions,
-}: {
-  title: ReactNode;
-  info?: ReactNode;
-  status?: ReactNode;
-  actions?: ReactNode;
-}) {
-  return (
-    <header className={styles.pageHeader}>
-      <div className={styles.pageHeaderMain}>
-        <h2 className={styles.pageTitle}>{title}</h2>
-        {status && <div className={styles.row}>{status}</div>}
-        {info && <div className={styles.info}>{info}</div>}
-      </div>
-      {actions && <div className={styles.row}>{actions}</div>}
-    </header>
   );
 }
 

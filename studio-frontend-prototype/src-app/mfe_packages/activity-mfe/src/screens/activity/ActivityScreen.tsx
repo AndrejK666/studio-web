@@ -57,6 +57,7 @@ import {
   type ActivityRow,
   type KindChoice,
 } from '../../model/activity';
+import { PageLoading, ProjectPage } from '@constructor-studio/mfe-shared/page';
 import styles from '../Screen.module.css';
 
 const errText = (e: unknown) => refusalText(e) ?? errorMessage(e);
@@ -320,30 +321,32 @@ export const ActivityScreen: React.FC<{ projectId: string; t: ScreenText; langua
   }, [projectId, attempt]);
 
   return (
-    <>
-      <header className={styles.header}>
-        <h2 className={styles.title}>{t('activity_title')}</h2>
-        {events && !error && (
-          <div className={styles.chips}>
+    <ProjectPage
+      title={t('activity_title')}
+      help={t('activity_about')}
+      helpLabel={t('help_label')}
+      chips={
+        events &&
+        !error && (
+          <>
             <Badge variant="secondary" data-activity-count="comment">
               {t.count('comments', countOf(events, 'comment'))}
             </Badge>
             <Badge variant="secondary" data-activity-count="check">
               {t.count('checks', countOf(events, 'check'))}
             </Badge>
-          </div>
-        )}
-      </header>
-      <p className={styles.about}>{t('activity_about')}</p>
-
+          </>
+        )
+      }
+    >
       {error ? (
         <GridFailed message={t('activity_failed', { error })} retry={t('retry')} onRetry={() => setAttempt((n) => n + 1)} />
       ) : events === null ? (
-        <p className={styles.muted}>…</p>
+        <PageLoading label={t('loading')} />
       ) : (
         <ActivityGrid events={events} t={t} language={language} />
       )}
-    </>
+    </ProjectPage>
   );
 };
 

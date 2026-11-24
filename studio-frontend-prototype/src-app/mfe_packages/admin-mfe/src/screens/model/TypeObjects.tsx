@@ -45,7 +45,8 @@ import {
   type TabLevel,
   type TypeAbsence,
 } from '@constructor-studio/mfe-shared';
-import { ErrorLine, Header, errText, useAdmin } from '../admin/common';
+import { ProjectPage } from '@constructor-studio/mfe-shared/page';
+import { ErrorLine, errText, useAdmin } from '../admin/common';
 import { FieldRow } from './ObjectAttributes';
 import styles from '../admin/Admin.module.css';
 import own from './Model.module.css';
@@ -131,12 +132,11 @@ export function TypeObjects({
   }
   if (!entity || !type) {
     return (
-      <>
-        <Header title={tab.label} />
+      <ProjectPage title={tab.label}>
         <p className={styles.muted} data-model-tab-unknown>
           {t('model_tab_unknown_type', { type: tab.target })}
         </p>
-      </>
+      </ProjectPage>
     );
   }
   if (open) {
@@ -147,16 +147,16 @@ export function TypeObjects({
   const total = page?.total ?? 0;
   const where = scope ? t(`model_in_${level}`) : t('model_in_organization');
   return (
-    <>
-      <Header
-        title={tab.label}
-        info={t('model_tab_about', { type: entity.name ?? type, where })}
-        status={
-          <Badge variant="outline">
-            {page === null ? t('reading') : t('model_objects_count', { count: String(total) })}
-          </Badge>
-        }
-      />
+    <ProjectPage
+      title={tab.label}
+      help={t('model_tab_about', { type: entity.name ?? type, where })}
+      helpLabel={t('help_label')}
+      chips={
+        <Badge variant="outline">
+          {page === null ? t('reading') : t('model_objects_count', { count: String(total) })}
+        </Badge>
+      }
+    >
       {problem?.absent ? (
         // Not a failure: the type is not in use here. Said, and nothing offered.
         <p className={styles.muted} data-model-type-absent={problem.absent.reason}>
@@ -253,7 +253,7 @@ export function TypeObjects({
           </Button>
         </div>
       )}
-    </>
+    </ProjectPage>
   );
 }
 
@@ -279,17 +279,17 @@ export function ObjectCard({
   const filled = fields.filter((f) => value[f.name] !== undefined && value[f.name] !== null && value[f.name] !== '');
   const extra = Object.keys(value).filter((k) => !fields.some((f) => f.name === k) && k !== 'id');
   return (
-    <>
-      <Header
-        title={objectLabel(row)}
-        info={t('model_card_about', { type: model.byId.get(type)?.name ?? type })}
-        status={<Badge variant="outline">{row.id}</Badge>}
-        action={
-          <Button size="sm" variant="outline" onClick={onBack} data-model-back>
-            {t('model_back')}
-          </Button>
-        }
-      />
+    <ProjectPage
+      title={objectLabel(row)}
+      help={t('model_card_about', { type: model.byId.get(type)?.name ?? type })}
+      helpLabel={t('help_label')}
+      chips={<Badge variant="outline">{row.id}</Badge>}
+      actions={
+        <Button size="sm" variant="outline" onClick={onBack} data-model-back>
+          {t('model_back')}
+        </Button>
+      }
+    >
       <Card>
         <CardContent className={own.card}>
           <strong>{t('model_card_fields')}</strong>
@@ -325,7 +325,7 @@ export function ObjectCard({
           </CardContent>
         </Card>
       )}
-    </>
+    </ProjectPage>
   );
 }
 

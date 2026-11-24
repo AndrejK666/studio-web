@@ -1,12 +1,12 @@
 import React from 'react';
 import { Button, Skeleton } from '@gears-frontx/ui-kit';
+import { ProjectPage } from '@constructor-studio/mfe-shared/page';
 import { useMfeBridge } from '@gears-frontx/react';
 import { GridFailed } from '@constructor-studio/mfe-shared/grid';
 import { useProjectListScreenTranslations, useProjectListText } from '../../i18n';
 import { WorkspaceProjectsProvider, useWorkspaceProjects } from '../../shared/workspaceProjects';
 import { useProjectRollups } from '../../shared/useProjectRollups';
 import { openProjectWizard } from '../../actions/wizardActions';
-import { SectionHeader } from '../../components/SectionHeader';
 import { ProjectsGrid } from './components/ProjectsGrid';
 import styles from './ProjectListScreen.module.css';
 
@@ -33,10 +33,8 @@ const ProjectList: React.FC = () => {
   );
 
   return (
-    <div className={styles.screen} data-project-list>
-      <SectionHeader title={t('title')} busy={busy} actions={actions()} />
-
-      <section className={styles.body}>
+    <ProjectPage title={t('title')} busy={busy} actions={actions()}>
+      <section className={styles.body} data-project-list>
         {busy ? (
           <div className={styles.rowsSkeleton} data-projects-loading>
             <Skeleton className={styles.rowSkeleton} />
@@ -52,7 +50,7 @@ const ProjectList: React.FC = () => {
           <ProjectsGrid key={workspace?.id ?? 'none'} rollups={rollups} />
         )}
       </section>
-    </div>
+    </ProjectPage>
   );
 };
 

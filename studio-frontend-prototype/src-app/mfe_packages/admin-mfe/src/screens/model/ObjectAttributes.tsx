@@ -31,7 +31,8 @@ import {
   type TabLevel,
 } from '@constructor-studio/mfe-shared';
 import { AdminApiService } from '../../api/AdminApiService';
-import { ErrorLine, Header, errText, useAdmin } from '../admin/common';
+import { PageLoading, ProjectPage } from '@constructor-studio/mfe-shared/page';
+import { ErrorLine, errText, useAdmin } from '../admin/common';
 import styles from '../admin/Admin.module.css';
 import own from './Model.module.css';
 
@@ -152,20 +153,19 @@ export function ObjectAttributes({
       }
     };
     return (
-      <>
-        <Header
-          title={t('model_attributes_title')}
-          action={
-            model.canEdit ? (
-              <Button size="sm" disabled={busy} onClick={() => void create()} data-attributes-create-type>
-                {t('model_create_type', { type })}
-              </Button>
-            ) : undefined
-          }
-        />
+      <ProjectPage
+        title={t('model_attributes_title')}
+        actions={
+          model.canEdit && (
+            <Button size="sm" disabled={busy} onClick={() => void create()} data-attributes-create-type>
+              {t('model_create_type', { type })}
+            </Button>
+          )
+        }
+      >
         <p className={styles.muted}>{t('model_attributes_no_type', { type })}</p>
         {error && <ErrorLine>{error}</ErrorLine>}
-      </>
+      </ProjectPage>
     );
   }
 
@@ -204,32 +204,36 @@ export function ObjectAttributes({
   };
 
   return (
-    <>
-      <Header
-        title={t('model_attributes_title')}
-        info={<>
-          <p>{t('model_attributes_about', { level: t(`model_level_${level}`) })}</p>
-          {scopeSettings && <Button size="sm" variant="outline" onClick={() => openScreen(bridge, scopeSettings)}>
-            {t('model_open_settings')}
-          </Button>}
-          {model.canEdit && <Button size="sm" variant="outline" onClick={() => openScreen(bridge, '/admin/domain-model', `${type}-fields`)}>
-            {t('model_manage_fields')}
-          </Button>}
-        </>}
-        status={<Badge variant="outline">{t('model_attributes_fields', { count: String(fields.length), type })}</Badge>}
-        action={
-          !editing && !forbidden && fields.some(editable) ? (
+    <ProjectPage
+      title={t('model_attributes_title')}
+      help={t('model_attributes_about', { level: t(`model_level_${level}`) })}
+      helpLabel={t('help_label')}
+      chips={<Badge variant="outline">{t('model_attributes_fields', { count: String(fields.length), type })}</Badge>}
+      actions={
+        <>
+          {scopeSettings && (
+            <Button size="sm" variant="ghost" onClick={() => openScreen(bridge, scopeSettings)}>
+              {t('model_open_settings')}
+            </Button>
+          )}
+          {model.canEdit && (
+            <Button size="sm" variant="ghost" onClick={() => openScreen(bridge, '/admin/domain-model', `${type}-fields`)}>
+              {t('model_manage_fields')}
+            </Button>
+          )}
+          {!editing && !forbidden && fields.some(editable) && (
             <Button size="sm" variant="outline" disabled={value === null} onClick={startEdit} data-attributes-edit>
               {t('model_edit')}
             </Button>
-          ) : undefined
-        }
-      />
+          )}
+        </>
+      }
+    >
       {error && <ErrorLine>{forbidden ? t('model_forbidden') : error}</ErrorLine>}
       <Card>
         <CardContent className={own.card}>
           {value === null ? (
-            <p className={styles.muted}>{t('reading')}</p>
+            <PageLoading label={t('reading')} blocks={1} />
           ) : editing ? (
             <form
               className={own.grid}
@@ -318,7 +322,7 @@ export function ObjectAttributes({
           )}
         </CardContent>
       </Card>
-    </>
+    </ProjectPage>
   );
 }
 
