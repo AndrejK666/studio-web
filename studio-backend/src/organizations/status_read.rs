@@ -8,6 +8,8 @@
 //! (`status_view.rs`), with no reader's credentials. A read that fails is
 //! `None`, which the status words as not known.
 
+use std::collections::BTreeMap;
+
 use serde_json::Value;
 
 use toolkit::client_hub::ClientHub;
@@ -162,14 +164,71 @@ pub fn deploys(page: &Value) -> Vec<Deploy> {
 
 /// The open pull requests as the signals read them.
 pub fn pulls(open: &[crate::artifact_ingest::port::OpenPull]) -> Vec<Pull> {
+    named_pulls(open, &BTreeMap::new())
+}
+
+/// The open pull requests with whom each waits on said as "Name (login)" when
+/// the login is a confirmed account of one of the organization's people, else
+/// as the login alone.
+pub fn named_pulls(
+    open: &[crate::artifact_ingest::port::OpenPull],
+    names: &BTreeMap<String, String>,
+) -> Vec<Pull> {
     open.iter()
         .map(|p| Pull {
             draft: p.waiting == "draft",
             waiting: p.waiting.clone(),
-            waiting_on: p.waiting_on.clone(),
+            waiting_on: p
+                .waiting_on
+                .iter()
+                .map(|login| match names.get(&login.to_ascii_lowercase()) {
+                    Some(name) if name != login => format!("{name} ({login})"),
+                    _ => login.clone(),
+                })
+                .collect(),
             days_since_update: p.days_since_update,
         })
         .collect()
+}
+
+/// The names of the organization's people behind the logins the pull
+/// requests wait on, keyed by the login lowercased, read the way the
+/// organization overview reads them (confirmed accounts of active members).
+async fn account_names(
+    hub: &ClientHub,
+    org: Uuid,
+    open: &[crate::artifact_ingest::port::OpenPull],
+) -> BTreeMap<String, String> {
+    use crate::user_profile::MemberAliases;
+    let mut out = BTreeMap::new();
+    let logins: Vec<String> = open
+        .iter()
+        .flat_map(|p| p.waiting_on.iter().cloned())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    if logins.is_empty() {
+        return out;
+    }
+    let Ok(directory) = hub.get_scoped::<dyn MemberAliases>(
+        &toolkit::client_hub::ClientScope::gts_id(crate::user_profile::IDENTITY_INSTANCE_ID),
+    ) else {
+        return out;
+    };
+    let found = futures_util::future::join_all(
+        super::overview::ACCOUNT_KINDS
+            .iter()
+            .map(|kind| directory.members_by_alias(org, kind, &logins)),
+    )
+    .await;
+    for found in found.into_iter().filter_map(Result::ok) {
+        for (login, member) in found {
+            if let Some(name) = member.display_name {
+                out.entry(login).or_insert(name);
+            }
+        }
+    }
+    out
 }
 
 /// A CI run as `build_facts` reads a node's value.
@@ -244,7 +303,9 @@ pub async fn read(hub: &ClientHub, ctx: &SecurityContext, project: Uuid) -> Read
     };
     let open = async {
         let port = hub.get::<dyn OpenPullRequests>().ok()?;
-        port.open_pulls(ctx, &scope).await.ok().map(|o| pulls(&o))
+        let open = port.open_pulls(ctx, &scope).await.ok()?;
+        let names = account_names(hub, ctx.subject_tenant_id(), &open).await;
+        Some(named_pulls(&open, &names))
     };
     let (documents, product, build, deployments, pulls) =
         tokio::join!(documents, product, runs, deployments, open);
@@ -342,6 +403,18 @@ mod tests {
         assert_eq!(build_status(Some("queued"), None), "queued");
         assert_eq!(build_status(Some("completed"), Some("timed_out")), "failed");
         assert_eq!(build_status(None, None), "unknown");
+    }
+
+    #[test]
+    fn whom_a_pull_waits_on_reads_as_name_and_login_when_the_login_is_one_of_ours() {
+        let open = vec![crate::artifact_ingest::port::OpenPull {
+            waiting: "review".into(),
+            waiting_on: vec!["Ann-GH".into(), "stranger".into()],
+            ..Default::default()
+        }];
+        let names = std::collections::BTreeMap::from([("ann-gh".to_owned(), "Ann Lee".to_owned())]);
+        let p = &named_pulls(&open, &names)[0];
+        assert_eq!(p.waiting_on, ["Ann Lee (Ann-GH)", "stranger"]);
     }
 
     #[test]

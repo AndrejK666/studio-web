@@ -64,7 +64,7 @@ const RUNS_PER_TENANT: u64 = 100;
 /// Where unattributed spend goes in a by-person breakdown.
 pub const UNATTRIBUTED: &str = "unattributed";
 /// The alias kinds a pull request's accounts are read as people through.
-const ACCOUNT_KINDS: [&str; 2] = ["github", "gitlab"];
+pub(super) const ACCOUNT_KINDS: [&str; 2] = ["github", "gitlab"];
 
 // ── Periods ──────────────────────────────────────────────────────────────────
 
