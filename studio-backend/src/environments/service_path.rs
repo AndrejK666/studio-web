@@ -38,6 +38,27 @@ pub struct PathView {
     /// not ask for them again (`?include=`).
     pub targets: super::Targets,
     pub deployments: Vec<crate::environments::model::Deployment>,
+    /// The path's stages 5-9, Product to Deploy (`project_path.rs`): what
+    /// every tab draws.
+    pub stages: Vec<crate::project_path::Stage>,
+}
+
+/// What a project's status reads its stages 5-9 through (`port.rs`).
+pub struct DeliveryStagesPort(pub std::sync::Arc<EnvironmentService>);
+
+#[async_trait::async_trait]
+impl crate::environments::port::ProjectDeliveryStages for DeliveryStagesPort {
+    async fn delivery_stages(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+    ) -> anyhow::Result<Vec<crate::project_path::Stage>> {
+        self.0
+            .project_path(ctx, project)
+            .await
+            .map(|v| v.stages)
+            .map_err(|e| anyhow::anyhow!("{e:?}"))
+    }
 }
 
 impl EnvironmentService {
@@ -85,9 +106,12 @@ impl EnvironmentService {
         // Everything below needs only the organization: read side by side
         // (seven reads in turn were 7.7 s on Dev). A refusal is said in the
         // order they used to be read in.
+        // A gear reading as itself (the project's status) has no Research
+        // sign-in of its own: whoever deploys brings theirs.
+        let as_gear = ctx.subject_type() == Some("service");
         let research = async {
             let research_kit = self.research_kit_applies(ctx, project).await?;
-            let research = if research_kit {
+            let research = if research_kit && !as_gear {
                 Some(self.research_sign_in(ctx, org, project).await)
             } else {
                 None
@@ -128,8 +152,31 @@ impl EnvironmentService {
             }
         };
         let deployments = self.deployments(ctx, org, Some(project), None);
-        let (research, builds, product_revision, deployments) =
-            tokio::join!(research, builds, product_revision, deployments);
+        // The product record and the CI runs, for the Product and Build
+        // stages (`project_path.rs`): read as the project's status reads them.
+        let record = async {
+            let products = self
+                .hub
+                .get::<dyn crate::product::port::ProjectProducts>()
+                .ok()?;
+            let record = products
+                .product_record(ctx, &project.to_string())
+                .await
+                .ok()?;
+            Some(crate::organizations::status_read::product_record_facts(
+                record.as_ref(),
+            ))
+        };
+        let ci = async {
+            let evidence = self
+                .hub
+                .get::<dyn crate::artifact_ingest::port::DeliveryEvidence>()
+                .ok()?;
+            let runs = evidence.ci_runs(ctx, &project.to_string()).await.ok()?;
+            Some(crate::organizations::status_read::last_build(runs))
+        };
+        let (research, builds, product_revision, deployments, record, ci) =
+            tokio::join!(research, builds, product_revision, deployments, record, ci);
         let (research_kit, research) = research?;
         let builds = self.reconcile_research_builds(org, builds?).await;
         let product_revision: Option<i64> = product_revision?;
@@ -166,15 +213,32 @@ impl EnvironmentService {
             environments,
             deployments,
             research_kit,
-            sign_in: research.as_ref().map_or(SignInState::None, |r| r.state),
+            sign_in: match &research {
+                Some(r) => r.state,
+                None if as_gear => SignInState::NotAsked,
+                None => SignInState::None,
+            },
         };
+        let delivery = path::project_path(&facts);
+        let (product, check) = match &record {
+            Some((product, check)) => (Some(product), check.as_ref()),
+            None => (None, None),
+        };
+        let stages = crate::project_path::delivery_stages(&crate::project_path::DeliveryFacts {
+            product,
+            revision: facts.product_revision,
+            check,
+            ci: ci.as_ref(),
+            path: Some(&delivery),
+        });
         Ok(PathView {
             organization_id: org,
-            path: path::project_path(&facts),
+            path: delivery,
             research_kit,
             research,
             targets,
             deployments: facts.deployments,
+            stages,
         })
     }
 

@@ -306,3 +306,26 @@ fn without_an_environment_research_is_offered_only_with_the_kit() {
     assert_eq!(e.state, StepState::Next);
     assert_eq!(e.action.as_ref().unwrap().kind, "deploy");
 }
+
+#[test]
+fn a_gear_reading_the_path_as_itself_is_not_held_up_by_its_own_sign_in() {
+    // The project's status reads the path as studio-organizations, which
+    // has no Research sign-in: whoever deploys brings theirs.
+    let f = PathFacts {
+        builds: vec![{
+            let mut b = build("r1", "passed");
+            b.r#where = Some("research".to_owned());
+            b.chart_ref = None;
+            b
+        }],
+        environments: vec![place(RESEARCH, "Research", "research", false, &[])],
+        research_kit: true,
+        sign_in: SignInState::NotAsked,
+        ..facts()
+    };
+    let p = project_path(&f);
+    let e = step(&p, "environment");
+    assert_eq!(e.state, StepState::Done);
+    assert!(e.checklist.iter().all(|c| c.done));
+    assert_eq!(step(&p, "running").state, StepState::Next);
+}

@@ -183,11 +183,44 @@ fn run_value(r: &crate::artifact_ingest::port::CiRun) -> Value {
     }})
 }
 
+/// The newest finished run on the main branch of `runs`, as the CI runs
+/// route reads them (`sort=updated&limit=50`): what the project's status
+/// and the delivery path (`project_path.rs`) both call the last build.
+pub fn last_build(mut runs: Vec<crate::artifact_ingest::port::CiRun>) -> BuildFacts {
+    runs.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    runs.truncate(RUNS as usize);
+    let nodes: Vec<Value> = runs.iter().map(run_value).collect();
+    build_facts(&serde_json::json!({ "nodes": nodes }))
+}
+
+/// The product record as the path reads it: its facts, and the engine's
+/// last verdict kept on it (`checks.<profile>`).
+pub fn product_record_facts(
+    record: Option<&Value>,
+) -> (ProductFacts, Option<crate::project_path::CheckFacts>) {
+    let page = match record {
+        Some(value) => serde_json::json!({"nodes": [{"value": value}]}),
+        None => serde_json::json!({"nodes": []}),
+    };
+    (
+        product_facts(&page),
+        record.and_then(crate::project_path::check_facts),
+    )
+}
+
 /// The reads of the path and the other gears' signals, side by side.
 pub struct Read {
     pub path: PathFacts,
     pub pulls: Option<Vec<Pull>>,
     pub deployments: Option<Vec<Deploy>>,
+    /// The engine's last verdict kept on the product record.
+    pub product_check: Option<crate::project_path::CheckFacts>,
+    /// The saved description's revision; `Some(0)` for one in the
+    /// repository only; `None` before one, or when it could not be read.
+    pub product_revision: Option<i64>,
+    /// Stages 5-9 as studio-environments decides them (`project_path.rs`),
+    /// read as this gear; `None` when they could not be read.
+    pub delivery: Option<Vec<crate::project_path::Stage>>,
 }
 
 /// The service identity this gear reads a project's status with: its own
@@ -218,20 +251,34 @@ pub async fn read(hub: &ClientHub, ctx: &SecurityContext, project: Uuid) -> Read
             .get::<dyn crate::product::port::ProjectProducts>()
             .ok()?;
         let record = port.product_record(ctx, &scope).await.ok()?;
-        let page = match record {
-            Some(value) => serde_json::json!({"nodes": [{"value": value}]}),
-            None => serde_json::json!({"nodes": []}),
-        };
-        Some(product_facts(&page))
+        Some(product_record_facts(record.as_ref()))
+    };
+    // The saved description's revision, as the delivery path reads it.
+    let revision = async {
+        let port = hub
+            .get::<dyn crate::product::port::ProjectProducts>()
+            .ok()?;
+        match port.latest_description(ctx, project).await.ok()? {
+            Some(d) => Some(d.revision.max(1)),
+            None => port
+                .saved_description(ctx, &scope)
+                .await
+                .ok()
+                .flatten()
+                .map(|_| 0),
+        }
     };
     let runs = async {
         let port = hub.get::<dyn DeliveryEvidence>().ok()?;
-        let mut runs = port.ci_runs(ctx, &scope).await.ok()?;
-        // The newest by update, as the route's `sort=updated&limit=50`.
-        runs.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-        runs.truncate(RUNS as usize);
-        let nodes: Vec<Value> = runs.iter().map(run_value).collect();
-        Some(build_facts(&serde_json::json!({ "nodes": nodes })))
+        let runs = port.ci_runs(ctx, &scope).await.ok()?;
+        Some(last_build(runs))
+    };
+    // Stages 5-9 as Releases says them, read as this gear.
+    let delivery = async {
+        let port = hub
+            .get::<dyn crate::environments::port::ProjectDeliveryStages>()
+            .ok()?;
+        port.delivery_stages(ctx, project).await.ok()
     };
     let deployments = async {
         let port = hub
@@ -246,8 +293,19 @@ pub async fn read(hub: &ClientHub, ctx: &SecurityContext, project: Uuid) -> Read
         let port = hub.get::<dyn OpenPullRequests>().ok()?;
         port.open_pulls(ctx, &scope).await.ok().map(|o| pulls(&o))
     };
-    let (documents, product, build, deployments, pulls) =
-        tokio::join!(documents, product, runs, deployments, open);
+    let (documents, product, revision, build, deployments, pulls, delivery) = tokio::join!(
+        documents,
+        product,
+        revision,
+        runs,
+        deployments,
+        open,
+        delivery
+    );
+    let (product, product_check) = match product {
+        Some((facts, check)) => (Some(facts), check),
+        None => (None, None),
+    };
     let (specs, model, findings) = match documents {
         Some(d) => (
             d.queues.as_deref().map(spec_queues),
@@ -281,6 +339,9 @@ pub async fn read(hub: &ClientHub, ctx: &SecurityContext, project: Uuid) -> Read
         },
         deployments,
         pulls,
+        product_check,
+        product_revision: revision,
+        delivery,
     }
 }
 
@@ -363,5 +424,24 @@ mod tests {
             (d.at.as_str(), d.reason.as_deref()),
             ("2026-11-01T00:00:00Z", None)
         );
+    }
+
+    #[test]
+    fn the_product_record_gives_its_facts_and_its_kept_check() {
+        let record = json!({"gears": ["a", "b", "c"], "last_preview": {"ok": true, "errors": 0},
+            "checks": {"prod": {"ok": false, "errors": 1, "revision": 2,
+                "checked_at": "2026-11-20T00:00:00Z"}}});
+        let (facts, check) = product_record_facts(Some(&record));
+        assert_eq!(facts.gears, 3);
+        assert_eq!(facts.resolves, Some(true));
+        assert_eq!(
+            check,
+            Some(crate::project_path::CheckFacts {
+                ok: false,
+                errors: 1,
+                revision: Some(2)
+            })
+        );
+        assert_eq!(product_record_facts(None), (ProductFacts::default(), None));
     }
 }

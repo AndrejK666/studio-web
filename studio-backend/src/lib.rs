@@ -47,6 +47,7 @@ mod pagination; // one ?offset=&limit= contract + total for every list endpoint
 mod plural; // "1 document", "2 documents": a count with its noun, never "document(s)"
 mod presence; // studio-presence: who is in Studio now, and a note to reach them
 mod product; // studio-product: a project's product, its gear repository, and the Gearbox engine
+mod project_path; // a project's one path, sources to running product: the stages every tab draws
 mod project_sources; // a project's repositories: one record, project.config sources[]
 mod registered_gears;
 mod reports; // studio-reports: report definitions, sources and drawing (ADR-0033)

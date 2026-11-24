@@ -1449,6 +1449,14 @@ pub struct ProjectStatusDto {
     /// Worst first.
     pub signals: Vec<ProjectSignalDto>,
     pub path: Vec<ProjectPathStepDto>,
+    /// The project's ONE path, from its sources to its running product, as
+    /// every tab draws it (`project_path.rs`): Sources, Documents, Domain
+    /// model, Findings, Product, Build, Images, Environment, Deploy, each
+    /// with its state, its cause, the tab that holds the evidence and what
+    /// moves it on; one of them the focus. A stage of a kit not installed
+    /// for the project is not on it. A status kept before this field was
+    /// added has none until it is computed again (at most 30 s).
+    pub stages: Vec<crate::project_path::ProjectStageDto>,
     /// The step to do next; absent when the path is done or unknown.
     pub next: Option<String>,
     /// The sources that could not be read: their part is not known, and
@@ -1706,11 +1714,28 @@ pub(super) async fn compute_project_status(
             status::signal_kit("deploy"),
         ),
         ("organization health", health.is_none(), None),
+        (
+            "releases",
+            read.delivery.is_none(),
+            Some(status::DELIVERY_KIT),
+        ),
     ] {
         if missing && kits.has(kit) {
             unread.push(name.to_string());
         }
     }
+    // Stages 5-9 as Releases says them; when they could not be read, the
+    // same rules over what this status read itself (the product, the CI
+    // runs), the stages after the build not known.
+    let delivery = read.delivery.take().unwrap_or_else(|| {
+        crate::project_path::delivery_stages(&crate::project_path::DeliveryFacts {
+            product: read.path.product.as_ref(),
+            revision: read.product_revision,
+            check: read.product_check.as_ref(),
+            ci: read.path.build.as_ref(),
+            path: None,
+        })
+    });
     let facts = status::Facts {
         specs: rollup.specs.as_ref().map(|s| s.specs),
         specs_failing: rollup.specs.as_ref().map(|s| s.failing),
@@ -1733,7 +1758,13 @@ pub(super) async fn compute_project_status(
     let verdict = status::project_verdict(&signals, Some(&path));
     let next = status::next_step(&path).map(|s| s.id.to_string());
     let path_facts = facts.path.clone().unwrap_or_default();
+    let stages = crate::project_path::join(
+        crate::project_path::upstream(&path, &path_facts),
+        delivery,
+        &kits,
+    );
     Ok(ProjectStatusDto {
+        stages: crate::project_path::stages_dto(&stages),
         project_id: id.to_string(),
         verdict: verdict.state.to_string(),
         label: verdict.label.to_string(),
