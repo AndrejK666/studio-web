@@ -25,7 +25,9 @@ import {
 import type {
   Capability,
   CatalogRepoSource,
+  GearConfigSchema,
   ImageKind,
+  InfraPlan,
   ImageState,
   InfraService,
   ProjectConfig,
@@ -45,6 +47,36 @@ const svc = (): ProductApiService => apiRegistry.getService(ProductApiService);
 /** Every read here asks the server again: a page reads after a write. */
 const FRESH = { staleTime: 0 };
 
+/** For what no write on the page changes -- the engine's catalogue, read
+ *  from the corpus -- one answer serves every screen of one open (the map,
+ *  the match section and the configurator each asked for it). */
+const CORPUS = { staleTime: 60_000 };
+
+/** Gear config schemas by the gears asked for, as the corpus says them: the
+ *  map asks for its gears again on every redraw, and two screens of one open
+ *  ask for the same. One answer (or one request still running) serves them. */
+const SCHEMA_TTL_MS = 60_000;
+const schemaCache = new Map<string, { at: number; answer: Promise<{ items: GearConfigSchema[]; total: number }> }>();
+
+function gearConfigSchemasCached(gears: string[]): Promise<{ items: GearConfigSchema[]; total: number }> {
+  const key = [...new Set(gears)].sort().join('\n');
+  const hit = schemaCache.get(key);
+  if (hit && Date.now() - hit.at < SCHEMA_TTL_MS) return hit.answer;
+  // Through a promise, so a missing service is a refused ask, not a throw.
+  const answer = Promise.resolve().then(() => svc().gearConfigSchemas().fetch({ gears }));
+  schemaCache.set(key, { at: Date.now(), answer });
+  // A failed ask is not kept: the next one tries again.
+  answer.catch(() => {
+    if (schemaCache.get(key)?.answer === answer) schemaCache.delete(key);
+  });
+  return answer;
+}
+
+/** Forget the kept schemas: for a test, or a corpus read again. */
+export function forgetGearConfigSchemas(): void {
+  schemaCache.clear();
+}
+
 function productChanged<T>(projectId: string, done: Promise<T>): Promise<T> {
   return done.then((v) => {
     window.dispatchEvent(new CustomEvent(PRODUCT_CHANGED_EVENT, { detail: projectId }));
@@ -52,8 +84,6 @@ function productChanged<T>(projectId: string, done: Promise<T>): Promise<T> {
   });
 }
 
-/** How many more times a preview is asked after the gateway gave up on it. */
-const PREVIEW_RETRIES = 3;
 /** How many more times a product save is sent after the gateway lost its answer. */
 const SAVE_RETRIES = 2;
 
@@ -99,8 +129,23 @@ export const api = {
       const publishes = !!(body.publish || body.open_pr || body.onto_base);
       return productChanged(projectId, publishes ? ask() : retryOnTimeout(ask, SAVE_RETRIES, [502, 504]));
     }
-    return productChanged(projectId, retryOnTimeout(ask, PREVIEW_RETRIES));
+    // Asked once: a check the gateway gave up on goes on on the server and
+    // lands in the record (`checks.<profile>`); asking again only queued
+    // another engine run behind it. A long check is queued instead
+    // (`startProductCheck`).
+    return productChanged(projectId, ask());
   },
+  /** Queue the engine's check of the latest saved revision for `profile`; its
+   *  verdict lands in the record's `checks`, its run in `check_runs`. */
+  startProductCheck: (_token: string, projectId: string, profile: string, strictness?: string) =>
+    productChanged(
+      projectId,
+      svc()
+        .startProductCheck(projectId)
+        .fetch({ profile, ...(strictness ? { strictness } : {}) })
+    ),
+  /** A studio-tasks run's state, for following a queued check. */
+  taskRunState: (_token: string, runId: string) => svc().taskRun({ runId, tenant: null }).fetch(FRESH),
   productDescription: (_token: string, projectId: string) => svc().productDescription({ projectId }).fetch(FRESH),
   productDescriptionRevisions: (_token: string, projectId: string) =>
     svc().productDescriptionRevisions({ projectId }).fetch(FRESH),
@@ -121,12 +166,12 @@ export const api = {
   ) => svc().saveProductDescription(projectId).fetch(body),
   gdlFile: (_token: string, projectId: string, what: { gear: string } | { path: string }) =>
     svc().gdlFile({ projectId, what }).fetch(FRESH),
-  gearConfigSchemas: (_token: string, gears: string[]) => svc().gearConfigSchemas().fetch({ gears }),
+  gearConfigSchemas: (_token: string, gears: string[]) => gearConfigSchemasCached(gears),
   completeProduct: (_token: string, gears: string[], config?: ProjectProduct['config']) =>
     svc().completeProduct().fetch({ gears, config: config ?? {} }),
   gearboxStatus: (_token: string, refresh = false, organizationId?: string) =>
     svc().gearboxStatus({ refresh, organizationId }).fetch(FRESH),
-  gearboxCatalogue: (_token: string) => svc().gearboxCatalogue({}).fetch(FRESH),
+  gearboxCatalogue: (_token: string) => svc().gearboxCatalogue({}).fetch(CORPUS),
   gearExplanations: (_token: string) => svc().gearExplanations({}).fetch(FRESH),
   gearBrings: (_token: string, gears: string[], candidate: string, config?: ProjectProduct['config']) =>
     svc().gearBrings().fetch({ gears, candidate, config: config ?? {} }),
@@ -141,6 +186,9 @@ export const api = {
   projectTargets: (_token: string, projectId: string) => svc().projectTargets({ projectId }).fetch(FRESH),
   infraPlan: (_token: string, projectId: string, environmentId: string) =>
     svc().infraPlan({ projectId, environmentId }).fetch(FRESH),
+  /** Every environment's plan in one call, not one call per environment. */
+  infraPlans: async (_token: string, projectId: string): Promise<InfraPlan[]> =>
+    (await svc().infraPlans({ projectId }).fetch(FRESH)).items,
   infraServices: (_token: string, projectId: string) => svc().infraServices({ projectId }).fetch(FRESH),
   putInfraServices: (_token: string, projectId: string, items: InfraService[]) =>
     svc().putInfraServices(projectId).fetch({ items }),

@@ -86,7 +86,7 @@ type Read = {
   services: InfraService[] | null;
   plans: InfraPlan[];
   /** The newest saved product.gdl: the configuration as saved. */
-  description: { revision: number; text: string } | null;
+  description: { revision: number; text: string; sha256: string } | null;
 };
 
 /** The bearer argument the moved-unchanged infra store still takes; `authShared()` carries the real one. */
@@ -162,18 +162,12 @@ export function ProductMap({
           (r) => r.items,
           (): InfraService[] | null => null
         ),
+      // What a deploy to each environment does with the infra services: every
+      // environment in one call, beside the rest rather than after it.
+      productApi.infraPlans(projectId).catch((): InfraPlan[] => []),
     ])
-      .then(async ([p, targets, components, profiles, cfg, description, services]) => {
-        // What a deploy to each environment does with the infra services.
-        const plans = services?.length
-          ? (
-              await Promise.all(
-                (targets?.environments ?? []).map(({ environment }) =>
-                  productApi.infraPlan(projectId, environment.id).catch(() => null)
-                )
-              )
-            ).filter((x): x is InfraPlan => !!x)
-          : [];
+      .then(([p, targets, components, profiles, cfg, description, services, allPlans]) => {
+        const plans = services?.length ? allPlans : [];
         if (!live) return;
         const byName: Record<string, Record<string, unknown>> = {};
         for (const n of profiles.nodes ?? []) {
@@ -181,7 +175,9 @@ export function ProductMap({
           if (name) byName[name] = n.value as Record<string, unknown>;
         }
         const nodes = components.nodes ?? [];
-        const latest = description?.latest ? { revision: description.latest.revision, text: description.latest.text } : null;
+        const latest = description?.latest
+          ? { revision: description.latest.revision, text: description.latest.text, sha256: description.latest.sha256 }
+          : null;
         setRead({
           product: p,
           targets,
@@ -246,8 +242,11 @@ export function ProductMap({
     [map]
   );
   const [schemas, setSchemas] = useState<Map<string, GearConfigSchema> | null>(null);
+  const catalogueRead = catalogue !== null;
   useEffect(() => {
-    if (!schemaAsk) return;
+    // Asked once the catalogue is read (or could not be): before it, the map
+    // names fewer of its plugins, and the ask was made twice.
+    if (!schemaAsk || !catalogueRead) return;
     let live = true;
     productApi
       .gearConfigSchemas(schemaAsk.split(','))
@@ -256,7 +255,7 @@ export function ProductMap({
     return () => {
       live = false;
     };
-  }, [schemaAsk]);
+  }, [schemaAsk, catalogueRead]);
   const described = useMemo(() => describedConfigs(read?.description?.text ?? ''), [read]);
   const nodeById = useMemo(() => new Map((map?.nodes ?? []).map((n) => [n.id, n])), [map]);
   /** Each screen card's catalogue entry, by node: what its pictures are kept under. */
@@ -554,6 +553,7 @@ export function ProductMap({
           <GdlView
             product={product}
             profile={checkProfile}
+            description={read.description}
             nodeIds={map.nodes.map((n) => n.id)}
             selected={selected}
             onSelect={select}

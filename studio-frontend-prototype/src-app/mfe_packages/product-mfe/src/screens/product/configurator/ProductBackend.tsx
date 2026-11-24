@@ -197,9 +197,9 @@ export function ProductBackend() {
   /** Check every profile an environment runs, one after another: the engine
    *  takes one product at a time. A newer round makes an older one stop. */
   const rounds = useRef(0);
-  const checkBound = useCallback(async () => {
+  const checkBound = useCallback(async (only: (profile: string) => boolean = () => true) => {
     const mine = ++rounds.current;
-    for (const p of profilesToCheck(bindings)) {
+    for (const p of profilesToCheck(bindings).filter(only)) {
       if (rounds.current !== mine) return;
       await runRef.current(false, false, undefined, p);
     }
@@ -213,14 +213,20 @@ export function ProductBackend() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [product.completedAt]);
 
-  // Ask the engine on arrival, once the bindings say which profiles to ask
-  // for; then again whenever the product changes -- a pick, a setting, a fix.
+  // On arrival, ask the engine only for the profiles whose kept verdict is
+  // not about the product as it is (a check of sixty gears outlasts the
+  // gateway; the kept verdict answers the rest); then again whenever the
+  // product changes -- a pick, a setting, a fix.
   const asked0 = useRef(false);
   useEffect(() => {
     if (!product.loaded || targets === undefined || picks.length === 0) return;
     const first = !asked0.current;
     asked0.current = true;
-    const timer = setTimeout(() => void checkBound(), first ? 0 : 600);
+    const stale = (p: string) => {
+      const v = verdictOf(record, p);
+      return v.state === 'unchecked' || v.state === 'stale';
+    };
+    const timer = setTimeout(() => void checkBound(first ? stale : undefined), first ? 0 : 600);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [product.loaded, targets, question]);

@@ -338,6 +338,12 @@ export class ProductApiService extends BaseApiService {
       `/studio-environments/v1/environments/${enc(environmentId)}/infra-plan?${project(projectId)}`
   );
 
+  /** Every environment's infra plan for the project, in one call. */
+  readonly infraPlans = this.protocol(RestEndpointProtocol).queryWith<
+    { items: InfraPlan[]; total: number },
+    { projectId: string }
+  >(({ projectId }) => `/studio-environments/v1/infra-plans?${project(projectId)}`);
+
   readonly infraServices = this.protocol(RestEndpointProtocol).queryWith<
     { items: InfraService[]; total: number },
     { projectId: string }
@@ -522,6 +528,14 @@ export class ProductApiService extends BaseApiService {
 
   /** Send the project's specifications to the gears-matcher: one background run. */
   /** Start a match; `strategy` is the service strategy (`gears_matcher` when absent, ADR-0074). */
+  /** Queue the engine's check of the latest saved revision for one profile. */
+  startProductCheck(projectId: string) {
+    return this.rest.mutation<
+      { run_id: string; profile: string; state: string },
+      { profile?: string; strictness?: string }
+    >('POST', orgScoped(`/studio-product/v1/product-check-runs?${project(projectId)}`));
+  }
+
   startGearMatch(projectId: string, strategy?: string) {
     return this.rest.mutation<
       { run_id: string; match_id: string; state: string },
