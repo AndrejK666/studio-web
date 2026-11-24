@@ -96,11 +96,11 @@ export class ReleasesApiService extends BaseApiService {
     ({ projectId, id }) => `${ENV}/deployments/${enc(id)}?${project(projectId)}`
   );
 
-  /** The end of a deploy's logs: its containers', or its Research services'. */
-  readonly deploymentLogs = this.protocol(RestEndpointProtocol).queryWith<
-    DeploymentLogs,
-    { organizationId: string; id: string }
-  >(({ organizationId, id }) => `${ENV}/deployments/${enc(id)}/logs?${org(organizationId)}`);
+  /** The end of a deploy's logs: its containers', or its Research services'. Named by
+   *  the project, so the server reads its organization whoever the caller's home is. */
+  readonly deploymentLogs = this.protocol(RestEndpointProtocol).queryWith<DeploymentLogs, ProjectParams & { id: string }>(
+    ({ projectId, id }) => `${ENV}/deployments/${enc(id)}/logs?${project(projectId)}`
+  );
 
   /** What Research says now of each image of a Research build (kept 30 s by the server). */
   readonly researchBuildImages = this.protocol(RestEndpointProtocol).queryWith<
@@ -171,11 +171,11 @@ export class ReleasesApiService extends BaseApiService {
     );
   }
 
-  /** The release's workloads and hosts, read from its cluster now. */
+  /** The release's workloads and hosts, read from its cluster now; named by the project. */
   readonly deploymentStatus = this.protocol(RestEndpointProtocol).queryWith<
     DeploymentStatus,
-    { organizationId: string; id: string }
-  >(({ organizationId, id }) => `${ENV}/deployments/${enc(id)}/status?${org(organizationId)}`);
+    ProjectParams & { id: string }
+  >(({ projectId, id }) => `${ENV}/deployments/${enc(id)}/status?${project(projectId)}`);
 
   /** Take a preview out (ADR-0055): its namespace goes, with everything in it. */
   removePreview(projectId: string, deploymentId: string) {

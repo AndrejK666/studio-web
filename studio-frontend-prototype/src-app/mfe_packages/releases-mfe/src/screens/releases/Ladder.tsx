@@ -80,7 +80,7 @@ const PROGRESS_MS = 4000;
  *  run reported, and how many of the release's pods are ready. Read again
  *  every few seconds; the screen reads again once the deploy ends. */
 export function DeployProgress({ deployment, onEnded }: { deployment: Deployment; onEnded: (message: string) => void }) {
-  const { t, organizationId } = useReleases();
+  const { t, organizationId, projectId } = useReleases();
   const api = useApi();
   const [run, setRun] = useState<TaskRun | null>(null);
   const [rollout, setRollout] = useState<DeploymentStatus | null>(null);
@@ -95,12 +95,10 @@ export function DeployProgress({ deployment, onEnded }: { deployment: Deployment
               .fetch({ staleTime: 0 })
               .catch(() => null)
           : null,
-        organizationId
-          ? api
-              .deploymentStatus({ organizationId, id: deployment.id })
-              .fetch({ staleTime: 0 })
-              .catch(() => null)
-          : null,
+        api
+          .deploymentStatus({ projectId, id: deployment.id })
+          .fetch({ staleTime: 0 })
+          .catch(() => null),
       ]);
       if (!live) return;
       setNow(Date.now());
@@ -125,7 +123,7 @@ export function DeployProgress({ deployment, onEnded }: { deployment: Deployment
       live = false;
       stop();
     };
-  }, [api, organizationId, deployment, onEnded, t]);
+  }, [api, organizationId, projectId, deployment, onEnded, t]);
   const workloads = rollout?.workloads ?? [];
   const desired = workloads.reduce((n, w) => n + Math.max(w.desired, 0), 0);
   const ready = workloads.reduce((n, w) => n + Math.max(Math.min(w.ready, w.desired), 0), 0);

@@ -27,7 +27,7 @@ export function DeploymentDetail({
   onClose: () => void;
   onIntent: (intent: Intent, action: Partial<PathAction>) => void;
 }) {
-  const { t, projectId, organizationId } = useReleases();
+  const { t, projectId } = useReleases();
   const api = useApi();
   const [d, setD] = useState<Deployment | null>(null);
   const [logs, setLogs] = useState<ContainerLog[] | null>(null);
@@ -50,19 +50,19 @@ export function DeploymentDetail({
     };
   }, [api, projectId, id, round]);
 
-  // The log once the organization is known; a deploy whose pods are gone has none.
+  // The log once the deploy is read; a deploy whose pods are gone has none.
   useEffect(() => {
-    if (!organizationId || !d) return;
+    if (!d) return;
     let live = true;
     api
-      .deploymentLogs({ organizationId, id })
+      .deploymentLogs({ projectId, id })
       .fetch({ staleTime: 0 })
       .then((l) => live && setLogs(l.containers ?? []))
       .catch(() => live && setLogs([]));
     return () => {
       live = false;
     };
-  }, [api, organizationId, id, d]);
+  }, [api, projectId, id, d]);
 
   const running = !!d && !ended(d.state);
   useEffect(() => {

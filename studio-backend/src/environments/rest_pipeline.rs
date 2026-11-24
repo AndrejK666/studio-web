@@ -279,14 +279,7 @@ async fn get_deployment(
     Query(f): Query<DeploymentFilter>,
 ) -> ApiResult<JsonBody<EnvironmentDeploymentDto>> {
     // As the list: a project's deployment is its organization's.
-    let org = match f.project_id {
-        Some(project) => envs
-            .0
-            .organization_of_project(&ctx, project)
-            .await
-            .map_err(problem)?,
-        None => ctx.subject_tenant_id(),
-    };
+    let org = super::deployments_org(&envs, &ctx, f.project_id).await?;
     let d = envs
         .0
         .deployment_view(&ctx, org, f.project_id, deployment_id)
