@@ -11,6 +11,7 @@
 //! `read_repository`. Nothing here writes: publishing to GitLab (commits,
 //! branches, merge requests) is still refused by the trait's defaults.
 
+mod ci;
 mod client;
 mod model;
 mod reviews;
@@ -25,7 +26,8 @@ use async_trait::async_trait;
 use super::driver::{
     ConnectionAuth, ConnectorCategory, ConnectorDriver, Contributor, DriverIdentity,
     PullRequestThreads, RemoteComment, RemoteCommit, RemoteFile, RemoteFileList, RemoteFileText,
-    RemoteIssue, RemotePullRequest, RemoteRepo, RepoTree, RepoTreeEntry,
+    RemoteIssue, RemotePullRequest, RemoteRepo, RemoteWorkflowJob, RemoteWorkflowRun, RepoTree,
+    RepoTreeEntry,
 };
 use super::references::ReferenceSyntax;
 use client::{Api, Family, Retry, encode, is_item_refusal};
@@ -396,6 +398,88 @@ impl ConnectorDriver for GitLabDriver {
         body: &serde_json::Value,
     ) -> anyhow::Result<serde_json::Value> {
         self.api(auth).graphql_raw(body).await
+    }
+
+    async fn list_workflow_runs(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        workflow: Option<i64>,
+        page: u32,
+        per_page: u32,
+    ) -> anyhow::Result<Vec<RemoteWorkflowRun>> {
+        // No workflows on GitLab (`list_workflows` lists none), so `workflow`
+        // is never one of ours. GraphQL pages by cursor: page N is reached by
+        // walking the N-1 before it, which the sync's few pages afford.
+        let _ = workflow;
+        let api = self.api(auth);
+        let project = client::project_path(repo_full_path).to_owned();
+        let first = per_page.clamp(1, 100);
+        let mut cursor: Option<String> = None;
+        for at in 1..=page.max(1) {
+            let data: ci::PipelinesData = api
+                .graphql(
+                    ci::PIPELINES_QUERY,
+                    serde_json::json!({ "project": project, "first": first, "cursor": cursor }),
+                )
+                .await?;
+            let Some(pipelines) = data.project.and_then(|p| p.pipelines) else {
+                return Ok(Vec::new());
+            };
+            if at == page.max(1) {
+                return Ok(pipelines
+                    .nodes
+                    .into_iter()
+                    .filter_map(|p| p.into_run(api.root(), &project))
+                    .collect());
+            }
+            match pipelines.page_info.end_cursor {
+                Some(next) if pipelines.page_info.has_next_page => cursor = Some(next),
+                _ => return Ok(Vec::new()),
+            }
+        }
+        Ok(Vec::new())
+    }
+
+    async fn list_workflow_jobs(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        run_id: i64,
+    ) -> anyhow::Result<Vec<RemoteWorkflowJob>> {
+        // The sync holds the pipeline's global id; GraphQL asks by its iid,
+        // which one REST call gives. A pipeline gone since is no jobs.
+        let api = self.api(auth);
+        let project = client::project_path(repo_full_path).to_owned();
+        let url = api.project(repo_full_path, &format!("/pipelines/{run_id}"));
+        let iid = match api.get::<ci::PipelineIid>(&url).await {
+            Ok(p) => p.iid,
+            Err(e) if is_item_refusal(&e) => return Ok(Vec::new()),
+            Err(e) => return Err(e),
+        };
+        let mut out = Vec::new();
+        let mut cursor: Option<String> = None;
+        for _ in 0..20 {
+            let data: ci::JobsData = api
+                .graphql(
+                    ci::JOBS_QUERY,
+                    serde_json::json!({ "project": project, "iid": iid.to_string(), "cursor": cursor }),
+                )
+                .await?;
+            let Some(jobs) = data.project.and_then(|p| p.pipeline).and_then(|p| p.jobs) else {
+                break;
+            };
+            out.extend(
+                jobs.nodes
+                    .into_iter()
+                    .filter_map(|j| j.into_job(api.root(), &project)),
+            );
+            match jobs.page_info.end_cursor {
+                Some(next) if jobs.page_info.has_next_page => cursor = Some(next),
+                _ => break,
+            }
+        }
+        Ok(out)
     }
 
     /// GitLab numbers issues (`#5`) and merge requests (`!5`) separately.

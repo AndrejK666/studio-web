@@ -836,3 +836,174 @@ async fn an_approval_only_the_approvals_endpoint_lists_is_read_where_licensed() 
     assert_eq!(threads[0].reviews[0].state, "approved");
     assert_eq!((threads[0].open, threads[0].total), (0, 0));
 }
+
+/* ── CI: pipelines and jobs through GraphQL ── */
+
+fn pipelines_page(nodes: serde_json::Value, next: Option<&str>) -> serde_json::Value {
+    json!({ "data": { "project": { "pipelines": {
+        "pageInfo": { "hasNextPage": next.is_some(), "endCursor": next },
+        "nodes": nodes,
+    } } } })
+}
+
+#[tokio::test]
+async fn pipelines_are_runs_and_a_later_page_walks_the_cursor() {
+    let mock = Mock::builder()
+        .post(
+            "/api/graphql",
+            Reply::json(pipelines_page(
+                json!([{ "id": "gid://gitlab/Ci::Pipeline/10", "iid": "1", "sha": "a",
+                         "ref": "main", "status": "SUCCESS", "source": "push" }]),
+                Some("c1"),
+            )),
+        )
+        .then(Reply::json(pipelines_page(
+            json!([
+                { "id": "gid://gitlab/Ci::Pipeline/9", "iid": "2", "sha": "b",
+                  "ref": "feature", "status": "FAILED", "source": "merge_request_event",
+                  "createdAt": "2026-11-20T10:00:00Z", "user": { "username": "ada" },
+                  "mergeRequest": { "iid": "7" } },
+                { "id": "gid://gitlab/Ci::Pipeline/8", "iid": "3", "sha": "c",
+                  "ref": "main", "status": "RUNNING", "source": "schedule" }
+            ]),
+            None,
+        )))
+        .start()
+        .await;
+    let driver = mock.driver();
+    let runs = driver
+        .list_workflow_runs(&mock.auth(), "acme/platform/app", None, 2, 1)
+        .await
+        .unwrap();
+    let calls = mock.calls("/api/graphql");
+    assert_eq!(calls.len(), 2);
+    assert_eq!(
+        calls[0].body.as_ref().unwrap()["variables"]["cursor"],
+        json!(null)
+    );
+    assert_eq!(calls[1].body.as_ref().unwrap()["variables"]["cursor"], "c1");
+    assert_eq!(
+        calls[1].body.as_ref().unwrap()["variables"]["project"],
+        "acme/platform/app"
+    );
+    assert_eq!(runs.len(), 2);
+    let failed = &runs[0];
+    assert_eq!((failed.id, failed.run_number), (9, Some(2)));
+    assert_eq!(failed.status.as_deref(), Some("completed"));
+    assert_eq!(failed.conclusion.as_deref(), Some("failure"));
+    assert_eq!(failed.event.as_deref(), Some("pull_request"));
+    assert_eq!(failed.actor.as_deref(), Some("ada"));
+    assert_eq!(failed.title.as_deref(), Some("Merge request !7"));
+    assert_eq!(
+        failed.url.as_deref(),
+        Some(format!("{}/acme/platform/app/-/pipelines/9", mock.base).as_str())
+    );
+    assert_eq!(runs[1].status.as_deref(), Some("in_progress"));
+    assert_eq!(runs[1].conclusion, None);
+    assert_eq!(runs[1].event.as_deref(), Some("schedule"));
+}
+
+#[tokio::test]
+async fn a_project_graphql_cannot_see_has_no_runs() {
+    let mock = Mock::builder()
+        .post(
+            "/api/graphql",
+            Reply::json(json!({ "data": { "project": null } })),
+        )
+        .start()
+        .await;
+    let runs = mock
+        .driver()
+        .list_workflow_runs(&mock.auth(), "acme/platform/app", None, 1, 100)
+        .await
+        .unwrap();
+    assert!(runs.is_empty());
+}
+
+#[tokio::test]
+async fn a_graphql_error_fails_the_run_listing() {
+    let mock = Mock::builder()
+        .post(
+            "/api/graphql",
+            Reply::json(json!({ "errors": [{ "message": "Internal server error" }] })),
+        )
+        .start()
+        .await;
+    let err = mock
+        .driver()
+        .list_workflow_runs(&mock.auth(), "acme/platform/app", None, 1, 100)
+        .await
+        .unwrap_err();
+    assert_eq!(kind_of(&err), Some(GitLabErrorKind::GraphQl));
+}
+
+#[tokio::test]
+async fn jobs_are_the_latest_attempt_and_an_allowed_failure_is_neutral() {
+    let mock = Mock::builder()
+        .get(
+            &format!("{PROJECT}/pipelines/9"),
+            Reply::json(json!({ "id": 9, "iid": 2 })),
+        )
+        .post(
+            "/api/graphql",
+            Reply::json(json!({ "data": { "project": { "pipeline": { "jobs": {
+                "pageInfo": { "hasNextPage": false, "endCursor": null },
+                "nodes": [
+                    { "id": "gid://gitlab/Ci::Build/1", "name": "test", "status": "FAILED",
+                      "retried": true, "stage": { "name": "test" } },
+                    { "id": "gid://gitlab/Ci::Build/2", "name": "test", "status": "FAILED",
+                      "retried": false, "stage": { "name": "test" },
+                      "finishedAt": "2026-11-20T10:05:00Z" },
+                    { "id": "gid://gitlab/Ci::Build/3", "name": "lint", "status": "FAILED",
+                      "allowFailure": true, "stage": { "name": "test" } },
+                    { "id": "gid://gitlab/Ci::Bridge/4", "name": "deploy", "status": "MANUAL",
+                      "stage": { "name": "deploy" } }
+                ]
+            } } } } })),
+        )
+        .start()
+        .await;
+    let jobs = mock
+        .driver()
+        .list_workflow_jobs(&mock.auth(), "acme/platform/app", 9)
+        .await
+        .unwrap();
+    let got: Vec<(i64, &str, Option<&str>, Option<&str>)> = jobs
+        .iter()
+        .map(|j| {
+            (
+                j.id,
+                j.name.as_str(),
+                j.conclusion.as_deref(),
+                j.failed_step.as_deref(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        got,
+        vec![
+            (2, "test", Some("failure"), Some("test")),
+            (3, "lint", Some("neutral"), None),
+            (4, "deploy", None, None),
+        ]
+    );
+    assert_eq!(
+        mock.calls("/api/graphql")[0].body.as_ref().unwrap()["variables"]["iid"],
+        "2"
+    );
+}
+
+#[tokio::test]
+async fn a_pipeline_gone_before_its_jobs_are_read_has_none() {
+    let mock = Mock::builder()
+        .get(&format!("{PROJECT}/pipelines/9"), Reply::status(404))
+        .start()
+        .await;
+    let jobs = mock
+        .driver()
+        .list_workflow_jobs(&mock.auth(), "acme/platform/app", 9)
+        .await
+        .unwrap();
+    assert!(jobs.is_empty());
+    assert!(mock.calls("/api/graphql").is_empty());
+}
