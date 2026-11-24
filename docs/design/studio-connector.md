@@ -199,6 +199,24 @@ check, not a network policy: a public name that resolves to a private address
 still passes, because resolution happens later in `reqwest`. Closing that is an
 egress policy on the deployment.
 
+A self-hosted source host on a private network (a GitLab at
+`gitlab.corp.internal` or `10.20.0.5`) is reached only when the deployment's
+operator names it in studio-connector's configuration:
+
+```yaml
+studio-connector:
+  config:
+    private_hosts: [gitlab.corp.internal, 10.20.0.5]
+```
+
+Each entry is one exact host name or IP literal: no wildcards, no subdomains,
+no ports. A URL on one of them skips the private-address and internal-name
+checks and nothing else, so HTTPS is still required and a provider pinned to
+its own hosts stays pinned. The list is read at boot and is the operator's,
+never a tenant's: a member can point a connection only where an administrator
+already decided the backend may go. A GitLab token for such a host, like any
+GitLab token, needs `read_api` and `read_repository`.
+
 #### A tenant uses only a connection its organization owns
 
 - [x] `p1` - **ID**: `cpt-studio-constraint-connector-own-connections`
@@ -243,22 +261,56 @@ repository sync (`cpt-studio-component-artifact-ingest`). A refused write is a 4
 `failed_precondition` `CONNECTION_NOT_OWNED`; a refused read is skipped and
 reported.
 
-#### Only GitHub reads and writes more than a repository list
+#### GitHub and GitLab read and write; Bitbucket only lists
 
 - [x] `p2` - **ID**: `cpt-studio-constraint-connector-github-depth`
 
-The GitLab and Bitbucket drivers implement `test` and `list_repositories`
-only. Issues, pull requests, commits, files, the repository tree, a path's
-history, tags, contributors, file writes, multi-file commits, branches,
-pull-request creation, repository creation, GraphQL and the clone URL are
-GitHub's alone today, so a repository import, a catalogue scan, a scaffold, a
-checkout or a file publish through any other source host answers with that
-driver's refusal. The pull-request listing
-carries `draft`, the reviewers and teams still owed a review, and the
-assignees, as GitHub's `/pulls` returns them; each reviewer's last word comes
-from the same GraphQL query as the unresolved review threads, so neither costs
-a call of its own. A GitLab or Bitbucket project therefore has no pull
-requests in the artifact graph, and nothing waiting on anybody.
+The Bitbucket driver implements `test` and `list_repositories` only, so a
+scaffold or a file publish through it answers with that driver's refusal, and
+a Bitbucket project has no pull requests in the artifact graph and nothing
+waiting on anybody. GitHub's pull-request listing carries `draft`, the
+reviewers and teams still owed a review, and the assignees, as `/pulls`
+returns them; each reviewer's last word comes from the same GraphQL query as
+the unresolved review threads, so neither costs a call of its own.
+
+The GitLab driver (`connectors/gitlab/`, after Insight's GitLab connector)
+reads the identity with its avatar, the paged project listing, issues, merge
+requests, their notes as comments, commits, changed files, contributors, the
+keyset-paged tree, raw files, branches, tags, path history, the clone URL
+(`oauth2` as the clone username), each reviewer's last word and the
+unresolved discussions of open merge requests (from GitLab's system notes,
+with `/approvals` as an optional extra that may answer 402), CI pipelines and
+jobs through GraphQL, releases and job artifacts. It writes what publishing
+and sharing need: multi-file commits (`POST /repository/commits`, one atomic
+call, creating the branch from its base), single files, branches, tags, merge
+requests, issues, commit statuses and pipelines (`dispatch_workflow` starts a
+pipeline on the ref with the workflow's name in the `STUDIO_WORKFLOW`
+variable). Every write is safe to ask for twice: a new branch that already
+holds exactly the files is the answer, a file already holding the content is
+not committed again, a tag already at the commit is the answer, an open merge
+request for the branch is reused, a status GitLab already holds is not an
+error. A write is never resent after a 5xx. Refusals keep GitLab's words and
+a kind: 403 a protected branch or a read-only token, 409 a conflict, 400/422 a
+request GitLab will not take.
+
+Its token is a personal, group or project access token with `read_api` and
+`read_repository` to read, and `api` to write. It follows `Link` only on the
+installation's own origin, waits out 429 by `Retry-After` and backs off on
+5xx, and classifies refusals: on a project's own listing they fail, on one
+item (a merge request's notes, an unlicensed feature) they skip it. GitLab
+numbers issues (`#5`) and merge requests (`!5`) separately, so a comment and
+a mention say which kind they name, and the artifact ingest keeps the two
+number spaces apart.
+
+A GitLab release has no number, only its tag; its id in Studio is the first
+eight bytes of the SHA-256 of the tag, big-endian, sign bit cleared, and its
+files are its asset links, by the link's id. A job that kept an artifacts
+archive is one build artifact, by the job's id and name. A download is the
+signed link GitLab answers when its artifacts are on object storage; a GitLab
+that serves the file itself gives none (`DownloadNeedsProxy`), and the output
+download then answers Studio's own `…/outputs/{output_id}/content`, which
+streams the file through the connection so the token never reaches the
+browser.
 
 ## 3. Technical Architecture
 

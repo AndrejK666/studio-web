@@ -77,6 +77,7 @@ impl ConnectorDriver for KubernetesDriver {
             });
         }
         Ok(DriverIdentity {
+            avatar_url: None,
             checks,
             account: format!("Kubernetes {}", version.git_version),
             display_name: Some(access.server.clone()),

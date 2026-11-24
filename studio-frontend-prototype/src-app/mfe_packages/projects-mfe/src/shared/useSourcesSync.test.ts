@@ -60,7 +60,7 @@ const repoNodes = (...paths: string[]) => ({
   isError: false,
 });
 
-const SOURCES = [source('acme/api'), source('acme/web'), source('lab/tool', 'c-gitlab')];
+const SOURCES = [source('acme/api'), source('acme/web'), source('lab/tool', 'c-bitbucket')];
 
 function render(overrides: { sources?: ProjectSource[]; isFirstImport?: boolean } = {}) {
   return renderHook(() =>
@@ -79,7 +79,7 @@ beforeEach(() => {
   emit.mockClear();
   window.sessionStorage.clear();
   nodes.current = repoNodes('acme/api');
-  const list = [connection('c-github', 'github'), connection('c-gitlab', 'gitlab')];
+  const list = [connection('c-github', 'github'), connection('c-bitbucket', 'bitbucket')];
   connections.current = {
     connections: list,
     byId: new Map(list.map((entry) => [entry.id, entry])),

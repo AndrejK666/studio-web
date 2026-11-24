@@ -121,6 +121,7 @@ impl ConnectorDriver for AssemblyServiceDriver {
             .or(info["catalogue"]["gears_md_commit"].as_str())
             .map(|c| c.chars().take(8).collect::<String>());
         Ok(DriverIdentity {
+            avatar_url: None,
             account: match commit {
                 Some(c) => format!("service {version}, catalogue {c}"),
                 None => format!("service {version}"),
