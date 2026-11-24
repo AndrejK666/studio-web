@@ -988,6 +988,8 @@ gears:
   # Tokens live in credstore; the scope chosen on create maps onto the
   # credstore sharing mode (personal -> private, workspace -> tenant,
   # organization -> shared).
+  # `private_hosts: [gitlab.corp.internal]` lets a connection name a
+  # self-hosted host on a private network; nothing else private passes.
   studio-connector:
     config: {}
 

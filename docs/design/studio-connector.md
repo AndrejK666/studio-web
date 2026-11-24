@@ -199,6 +199,24 @@ check, not a network policy: a public name that resolves to a private address
 still passes, because resolution happens later in `reqwest`. Closing that is an
 egress policy on the deployment.
 
+A self-hosted source host on a private network (a GitLab at
+`gitlab.corp.internal` or `10.20.0.5`) is reached only when the deployment's
+operator names it in studio-connector's configuration:
+
+```yaml
+studio-connector:
+  config:
+    private_hosts: [gitlab.corp.internal, 10.20.0.5]
+```
+
+Each entry is one exact host name or IP literal: no wildcards, no subdomains,
+no ports. A URL on one of them skips the private-address and internal-name
+checks and nothing else, so HTTPS is still required and a provider pinned to
+its own hosts stays pinned. The list is read at boot and is the operator's,
+never a tenant's: a member can point a connection only where an administrator
+already decided the backend may go. A GitLab token for such a host, like any
+GitLab token, needs `read_api` and `read_repository`.
+
 #### A tenant uses only a connection its organization owns
 
 - [x] `p1` - **ID**: `cpt-studio-constraint-connector-own-connections`

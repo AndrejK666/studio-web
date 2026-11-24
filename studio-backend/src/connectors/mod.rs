@@ -190,6 +190,12 @@ pub fn source_driver_ids() -> [&'static str; 3] {
 pub struct ConnectorGearConfig {
     #[serde(default = "default_vendor")]
     pub vendor: String,
+    /// Private-network hosts a connection's address may name: a self-hosted
+    /// GitLab at `gitlab.corp.internal` or `10.20.0.5`. Exact host names or
+    /// IP literals, set by the operator; every other private or internal
+    /// address stays refused (`url_guard`). Empty by default.
+    #[serde(default)]
+    pub private_hosts: Vec<String>,
 }
 
 // The default lives in `Default` as a literal, because Gearbox reads a
@@ -199,6 +205,7 @@ impl Default for ConnectorGearConfig {
     fn default() -> Self {
         Self {
             vendor: "constructorfabric".into(),
+            private_hosts: Vec::new(),
         }
     }
 }
@@ -230,6 +237,10 @@ impl Gear for StudioConnectorGear {
         info!("studio-connector: knowledge-graph types cataloged");
 
         let cfg: ConnectorGearConfig = ctx.config_or_default()?;
+        url_guard::allow_private_hosts(&cfg.private_hosts);
+        if !cfg.private_hosts.is_empty() {
+            info!(hosts = ?cfg.private_hosts, "studio-connector: private hosts allowed for connections");
+        }
         let mut drivers: Vec<(String, Arc<dyn ConnectorDriver>)> = Vec::new();
         for id in KNOWN_DRIVERS {
             match ctx

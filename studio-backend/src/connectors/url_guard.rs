@@ -17,6 +17,18 @@
 //! internal name, and — where the provider has no self-hosted form — the
 //! provider's own host.
 //!
+//! ## Private hosts an operator allows
+//!
+//! A self-hosted GitLab on a private network (`gitlab.corp.internal`,
+//! `10.20.0.5`) is refused by the rules above, rightly, when a tenant member
+//! types it. The deployment's operator may name such hosts in studio-connector's
+//! configuration (`private_hosts`); a URL on exactly one of them skips the
+//! private-address and internal-name checks, and nothing else does. The list
+//! is the operator's, never a tenant's: it is read at boot from the gear's
+//! config, so a member can reach only what an administrator already decided
+//! the backend may reach. HTTPS is still required, and a provider pinned to
+//! its own hosts ([`HostRule::OneOf`]) stays pinned.
+//!
 //! ## What it is not
 //!
 //! This is a host check, not a network policy. A public name that resolves to a
@@ -26,8 +38,37 @@
 //! here; what this does close is the whole class of directly-addressed internal
 //! targets, which is what a hand-typed field actually carries.
 
+use std::sync::RwLock;
+
 use anyhow::{Context, anyhow};
 use reqwest::Url;
+
+/// The private hosts the operator allows ([`allow_private_hosts`]).
+static PRIVATE_HOSTS: RwLock<Vec<String>> = RwLock::new(Vec::new());
+
+/// A host as the allow-list compares it: lower case, no brackets around an
+/// IPv6 literal, no trailing dot.
+fn host_key(host: &str) -> String {
+    host.trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .trim_end_matches('.')
+        .to_ascii_lowercase()
+}
+
+/// Set the private hosts a configured URL may name: studio-connector's
+/// `private_hosts`, read once at boot. Exact host names or IP literals; no
+/// wildcards, no ports, so an entry allows exactly one machine.
+pub(crate) fn allow_private_hosts(hosts: &[String]) {
+    let keys: Vec<String> = hosts
+        .iter()
+        .map(|h| host_key(h))
+        .filter(|h| !h.is_empty())
+        .collect();
+    if let Ok(mut list) = PRIVATE_HOSTS.write() {
+        *list = keys;
+    }
+}
 
 /// What a URL is allowed to point at.
 pub(crate) enum HostRule {
@@ -44,6 +85,20 @@ pub(crate) enum HostRule {
 /// `what` names the field in the error, because this message is what the
 /// person who typed it reads.
 pub(crate) fn check_url(raw: &str, what: &str, rule: HostRule) -> anyhow::Result<Url> {
+    let allowed = PRIVATE_HOSTS
+        .read()
+        .map(|list| list.clone())
+        .unwrap_or_default();
+    check_url_with(raw, what, rule, &allowed)
+}
+
+/// [`check_url`] against an explicit allow-list of private hosts.
+fn check_url_with(
+    raw: &str,
+    what: &str,
+    rule: HostRule,
+    private_hosts: &[String],
+) -> anyhow::Result<Url> {
     let raw = raw.trim();
     let url = Url::parse(raw).with_context(|| format!("{what} is not a URL"))?;
 
@@ -68,7 +123,10 @@ pub(crate) fn check_url(raw: &str, what: &str, rule: HostRule) -> anyhow::Result
     // nothing else, and one string parse is not worth a direct dependency on
     // its transitive.
     let literal = host.trim_start_matches('[').trim_end_matches(']');
-    if let Ok(ip) = literal.parse::<std::net::IpAddr>() {
+    let operator_allowed = private_hosts.contains(&host_key(&host));
+    if let Ok(ip) = literal.parse::<std::net::IpAddr>()
+        && !operator_allowed
+    {
         let internal = match ip {
             std::net::IpAddr::V4(ip) => {
                 ip.is_loopback()
@@ -103,9 +161,10 @@ pub(crate) fn check_url(raw: &str, what: &str, rule: HostRule) -> anyhow::Result
         ".cluster.local",
         ".svc",
     ];
-    if INTERNAL
-        .iter()
-        .any(|bad| host == *bad || host.ends_with(bad))
+    if !operator_allowed
+        && INTERNAL
+            .iter()
+            .any(|bad| host == *bad || host.ends_with(bad))
     {
         return Err(anyhow!(
             "{what} points at the internal name {host}, which is inside this deployment \
@@ -169,6 +228,45 @@ mod tests {
                 HostRule::AnyPublic
             )
             .is_ok()
+        );
+    }
+
+    /// An operator may allow exactly the private hosts their GitLab runs on;
+    /// everything else private stays refused, and https stays required.
+    #[test]
+    fn an_operator_allowed_private_host_passes_and_nothing_else_does() {
+        let allowed = vec![host_key("GitLab.Corp.Internal."), host_key("10.20.0.5")];
+        for good in [
+            "https://gitlab.corp.internal/api/v4",
+            "https://10.20.0.5",
+            "https://10.20.0.5:8443/gitlab",
+        ] {
+            assert!(
+                check_url_with(good, "Server URL", HostRule::AnyPublic, &allowed).is_ok(),
+                "{good} is on the operator's list"
+            );
+        }
+        for bad in [
+            "http://gitlab.corp.internal",
+            "https://other.corp.internal",
+            "https://sub.gitlab.corp.internal",
+            "https://10.20.0.6",
+            "https://169.254.169.254/latest/meta-data",
+        ] {
+            assert!(
+                check_url_with(bad, "Server URL", HostRule::AnyPublic, &allowed).is_err(),
+                "{bad} should have been refused"
+            );
+        }
+        // A provider pinned to its own hosts stays pinned.
+        assert!(
+            check_url_with(
+                "https://gitlab.corp.internal",
+                "URL",
+                HostRule::OneOf(&["slack.com"]),
+                &allowed
+            )
+            .is_err()
         );
     }
 
