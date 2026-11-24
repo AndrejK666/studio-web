@@ -7,7 +7,7 @@ How the engineering skills should consume this repo's domain documentation when 
 - **`GLOSSARY-MAP.md`** at the repo root. It lists the contexts: the shared glossary `docs/glossary.md`, and one `GLOSSARY.md` per part (`studio-backend/`, `studio-frontend/`, `theia/`). Read the shared one always, and the glossary of the part you're working in.
 - **`docs/adr/`**: read the ADRs that touch the area you're about to work in. The index is `docs/adr/README.md`.
 
-If a part's `GLOSSARY.md` doesn't exist yet, **proceed silently**. Don't flag its absence; don't create it upfront. `/domain-modeling` creates it when the first term specific to that part gets resolved.
+If a part's `GLOSSARY.md` doesn't exist yet, **proceed silently**. Don't flag its absence; don't create it upfront. `/domain-modeling` creates it when the first term specific to that part gets resolved. `GLOSSARY-MAP.md` names a part's glossary without a link until it exists (`scripts/check-docs.mjs` fails on a dead link there); the change that creates it turns the name into a link.
 
 ## Where a term goes
 

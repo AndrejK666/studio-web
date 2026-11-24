@@ -20,7 +20,7 @@ with GitHub; `STUDIO_STAND=local npm run dev:all` faces the compose stack
 instead (see [`docs/stands.md`](docs/stands.md)). The host shell boots, fetches the MFE manifest,
 and the left menu fills in with screens contributed by whatever MFE packages
 are present under `src-app/mfe_packages/`. This guide assumes the
-[`frontx-template-mfe`](../template-mfe/README.md) packages have been added —
+[`frontx-template-mfe`](.frontx/ai/@gears-frontx/frontx-template-mfe/workflows/add-mfe-package-workflow.md) packages have been added —
 `demo-mfe` `:3001`, `_blank-mfe` `:3099`, widget fixtures `:3201` / `:3202` —
 a shell-only seed has none yet: the menu stays empty and
 `generate:mfe-manifests` writes an empty manifest set, both expected until
@@ -118,7 +118,7 @@ Add a screen to an existing MFE (e.g. `src-app/mfe_packages/demo-mfe`):
 ## Add a microfrontend
 
 MFEs are the unit of composition. `_blank-mfe` (the copy-from scaffold) ships
-with [`frontx-template-mfe`](../template-mfe/README.md), not the shell — run
+with [`frontx-template-mfe`](.frontx/ai/@gears-frontx/frontx-template-mfe/workflows/add-mfe-package-workflow.md), not the shell — run
 `frontx add frontx-template-mfe` first if `src-app/mfe_packages/_blank-mfe`
 isn't there yet, then `npm install` (the workspace glob picks up the new
 packages, so the lock must be regenerated). Start from the blank MFE:

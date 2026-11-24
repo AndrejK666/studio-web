@@ -14,7 +14,11 @@
  * after the PR that caused it.
  *
  * Links are checked for the same reason: a document that was moved or renamed
- * leaves its readers on a 404 that no review notices.
+ * leaves its readers on a 404 that no review notices. So are `ADR-NNNN`
+ * citations: Studio's Open questions list one to a record that does not exist
+ * as a problem that stops a build. Both checks also cover the Markdown Studio
+ * reads outside docs/ (the root's, deploy/'s, keycloak/'s), where a dead link
+ * turns up in the same list.
  */
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
@@ -44,6 +48,18 @@ const PLACEHOLDER_TITLE = /^#\s.*\{[A-Z][^}]*\}/m;
 
 const LINK = /\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
 
+/** `ADR-0042`, `ADR 42`: a citation of a record in docs/adr/. */
+const ADR_CITATION = /\bADR[- ]0*(\d{1,4})\b/g;
+
+/**
+ * Records cited on purpose though they are not in docs/adr/, each with where
+ * the reason is written down.
+ */
+const ADRS_NOT_ON_MAIN = new Map([[17, 'docs/adr/README.md: "ADR-0017 is not on `main`"']]);
+
+/** Markdown outside docs/ that Studio reads as documentation: links and ADR citations only. */
+const OTHER_DOCS = ['.', 'deploy', 'keycloak'];
+
 function walk(dir) {
   return readdirSync(dir).flatMap((name) => {
     const path = join(dir, name);
@@ -72,6 +88,31 @@ const errors = [];
 const fail = (file, message) => errors.push(`${file.split(sep).join('/')}: ${message}`);
 
 const files = walk(DOCS);
+const adrNumbers = new Set(
+  readdirSync(join(DOCS, 'adr'))
+    .map((name) => name.match(/^(\d{4})-.*\.md$/)?.[1])
+    .filter(Boolean)
+    .map(Number),
+);
+
+/** Every relative link of `file` leads to a file or directory. */
+function checkLinks(file, body) {
+  for (const [, target] of body.matchAll(LINK)) {
+    if (/^[a-z][a-z0-9+.-]*:/i.test(target) || target.startsWith('#')) continue;
+    const path = decodeURIComponent(target.split('#')[0]);
+    if (!existsSync(resolve(dirname(file), path))) fail(file, `links to ${target}, which does not exist`);
+  }
+}
+
+/** Every `ADR-NNNN` that `file` cites is a record in docs/adr/. */
+function checkAdrCitations(file, body) {
+  const cited = new Set([...body.matchAll(ADR_CITATION)].map(([, n]) => Number(n)));
+  for (const n of cited) {
+    if (!adrNumbers.has(n) && !ADRS_NOT_ON_MAIN.has(n)) {
+      fail(file, `cites ADR-${String(n).padStart(4, '0')}, which docs/adr/ does not have`);
+    }
+  }
+}
 const definedIn = new Map();
 const citations = [];
 
@@ -95,11 +136,18 @@ for (const file of files) {
   }
   for (const [, id] of body.matchAll(CITATION)) citations.push([file, id]);
 
-  for (const [, target] of body.matchAll(LINK)) {
-    if (/^[a-z][a-z0-9+.-]*:/i.test(target) || target.startsWith('#')) continue;
-    const path = decodeURIComponent(target.split('#')[0]);
-    if (!existsSync(resolve(dirname(file), path))) fail(file, `links to ${target}, which does not exist`);
-  }
+  checkLinks(file, body);
+  // docs/upstream/ keeps other projects' documents, which cite their own ADRs.
+  if (top !== 'upstream') checkAdrCitations(file, body);
+}
+
+const others = OTHER_DOCS.flatMap((dir) =>
+  dir === '.' ? readdirSync('.').filter((name) => name.endsWith('.md') && statSync(name).isFile()) : walk(dir),
+);
+for (const file of others) {
+  const body = prose(readFileSync(file, 'utf8'));
+  checkLinks(file, body);
+  checkAdrCitations(file, body);
 }
 
 // A document nobody can find from an index is one nobody keeps up to date.
@@ -131,7 +179,9 @@ for (const [file, id] of dangling.values()) fail(file, `cites ${id}, which no do
 
 if (errors.length) {
   console.error(errors.join('\n'));
-  console.error(`\n${errors.length} problem(s) in ${DOCS}/.`);
+  console.error(`\n${errors.length} problem(s) in the documentation.`);
   process.exit(1);
 }
-console.log(`${files.length} documents, ${definedIn.size} ids: all specs typed, every id defined once and cited ids exist, every link resolves.`);
+console.log(
+  `${files.length} documents (and ${others.length} outside docs/), ${definedIn.size} ids: all specs typed, every id defined once and cited ids exist, every cited ADR exists, every link resolves.`,
+);
