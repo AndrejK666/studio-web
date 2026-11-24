@@ -696,6 +696,10 @@ gears:
       # (`backend.serviceSubject`). The same value goes to studio-session.
       service_account:
         subject: "${STUDIO_SERVICE_SUBJECT:-00000000-0000-4000-8000-00000000057d}"
+      # The GitLab the realm's `gitlab` broker signs people in from, where a
+      # GitLab sign-in's photo is looked up (keycloak/GITLAB_SSO.md). The chart
+      # passes `keycloak.gitlabIdp.baseUrl`; empty means gitlab.com.
+      gitlab_url: "${STUDIO_GITLAB_URL:-}"
 
   # How a person without an organization comes by one (ADR-0051 §2): `open`
   # creates it at once, `request` asks a platform administrator, `off` leaves
