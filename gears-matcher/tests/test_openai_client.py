@@ -153,3 +153,10 @@ def test_a_reasoning_model_gets_a_larger_reply_cap_in_the_request_and_the_label(
     client, seen = client_for(ok(), model="gpt-5.5")
     call(client)
     assert json.loads(seen[0].content)["max_completion_tokens"] == oc.REASONING_MAX_TOKENS
+
+
+def test_a_gateways_499_is_retried_then_succeeds() -> None:
+    replies = [httpx2.Response(499, text=""), httpx2.Response(200, json=completion())]
+    client, seen = client_for(lambda r: replies.pop(0))
+    call(client)
+    assert len(seen) == 2

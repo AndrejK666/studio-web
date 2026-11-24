@@ -20,7 +20,11 @@ PATH = re.compile(r"^(?!/)(?!.*(^|/)\.\.(/|$))[^\x00-\x1f\x7f\\]+\.md$")
 PATH_MAX = 300
 _FIELDS = {"product", "own_gears", "documents", "options"}
 _DOC_FIELDS = {"path", "sha256", "content"}
-_OPTION_FIELDS = {"use_gears_bundle", "max_calls", "extract_max_calls"}
+_OPTION_FIELDS = {"use_gears_bundle", "max_calls", "extract_max_calls", "provider", "model"}
+# What a run may ask for. Constructor's connector is not one of them: it is reachable only inside
+# the VPN, so a deployed Studio cannot use it. The service's own default is still its config's.
+PROVIDERS = ("litellm", "openai")
+MODEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,99}$")
 
 
 @dataclass(frozen=True)
@@ -63,6 +67,8 @@ class RunRequest:
     use_gears_bundle: bool = False
     max_calls: int = 400
     extract_max_calls: int | None = None
+    provider: str | None = None  # one of `PROVIDERS`; None: the service's own default
+    model: str | None = None  # one model id for all three roles; None: the provider's default
 
     def to_json(self) -> dict[str, Any]:
         """What is stored while the run is not finished (so a restart can run it again)."""
@@ -76,6 +82,8 @@ class RunRequest:
                 "use_gears_bundle": self.use_gears_bundle,
                 "max_calls": self.max_calls,
                 "extract_max_calls": self.extract_max_calls,
+                "provider": self.provider,
+                "model": self.model,
             },
         }
 
@@ -89,6 +97,8 @@ class RunRequest:
             use_gears_bundle=options["use_gears_bundle"],
             max_calls=options["max_calls"],
             extract_max_calls=options["extract_max_calls"],
+            provider=options.get("provider"),  # a run stored before these options existed has none
+            model=options.get("model"),
         )
 
 
@@ -114,6 +124,7 @@ def parse_request(body: Any, limits: Limits) -> RunRequest:
     options = body.get("options") or {}
     if not isinstance(options, dict) or set(options) - _OPTION_FIELDS:
         raise bad_request("options: known fields only")
+    provider, model = _provider_and_model(options.get("provider"), options.get("model"))
     return RunRequest(
         product=product,
         documents=documents,
@@ -123,7 +134,21 @@ def parse_request(body: Any, limits: Limits) -> RunRequest:
         extract_max_calls=_optional_bound(
             options.get("extract_max_calls"), "extract_max_calls", limits.max_extract_calls
         ),
+        provider=provider,
+        model=model,
     )
+
+
+def _provider_and_model(provider: Any, model: Any) -> tuple[str | None, str | None]:
+    if provider is None and model is None:
+        return None, None
+    if provider not in PROVIDERS:
+        raise unprocessable(
+            "unknown_provider", f"options.provider must be one of: {', '.join(PROVIDERS)}"
+        )
+    if model is not None and (not isinstance(model, str) or not MODEL.match(model)):
+        raise bad_request("options.model is not a model id")
+    return provider, model
 
 
 def _document(doc: Any, limits: Limits) -> Document:
