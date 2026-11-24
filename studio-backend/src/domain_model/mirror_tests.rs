@@ -1386,3 +1386,38 @@ async fn every_project_s_phase_answers_the_same_from_postgres_and_finds_subtypes
     want.sort();
     assert_eq!(phases, want, "a project without a phase is not listed");
 }
+
+/// A fill that keeps failing is not tried every minute for good: each failure
+/// in a row doubles the wait, up to an hour, and a success starts over.
+#[test]
+fn a_fill_that_keeps_failing_waits_longer_each_time() {
+    use std::time::{Duration, Instant};
+    let wait = super::fill_retry_after;
+    assert_eq!(wait(1), Duration::from_secs(60));
+    assert_eq!(wait(2), Duration::from_secs(120));
+    assert_eq!(wait(4), Duration::from_secs(480));
+    assert_eq!(wait(7), Duration::from_secs(3600), "capped at an hour");
+    assert_eq!(wait(u32::MAX), Duration::from_secs(3600));
+
+    let fills = FillState::default();
+    let tenant = Uuid::new_v4();
+    let back_date = |by: u64| {
+        fills.failed_at.lock().unwrap().get_mut(&tenant).unwrap().0 =
+            Instant::now() - Duration::from_secs(by);
+    };
+    assert!(fills.claim(tenant));
+    fills.release(tenant, true);
+    assert!(!fills.claim(tenant), "a failed fill waits");
+    back_date(61);
+    assert!(
+        fills.claim(tenant),
+        "and is tried again after the first wait"
+    );
+    fills.release(tenant, true);
+    back_date(61);
+    assert!(!fills.claim(tenant), "the second wait is longer");
+    back_date(121);
+    assert!(fills.claim(tenant));
+    fills.release(tenant, false);
+    assert!(fills.claim(tenant), "a success clears the count");
+}

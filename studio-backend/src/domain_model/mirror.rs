@@ -56,8 +56,22 @@ use super::store::{
 const ROWS_PER_STATEMENT: usize = 500;
 /// Ids per `IN (…)` list.
 const IDS_PER_STATEMENT: usize = 1_000;
-/// How long a tenant whose fill failed waits before a read retries it.
+/// How long a tenant whose fill failed waits before a read retries it, the
+/// first time; each failure in a row doubles it, up to [`FILL_RETRY_MAX`].
 const FILL_RETRY_AFTER: Duration = Duration::from_secs(60);
+/// The longest a tenant waits between fills. A fill reads every object and
+/// walks every one's edges: on the stand (2026-11-24) an organization of
+/// 82 000 objects whose fill could never succeed was refilled every minute,
+/// and kept graph-storage's Postgres at 430 % CPU for good.
+const FILL_RETRY_MAX: Duration = Duration::from_secs(60 * 60);
+
+/// How long a tenant waits after `failures` failed fills in a row.
+fn fill_retry_after(failures: u32) -> Duration {
+    let doublings = failures.saturating_sub(1).min(16);
+    FILL_RETRY_AFTER
+        .saturating_mul(1u32 << doublings)
+        .min(FILL_RETRY_MAX)
+}
 
 const OBJECT_TYPE_PREFIX: &str = "gts.cf.studio.domain.";
 const RELATION_TYPE_PREFIX: &str = "gts.cf.studio.domainrel.";
@@ -668,7 +682,8 @@ fn now_ms() -> i64 {
 #[derive(Default)]
 struct FillState {
     running: Mutex<HashSet<Uuid>>,
-    failed_at: Mutex<HashMap<Uuid, Instant>>,
+    /// When a tenant's last fill failed, and how many failed in a row.
+    failed_at: Mutex<HashMap<Uuid, (Instant, u32)>>,
     /// Bumped whenever a mirror write fails or a delete lands: a fill that
     /// started under an older generation may have read the graph before the
     /// change, so it must not declare the tenant complete.
@@ -693,7 +708,7 @@ impl FillState {
         if let Ok(failed) = self.failed_at.lock()
             && failed
                 .get(&tenant)
-                .is_some_and(|at| at.elapsed() < FILL_RETRY_AFTER)
+                .is_some_and(|(at, n)| at.elapsed() < fill_retry_after(*n))
         {
             return false;
         }
@@ -709,7 +724,8 @@ impl FillState {
         }
         if let Ok(mut f) = self.failed_at.lock() {
             if failed {
-                f.insert(tenant, Instant::now());
+                let n = f.get(&tenant).map_or(0, |(_, n)| *n);
+                f.insert(tenant, (Instant::now(), n.saturating_add(1)));
             } else {
                 f.remove(&tenant);
             }
