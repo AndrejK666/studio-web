@@ -552,6 +552,18 @@ export interface StudioBuildStarted {
   namespace: string;
 }
 
+/** `GET /studio-environments/v1/builds/{id}/images`: one image of a Research build, as Research says it is now. */
+export interface ResearchBuildImage {
+  app: string;
+  image: string;
+  name?: string | null;
+  research_id?: string | null;
+  /** `unknown` when Research could not be asked. */
+  status: 'built' | 'building' | 'failed' | 'missing' | 'unknown';
+  /** Research's words: why it failed or is missing, or why it could not be asked. */
+  message?: string | null;
+}
+
 /** `GET /studio-environments/v1/builds/{id}`: one build as Studio keeps it. */
 export interface EnvironmentBuild {
   build_id: string;

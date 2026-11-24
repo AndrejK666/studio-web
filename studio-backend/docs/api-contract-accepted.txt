@@ -701,10 +701,12 @@ request	POST /studio-environments/v1/builds	environment_id	Uuid	required
 request	POST /studio-environments/v1/builds	product_file	String	optional
 request	POST /studio-environments/v1/builds	profile	String	optional
 request	POST /studio-environments/v1/builds	ref	String	optional
+request	POST /studio-environments/v1/builds	then_deploy	bool	optional
 request	POST /studio-environments/v1/builds/plan	environment_id	Uuid	required
 request	POST /studio-environments/v1/builds/plan	product_file	String	optional
 request	POST /studio-environments/v1/builds/plan	profile	String	optional
 request	POST /studio-environments/v1/builds/plan	ref	String	optional
+request	POST /studio-environments/v1/builds/plan	then_deploy	bool	optional
 request	POST /studio-environments/v1/builds/{}/deploy	environment_id	Uuid	required
 request	POST /studio-environments/v1/deployments	action	String	optional
 request	POST /studio-environments/v1/deployments	build	String	optional
@@ -3603,6 +3605,9 @@ response	GET /studio-environments/v1/builds/{}	cause.summary	String	optional
 response	GET /studio-environments/v1/builds/{}	chart_ref	String	optional
 response	GET /studio-environments/v1/builds/{}	chart_version	String	optional
 response	GET /studio-environments/v1/builds/{}	commit	String	optional
+response	GET /studio-environments/v1/builds/{}	deploy_failure	String	optional
+response	GET /studio-environments/v1/builds/{}	deployment_id	String	optional
+response	GET /studio-environments/v1/builds/{}	deploys_to	String	optional
 response	GET /studio-environments/v1/builds/{}	environment	String	optional
 response	GET /studio-environments/v1/builds/{}	environment_id	String	optional
 response	GET /studio-environments/v1/builds/{}	failure	String	optional
@@ -3621,6 +3626,14 @@ response	GET /studio-environments/v1/builds/{}	source_connection	String	optional
 response	GET /studio-environments/v1/builds/{}	source_connection_id	String	optional
 response	GET /studio-environments/v1/builds/{}	status	String	always
 response	GET /studio-environments/v1/builds/{}	where	String	optional
+response	GET /studio-environments/v1/builds/{}/images	items	Vec<{}>	always
+response	GET /studio-environments/v1/builds/{}/images	items.app	String	always
+response	GET /studio-environments/v1/builds/{}/images	items.image	String	always
+response	GET /studio-environments/v1/builds/{}/images	items.message	String	optional
+response	GET /studio-environments/v1/builds/{}/images	items.name	String	optional
+response	GET /studio-environments/v1/builds/{}/images	items.research_id	String	optional
+response	GET /studio-environments/v1/builds/{}/images	items.status	String	always
+response	GET /studio-environments/v1/builds/{}/images	total	usize	always
 response	GET /studio-environments/v1/builds/{}/log	build_id	String	always
 response	GET /studio-environments/v1/builds/{}/log	environment	String	always
 response	GET /studio-environments/v1/builds/{}/log	namespace	String	always
@@ -9510,6 +9523,7 @@ route	GET /studio-domain-model/v1/types
 route	GET /studio-domain-model/v1/types/{}
 route	GET /studio-domain-model/v1/types/{}/conformance
 route	GET /studio-environments/v1/builds/{}
+route	GET /studio-environments/v1/builds/{}/images
 route	GET /studio-environments/v1/builds/{}/log
 route	GET /studio-environments/v1/config-secrets
 route	GET /studio-environments/v1/deployments

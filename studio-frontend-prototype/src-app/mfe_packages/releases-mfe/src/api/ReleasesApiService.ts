@@ -33,6 +33,7 @@ import type {
   EnvironmentBuild,
   MyResearchProjects,
   ProjectPath,
+  ResearchBuildImage,
   ResearchHardware,
   StudioBuildStarted,
 } from './types';
@@ -100,6 +101,12 @@ export class ReleasesApiService extends BaseApiService {
     DeploymentLogs,
     { organizationId: string; id: string }
   >(({ organizationId, id }) => `${ENV}/deployments/${enc(id)}/logs?${org(organizationId)}`);
+
+  /** What Research says now of each image of a Research build (kept 30 s by the server). */
+  readonly researchBuildImages = this.protocol(RestEndpointProtocol).queryWith<
+    { items: ResearchBuildImage[]; total: number },
+    ProjectParams & { buildId: string }
+  >(({ projectId, buildId }) => `${ENV}/builds/${enc(buildId)}/images?${project(projectId)}`);
 
   /** One build as Studio keeps it, with its cause when it failed. */
   readonly build = this.protocol(RestEndpointProtocol).queryWith<EnvironmentBuild, ProjectParams & { buildId: string }>(

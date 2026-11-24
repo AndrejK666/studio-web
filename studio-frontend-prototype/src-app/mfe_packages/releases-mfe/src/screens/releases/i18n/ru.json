@@ -428,7 +428,7 @@
   "image_status_ready_title": "Собран и лежит в своём реестре.",
   "image_status_building_title": "Сборка ещё делает его.",
   "image_status_failed_title": "Сборка упала, не сделав этот образ.",
-  "image_status_unconfirmed_title": "Сборка упала после того, как запросила этот образ у Research: развёртывание проверит, собран ли он.",
+  "image_status_unconfirmed_title": "Не удалось спросить Constructor Research, есть ли у него этот образ: войдите в Research или повторите чуть позже.",
   "image_status_gone_title": "Его больше нет в реестре.",
   "images_fits_count_one": "Подходит {count} окружению",
   "images_fits_count_few": "Подходит {count} окружениям",

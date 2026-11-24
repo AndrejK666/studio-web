@@ -2529,6 +2529,23 @@
     },
     {
       "method": "GET",
+      "path": "/studio-environments/v1/builds/{build_id}/images",
+      "operation_id": "studio_environments.get_research_build_images",
+      "tag": "",
+      "summary": "What Constructor Research says of each image of a Research build, now",
+      "authenticated": true,
+      "responses": [
+        "ResearchImagesDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-environments/v1/builds/{build_id}/log",
       "operation_id": "studio_environments.get_build_log",
       "tag": "",
