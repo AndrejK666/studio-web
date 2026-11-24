@@ -192,27 +192,43 @@ function setUp({
     productDescription: read('productDescription', { latest: null }),
     saveBindings: write('saveBindings', { items: [], total: 0 }),
     projectPath: read('projectPath', carry ? { ...answer, targets, deployments: deploys } : answer),
-    specPlan: read('specPlan', { items: [{}, {}], total: 2 }),
     deployment: read('deployment', deployment({})),
     deploymentLogs: read('deploymentLogs', { containers: [] }),
     myResearchProjects: read('myResearchProjects', { connection_id: 'c-research', items: [{ id: 'rp', name: 'ML team' }], total: 1 }),
     myResearchHardware: read('myResearchHardware', { items: [{ id: 'gpu', name: 'GPU', trial: true }], total: 1 }),
     createProjectEnvironment: write('createProjectEnvironment', env({ id: 'e-research', name: 'Research ML team', kind: 'research', research_project: 'rp' })),
     startBuild: write('startBuild', { build_id: 'research-7', run_id: 'r7', namespace: 'shop' }),
+    deployBuiltImages: write('deployBuiltImages', deployment({ id: 'd8', state: 'queued', environment_id: 'e-research' })),
+    buildImages: read('buildImages', { items: [], total: 0 }),
+    deploymentStatus: read('deploymentStatus', { deployment: deployment({}), workloads: [], hosts: [] }),
+    taskRun: read('taskRun', { id: 'r', state: 'running' }),
   });
 }
+
+/** Waits for an element, as the screen reads its answers. */
+const el = (selector: string) =>
+  waitFor(() => {
+    const e = document.querySelector(selector);
+    if (!e) throw new Error(`not yet: ${selector}`);
+    return e as HTMLElement;
+  });
+
+/** Picks a stage on the release map. */
+const openStage = async (stage: string) => {
+  fireEvent.click(await el(`[data-map-stage="${stage}"]`));
+  return el(`[data-release-stage="${stage}"]`);
+};
 
 describe('ReleasesScreen', () => {
   beforeEach(() => {
     scope.project = 'p1';
-    try {
-      window.localStorage.clear();
-    } catch {
-      // No storage: the tab is the next step's.
-    }
+    window.history.replaceState(null, '', '/');
     setUp();
   });
-  afterEach(() => vi.clearAllMocks());
+  afterEach(() => {
+    vi.clearAllMocks();
+    window.history.replaceState(null, '', '/');
+  });
 
   it('asks for a project when none is open', () => {
     scope.project = null;
@@ -220,49 +236,186 @@ describe('ReleasesScreen', () => {
     expect(screen.getByText('no_project')).toBeTruthy();
   });
 
-  it('shows the release summary and environments immediately, with Promote to the next environment', async () => {
-    render(<ReleasesScreen bridge={null} />);
-    expect(await screen.findByText('0.2.0 runs in dev')).toBeTruthy();
-    expect(document.querySelector('[data-release-overview]')).not.toBeNull();
-    expect(document.querySelector('[data-release-tab="history"]')?.getAttribute('aria-expanded')).toBe('false');
-    const dev = document.querySelector('[data-ladder-step="dev"]');
-    expect(dev?.getAttribute('data-ladder-state')).toBe('runs');
-    const prod = document.querySelector('[data-ladder-step="prod"]');
-    expect(prod?.getAttribute('data-ladder-state')).toBe('empty');
-    // prod takes from dev, which runs studio-2: Promote installs it.
-    const promote = document.querySelector('[data-ladder-promote]') as HTMLElement;
-    expect(promote.textContent).toContain('0.2.0');
-    fireEvent.click(promote);
-    await waitFor(() => expect(calls.some((c) => c.name === 'createDeployment')).toBe(true));
-    const asked = calls.find((c) => c.name === 'createDeployment');
-    expect(asked?.args).toEqual(['p1']);
-    expect(asked?.body).toEqual({ environment_id: 'e-prod', build: 'studio-2' });
-    // A protected environment answers "waiting for an administrator".
-    expect(await screen.findByText(/asked_waits/)).toBeTruthy();
-  });
+  describe('the release map', () => {
+    it('draws Build → Images → Environment → Deploy with each state and fact, and opens on the stage that failed', async () => {
+      render(<ReleasesScreen bridge={null} />);
+      const map = await el('[data-release-map]');
+      await waitFor(() =>
+        expect([...map.querySelectorAll('[data-map-stage]')].map((n) => `${n.getAttribute('data-map-stage')}:${n.getAttribute('data-map-state')}`)).toEqual([
+          'build:failed',
+          'images:done',
+          'environment:done',
+          'deploy:done',
+        ])
+      );
+      // The newest build failed; the images are the passed one's, deployed to dev.
+      expect(map.querySelector('[data-map-stage="build"] [data-map-fact]')?.textContent).toBe('desktop-3');
+      expect(map.querySelector('[data-map-stage="images"]')?.textContent).toContain('map_images_from {"build":"studio-2"}');
+      expect(map.querySelector('[data-map-stage="environment"] [data-map-fact]')?.textContent).toBe('dev');
+      expect(map.querySelector('[data-map-stage="deploy"]')?.textContent).toContain('0.2.0');
+      // The page opens on the stage that needs attention, and says so in the map.
+      expect((await el('[data-release-stage]')).getAttribute('data-release-stage')).toBe('build');
+      expect(map.querySelector('[data-map-stage="build"]')?.getAttribute('aria-selected')).toBe('true');
+      // No overview, no path: the map replaced them.
+      expect(document.querySelector('[data-release-overview]')).toBeNull();
+      expect(document.querySelector('[data-project-path]')).toBeNull();
+    });
 
-  it('asks before an uninstall and sends it only on confirm', async () => {
-    render(<ReleasesScreen bridge={null} />);
-    await screen.findByText('0.2.0 runs in dev');
-    const deployButtons = document.querySelectorAll('[data-ladder-deploy]');
-    fireEvent.click(deployButtons[0] as HTMLElement);
-    fireEvent.click(await waitFor(() => document.querySelector('[data-deploy-uninstall]') as HTMLElement));
-    expect(await screen.findByText(/uninstall_title/)).toBeTruthy();
-    expect(calls.some((c) => c.name === 'createDeployment')).toBe(false);
-    fireEvent.click(document.querySelector('[data-confirm]') as HTMLElement);
-    await waitFor(() => expect(calls.some((c) => c.name === 'createDeployment')).toBe(true));
-    expect(calls.find((c) => c.name === 'createDeployment')?.body).toEqual({
-      environment_id: 'e-dev',
-      product: 'shop',
-      profile: 'prod',
-      action: 'uninstall',
+    it('shows one stage at a time and keeps the stage in the address', async () => {
+      render(<ReleasesScreen bridge={null} />);
+      await openStage('environment');
+      expect(document.querySelector('[data-stage-panel="build"]')).toBeNull();
+      expect(window.location.search).toContain('rel.stage=environment');
+      await openStage('deploy');
+      expect(document.querySelector('[data-stage-panel="environment"]')).toBeNull();
+      expect(window.location.search).toContain('rel.stage=deploy');
+    });
+
+    it('opens on the stage, the build and the environment the address names', async () => {
+      window.history.replaceState(null, '', '/?screen=releases;project=p1&rel.stage=images&rel.build=studio-2');
+      render(<ReleasesScreen bridge={null} />);
+      const panel = await el('[data-release-stage="images"]');
+      await waitFor(() => expect(panel.querySelector('[data-images-build]')?.getAttribute('data-images-build')).toBe('studio-2'));
+      expect(panel.querySelector('[data-build-chart]')?.textContent).toContain('oci://ghcr.io/acme/charts/shop:0.2.0');
+      expect(panel.querySelector('[data-images-fits]')?.textContent).toBe('dev, prod');
     });
   });
 
-  it('binds a profile to an environment under the ladder, keeping the others', async () => {
+  describe('Deploy', () => {
+    it('deploys the chosen images to the chosen environment, which waits for approval when protected', async () => {
+      render(<ReleasesScreen bridge={null} />);
+      const envs = await openStage('environment');
+      const prod = await waitFor(() => {
+        const row = envs.querySelector('[data-ladder-row="prod"]');
+        if (!row) throw new Error('not yet');
+        return row as HTMLElement;
+      });
+      expect(prod.querySelector('[data-ladder-fit]')?.getAttribute('data-ladder-fit')).toBe('yes');
+      fireEvent.click(prod.querySelector('[data-ladder-choose]') as HTMLElement);
+      await waitFor(() => expect(prod.hasAttribute('data-ladder-selected')).toBe(true));
+      expect(window.location.search).toContain('rel.env=e-prod');
+      fireEvent.click(await el('[data-environment-next]'));
+      const deploy = await el('[data-release-stage="deploy"]');
+      expect(deploy.querySelector('[data-deploy-plan-environment]')?.textContent).toContain('prod');
+      fireEvent.click(deploy.querySelector('[data-deploy-run]') as HTMLElement);
+      await waitFor(() => expect(calls.some((c) => c.name === 'createDeployment')).toBe(true));
+      const asked = calls.find((c) => c.name === 'createDeployment');
+      expect(asked?.args).toEqual(['p1']);
+      expect(asked?.body).toEqual({ environment_id: 'e-prod', build: 'studio-2' });
+      expect(await screen.findByText(/asked_waits/)).toBeTruthy();
+    });
+
+    it('a deploy to a Research environment goes by the deploy-only route', async () => {
+      setUp({
+        path: readyPath({ research_kit: true, research: { state: 'signed_in', connection_id: 'c-research' } }),
+        extraEnvironments: [
+          { environment: env({ id: 'e-research', name: 'research-ml', kind: 'research', research_project: 'rp', project_id: 'p1' }), namespace: 'shop' },
+        ],
+        extraBuilds: [
+          buildNode('r1', {
+            build_id: 'research-1',
+            where: 'research',
+            status: 'passed',
+            environment_id: 'e-research',
+            started_at: '2026-11-10T09:00:00Z',
+            finished_at: '2026-11-10T09:20:00Z',
+            images: [
+              { app: 'api-gateway', image: 'research-image://1' },
+              { app: 'ui', image: 'research-image://2' },
+              { app: 'database', image: 'research-image://3' },
+            ],
+          }),
+        ],
+      });
+      render(<ReleasesScreen bridge={null} />);
+      // The passed Research build is the images' build: three, in Research.
+      const images = await openStage('images');
+      await waitFor(() => expect(images.querySelector('[data-images-build]')?.getAttribute('data-images-build')).toBe('research-1'));
+      expect(document.querySelector('[data-map-stage="images"]')?.textContent).toContain('map_images_count {"done":3,"total":3}');
+      expect(images.querySelector('[data-images-place]')?.getAttribute('data-images-place')).toBe('research');
+      expect(images.querySelectorAll('[data-build-image]').length).toBe(3);
+      // A passed build is deployable from Images.
+      fireEvent.click(images.querySelector('[data-images-deploy]') as HTMLElement);
+      const deploy = await el('[data-release-stage="deploy"]');
+      expect(window.location.search).toContain('rel.env=e-research');
+      fireEvent.click(deploy.querySelector('[data-deploy-run]') as HTMLElement);
+      await waitFor(() => expect(calls.some((c) => c.name === 'deployBuiltImages')).toBe(true));
+      const asked = calls.find((c) => c.name === 'deployBuiltImages');
+      expect(asked?.args).toEqual(['p1', 'research-1']);
+      expect(asked?.body).toEqual({ environment_id: 'e-research' });
+      expect(calls.some((c) => c.name === 'createDeployment')).toBe(false);
+    });
+
+    it('says why the images cannot go to the chosen environment and keeps Deploy off', async () => {
+      window.history.replaceState(null, '', '/?rel.stage=deploy&rel.build=desktop-3');
+      render(<ReleasesScreen bridge={null} />);
+      const deploy = await el('[data-release-stage="deploy"]');
+      await waitFor(() => expect(deploy.querySelector('[data-deploy-why]')?.textContent).toBe('deploy_needs_images'));
+      expect((deploy.querySelector('[data-deploy-run]') as HTMLButtonElement).disabled).toBe(true);
+    });
+
+    it('asks before an uninstall and sends it only on confirm', async () => {
+      render(<ReleasesScreen bridge={null} />);
+      await openStage('deploy');
+      fireEvent.click(await el('[data-deploy-uninstall]'));
+      expect(await screen.findByText(/uninstall_title/)).toBeTruthy();
+      expect(calls.some((c) => c.name === 'createDeployment')).toBe(false);
+      fireEvent.click(document.querySelector('[data-confirm]') as HTMLElement);
+      await waitFor(() => expect(calls.some((c) => c.name === 'createDeployment')).toBe(true));
+      expect(calls.find((c) => c.name === 'createDeployment')?.body).toEqual({
+        environment_id: 'e-dev',
+        product: 'shop',
+        profile: 'prod',
+        action: 'uninstall',
+      });
+    });
+
+    it('a failed deploy shows its cause in the map and on the stage, which the page opens on', async () => {
+      setUp({
+        noBuilds: true,
+        deployments: [deployment({ id: 'd5', state: 'failed', outcome: 'ImagePullBackOff: denied\nmore' })],
+      });
+      render(<ReleasesScreen bridge={null} />);
+      const deploy = await el('[data-release-stage="deploy"]');
+      expect(document.querySelector('[data-map-stage="deploy"]')?.getAttribute('data-map-state')).toBe('failed');
+      expect(document.querySelector('[data-map-stage="deploy"] [data-map-more]')?.textContent).toBe('ImagePullBackOff: denied');
+      expect(deploy.querySelector('[data-deploy-cause]')?.textContent).toBe('ImagePullBackOff: denied');
+      fireEvent.click(deploy.querySelector('[data-deploy-open-detail]') as HTMLElement);
+      expect(await el('[data-deployment-detail="d5"]')).toBeTruthy();
+    });
+
+    it('lists the deploys under it: search, a row opens what the deploy said, and an earlier one deploys again', async () => {
+      setUp({
+        deployments: [
+          deployment({ id: 'd1', product: 'shop', reason: 'first try' }),
+          deployment({ id: 'd2', product: 'billing', environment_name: 'prod', environment_id: 'e-prod', namespace: 'billing-prod' }),
+          deployment({ id: 'd0', product: 'shop', chart_version: '0.1.0', requested_at: '2026-11-01T10:00:00Z' }),
+        ],
+      });
+      render(<ReleasesScreen bridge={null} />);
+      await openStage('deploy');
+      await waitFor(() => expect(document.querySelectorAll('[data-deploy-history-row]').length).toBe(3));
+      fireEvent.click(document.querySelector('[data-deploy-history-row="d1"]')?.closest('tr') as HTMLElement);
+      const detail = await el('[data-deploy-history-detail="d1"]');
+      expect(detail.textContent).toContain('first try');
+      // What runs there now is not deployed again from here.
+      expect(detail.querySelector('[data-deploy-again]')).toBeNull();
+      fireEvent.click(document.querySelector('[data-deploy-history-row="d0"]')?.closest('tr') as HTMLElement);
+      const earlier = await el('[data-deploy-history-detail="d0"]');
+      fireEvent.click(earlier.querySelector('[data-deploy-again="d0"]') as HTMLElement);
+      await waitFor(() => expect(calls.some((c) => c.name === 'createDeployment')).toBe(true));
+      expect(calls.find((c) => c.name === 'createDeployment')?.body).toEqual({ environment_id: 'e-dev', redeploy_of: 'd0' });
+      const search = screen.getByPlaceholderText('search_deploys');
+      fireEvent.change(search, { target: { value: 'billing-prod' } });
+      await waitFor(() => expect(document.querySelectorAll('[data-deploy-history-row]').length).toBe(1));
+      expect(document.querySelector('[data-deploy-history-row="d2"]')).toBeTruthy();
+    });
+  });
+
+  it('binds a profile to an environment on Environment, keeping the others', async () => {
     render(<ReleasesScreen bridge={null} />);
-    await screen.findByText('0.2.0 runs in dev');
-    const prod = document.querySelector('[data-binding-environment="prod"] select') as HTMLSelectElement;
+    await openStage('environment');
+    const prod = (await el('[data-binding-environment="prod"] select')) as HTMLSelectElement;
     fireEvent.change(prod, { target: { value: 'prod' } });
     fireEvent.click(document.querySelector('[data-bindings-save]') as HTMLElement);
     await waitFor(() => expect(calls.some((c) => c.name === 'saveBindings')).toBe(true));
@@ -276,163 +429,50 @@ describe('ReleasesScreen', () => {
     });
   });
 
-  it('lists the builds on Build: the newest open, a failed one with whose it is to fix', async () => {
-    setUp({ deployments: [] });
-    render(<ReleasesScreen bridge={null} />);
-    await screen.findByText('release_overview');
-    fireEvent.click(document.querySelector('[data-release-tab="build"]') as HTMLElement);
-    const failed = await waitFor(() => {
-      const card = document.querySelector('[data-build-card="desktop-3"]');
-      if (!card) throw new Error('not yet');
-      return card;
-    });
-    expect(failed.querySelector('[data-build-cause="gear"]')?.textContent).toContain('Gear billing fails');
-    await waitFor(() => expect(document.querySelectorAll('[data-product-build]').length).toBe(2));
-    expect(document.querySelector('[data-product-build="desktop-3"]')?.hasAttribute('data-product-build-open')).toBe(true);
-    // A click on another row opens it under the list instead; a second click closes it.
-    const row = () => document.querySelector('[data-product-build="studio-2"]')?.closest('tr') as HTMLElement;
-    fireEvent.click(row());
-    await waitFor(() => expect(document.querySelector('[data-build-card="studio-2"]')).toBeTruthy());
-    expect(document.querySelector('[data-build-card="desktop-3"]')).toBeNull();
-    fireEvent.click(row());
-    await waitFor(() => expect(document.querySelector('[data-build-card]')).toBeNull());
-  });
-
-  it("lists the chosen workflow's CI runs in a grid that searches them", async () => {
-    setUp({
-      deployments: [],
-      runs: [
-        runNode('r1', { workflow: 'ci', title: 'Fix the cart', branch: 'main', sha: 'aaaaaaa1', status: 'completed', conclusion: 'success', author: 'ann', created_at: '2026-11-08T09:00:00Z' }),
-        runNode('r2', { workflow: 'ci', title: 'Add billing', branch: 'main', sha: 'bbbbbbb2', status: 'completed', conclusion: 'failure', author: 'bob', created_at: '2026-11-09T09:00:00Z' }),
-      ],
-    });
-    render(<ReleasesScreen bridge={null} />);
-    await screen.findByText('release_overview');
-    fireEvent.click(document.querySelector('[data-release-tab="build"]') as HTMLElement);
-    expect(await screen.findByText('Fix the cart')).toBeTruthy();
-    expect(screen.getByText('Add billing')).toBeTruthy();
-    const search = screen.getByPlaceholderText('search_runs');
-    fireEvent.change(search, { target: { value: 'billing' } });
-    await waitFor(() => expect(screen.queryByText('Fix the cart')).toBeNull());
-    expect(screen.getByText('Add billing')).toBeTruthy();
-    fireEvent.change(search, { target: { value: 'nothing like it' } });
-    expect(await screen.findByText('no_runs_match')).toBeTruthy();
-    fireEvent.click(document.querySelector('[data-grid-clear-filters]') as HTMLElement);
-    expect(await screen.findByText('Fix the cart')).toBeTruthy();
-  });
-
-  it('lists the deploys on History: search, and a row opens what the deploy said', async () => {
-    setUp({
-      deployments: [
-        deployment({ id: 'd1', product: 'shop', reason: 'first try' }),
-        deployment({ id: 'd2', product: 'billing', environment_name: 'prod', namespace: 'billing-prod' }),
-      ],
-    });
-    render(<ReleasesScreen bridge={null} />);
-    await screen.findByText('0.2.0 runs in dev');
-    fireEvent.click(document.querySelector('[data-release-tab="history"]') as HTMLElement);
-    await waitFor(() => expect(document.querySelectorAll('[data-deploy-history-row]').length).toBe(2));
-    fireEvent.click(document.querySelector('[data-deploy-history-row="d1"]')?.closest('tr') as HTMLElement);
-    const detail = await waitFor(() => {
-      const d = document.querySelector('[data-deploy-history-detail="d1"]');
-      if (!d) throw new Error('not yet');
-      return d;
-    });
-    expect(detail.textContent).toContain('first try');
-    const search = screen.getByPlaceholderText('search_deploys');
-    fireEvent.change(search, { target: { value: 'billing-prod' } });
-    await waitFor(() => expect(document.querySelectorAll('[data-deploy-history-row]').length).toBe(1));
-    expect(document.querySelector('[data-deploy-history-row="d2"]')).toBeTruthy();
-  });
-
-  describe('targets and deploys from the path', () => {
-    const asked = (name: string) => calls.filter((c) => c.name === name).length;
-
-    it('takes them from the path answer and does not read them again', async () => {
-      setUp({ carry: true });
+  describe('Build', () => {
+    it('lists the builds: the newest open, a failed one with whose it is to fix, and its images on Images', async () => {
+      setUp({ deployments: [] });
       render(<ReleasesScreen bridge={null} />);
-      expect(await screen.findByText('0.2.0 runs in dev')).toBeTruthy();
-      expect(calls.find((c) => c.name === 'projectPath')?.args).toEqual([
-        { projectId: 'p1', include: 'targets,deployments' },
-      ]);
-      expect(asked('targets')).toBe(0);
-      expect(asked('deployments')).toBe(0);
+      const failed = await el('[data-build-card="desktop-3"]');
+      expect(failed.querySelector('[data-build-cause="gear"]')?.textContent).toContain('Gear billing fails');
+      await waitFor(() => expect(document.querySelectorAll('[data-product-build]').length).toBe(2));
+      expect(document.querySelector('[data-product-build="desktop-3"]')?.hasAttribute('data-product-build-open')).toBe(true);
+      // A click on another row opens it under the list instead; a second click closes it.
+      const row = () => document.querySelector('[data-product-build="studio-2"]')?.closest('tr') as HTMLElement;
+      fireEvent.click(row());
+      const card = await el('[data-build-card="studio-2"]');
+      expect(document.querySelector('[data-build-card="desktop-3"]')).toBeNull();
+      // What it made is the Images stage's.
+      fireEvent.click(card.querySelector('[data-build-see-images]') as HTMLElement);
+      expect((await el('[data-release-stage="images"]')).querySelector('[data-images-build]')?.getAttribute('data-images-build')).toBe('studio-2');
+      expect(window.location.search).toContain('rel.build=studio-2');
     });
 
-    it('reads them on their own from a backend whose path does not carry them', async () => {
-      render(<ReleasesScreen bridge={null} />);
-      expect(await screen.findByText('0.2.0 runs in dev')).toBeTruthy();
-      expect(asked('targets')).toBe(1);
-      expect(asked('deployments')).toBe(1);
-    });
-
-    it('reads them on their own when the path fails and shows an unreadable deployment history', async () => {
-      Object.assign(service, {
-        projectPath: read('projectPath', new Error('path is down')),
-        deployments: read('deployments', new Error('deploys are down')),
-      });
-      render(<ReleasesScreen bridge={null} />);
-      expect(await screen.findByText('release_deployments_unavailable')).toBeTruthy();
-      expect(screen.getByText('deploys are down')).toBeTruthy();
-      expect(document.querySelector('[data-ladder-step="dev"]')).toBeNull();
-      expect(asked('targets')).toBe(1);
-      expect(asked('deployments')).toBe(1);
-    });
-
-    it('a 404 from the targets is a deployment without environments, not an error', async () => {
-      Object.assign(service, {
-        projectPath: read('projectPath', new Error('path is down')),
-        targets: read('targets', Object.assign(new Error('not found'), { response: { status: 404 } })),
-      });
-      render(<ReleasesScreen bridge={null} />);
-      expect(await screen.findByText('no_environments_here')).toBeTruthy();
-    });
-  });
-
-  describe('the path to running (#1050)', () => {
-    it('shows every step from Specs to Running, the current one open with its action', async () => {
-      render(<ReleasesScreen bridge={null} />);
-      const path = await waitFor(() => {
-        const p = document.querySelector('[data-project-path]');
-        if (!p) throw new Error('not yet');
-        return p;
-      });
-      const steps = [...path.querySelectorAll('[data-path-step]')].map((s) => s.getAttribute('data-path-step'));
-      expect(steps).toEqual(['specs', 'product', 'build', 'image', 'environment', 'running']);
-      expect(path.querySelector('[data-path-step="specs"]')?.getAttribute('data-path-state')).toBe('done');
-      expect(path.getAttribute('data-path-current')).toBe('running');
-      expect(path.querySelector('[data-path-reason]')?.textContent).toBe('Nothing is deployed yet.');
-      // Its action opens the one deploy dialog on dev.
-      fireEvent.click(path.querySelector('[data-path-action="deploy"]') as HTMLElement);
-      const dialog = await waitFor(() => {
-        const d = document.querySelector('[data-deploy-dialog]');
-        if (!d) throw new Error('not yet');
-        return d;
-      });
-      expect(dialog.querySelector('[data-deploy-target="e-dev"]')?.getAttribute('data-deploy-target-focused')).toBe('true');
-    });
-
-    it('a project without a product is sent to compose one', async () => {
+    it("lists the CI runs folded under the builds, in a grid that searches them", async () => {
       setUp({
-        path: readyPath({
-          current: 'product',
-          steps: [
-            { id: 'product', state: 'next', reason: 'The project has no product yet.', checklist: [], action: { kind: 'open_product', label: '' } },
-            { id: 'build', state: 'later', reason: 'Waits for the product.', checklist: [] },
-          ],
-        }),
+        deployments: [],
+        runs: [
+          runNode('r1', { workflow: 'ci', title: 'Fix the cart', branch: 'main', sha: 'aaaaaaa1', status: 'completed', conclusion: 'success', author: 'ann', created_at: '2026-11-08T09:00:00Z' }),
+          runNode('r2', { workflow: 'ci', title: 'Add billing', branch: 'main', sha: 'bbbbbbb2', status: 'completed', conclusion: 'failure', author: 'bob', created_at: '2026-11-09T09:00:00Z' }),
+        ],
       });
       render(<ReleasesScreen bridge={null} />);
-      const button = await waitFor(() => {
-        const b = document.querySelector('[data-path-open="product"] [data-path-action="open_product"]');
-        if (!b) throw new Error('not yet');
-        return b as HTMLElement;
-      });
-      fireEvent.click(button);
-      expect(openScreen).toHaveBeenCalledWith(null, '/product');
+      const ci = await el('[data-build-in-ci]');
+      expect(ci.tagName).toBe('DETAILS');
+      expect(ci.hasAttribute('open')).toBe(false);
+      expect(await screen.findByText('Fix the cart')).toBeTruthy();
+      expect(screen.getByText('Add billing')).toBeTruthy();
+      const search = screen.getByPlaceholderText('search_runs');
+      fireEvent.change(search, { target: { value: 'billing' } });
+      await waitFor(() => expect(screen.queryByText('Fix the cart')).toBeNull());
+      expect(screen.getByText('Add billing')).toBeTruthy();
+      fireEvent.change(search, { target: { value: 'nothing like it' } });
+      expect(await screen.findByText('no_runs_match')).toBeTruthy();
+      fireEvent.click(document.querySelector('[data-grid-clear-filters]') as HTMLElement);
+      expect(await screen.findByText('Fix the cart')).toBeTruthy();
     });
 
-    it('a failed build names its gear and its cause leads to the gear', async () => {
+    it('a failed build names its gear under Build and its cause leads to the gear', async () => {
       setUp({
         path: readyPath({
           current: 'build',
@@ -459,97 +499,119 @@ describe('ReleasesScreen', () => {
         }),
       });
       render(<ReleasesScreen bridge={null} />);
-      const cause = await waitFor(() => {
-        const c = document.querySelector('[data-path-open="build"] [data-failure-cause="GEAR_BUILD_FAILED"]');
-        if (!c) throw new Error('not yet');
-        return c;
-      });
+      const cause = await el('[data-release-stage="build"] [data-path-open="build"] [data-failure-cause="GEAR_BUILD_FAILED"]');
       expect(cause.textContent).toContain('gear `billing`');
       fireEvent.click(cause.querySelector('[data-path-action="open_gear"]') as HTMLElement);
       expect(openScreen).toHaveBeenCalledWith(null, '/product');
     });
 
-    it('a missing secret is a checklist item before any deploy', async () => {
+    it('a running Research build shows how far it got in the map and under Build', async () => {
       setUp({
-        path: readyPath({
-          current: 'environment',
-          steps: [
-            {
-              id: 'environment',
-              state: 'blocked',
-              reason: '1 thing is missing before a deploy to dev.',
-              environment_id: 'e-dev',
-              checklist: [
-                { code: 'PROFILE_BOUND', text: 'A profile is bound to dev.', done: true },
-                {
-                  code: 'SECRET',
-                  text: 'The product needs the secret SMTP_PASSWORD in dev.',
-                  done: false,
-                  action: { kind: 'provide_secret', label: 'Provide it', key: 'SMTP_PASSWORD', environment_id: 'e-dev' },
-                },
-              ],
-              action: { kind: 'provide_secret', label: 'Provide it', key: 'SMTP_PASSWORD', environment_id: 'e-dev' },
-            },
-          ],
-        }),
+        path: readyPath({ research_kit: true, research: { state: 'signed_in', connection_id: 'c-research' } }),
+        extraBuilds: [
+          buildNode('r1', {
+            build_id: 'research-1',
+            where: 'research',
+            status: 'running',
+            step: 'images',
+            started_at: '2026-11-10T09:00:00Z',
+          }),
+        ],
       });
       render(<ReleasesScreen bridge={null} />);
-      const missing = await waitFor(() => {
-        const m = document.querySelector('[data-path-checklist] [data-check="SECRET"]');
-        if (!m) throw new Error('not yet');
-        return m;
-      });
-      expect(missing.getAttribute('data-check-done')).toBeNull();
-      expect(missing.textContent).toContain('SMTP_PASSWORD');
-      // Provide it opens the environment's configuration on Deploy.
-      fireEvent.click(missing.querySelector('[data-path-action="provide_secret"]') as HTMLElement);
-      await waitFor(() => expect(document.querySelector('[data-step="deploy"]')).toBeTruthy());
+      const build = await el('[data-release-stage="build"]');
+      expect(document.querySelector('[data-map-stage="build"]')?.getAttribute('data-map-state')).toBe('running');
+      expect(document.querySelector('[data-map-stage="build"]')?.textContent).toContain('map_build_running_at');
+      const card = await el('[data-build-card="research-1"]');
+      expect(card.querySelector('[data-research-progress]')?.getAttribute('data-research-progress')).toBe('images');
+      // Build and run in Research opens the dialog on the Research target.
+      fireEvent.click(build.querySelector('[data-research-open]') as HTMLElement);
+      expect(await el('[data-deploy-dialog] [data-deploy-target-research]')).toBeTruthy();
+    });
+  });
+
+  describe('targets and deploys from the path', () => {
+    const asked = (name: string) => calls.filter((c) => c.name === name).length;
+
+    it('takes them from the path answer and does not read them again', async () => {
+      setUp({ carry: true });
+      render(<ReleasesScreen bridge={null} />);
+      await el('[data-map-stage="deploy"][data-map-state="done"]');
+      expect(calls.find((c) => c.name === 'projectPath')?.args).toEqual([
+        { projectId: 'p1', include: 'targets,deployments' },
+      ]);
+      expect(asked('targets')).toBe(0);
+      expect(asked('deployments')).toBe(0);
     });
 
-    it('a project running in an environment is done and opens its application', async () => {
-      setUp({
-        path: readyPath({
-          steps: [
-            {
-              id: 'running',
-              state: 'done',
-              reason: 'Runs in Research at https://shop.example.',
-              checklist: [],
-              url: 'https://shop.example',
-              action: { kind: 'open_app', label: 'Open the application', url: 'https://shop.example' },
-            },
-          ],
-          running_in: [{ environment_id: 'e-r', environment_name: 'Research', url: 'https://shop.example' }],
-        }),
-      });
-      const opened = vi.spyOn(window, 'open').mockReturnValue(null);
+    it('reads them on their own from a backend whose path does not carry them', async () => {
       render(<ReleasesScreen bridge={null} />);
-      const button = await waitFor(() => {
-        const b = document.querySelector('[data-path-action="open_app"]');
-        if (!b) throw new Error('not yet');
-        return b as HTMLElement;
-      });
-      expect(document.querySelector('[data-path-step="running"]')?.getAttribute('data-path-state')).toBe('done');
-      fireEvent.click(button);
-      expect(opened).toHaveBeenCalledWith('https://shop.example', '_blank', 'noopener,noreferrer');
+      await el('[data-map-stage="deploy"][data-map-state="done"]');
+      expect(asked('targets')).toBe(1);
+      expect(asked('deployments')).toBe(1);
     });
+
+    it('reads them on their own when the path fails and shows an unreadable deployment history', async () => {
+      Object.assign(service, {
+        projectPath: read('projectPath', new Error('path is down')),
+        deployments: read('deployments', new Error('deploys are down')),
+      });
+      render(<ReleasesScreen bridge={null} />);
+      expect(await screen.findByText(/release_deployments_unavailable/)).toBeTruthy();
+      expect(screen.getByText(/deploys are down/)).toBeTruthy();
+      expect(asked('targets')).toBe(1);
+      expect(asked('deployments')).toBe(1);
+    });
+
+    it('a 404 from the targets is a deployment without environments, not an error', async () => {
+      Object.assign(service, {
+        projectPath: read('projectPath', new Error('path is down')),
+        targets: read('targets', Object.assign(new Error('not found'), { response: { status: 404 } })),
+      });
+      render(<ReleasesScreen bridge={null} />);
+      expect(await screen.findByText('no_environments_here')).toBeTruthy();
+    });
+  });
+
+  it('a missing secret is a checklist item on Environment, and Provide it stays there on its environment', async () => {
+    setUp({
+      path: readyPath({
+        current: 'environment',
+        steps: [
+          {
+            id: 'environment',
+            state: 'blocked',
+            reason: '1 thing is missing before a deploy to dev.',
+            environment_id: 'e-dev',
+            checklist: [
+              { code: 'PROFILE_BOUND', text: 'A profile is bound to dev.', done: true },
+              {
+                code: 'SECRET',
+                text: 'The product needs the secret SMTP_PASSWORD in dev.',
+                done: false,
+                action: { kind: 'provide_secret', label: 'Provide it', key: 'SMTP_PASSWORD', environment_id: 'e-dev' },
+              },
+            ],
+            action: { kind: 'provide_secret', label: 'Provide it', key: 'SMTP_PASSWORD', environment_id: 'e-dev' },
+          },
+        ],
+      }),
+    });
+    render(<ReleasesScreen bridge={null} />);
+    await openStage('environment');
+    const missing = await el('[data-path-checklist] [data-check="SECRET"]');
+    expect(missing.getAttribute('data-check-done')).toBeNull();
+    expect(missing.textContent).toContain('SMTP_PASSWORD');
+    fireEvent.click(missing.querySelector('[data-path-action="provide_secret"]') as HTMLElement);
+    expect(await el('[data-environment-chosen="dev"] [data-environment-config="dev"]')).toBeTruthy();
+    expect(window.location.search).toContain('rel.env=e-dev');
   });
 
   describe('Deploy to… (#1053)', () => {
     const openDialog = async () => {
       render(<ReleasesScreen bridge={null} />);
-      fireEvent.click(
-        await waitFor(() => {
-          const b = document.querySelector('[data-deploy-to]');
-          if (!b) throw new Error('not yet');
-          return b as HTMLElement;
-        })
-      );
-      return waitFor(() => {
-        const d = document.querySelector('[data-deploy-dialog]');
-        if (!d) throw new Error('not yet');
-        return d;
-      });
+      fireEvent.click(await el('[data-deploy-to]'));
+      return el('[data-deploy-dialog]');
     };
 
     it('lists the environments and no Research target without the kit', async () => {
@@ -731,38 +793,37 @@ describe('ReleasesScreen', () => {
     it('groups the environments into Kubernetes and Research, each row with its place', async () => {
       setUp({ path: readyPath(kit), extraEnvironments: [researchEnv] });
       render(<ReleasesScreen bridge={null} />);
+      await openStage('environment');
       const kube = await group('kubernetes');
       expect([...kube.querySelectorAll('[data-ladder-row]')].map((r) => r.getAttribute('data-ladder-row'))).toEqual(['dev', 'prod']);
       await waitFor(() => expect(kube.querySelector('[data-environment-target="kubernetes"]')?.textContent).toContain('Acme cluster'));
       expect(kube.textContent).toContain('shop-dev');
       const research = await group('research');
       expect([...research.querySelectorAll('[data-ladder-row]')].map((r) => r.getAttribute('data-ladder-row'))).toEqual(['research-ml']);
+      // studio-2 has a chart and no Research images: the Research row says so.
+      expect(research.querySelector('[data-ladder-fit]')?.getAttribute('data-ladder-fit')).toBe('research_only');
       const target = research.querySelector('[data-environment-target="research"]') as HTMLElement;
       await waitFor(() => expect(target.textContent).toContain('ML team'));
       await waitFor(() => expect(target.textContent).toContain('GPU'));
       expect(target.textContent).toContain('Research account');
     });
 
-    it('Build and run in Research opens the dialog on the Research target', async () => {
+    it('the Research group says how to get an environment there', async () => {
       setUp({ path: readyPath(kit) });
       render(<ReleasesScreen bridge={null} />);
+      await openStage('environment');
       const research = await group('research', false);
       expect(research.textContent).toContain('group_research_empty');
-      fireEvent.click(research.querySelector('[data-research-open]') as HTMLElement);
-      expect(await waitFor(() => {
-        const r = document.querySelector('[data-deploy-dialog] [data-deploy-target-research]');
-        if (!r) throw new Error('not yet');
-        return r;
-      })).toBeTruthy();
     });
 
     it('without the kit there is no Research group unless an environment is one', async () => {
       render(<ReleasesScreen bridge={null} />);
+      await openStage('environment');
       await group('kubernetes');
       expect(document.querySelector('[data-environment-group="research"]')).toBeNull();
     });
 
-    it('without a product says why and leaves Deploy… and Build and run waiting', async () => {
+    it('without a product says why and leaves Choose and Build and run waiting', async () => {
       setUp({
         path: readyPath({
           ...kit,
@@ -773,65 +834,27 @@ describe('ReleasesScreen', () => {
         }),
       });
       render(<ReleasesScreen bridge={null} />);
-      const line = await waitFor(() => {
-        const l = document.querySelector('[data-releases-no-product]');
-        if (!l) throw new Error('not yet');
-        return l as HTMLElement;
-      });
+      const line = await el('[data-releases-no-product]');
       expect(line.textContent).toContain('no_product_actions');
+      expect(document.querySelector('[data-map-stage="build"]')?.getAttribute('data-map-state')).toBe('blocked');
+      await openStage('build');
+      expect((await el('[data-research-open]') as HTMLButtonElement).disabled).toBe(true);
+      await openStage('environment');
       await group('kubernetes');
-      const deploy = document.querySelector('[data-ladder-deploy]') as HTMLButtonElement;
-      expect(deploy.disabled).toBe(true);
-      expect(deploy.title).toBe('no_product_short');
-      expect((document.querySelector('[data-research-open]') as HTMLButtonElement).disabled).toBe(true);
+      const choose = document.querySelector('[data-ladder-choose]') as HTMLButtonElement;
+      expect(choose.disabled).toBe(true);
+      expect(choose.title).toBe('no_product_short');
       fireEvent.click(line.querySelector('[data-path-action="open_product"]') as HTMLElement);
       expect(openScreen).toHaveBeenCalledWith(null, '/product');
-    });
-
-    it('lists the Research builds with their place: a running one with its step, a failed one with its cause', async () => {
-      setUp({
-        path: readyPath(kit),
-        extraEnvironments: [researchEnv],
-        extraBuilds: [
-          buildNode('r1', {
-            build_id: 'research-1',
-            where: 'research',
-            status: 'running',
-            step: 'images',
-            environment_id: 'e-research',
-            started_at: '2026-11-10T09:00:00Z',
-          }),
-          buildNode('r0', {
-            build_id: 'research-0',
-            where: 'research',
-            status: 'failed',
-            failure: 'Research cannot be reached',
-            failure_step: 'upload',
-            environment_id: 'e-research',
-            started_at: '2026-11-10T08:00:00Z',
-          }),
-        ],
-      });
-      render(<ReleasesScreen bridge={null} />);
-      const running = await waitFor(() => {
-        const r = document.querySelector('[data-research-build-row="research-1"]');
-        if (!r) throw new Error('not yet');
-        return r as HTMLElement;
-      });
-      expect(running.querySelector('[data-research-progress]')?.getAttribute('data-research-progress')).toBe('images');
-      expect(running.querySelector('[data-environment-target="research"]')).toBeTruthy();
-      const failed = document.querySelector('[data-research-build-row="research-0"]') as HTMLElement;
-      expect(failed.getAttribute('data-research-build-status')).toBe('failed');
-      expect(failed.textContent).toContain('Research cannot be reached');
-      expect(failed.querySelector('[data-research-progress]')).toBeNull();
     });
 
     it('says what Builds and History will hold when there is nothing yet', async () => {
       setUp({ deployments: [], noBuilds: true });
       render(<ReleasesScreen bridge={null} />);
+      await openStage('build');
       await waitFor(() => expect(document.querySelector('[data-releases-empty="builds"]')?.textContent).toContain('builds_empty'));
-      expect(document.querySelector('[data-releases-empty="history"]')?.textContent).toContain('history_empty');
-      expect(document.querySelector('[data-release-tab="history"]')).toBeNull();
+      await openStage('deploy');
+      expect((await el('[data-releases-empty="history"]')).textContent).toContain('history_empty');
     });
   });
 });

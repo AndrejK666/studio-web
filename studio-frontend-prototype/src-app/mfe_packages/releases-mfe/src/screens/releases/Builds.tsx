@@ -1,19 +1,19 @@
 /**
- * A project's builds (ADR-0045, ADR-0048 §9), Releases' first step: the
- * prototype's builds-tab.tsx (00828880) carried over in part. One line says
- * where the builds stand; Build in CI -- the repository's workflow, its runs,
- * which one is the project's build workflow -- then the product's builds,
- * from Studio, the IDE or CI, as one list (BuildsGrids.tsx, the kit's DataGrid
- * as Specs, #1076): the newest open under it with how far it
- * got (prepare, images, publish), its log, what failed and whose it is to
- * fix, and, once it published its chart, Deploy. A run of the project's
- * build workflow is one of them even when it left no manifest.
+ * A project's builds (ADR-0045, ADR-0048 §9), the release map's Build stage:
+ * the prototype's builds-tab.tsx (00828880) carried over in part. One line
+ * says where the builds stand; then the product's builds, from Research,
+ * Studio, the IDE or CI, as one list (BuildsGrids.tsx, the kit's DataGrid as
+ * Specs, #1076): the newest open under it with how far it got, its log, what
+ * failed and whose it is to fix, and what it made -- which the Images stage
+ * shows. Last and folded, the CI runs of the project's repositories: a run is
+ * a build of this product only when its workflow is the project's build
+ * workflow, which is then among the builds even when it left no manifest.
  */
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { Badge, Button, NativeSelect, NativeSelectOption } from '@gears-frontx/ui-kit';
-import { isNotFound, openScreen, runWhenVisible, usePollWhileVisible, useScreenAvailability } from '@constructor-studio/mfe-shared';
-import type { BuildLog, Deployment, DeployEnvironment, ProjectBuildConfig, ProjectImage } from '../../api/types';
+import { isNotFound, openScreen, runWhenVisible, useScreenAvailability } from '@constructor-studio/mfe-shared';
+import type { BuildLog, DeployEnvironment, ProjectBuildConfig, ProjectImage } from '../../api/types';
 import {
   buildWorkflowOf,
   buildsHeadline,
@@ -33,19 +33,17 @@ import {
   type StageState,
 } from '../../model/builds';
 import { recordFor, whereItRuns } from '../../model/images';
+import { recordedProgress } from '../../model/environment-targets';
+import { ResearchProgress } from './ResearchProgress';
 import { buildsHint } from '../../model/pipeline';
 import { ROUTES } from '../../model/path';
 import { CiRunsGrid, ProductBuildsGrid, STAGE_MARK } from './BuildsGrids';
-import { DeployBuildTo } from './DeployActions';
 import { ErrorLine, errText, useApi, useReleases } from './parts';
 import { NextLine } from './NextLine';
 import styles from './ReleasesScreen.module.css';
 
 /** At most this many runs are read: the sync keeps the newest few hundred per repository. */
 const LIMIT = 200;
-
-/** How often the product's builds are read again while one runs. */
-const FOLLOW_MS = 10_000;
 
 /** How often an open log is read again while its build runs. */
 const LOG_FOLLOW_MS = 5_000;
@@ -57,27 +55,23 @@ export function ProjectBuilds({
   ideBuilds,
   environments,
   environmentsReady = true,
-  deployments,
   round,
   now,
-  onChanged,
-  onFollow,
+  onImages,
   runningIn = null,
 }: {
+  /** Show a build's images: the Images stage, on that build. */
+  onImages: (build: IdeBuild) => void;
   /** The product's builds as recorded (`build` nodes), read by Releases. */
   ideBuilds: IdeBuild[];
   /** The environment something of the product runs in, when one does: with no build on record it was built outside Studio. */
   runningIn?: string | null;
   environments: DeployEnvironment[];
   environmentsReady?: boolean;
-  deployments: Deployment[];
   /** Bumped by Releases when it read again: read the runs again too. */
   round: number;
   /** When Releases last read: what "lost" and "took" are measured against. */
   now: number;
-  onChanged: (message: string) => void;
-  /** A build runs: ask Releases to read again. */
-  onFollow: () => void;
 }) {
   const { t, projectId, bridge } = useReleases();
   const api = useApi();
@@ -127,9 +121,6 @@ export function ProjectBuilds({
     () => productBuildsOf(ideBuilds, runs ?? [], config?.build, repoPaths),
     [ideBuilds, runs, config, repoPaths]
   );
-  const running = builds.some((b) => b.status === 'running' && !isLost(b, now));
-  // Not while the tab is hidden: shown again, it reads at once.
-  usePollWhileVisible(onFollow, FOLLOW_MS, running);
 
   // Building in Studio is not in this portal yet (parity.md): the line says
   // what it can without it.
@@ -174,8 +165,13 @@ export function ProjectBuilds({
           {t(registryTarget ? 'configure_build_registry' : 'open_build_infrastructure')}
         </Button>
       )}
-      <section className={styles.card} data-build-in-ci>
-        <h2 className={styles.cardTitle}>{t('build_in_ci_title')}</h2>
+      <ProductBuilds builds={builds} now={now} onImages={onImages} />
+      <details className={styles.card} data-build-in-ci>
+        <summary className={styles.summary}>
+          <b>{t('build_in_ci_title')}</b>{' '}
+          <span className={styles.muted}>{t('build_in_ci_about')}</span>
+          {runs && <span className={styles.muted}> · {t.count('ci_runs_count', runs.length)}</span>}
+        </summary>
         <InCi
           config={config}
           setConfig={setConfig}
@@ -186,8 +182,7 @@ export function ProjectBuilds({
           builds={ideBuilds}
           now={now}
         />
-      </section>
-      <ProductBuilds builds={builds} environments={environments} deployments={deployments} now={now} onChanged={onChanged} />
+      </details>
     </section>
   );
 }
@@ -388,16 +383,12 @@ function InCi({
  *  is lost, not running. */
 function ProductBuilds({
   builds,
-  environments,
-  deployments,
   now,
-  onChanged,
+  onImages,
 }: {
   builds: IdeBuild[];
-  environments: DeployEnvironment[];
-  deployments: Deployment[];
   now: number;
-  onChanged: (message: string) => void;
+  onImages: (build: IdeBuild) => void;
 }) {
   const { t } = useReleases();
   // One array while nothing changed: every new one reloads the grid.
@@ -409,8 +400,7 @@ function ProductBuilds({
   if (product.length === 0) return null;
   const opened = product.find((b) => b.id === shown);
   return (
-    <section className={styles.card} data-product-builds>
-      <h2 className={styles.cardTitle}>{t('builds_title')}</h2>
+    <section className={styles.stack} data-product-builds>
       <ProductBuildsGrid builds={product} now={now} open={opened?.id ?? null} onToggle={toggle} />
       {opened && (
         <section className={styles.card} data-product-build-open={opened.buildId}>
@@ -423,9 +413,7 @@ function ProductBuilds({
             build={opened}
             lost={isLost(opened, now)}
             now={now}
-            environments={environments}
-            deployments={deployments}
-            onChanged={onChanged}
+            onImages={onImages}
           />
         </section>
       )}
@@ -433,26 +421,24 @@ function ProductBuilds({
   );
 }
 
-/** One build, open under the list: where it ran, its log, what failed and
- *  whose it is to fix, or what it published, and Deploy once it published a chart. */
+/** One build, open under the list: where it ran, how far a running one is,
+ *  its log, what failed and whose it is to fix, and what it made, which the
+ *  Images stage shows. */
 function BuildDetails({
   build: b,
   lost,
   now,
-  environments,
-  deployments,
-  onChanged,
+  onImages,
 }: {
   build: IdeBuild;
   lost: boolean;
   now: number;
-  environments: DeployEnvironment[];
-  deployments: Deployment[];
-  onChanged: (message: string) => void;
+  onImages: (build: IdeBuild) => void;
 }) {
   const { t, language } = useReleases();
   const cause = b.status === 'failed' ? failureCause(b, now) : null;
   const place = b.place ? placeLines(b.place) : [];
+  const progress = b.where === 'research' ? recordedProgress(b) : null;
   return (
     <div className={styles.stack} data-build-card={b.buildId} data-build-card-status={lost ? 'lost' : b.status}>
       {b.branch && (
@@ -481,6 +467,12 @@ function BuildDetails({
               })}
         </p>
       )}
+      {progress && (
+        <div className={styles.stack} data-build-progress>
+          <ResearchProgress progress={progress} />
+          <span className={styles.muted}>{t('research_build_follow')}</span>
+        </div>
+      )}
       {b.where === 'studio' && <BuildLogPanel buildId={b.buildId} running={b.status === 'running'} />}
       {cause && !lost && (
         <p className={styles.muted} data-build-cause={cause.kind}>
@@ -500,20 +492,18 @@ function BuildDetails({
           </a>
         </div>
       )}
-      {b.images.length > 0 ? (
-        <BuildImages build={b} />
+      {b.images.length > 0 || b.chartRef ? (
+        <div className={styles.row} data-build-made>
+          <span className={styles.muted}>
+            {b.images.length > 0 ? t.count('build_made_images', b.images.length) : t('build_made_chart', { version: b.chartVersion ?? '' })}
+          </span>
+          <Button size="sm" variant="outline" onClick={() => onImages(b)} data-build-see-images>
+            {t('build_see_images')}
+          </Button>
+        </div>
       ) : b.outputs.length > 0 ? (
         <div className={styles.muted}>{b.outputs.join(', ')}</div>
       ) : null}
-      {b.chartRef ? (
-        <div className={styles.muted} data-build-chart>
-          {t('chart')} <code>{b.chartRef}</code>
-          {b.chartVersion ? <>:{b.chartVersion}</> : null}
-        </div>
-      ) : null}
-      {b.status === 'passed' && b.chartRef && b.chartVersion && (
-        <DeployBuildTo build={b} environments={environments} deployments={deployments} onChanged={onChanged} />
-      )}
     </div>
   );
 }
@@ -522,7 +512,7 @@ function BuildDetails({
  *  where it runs now, whether it is pinned or gone. An image Studio did not
  *  record (a build from before the records, or one the IDE pushed) is its
  *  reference alone. */
-function BuildImages({ build: b }: { build: IdeBuild }) {
+export function BuildImages({ build: b }: { build: IdeBuild }) {
   const { projectId } = useReleases();
   const api = useApi();
   const [records, setRecords] = useState<ProjectImage[]>([]);

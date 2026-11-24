@@ -4,21 +4,16 @@
  * clusters, deployed to with Deploy… -- and Constructor Research --
  * applications in Research projects, built and run with Build and run in
  * Research -- and names the place on every row: the cluster and namespace,
- * or the Research project, its hardware and the Research account. Under the
- * Builds step, the builds that ran in Research with that place, a running
- * one with the step it reported, a failed one with its cause.
+ * or the Research project, its hardware and the Research account. The groups
+ * are the release map's Environment stage: a row's Choose picks where the
+ * chosen images go.
  */
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { Badge, Button } from '@gears-frontx/ui-kit';
 import type { Connection, DeployEnvironment, PathAction, ProjectPath, ResearchHardware, ResearchProject } from '../../api/types';
-import type { IdeBuild } from '../../model/builds';
-import { RESEARCH_STEPS } from '../../model/research-progress';
 import {
   byTargetKind,
   environmentTarget,
-  recordedProgress,
-  researchBuildsOf,
   researchProjectsWithHardware,
   type TargetKind,
   type TargetNames,
@@ -27,8 +22,7 @@ import type { Intent } from '../../model/path';
 import type { LadderStep } from '../../model/releases';
 import { ReleaseLadder } from './Ladder';
 import { ActionButton } from './ProjectPath';
-import { ResearchProgress } from './ResearchProgress';
-import { ErrorLine, When, useApi, useReleases } from './parts';
+import { useApi, useReleases } from './parts';
 import styles from './ReleasesScreen.module.css';
 
 /** The names the rows need: the project's connections, and -- signed in to
@@ -183,7 +177,7 @@ function GroupHead({
   );
 }
 
-type LadderProps = Pick<React.ComponentProps<typeof ReleaseLadder>, 'bindings' | 'open' | 'onOpen' | 'onChanged' | 'panel'>;
+type LadderProps = Pick<React.ComponentProps<typeof ReleaseLadder>, 'bindings' | 'selected' | 'onSelect' | 'fitOf'>;
 
 /** The environments in two groups, each with its place and its action. */
 export function EnvironmentGroups({
@@ -192,7 +186,6 @@ export function EnvironmentGroups({
   names,
   blocked,
   noEnvironment,
-  onResearch,
   ...ladder
 }: LadderProps & {
   steps: LadderStep[];
@@ -202,8 +195,6 @@ export function EnvironmentGroups({
   blocked: string | null;
   /** What the Kubernetes group says with no cluster environment. */
   noEnvironment: React.ReactNode;
-  /** Opens Deploy to… on the Research target. */
-  onResearch: () => void;
 }) {
   const { t } = useReleases();
   const groups = byTargetKind(steps, (s) => s.environment);
@@ -234,17 +225,7 @@ export function EnvironmentGroups({
             blocked={blocked}
             head={
               <>
-                <GroupHead
-                  kind="research"
-                  about={t('group_research_about')}
-                  action={
-                    kit && (
-                      <Button size="sm" disabled={!!blocked} title={blocked ?? undefined} onClick={onResearch} data-research-open>
-                        {t('research_run')}
-                      </Button>
-                    )
-                  }
-                />
+                <GroupHead kind="research" about={t('group_research_about')} />
                 {!kit && <p className={styles.muted}>{t('group_research_no_kit')}</p>}
                 {kit && groups.research.length === 0 && <p className={styles.muted}>{t('group_research_empty')}</p>}
               </>
@@ -269,85 +250,6 @@ export function NoProductLine({
     <div className={styles.noProduct} role="note" data-releases-no-product>
       <span>{t('no_product_actions')}</span>
       {action && <ActionButton action={action} onIntent={onIntent} />}
-    </div>
-  );
-}
-
-const BUILD_BADGE: Record<string, 'success' | 'danger' | 'info' | 'secondary'> = {
-  passed: 'success',
-  failed: 'danger',
-  running: 'info',
-  cancelled: 'secondary',
-};
-
-/** How many Research builds the Builds step shows before "Show all builds". */
-const RESEARCH_BUILDS_SHOWN = 5;
-
-/** The builds that ran in Constructor Research, with where they ran. */
-export function ResearchBuilds({
-  builds,
-  environments,
-  names,
-}: {
-  builds: IdeBuild[];
-  environments: { environment: DeployEnvironment; namespace: string }[];
-  names: TargetNames;
-}) {
-  const { t } = useReleases();
-  const research = researchBuildsOf(
-    builds,
-    environments.map((x) => x.environment)
-  ).slice(0, RESEARCH_BUILDS_SHOWN);
-  if (research.length === 0) return null;
-  return (
-    <div className={styles.stack} data-research-builds>
-      <h3 className={styles.subTitle}>
-        <span className={styles.targetMain}>
-          <TargetIcon kind="research" />
-          {t('research_builds_title')}
-        </span>
-      </h3>
-      <ul className={styles.researchBuilds}>
-        {research.map((b) => {
-          const at = environments.find((x) => x.environment.id === b.place?.environmentId);
-          const progress = recordedProgress(b);
-          return (
-            <li key={b.id} className={styles.researchBuild} data-research-build-row={b.buildId} data-research-build-status={b.status}>
-              <div className={styles.researchBuildHead}>
-                <code>{b.buildId}</code>
-                <Badge variant={BUILD_BADGE[b.status] ?? 'secondary'}>{t(`research_build_state_${b.status}`)}</Badge>
-                <span className={styles.muted}>
-                  {t('research_build_where', { environment: at?.environment.name ?? b.place?.environment ?? '—' })}
-                </span>
-                <span className={styles.muted}>
-                  <When iso={b.finishedAt ?? b.startedAt} />
-                </span>
-              </div>
-              {at && <TargetCell env={at.environment} namespace={at.namespace} names={names} />}
-              {progress && (
-                <>
-                  <ResearchProgress progress={progress} />
-                  <span className={styles.muted}>{t('research_build_follow')}</span>
-                </>
-              )}
-              {b.status === 'failed' && (
-                <>
-                  {b.failureStep && (
-                    <span className={styles.muted}>
-                      {t('research_build_step', {
-                        step: (RESEARCH_STEPS as readonly string[]).includes(b.failureStep)
-                          ? t(`progress_step_${b.failureStep}`)
-                          : b.failureStep,
-                      })}
-                    </span>
-                  )}
-                  {b.failure && <ErrorLine>{b.failure}</ErrorLine>}
-                </>
-              )}
-            </li>
-          );
-        })}
-      </ul>
     </div>
   );
 }
