@@ -113,7 +113,11 @@ export const OverviewSection: React.FC<{
       live = false;
     };
   }, [olderStatus, projectId]);
-  const stages = serverStages ?? joinStages(stagesFromStatus(read.data?.path), delivery ?? []);
+  const fromStatus = stagesFromStatus(read.data?.path);
+  // As the server decides Product: a product that does not resolve is failed,
+  // whatever revision is saved.
+  const unresolved = fromStatus.filter((s) => s.id === 'product' && s.state === 'failed');
+  const stages = serverStages ?? joinStages(fromStatus, delivery ?? [], unresolved);
   const open = (route: string | null) => {
     if (route) openScreen(bridge, route);
   };

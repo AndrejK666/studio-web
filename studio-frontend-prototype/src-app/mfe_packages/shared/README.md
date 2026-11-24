@@ -97,6 +97,32 @@ each MFE's build bundles them into its own stylesheet, as it does its own.
   `useThemedRoot` finds a popup's `container`: the screen's `[data-theme]`
   root, or else the shadow root's top element.
 
+## The project path
+
+One project path, from its sources to its running product, is drawn the same
+on Overview, Product and Releases: `ProjectPath` from its own entry,
+`@constructor-studio/mfe-shared/path` (`src/path.ts`; a stylesheet and a
+dictionary the main entry need not carry). The stages are the server's
+(studio-backend `project_path.rs`): `GET /studio-organizations/v1/project-status`
+answers all nine in `stages`, `GET /studio-environments/v1/project-path` stages
+5-9. A stage's number is its place on the whole path, so Product is 5 on every
+tab; `only` picks the stages a screen shows.
+
+- A chip's colour is its state (`done`, `current`, `blocked`, `todo`,
+  `running`, `failed`, `unknown`) over the portal's tokens; the focus — the
+  first stage neither done nor unknown — is outlined.
+- Its cause shows on hover and in the line under the strip, with the action
+  that moves it on (worded by its `kind` in the dictionary, the server's label
+  otherwise).
+- A click opens the tab that holds the evidence through `openScreen`, where
+  that screen and its kit are here; `onSelect` keeps a stage on its own screen
+  (Releases' stage panels — then `tabIdPrefix`/`panelId` make the chips its
+  tabs — and Product's save), `onAction` acts on a stage's action there.
+- Its words are in `src/path/i18n/{en,ru}.json`, counts through `t.count`.
+- A server before `stages` answered only its own steps: `stagesFromStatus`
+  and `stagesFromDelivery` say those as stages by the same rules, and
+  `joinStages` puts them in path order with the focus marked.
+
 ## The Inbox count
 
 A screen that reads the person's open Inbox (`GET /studio-user/v1/me/inbox`)

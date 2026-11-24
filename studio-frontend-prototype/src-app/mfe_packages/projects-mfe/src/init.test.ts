@@ -36,6 +36,7 @@ vi.mock('./api/DocumentsApiService', () => ({
 vi.mock('./api/ProjectStatusApiService', () => ({
   ProjectStatusApiService: class ProjectStatusApiService {},
   ProjectPhaseApiService: class ProjectPhaseApiService {},
+  ProjectDeliveryApiService: class ProjectDeliveryApiService {},
 }));
 
 vi.mock('./api/SpecQualityApiService', () => ({
@@ -149,8 +150,9 @@ describe('projects-mfe init', () => {
     // catalogue the create wizard reads, and the project's specs),
     // studio-spec-quality (whether those specs can be checked) and
     // studio-organizations (the project status Overview draws) and
-    // studio-domain-model (a next step waiting on a project field).
-    expect(register).toHaveBeenCalledTimes(10);
+    // studio-domain-model (a next step waiting on a project field), and
+    // studio-environments (the path's stages 5-9 from an older status).
+    expect(register).toHaveBeenCalledTimes(11);
     expect(initialize).toHaveBeenCalledTimes(1);
     expect(createFrontX).toHaveBeenCalledTimes(1);
     expect(effects).toHaveBeenCalledTimes(1);
