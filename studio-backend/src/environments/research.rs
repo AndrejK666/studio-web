@@ -162,6 +162,7 @@ impl Drop for Tree {
 /// local disk, at the synced commit for the source's own branch -- and only
 /// otherwise (a commit or product branch pushed since the last sync) from
 /// the provider, in this background run.
+#[allow(clippy::too_many_arguments)]
 async fn prepare(
     hub: &Arc<ClientHub>,
     ctx: &SecurityContext,
