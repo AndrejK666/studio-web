@@ -2668,8 +2668,9 @@ impl IdentityService {
 /// Strongest first, then by kind and id: the order every alias list is shown in.
 fn sort_aliases(out: &mut [AliasRecord]) {
     out.sort_by(|a, b| {
-        let strength =
-            |record: &AliasRecord| Confidence::parse(&record.confidence).map_or(0, Confidence::strength);
+        let strength = |record: &AliasRecord| {
+            Confidence::parse(&record.confidence).map_or(0, Confidence::strength)
+        };
         strength(b)
             .cmp(&strength(a))
             .then_with(|| a.kind.cmp(&b.kind))

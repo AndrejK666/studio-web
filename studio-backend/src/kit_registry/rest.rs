@@ -1696,7 +1696,9 @@ async fn catalogue(
             .into_iter()
             .map(|detail| {
                 // A kit of the shared library names no organization, as `get_kit` answers it.
-                let grant = (detail.kit.shelf == "organization").then_some(org).flatten();
+                let grant = (detail.kit.shelf == "organization")
+                    .then_some(org)
+                    .flatten();
                 detail_dto(detail, &bundles, grant)
             })
             .collect()
