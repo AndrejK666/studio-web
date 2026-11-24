@@ -20,6 +20,7 @@ import { workspaceCreateSlice } from './slices/workspaceSlice';
 import { artifactSyncSlice } from './slices/artifactSyncSlice';
 import { sourcesConnectSlice } from './slices/sourcesConnectSlice';
 import { typeDecisionSlice } from './slices/typeDecisionSlice';
+import { gearsMatchSlice } from './slices/gearsMatchSlice';
 import { specsCheckSlice } from './slices/specsCheckSlice';
 import { documentUploadSlice } from './slices/documentUploadSlice';
 import { initWizardEffects } from './effects/wizardEffects';
@@ -81,6 +82,8 @@ registerSlice(sourcesConnectSlice, (dispatch) => initSourcesConnectEffects(dispa
 registerSlice(typeDecisionSlice, (dispatch) => initTypeDecisionEffects(dispatch, mfeApp));
 // Check's runs, followed here so a check outlives a switch of section or project.
 registerSlice(specsCheckSlice, initSpecsCheckEffects);
+// Gears: the chosen connection and model, and each project's latest match.
+registerSlice(gearsMatchSlice);
 // Upload documents: the panel's rows are sent here, and the documents read invalidated on the app-bound QueryClient.
 registerSlice(documentUploadSlice, (dispatch) => initDocumentUploadEffects(dispatch, mfeApp));
 
