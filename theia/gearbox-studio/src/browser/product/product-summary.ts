@@ -11,11 +11,9 @@
 import type { Diagnostic } from "../../common/generated/Diagnostic";
 import type { InclusionReason } from "../../common/generated/InclusionReason";
 import type { ProductStatus } from "../product-store";
+import { plural } from "../../common/plural";
 
-/** `1 warning`, `2 warnings`: a count and its noun, agreeing. */
-export function plural(count: number, one: string, many: string): string {
-  return `${count} ${count === 1 ? one : many}`;
-}
+export { plural };
 
 /**
  * How each deployment kind reads beside a profile's id.

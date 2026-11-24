@@ -131,7 +131,7 @@ describe('what the view says', () => {
         expect(buildLine(build)).toBe('Reading documents 1/4 · docs/a.md');
         expect(buildLine({ ...build, done: 4, candidates: 3, judged: 1 })).toBe('Checking disagreements 1/3');
         expect(buildLine({ ...build, running: false, error: 'no model key' })).toBe('Stopped: no model key');
-        expect(buildLine({ ...build, running: false, done: 4, finished_at: 'now' })).toBe('Built 4 document(s), checked 0 candidate(s)');
+        expect(buildLine({ ...build, running: false, done: 4, finished_at: 'now' })).toBe('Built 4 documents, checked 0 candidates');
         expect(buildLine({ ...build, running: false })).toBe('');
     });
 

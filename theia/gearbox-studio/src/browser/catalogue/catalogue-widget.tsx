@@ -19,6 +19,7 @@ import React from "@theia/core/shared/react";
 
 import type { FailedRoot } from "../../common/generated/FailedRoot";
 import { rowKey } from "../../common/protocol";
+import { plural } from "../../common/plural";
 import { CatalogueStore } from "../catalogue-store";
 import { ProductEditService } from "../product-edit-service";
 import { ProductStore } from "../product-store";
@@ -104,7 +105,7 @@ export class CatalogueWidget extends ReactWidget {
               data-catalogue-diagnostics={state.diagnostics.length}
               onClick={() => void this.commands.executeCommand(SHOW_CATALOGUE_DIAGNOSTICS.id)}
             >
-              {state.diagnostics.length} diagnostic(s) →
+              {plural(state.diagnostics.length, "diagnostic", "diagnostics")} →
             </button>
           )}
         </div>

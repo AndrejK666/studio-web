@@ -2594,7 +2594,7 @@ function renderDiagnosticsSummary(
   return (
     <div className={`gbx-diagnostics gbx-diagnostics-${String(worst).toLowerCase()}`}>
       <div className="gbx-diagnostics-label">
-        {diagnostics.length} diagnostic(s)
+        {plural(diagnostics.length, "diagnostic", "diagnostics")}
         {errors > 0 && `, ${errors} blocking`}
       </div>
       <button type="button" className="gbx-choice" data-show-conflicts onClick={show}>

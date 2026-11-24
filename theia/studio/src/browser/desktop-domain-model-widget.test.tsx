@@ -90,12 +90,12 @@ describe('DesktopDomainModelWidget', () => {
 
     it('shows the document in front first: its findings, and what the model reads in it', () => {
         const widget = mount(createController(ready()));
-        expect(text(widget, '[data-testid="domain-model-document"]')).toContain('docs/orders.md · read at abc12345 · 2 fact(s)');
+        expect(text(widget, '[data-testid="domain-model-document"]')).toContain('docs/orders.md · read at abc12345 · 2 facts');
         expect(widget.node.querySelectorAll('[data-testid="domain-model-finding"]')).toHaveLength(1);
         expect(text(widget, '[data-testid="domain-model-document"]')).toContain('An order has a total.');
         expect(text(widget, '[data-testid="domain-model-document"]')).not.toContain('A customer signs in.');
         expect(text(widget, '[data-testid="domain-model-tab-document"]')).toBe('This document (1)');
-        expect(text(widget, '[data-testid="domain-model-build"]')).toBe('Built 1 document(s), checked 0 candidate(s)');
+        expect(text(widget, '[data-testid="domain-model-build"]')).toBe('Built 1 document, checked 0 candidates');
     });
 
     it('says a side edited here since the model read it', () => {
@@ -138,8 +138,8 @@ describe('DesktopDomainModelWidget', () => {
         expect(text(widget, '[data-testid="domain-model-findings"]')).toContain('How many customers may an order have?');
         click(widget, '[data-testid="domain-model-tab-entities"]');
         expect([...widget.node.querySelectorAll('[data-testid="domain-model-entity"]')].map(e => e.textContent)).toEqual([
-            'Customer 1 fact(s) in 1 document(s)',
-            'Order 1 fact(s) in 1 document(s)',
+            'Customer 1 fact in 1 document',
+            'Order 1 fact in 1 document',
         ]);
         click(widget, '[data-testid="domain-model-entity"]');
         expect(text(widget, '[data-testid="domain-model-entities"]')).toContain('A customer signs in.');

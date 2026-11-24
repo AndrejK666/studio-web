@@ -16,6 +16,8 @@
 // since, so a passage is found by its quote, nearest the line it was read at,
 // and a quote no longer in the file is said rather than pinned to a stale line.
 
+import { plural } from './plural';
+
 export interface DomainModelSide {
     readonly path: string;
     readonly line_start?: number | null;
@@ -219,7 +221,7 @@ export function buildLine(build: DomainModelBuild): string {
         return `Stopped: ${build.error}`;
     }
     if (build.finished_at) {
-        return `Built ${build.done} document(s), checked ${build.judged} candidate(s)`;
+        return `Built ${plural(build.done, 'document', 'documents')}, checked ${plural(build.judged, 'candidate', 'candidates')}`;
     }
     return '';
 }

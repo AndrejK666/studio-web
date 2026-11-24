@@ -11,14 +11,11 @@
 import { repositoryLine, type DesktopGitRepository } from '../common/desktop-git';
 import type { OrcaRepository, OrcaRuntimeStatus, OrcaWorktree } from '../common/orca-protocol';
 import { groupWorktrees } from '../common/orca-worktree-groups';
+import { plural } from '../common/plural';
 import type { StartRow, StartSection } from './start-page-hub';
 
 /** Rows per list; the layer caps again and counts the rest. */
 export const LIST_MAX = 6;
-
-function plural(n: number, one: string, many: string): string {
-    return `${n} ${n === 1 ? one : many}`;
-}
 
 /** "3 min ago", from epoch millis. */
 export function agoText(at: number | undefined, now: number): string {

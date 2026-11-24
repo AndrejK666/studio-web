@@ -47,6 +47,7 @@ import type { PluginTarget } from "../common/generated/PluginTarget";
 import type { ProductEdit } from "../common/generated/ProductEdit";
 import type { ResolveResult } from "../common/generated/ResolveResult";
 import { GearboxService } from "../common/protocol";
+import { plural } from "../common/plural";
 import { isEngineGone, isOutcomeUnknown } from "./engine-failure";
 import { CatalogueStore } from "./catalogue-store";
 import { productSourceFor, type ProductSource } from "./add-gear/product-source";
@@ -243,7 +244,7 @@ export class ProductEditService {
       label: open.label,
       summary:
         `Remove ${plugin?.gear ?? gear}${plugin ? ` from ${gear}` : ""}.` +
-        (count > 0 ? ` ${count} pending change(s) to it will be discarded.` : ""),
+        (count > 0 ? ` ${plural(count, "pending change", "pending changes")} to it will be discarded.` : ""),
       targets: [operation],
       dryRun: async () => {
         const preview = await this.service.applyEdits(open.path, [operation], true);
