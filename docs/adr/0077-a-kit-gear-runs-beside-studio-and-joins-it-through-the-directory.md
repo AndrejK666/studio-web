@@ -121,7 +121,7 @@ any name, so the TCP listener never opens without it.
 
 A new manifest section, `run_gears` (`kit_gear(...)` in `kit.gdl`), names
 each gear the kit runs. Each entry has the gear id `kit-<slug>-<name>`, the
-package and version (a gear is a published package, ADR-0078 on its branch),
+package and version (a gear is a published package, ADR-0078),
 an optional image digest, its routes (all under `/<gear>/v1/`), the MCP tools
 mapped to those routes, resources and whether it needs a database. Only a
 platform-tier kit may carry the section. It is separate from `gears` (claims

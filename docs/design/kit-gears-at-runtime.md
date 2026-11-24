@@ -74,7 +74,7 @@ below are in gears-rust.
 | A remote gear as a plugin of an in-process host | **missing** | DESIGN § Plugin Transport Abstraction (P2): the plugin pattern is "entirely in-process". A kit cannot ship, say, an authz or credstore plugin as a separate process. |
 | Spawning and lifecycle | **local only** | `libs/toolkit/src/backends/mod.rs` l. 89–108, `OopBackend` / `LocalProcessBackend`: the host can spawn local processes. On Kubernetes the lifecycle is Helm's (`docs/arch/toolkit-oop/ADR/0004-…helm-chart-organization.md`, `toolkit-common` library chart). |
 | Reference composition | **exists** | `apps/cf-gears-flight-control`: directory + grpc-hub + api-gateway (proxy on) + types-registry + authn-resolver; everything else OoP. `config/oop-flight-control.yaml` is the host config a Studio stand would copy. |
-| Gearbox: one gear as its own application | **exists** | `docs/GEARBOX.md`: the resolver places gears into applications per deployment profile and marks bindings that cross an application boundary. Registry-sourced gears were not built on 2026-09-14; ADR-0078 (gears are published packages, on its own branch) addresses that. |
+| Gearbox: one gear as its own application | **exists** | `docs/GEARBOX.md`: the resolver places gears into applications per deployment profile and marks bindings that cross an application boundary. Registry-sourced gears were not built on 2026-09-14; ADR-0078 (gears are published packages) addresses that. |
 | WebAssembly | **absent** | No `wasmtime` in either `Cargo.lock`. `gears/serverless-runtime` is design only (`gear.gdl`: `implementation = "design"`); its ADR-0005 (thin host) names WASM a "potential" backend. |
 
 Two documents have drifted from the code and should not be trusted on these
