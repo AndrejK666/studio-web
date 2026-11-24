@@ -263,8 +263,8 @@ export function EnvironmentsGrid({
   const columns = useMemo<DataGridTableColumn<EnvironmentRow>[]>(
     () => [
       { id: 'environment', label: t('col_environment'), component: NameCell, width: 220 },
-      { id: 'kind', label: t('col_kind'), component: KindCell, width: 110 },
-      { id: 'target', label: t('col_target'), component: TargetColumnCell, width: 240 },
+      { id: 'kind', label: t('col_kind'), component: KindCell, width: 130 },
+      { id: 'target', label: t('col_target'), component: TargetColumnCell, width: 220 },
       { id: 'status', label: t('col_status'), component: StatusCell, width: 190 },
       { id: 'runs', label: t('col_runs'), component: RunsCell, width: 140 },
       { id: 'fits', label: t('col_fits'), component: FitCell, width: 190 },
