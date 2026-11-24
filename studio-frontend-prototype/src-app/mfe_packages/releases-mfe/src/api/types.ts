@@ -495,7 +495,7 @@ export interface PathCheck {
   action?: PathAction | null;
 }
 
-export type PathStepId = "specs" | "product" | "build" | "image" | "environment" | "running";
+export type PathStepId = "product" | "build" | "image" | "environment" | "running";
 export type PathStepState = "done" | "active" | "failed" | "blocked" | "next" | "later";
 
 export interface PathStep {
@@ -567,12 +567,6 @@ export interface EnvironmentBuild {
 /** The end of each container's log of a deployed release. */
 export interface DeploymentLogs {
   containers: ContainerLog[];
-}
-
-/** The plan the spec mapping reads from the project's documents: only its size is read here. */
-export interface MappingPlanSummary {
-  items: unknown[];
-  total: number;
 }
 
 /** A release as its cluster reports it now. */

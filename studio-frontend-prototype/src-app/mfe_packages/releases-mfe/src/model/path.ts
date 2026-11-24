@@ -1,42 +1,12 @@
-/* A project's path to running (#1050): Specs → Product → Build → Image →
- * Environment → Running. The server decides Product to Running from what
- * the project keeps (`GET /studio-environments/v1/project-path`); Specs is
- * the spec mapping's, read here from the size of its plan. What a step's
+/* A project's path to running (#1050): Product → Build → Image →
+ * Environment → Running, as the server decides it from what the project
+ * keeps (`GET /studio-environments/v1/project-path`); the release map shows a
+ * step that failed or blocks under its stage. What a step's
  * action does on this screen, which deploy the address names (the Inbox's
  * "A Research deploy you asked for failed" opens one, #1054), and the
  * Research target of the one deploy dialog (#1053) are decided here too. */
 
-import type {
-  DeployEnvironment,
-  DeployEnvironmentInput,
-  PathAction,
-  PathStep,
-  PathStepId,
-  ProjectPath,
-} from "../api/types";
-
-/** The order of the steps, as the path is drawn. */
-export const PATH_STEPS: readonly PathStepId[] = ["specs", "product", "build", "image", "environment", "running"];
-
-/** How many capabilities the project's specifications need, or why it is not known. */
-export type SpecsSeen = { count: number } | "unavailable";
-
-/** The Specs step: done once the specifications name a capability; never
- *  blocks the rest -- a product may be composed without them. */
-export function specsStep(seen: SpecsSeen): PathStep {
-  if (seen === "unavailable") {
-    return { id: "specs", state: "later", reason: "", checklist: [] };
-  }
-  return seen.count > 0
-    ? { id: "specs", state: "done", reason: "", checklist: [] }
-    : { id: "specs", state: "next", reason: "", checklist: [], action: { kind: "open_specs", label: "" } };
-}
-
-/** The whole path: Specs first, then the server's steps. The step to look
- *  at stays the server's -- Specs only says what the documents give. */
-export function pathSteps(path: ProjectPath, specs: SpecsSeen): PathStep[] {
-  return [specsStep(specs), ...path.steps];
-}
+import type { DeployEnvironment, DeployEnvironmentInput, PathAction } from "../api/types";
 
 /** What pressing a step's (or a cause's) button does on Releases. */
 export type Intent =
@@ -49,7 +19,6 @@ export type Intent =
 
 /** The screens a step leads to, by their routes. */
 export const ROUTES = {
-  specs: "/projects/specs",
   sources: "/projects/sources",
   product: "/product",
   connections: "/connections",
@@ -58,8 +27,6 @@ export const ROUTES = {
 
 export function intentOf(a: Pick<PathAction, "kind"> & Partial<PathAction>, deploymentId?: string | null): Intent {
   switch (a.kind) {
-    case "open_specs":
-      return { kind: "screen", route: ROUTES.specs };
     case "open_sources":
       return { kind: "screen", route: ROUTES.sources };
     case "open_product":

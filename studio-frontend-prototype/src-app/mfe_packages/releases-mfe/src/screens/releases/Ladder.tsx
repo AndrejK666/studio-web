@@ -15,7 +15,7 @@ import { Badge, Button, Table, TableBody, TableCell, TableHead, TableHeader, Tab
 import type { Connection, Deployment, DeploymentStatus, ProjectTargets, TaskRun } from '../../api/types';
 import type { IdeBuild } from '../../model/builds';
 import { productUrls, profilesBoundTo } from '../../model/project-deploys';
-import { newestRelease, stepStatus, versionOf, type LadderStep } from '../../model/releases';
+import { stepStatus, versionOf, type LadderStep } from '../../model/releases';
 import { RungPlace, useDeployRequest } from './DeployActions';
 import { ErrorLine, TONE_BADGE, When, personLabel, relTime, useApi, usePeople, useReleases, type Tone } from './parts';
 import styles from './ReleasesScreen.module.css';
@@ -45,14 +45,14 @@ export function ReleaseLadder({
   onSelect: (environment: string) => void;
   /** Whether the chosen images can go there: adds the column when given. */
   fitOf?: (step: LadderStep) => React.ReactNode;
-  /** What the card says above its rows; absent: the newest published build. */
-  head?: React.ReactNode;
+  /** What the card says above its rows: the group's heading. */
+  head: React.ReactNode;
   /** Where a row's environment runs: adds the column when given. */
   targetOf?: (step: LadderStep) => React.ReactNode;
   /** Why nothing can be deployed here yet: Choose waits, saying so. */
   blocked?: string | null;
 }) {
-  const { t, language, projectId } = useReleases();
+  const { t, projectId } = useReleases();
   const api = useApi();
   const [expanded, setExpanded] = useState<string | null>(null);
   // Every rung asks which place it stands on: read once for the ladder.
@@ -68,23 +68,10 @@ export function ReleaseLadder({
       live = false;
     };
   }, [api, projectId]);
-  const newest = newestRelease(steps);
   const columns = 6 + (targetOf ? 1 : 0) + (fitOf ? 1 : 0);
   return (
     <section className={styles.card} data-release-ladder>
-      {head ?? (
-        <div className={styles.muted} data-ladder-build>
-          {t('newest_build')}{' '}
-          {newest ? (
-            <>
-              <b>{newest.chartVersion ?? newest.buildId}</b> · {newest.where} ·{' '}
-              {relTime(newest.finishedAt ?? newest.startedAt ?? '', language)}
-            </>
-          ) : (
-            t('nothing_published')
-          )}
-        </div>
-      )}
+      {head}
       {steps.length > 0 && (
         <Table>
           <TableHeader>

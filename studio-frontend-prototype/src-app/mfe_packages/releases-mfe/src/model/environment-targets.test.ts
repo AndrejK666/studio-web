@@ -6,7 +6,6 @@ import {
   environmentTarget,
   noProduct,
   recordedProgress,
-  researchBuildsOf,
   researchProjectsWithHardware,
   shortId,
   targetKindOf,
@@ -119,15 +118,6 @@ describe("environment targets", () => {
     expect(noProduct(null)).toBe(false);
     expect(noProduct({ steps: [{ id: "product", state: "next" }] })).toBe(true);
     expect(noProduct({ steps: [{ id: "product", state: "done" }] })).toBe(false);
-  });
-
-  it("lists the builds that ran in Research, by where or by their environment", () => {
-    const builds = [
-      build({ buildId: "r1", where: "research" }),
-      build({ buildId: "s1", where: "studio" }),
-      build({ buildId: "s2", where: "studio", place: { environmentId: "e-r" } as IdeBuild["place"] }),
-    ];
-    expect(researchBuildsOf(builds, [env({}), research]).map((b) => b.buildId)).toEqual(["r1", "s2"]);
   });
 
   it("a running build shows the step it reported, an unknown one as prepare", () => {

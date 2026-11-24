@@ -1,34 +1,14 @@
 import { describe, expect, it } from "vitest";
-import type { DeployEnvironment, ProjectPath } from "../api/types";
+import type { DeployEnvironment } from "../api/types";
 import {
   deploymentFromSearch,
   intentOf,
-  pathSteps,
   researchEnvironmentFor,
   researchEnvironmentInput,
   researchEnvironmentName,
   researchEnvironmentStale,
   pickableResearchProjects,
-  specsStep,
 } from "./path";
-
-const path: ProjectPath = {
-  organization_id: "org",
-  current: "product",
-  steps: [{ id: "product", state: "next", reason: "No product", checklist: [], action: { kind: "open_product", label: "" } }],
-  running_in: [],
-  research_kit: false,
-};
-
-describe("the path's Specs step", () => {
-  it("is next when the documents name no capability, done when they do, and never blocks", () => {
-    expect(specsStep({ count: 0 }).state).toBe("next");
-    expect(specsStep({ count: 0 }).action?.kind).toBe("open_specs");
-    expect(specsStep({ count: 3 }).state).toBe("done");
-    expect(specsStep("unavailable").state).toBe("later");
-    expect(pathSteps(path, { count: 2 }).map((s) => s.id)).toEqual(["specs", "product"]);
-  });
-});
 
 describe("what a step's action does", () => {
   it("opens the screen, tab, dialog or deploy it names", () => {

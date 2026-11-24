@@ -31,7 +31,6 @@ import type {
   DeployEnvironmentInput,
   DeploymentLogs,
   EnvironmentBuild,
-  MappingPlanSummary,
   MyResearchProjects,
   ProjectPath,
   ResearchHardware,
@@ -129,11 +128,6 @@ export class ReleasesApiService extends BaseApiService {
       `${ENV}/project-environments?${project(projectId)}`
     );
   }
-
-  /** What the project's specifications need (studio-spec-mapping): the Specs step reads its size. */
-  readonly specPlan = this.protocol(RestEndpointProtocol).queryWith<MappingPlanSummary, ProjectParams>(
-    ({ projectId }) => `/studio-spec-mapping/v1/plan?${project(projectId)}`
-  );
 
   /** The project's deploys, newest first. */
   readonly deployments = this.protocol(RestEndpointProtocol).queryWith<DeploymentList, ProjectParams>(

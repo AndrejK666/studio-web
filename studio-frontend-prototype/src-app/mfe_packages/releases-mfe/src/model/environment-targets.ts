@@ -98,13 +98,6 @@ export function noProduct(path: { steps: readonly { id: string; state: string }[
   return !!step && step.state !== "done";
 }
 
-/** The builds that ran in Constructor Research, newest first: those that say
- *  so, and those whose environment is a Research one. */
-export function researchBuildsOf(builds: readonly IdeBuild[], environments: readonly DeployEnvironment[]): IdeBuild[] {
-  const research = new Set(environments.filter((e) => targetKindOf(e) === "research").map((e) => e.id));
-  return builds.filter((b) => b.where === "research" || (!!b.place?.environmentId && research.has(b.place.environmentId)));
-}
-
 /** How far a running Research build is, as its record says: the step it is
  *  in (no counts: those live in the run, which the dialog follows). */
 export function recordedProgress(build: Pick<IdeBuild, "status" | "step">): ResearchProgress | null {
