@@ -431,6 +431,11 @@ pub struct IdentityService {
     hub: OnceLock<Arc<toolkit::client_hub::ClientHub>>,
     /// The Inbox's facts, kept a few seconds per (person, organization).
     inbox_reads: InboxReads,
+    /// The GitLab the realm brokers sign-ins from (`studio-user.gitlab_url`),
+    /// asked for a GitLab account's picture. `https://gitlab.com` unset.
+    gitlab_url: OnceLock<String>,
+    /// For that one public lookup.
+    http: reqwest::Client,
 }
 
 /// How long the Inbox's facts are reused. The owner accepted 30 s: the badge,
@@ -478,6 +483,8 @@ impl IdentityService {
             realm_read: Mutex::new(HashMap::new()),
             hub: OnceLock::new(),
             inbox_reads: InboxReads::default(),
+            gitlab_url: OnceLock::new(),
+            http: reqwest::Client::new(),
         }
     }
 
@@ -615,6 +622,50 @@ impl IdentityService {
     /// Tell the service which organization a new person joins, if any.
     pub fn set_first_login_join(&self, join: Option<(Uuid, String)>) {
         let _ = self.first_login_join.set(join);
+    }
+
+    /// The GitLab the realm brokers sign-ins from, when it is not gitlab.com.
+    pub fn set_gitlab_url(&self, url: Option<String>) {
+        if let Some(url) = url.map(|u| u.trim().to_owned()).filter(|u| !u.is_empty()) {
+            let _ = self.gitlab_url.set(url);
+        }
+    }
+
+    fn gitlab_url(&self) -> &str {
+        self.gitlab_url
+            .get()
+            .map(String::as_str)
+            .unwrap_or("https://gitlab.com")
+    }
+
+    /// Give a profile with no photo its GitLab account's picture
+    /// ([`super::gitlab_avatar`]). Asked only while the profile has none, and
+    /// never fatal: a GitLab that does not answer leaves the profile as it is.
+    async fn fill_gitlab_avatar(
+        &self,
+        user_id: &str,
+        base: &str,
+        account_id: Option<&str>,
+        username: &str,
+    ) {
+        let blank = match self.store.get_user(user_id).await {
+            Ok(Some(p)) => p.avatar_url.as_deref().is_none_or(|s| s.trim().is_empty()),
+            _ => false,
+        };
+        if !blank {
+            return;
+        }
+        match super::gitlab_avatar::avatar_url(&self.http, base, account_id, username).await {
+            Ok(Some(url)) => {
+                if let Err(error) = self.fill_blank_avatar(user_id, &url).await {
+                    tracing::warn!(user = %user_id, "studio-user: could not take a GitLab photo: {error:#}");
+                }
+            }
+            Ok(None) => {}
+            Err(error) => {
+                tracing::debug!(user = %user_id, "studio-user: GitLab did not give a photo: {error:#}");
+            }
+        }
     }
 
     /// Hand the service its view of the IdP's brokered logins.
@@ -1014,10 +1065,22 @@ impl IdentityService {
                 tracing::warn!(user = %user_id, "studio-user: could not record a brokered login: {error:#}");
             }
         }
-        if let Some(url) = brokered.iter().find_map(brokered_avatar_url)
-            && let Err(error) = self.fill_blank_avatar(user_id, &url).await
+        if let Some(url) = brokered.iter().find_map(brokered_avatar_url) {
+            if let Err(error) = self.fill_blank_avatar(user_id, &url).await {
+                tracing::warn!(user = %user_id, "studio-user: could not take a photo from a brokered login: {error:#}");
+            }
+        } else if let Some(account) = brokered
+            .iter()
+            .find(|a| a.provider.eq_ignore_ascii_case("gitlab"))
         {
-            tracing::warn!(user = %user_id, "studio-user: could not take a photo from a brokered login: {error:#}");
+            // GitLab's picture is at no address its id makes: asked for.
+            self.fill_gitlab_avatar(
+                user_id,
+                self.gitlab_url(),
+                Some(&account.user_id),
+                &account.user_name,
+            )
+            .await;
         }
     }
 
@@ -1598,7 +1661,21 @@ impl IdentityService {
                     ));
                 }
                 AliasOutcome::AlreadyHeld => report.already_confirmed += 1,
-                AliasOutcome::Refused(reason) => report.refused.push(reason.to_owned()),
+                AliasOutcome::Refused(reason) => {
+                    report.refused.push(reason.to_owned());
+                    continue;
+                }
+            }
+            // A GitLab account the person proved brings its picture, from the
+            // GitLab the connection points at.
+            if connection.provider.eq_ignore_ascii_case("gitlab") {
+                let base = if connection.base_url.trim().is_empty() {
+                    self.gitlab_url().to_owned()
+                } else {
+                    connection.base_url.clone()
+                };
+                self.fill_gitlab_avatar(user_id, &base, None, &connection.account)
+                    .await;
             }
         }
         Ok(())

@@ -53,7 +53,11 @@ const line = (repo: string, overrides: Partial<SourceImportLine> = {}): SourceIm
   ...overrides,
 });
 
-const CONNECTIONS = [connection('c-github', 'github'), connection('c-gitlab', 'gitlab')];
+const CONNECTIONS = [
+  connection('c-github', 'github'),
+  connection('c-gitlab', 'gitlab'),
+  connection('c-bitbucket', 'bitbucket'),
+];
 
 const ACTIVITY: SourceActivityListDto = {
   items: [{ repo: 'n-api', open: 3, merged: 4, commits: 9, days: [0, 1, 0, 2, 0, 0, 1] }],
@@ -151,10 +155,16 @@ describe('a source in the config is a row', () => {
     });
   });
 
-  it('on GitLab or Bitbucket reads that its provider cannot sync', () => {
+  it('on Bitbucket reads that its provider cannot sync', () => {
+    const row = only(answers({ sources: [source('lab/tool', 'c-bitbucket')], nodes: [] }));
+    expect(row.provider).toBe('bitbucket');
+    expect(row.lastSync).toEqual({ kind: 'unavailable', provider: 'bitbucket' });
+  });
+
+  it('on GitLab reads Not synced until a sync pulls it in', () => {
     const row = only(answers({ sources: [source('lab/tool', 'c-gitlab')], nodes: [] }));
     expect(row.provider).toBe('gitlab');
-    expect(row.lastSync).toEqual({ kind: 'unavailable', provider: 'gitlab' });
+    expect(row.lastSync).toEqual({ kind: 'not_synced' });
   });
 
   it('whose connection is gone reads Not connected, and still shows what its node holds', () => {

@@ -162,6 +162,7 @@ impl ConnectorDriver for DiscordDriver {
             .or(me.username)
             .unwrap_or_else(|| "unknown application".into());
         Ok(DriverIdentity {
+            avatar_url: None,
             checks: Vec::new(),
             account: name,
             display_name: Some(if me.bot {
@@ -326,6 +327,7 @@ impl ConnectorDriver for DiscordWebhookDriver {
         }
         let hook: Webhook = res.json().await?;
         Ok(DriverIdentity {
+            avatar_url: None,
             checks: Vec::new(),
             account: hook.name.unwrap_or_else(|| "Discord webhook".into()),
             display_name: hook.channel_id.map(|id| format!("posts to channel {id}")),

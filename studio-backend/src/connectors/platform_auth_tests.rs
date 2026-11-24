@@ -52,6 +52,7 @@ impl ConnectorDriver for GitHubLike {
     }
     async fn test(&self, _auth: &ConnectionAuth) -> anyhow::Result<DriverIdentity> {
         Ok(DriverIdentity {
+            avatar_url: None,
             account: "octocat".into(),
             display_name: None,
             checks: Vec::new(),

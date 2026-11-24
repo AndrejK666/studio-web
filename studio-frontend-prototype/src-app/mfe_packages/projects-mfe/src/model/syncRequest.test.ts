@@ -35,15 +35,16 @@ describe('which sources a sync is asked for', () => {
     });
   });
 
-  it('records GitLab and Bitbucket repositories as unsyncable, saying why', () => {
+  it('asks for a GitLab repository and records a Bitbucket one as unsyncable, saying why', () => {
     const plan = syncPlan(
       [source('acme/lab', 'c-gitlab'), source('acme/bucket', 'c-bitbucket')],
       connections
     );
 
-    expect(plan.repos).toEqual([]);
+    expect(plan.repos).toEqual([
+      { repo: 'acme/lab', provider: 'gitlab', baseUrl: undefined, secretRef: 'studio-connection-c-gitlab' },
+    ]);
     expect(plan.unsyncable).toEqual([
-      { repo: 'acme/lab', reason: { kind: 'i18n', key: 'artifacts_reason_provider_cannot_sync' } },
       { repo: 'acme/bucket', reason: { kind: 'i18n', key: 'artifacts_reason_provider_cannot_sync' } },
     ]);
   });

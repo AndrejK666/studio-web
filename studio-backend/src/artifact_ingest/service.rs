@@ -27,7 +27,7 @@ use super::gts;
 use crate::connectors::sdk::git_checkout;
 use crate::connectors::sdk::{
     ConnectionAuth, ConnectorDriver, DownloadTarget, Mention, NumberRef, PullRequestThreads,
-    Relation, RemoteBuildArtifact, find_references,
+    RefKind, Relation, RemoteBuildArtifact, find_references,
 };
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -668,6 +668,11 @@ impl IngestService {
         let mut by_number: HashMap<i64, String> = HashMap::new();
         // The issues among them: only an issue can be closed or be a parent.
         let mut issue_by_number: HashMap<i64, String> = HashMap::new();
+        // The pull requests among them. On GitLab issues and merge requests
+        // are numbered separately, so issue 5 and merge request 5 are two
+        // items: a mention or a comment that says which it means is looked up
+        // here or above, never in the shared map.
+        let mut pr_by_number: HashMap<i64, String> = HashMap::new();
         // Links read off an issue or a pull request, made edges once the
         // listing is done and every item of this repository has its node
         // (ADR-0047 §3). A target outside the repository, or outside this
@@ -849,7 +854,13 @@ impl IngestService {
                 );
                 let links: Vec<Mention> = find_references(&text, syntax)
                     .into_iter()
-                    .filter(|m| !(m.target.repo.is_none() && m.target.number == number))
+                    // Itself, unless the mention says it is an issue: on GitLab
+                    // issue 5 is another item than merge request 5.
+                    .filter(|m| {
+                        !(m.target.repo.is_none()
+                            && m.target.number == number
+                            && m.target.kind != RefKind::Issue)
+                    })
                     .collect();
                 let node = gts::pull_request_node(
                     source_scope,
@@ -888,6 +899,7 @@ impl IngestService {
                     }
                 }
                 by_number.insert(number, pr_id.clone());
+                pr_by_number.insert(number, pr_id.clone());
                 pr_refs.push((number, pr_id));
                 nodes.push(node);
             }
@@ -911,6 +923,7 @@ impl IngestService {
         edges.extend(item_link_edges(
             &item_links,
             &issue_by_number,
+            &pr_by_number,
             &by_number,
             repo_full_path,
         ));
@@ -1303,7 +1316,12 @@ impl IngestService {
             comments += batch.len();
             for c in batch {
                 let author = c.author.clone();
-                let target = by_number.get(&c.target_number).cloned();
+                let target = match c.target_is_pull_request {
+                    Some(true) => pr_by_number.get(&c.target_number),
+                    Some(false) => issue_by_number.get(&c.target_number),
+                    None => by_number.get(&c.target_number),
+                }
+                .cloned();
                 let node =
                     gts::comment_node(source_scope, &repo_id, connector_id, repo_full_path, c);
                 let comment_id = node.instance_id.clone();
@@ -2901,10 +2919,6 @@ impl IngestService {
                 return;
             }
         };
-        let http = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .build()
-            .unwrap_or_default();
         for a in manifests {
             let Some(run) = a.run_id else { continue };
             if known.contains(&gts::build_instance_id(
@@ -2913,11 +2927,12 @@ impl IngestService {
             )) {
                 continue;
             }
+            // Through the driver rather than its signed link: a GitLab that
+            // serves artifacts itself gives no link, only the bytes.
             let read = async {
-                let url = driver
-                    .download_link(auth, repo_full_path, DownloadTarget::BuildArtifact(a.id))
+                let res = driver
+                    .download(auth, repo_full_path, DownloadTarget::BuildArtifact(a.id))
                     .await?;
-                let res = http.get(&url).send().await?.error_for_status()?;
                 if res
                     .content_length()
                     .is_some_and(|n| n > builds::MAX_MANIFEST_BYTES as u64)
@@ -2930,7 +2945,11 @@ impl IngestService {
                 }
                 builds::manifest_from_zip(&bytes)
             };
-            let text = match read.await {
+            let read = tokio::time::timeout(std::time::Duration::from_secs(30), read);
+            let text = match read
+                .await
+                .unwrap_or_else(|_| Err(anyhow!("the manifest took longer than 30 s")))
+            {
                 Ok(t) => t,
                 Err(e) => {
                     warn!(error = %e, run, repo = repo_full_path, "studio-artifact-ingest: a pipeline's manifest could not be read");
@@ -3096,6 +3115,11 @@ impl IngestService {
     /// project repository it came from -- only one the project's organization
     /// owns, as for Build in CI. The link lives about a minute; nothing is
     /// downloaded here.
+    ///
+    /// A provider that serves the file itself gives no such link (a GitLab
+    /// with its artifacts on local storage): the answer is then Studio's own
+    /// route, `…/outputs/{output_id}/content`, which streams the file through
+    /// the same connection ([`Self::output_download`]).
     pub async fn output_download_link(
         &self,
         ctx: &SecurityContext,
@@ -3104,6 +3128,68 @@ impl IngestService {
         output_id: &str,
         asset: Option<&str>,
     ) -> Result<String, super::builds::BuildRefusal> {
+        use super::builds::BuildRefusal;
+        let (repository, target) = self
+            .output_repository(ctx, am, project, output_id, asset)
+            .await?;
+        match repository.download_link(target).await {
+            Ok(url) => Ok(url),
+            Err(e)
+                if e.downcast_ref::<crate::connectors::sdk::DownloadNeedsProxy>()
+                    .is_some() =>
+            {
+                let mut url = format!(
+                    "/cf/studio-artifact-ingest/v1/outputs/{}/content?project_id={project}",
+                    query_value(output_id)
+                );
+                if let Some(asset) = asset.map(str::trim).filter(|a| !a.is_empty()) {
+                    url.push_str("&asset_id=");
+                    url.push_str(&query_value(asset));
+                }
+                Ok(url)
+            }
+            Err(e) => Err(BuildRefusal::Provider(format!("{e:#}"))),
+        }
+    }
+
+    /// One output's bytes, fetched through the connection of the project
+    /// repository it came from, for Studio to stream on: what a member gets
+    /// where the provider signs no link. The same checks as
+    /// [`Self::output_download_link`].
+    pub async fn output_download(
+        &self,
+        ctx: &SecurityContext,
+        am: &dyn account_management_sdk::AccountManagementClient,
+        project: Uuid,
+        output_id: &str,
+        asset: Option<&str>,
+    ) -> Result<reqwest::Response, super::builds::BuildRefusal> {
+        let (repository, target) = self
+            .output_repository(ctx, am, project, output_id, asset)
+            .await?;
+        repository
+            .download(target)
+            .await
+            .map_err(|e| super::builds::BuildRefusal::Provider(format!("{e:#}")))
+    }
+
+    /// The repository an output came from, opened through its project
+    /// source's connection (only one the project's organization owns), and
+    /// what in it to download.
+    async fn output_repository(
+        &self,
+        ctx: &SecurityContext,
+        am: &dyn account_management_sdk::AccountManagementClient,
+        project: Uuid,
+        output_id: &str,
+        asset: Option<&str>,
+    ) -> Result<
+        (
+            crate::connectors::sdk::Repository,
+            crate::connectors::sdk::DownloadTarget,
+        ),
+        super::builds::BuildRefusal,
+    > {
         use super::builds::BuildRefusal;
         let output = self
             .list_outputs(ctx, &project.to_string())
@@ -3146,10 +3232,7 @@ impl IngestService {
         )
         .await
         .map_err(|e| BuildRefusal::Provider(format!("{e:#}")))?;
-        repository
-            .download_link(target)
-            .await
-            .map_err(|e| BuildRefusal::Provider(format!("{e:#}")))
+        Ok((repository, target))
     }
 
     pub async fn record_mapping_decision(
@@ -3880,9 +3963,24 @@ async fn read_one(dir: PathBuf, path: &str) -> anyhow::Result<Option<String>> {
 /// targets this sync holds a node of (ADR-0047 §3). Only an issue is closed
 /// or is a parent: "closes" naming a pull request is a reference to it, and
 /// "part of" a pull request is nothing.
+/// A query-string value, percent-encoded but for the unreserved characters.
+fn query_value(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char);
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
 fn item_link_edges(
     links: &[(String, &'static str, NumberRef)],
     issue_by_number: &HashMap<i64, String>,
+    pr_by_number: &HashMap<i64, String>,
     by_number: &HashMap<i64, String>,
     repo_full_path: &str,
 ) -> Vec<GtsEdge> {
@@ -3891,12 +3989,24 @@ fn item_link_edges(
         if !target.is_in(repo_full_path) {
             continue;
         }
-        let (rel, to) = match (*rel, issue_by_number.get(&target.number)) {
-            (gts::REL_CLOSES | gts::REL_PART_OF, Some(issue)) => (*rel, issue),
-            (gts::REL_PART_OF, None) => continue,
-            (_, _) => match by_number.get(&target.number) {
-                Some(item) => (gts::REL_REFERENCES, item),
+        let (rel, to) = match target.kind {
+            // A change request is never closed by another or a parent of
+            // anything: naming one is referencing it.
+            RefKind::ChangeRequest => match (*rel, pr_by_number.get(&target.number)) {
+                (gts::REL_PART_OF, _) | (_, None) => continue,
+                (_, Some(pr)) => (gts::REL_REFERENCES, pr),
+            },
+            RefKind::Issue => match issue_by_number.get(&target.number) {
+                Some(issue) => (*rel, issue),
                 None => continue,
+            },
+            RefKind::Any => match (*rel, issue_by_number.get(&target.number)) {
+                (gts::REL_CLOSES | gts::REL_PART_OF, Some(issue)) => (*rel, issue),
+                (gts::REL_PART_OF, None) => continue,
+                (_, _) => match by_number.get(&target.number) {
+                    Some(item) => (gts::REL_REFERENCES, item),
+                    None => continue,
+                },
             },
         };
         if to != from {
@@ -4021,7 +4131,11 @@ mod tests {
     /// holds; closing a pull request is referencing it (ADR-0047 §3).
     #[test]
     fn links_become_edges_to_the_items_this_repository_holds() {
-        let here = |number| NumberRef { repo: None, number };
+        let here = |number| NumberRef {
+            repo: None,
+            number,
+            ..Default::default()
+        };
         let issues = HashMap::from([(1, "i1".to_string()), (2, "i2".to_string())]);
         let mut items = issues.clone();
         items.insert(3, "p3".to_string());
@@ -4037,6 +4151,7 @@ mod tests {
                 NumberRef {
                     repo: Some("other/repo".into()),
                     number: 1,
+                    ..Default::default()
                 },
             ),
             (
@@ -4045,12 +4160,14 @@ mod tests {
                 NumberRef {
                     repo: Some("Acme/Specs".into()),
                     number: 1,
+                    ..Default::default()
                 },
             ),
             ("i1".to_string(), gts::REL_PART_OF, here(3)),
         ];
+        let prs = HashMap::from([(3, "p3".to_string())]);
         let got: Vec<(&str, String, String)> =
-            item_link_edges(&links, &issues, &items, "acme/specs")
+            item_link_edges(&links, &issues, &prs, &items, "acme/specs")
                 .into_iter()
                 .map(|e| (e.type_id, e.from, e.to))
                 .collect();
@@ -4061,6 +4178,50 @@ mod tests {
                 (gts::REL_REFERENCES, "p3".into(), "i2".into()),
                 (gts::REL_REFERENCES, "p5".into(), "p3".into()),
                 (gts::REL_PART_OF, "i2".into(), "i1".into()),
+            ]
+        );
+    }
+
+    /// On GitLab issue 5 and merge request 5 are two items, and each
+    /// mention says which one it names.
+    #[test]
+    fn a_mention_that_says_its_kind_finds_that_item_and_not_its_namesake() {
+        let named = |number, kind| NumberRef {
+            repo: None,
+            number,
+            kind,
+        };
+        let issues = HashMap::from([(5, "issue-5".to_string())]);
+        let prs = HashMap::from([(5, "mr-5".to_string()), (6, "mr-6".to_string())]);
+        // The shared map holds whichever was stored last: the merge request.
+        let items = prs.clone();
+        let links = vec![
+            (
+                "mr-6".to_string(),
+                gts::REL_CLOSES,
+                named(5, RefKind::Issue),
+            ),
+            (
+                "mr-6".to_string(),
+                gts::REL_CLOSES,
+                named(5, RefKind::ChangeRequest),
+            ),
+            (
+                "issue-5".to_string(),
+                gts::REL_PART_OF,
+                named(6, RefKind::ChangeRequest),
+            ),
+        ];
+        let got: Vec<(&str, String, String)> =
+            item_link_edges(&links, &issues, &prs, &items, "g/p")
+                .into_iter()
+                .map(|e| (e.type_id, e.from, e.to))
+                .collect();
+        assert_eq!(
+            got,
+            vec![
+                (gts::REL_CLOSES, "mr-6".into(), "issue-5".into()),
+                (gts::REL_REFERENCES, "mr-6".into(), "mr-5".into()),
             ]
         );
     }

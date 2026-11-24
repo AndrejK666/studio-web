@@ -121,6 +121,7 @@ impl ConnectorDriver for SignedIn {
             ));
         }
         Ok(DriverIdentity {
+            avatar_url: None,
             checks: Vec::new(),
             account: "research-user-7".into(),
             display_name: Some("Ada".into()),

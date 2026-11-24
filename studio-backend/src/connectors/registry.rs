@@ -124,6 +124,7 @@ impl ConnectorDriver for RegistryDriver {
         // that reaches past pushing and pulling. Reported, never failed here.
         let checks = vec![scope_check(token_scopes(&self.http, &access).await)];
         Ok(DriverIdentity {
+            avatar_url: None,
             checks,
             account: access.username.clone(),
             display_name: Some(access.host.clone()),

@@ -84,7 +84,7 @@ const source = (full_path: string, connection_id = 'c-github'): ProjectSource =>
 const connection = (id: string, provider: string) =>
   ({ id, provider, label: id, base_url: '', secret_ref: `studio-connection-${id}` }) as ConnectionDto;
 
-const SOURCES = [source('acme/api'), source('acme/web'), source('lab/tool', 'c-gitlab')];
+const SOURCES = [source('acme/api'), source('acme/web'), source('lab/tool', 'c-bitbucket')];
 
 function answerAll() {
   queries.current = {
@@ -103,7 +103,7 @@ function answerAll() {
       ],
       total: 1,
     }),
-    connections: answered({ items: [connection('c-github', 'github'), connection('c-gitlab', 'gitlab')] }),
+    connections: answered({ items: [connection('c-github', 'github'), connection('c-bitbucket', 'bitbucket')] }),
     activity: answered({
       items: [{ repo: 'n-api', open: 2, merged: 1, commits: 5, days: [0, 0, 1, 0, 0, 1, 0] }],
       total: 1,
@@ -177,7 +177,7 @@ beforeEach(() => {
 });
 
 describe('useSourcesLoad', () => {
-  it('gives rows for a synced GitHub repository, an unsynced one and a GitLab one', () => {
+  it('gives rows for a synced GitHub repository, an unsynced one and a Bitbucket one', () => {
     const { view } = mount();
 
     expect(view.ready).toBe(true);
@@ -187,7 +187,7 @@ describe('useSourcesLoad', () => {
     ).toEqual([
       ['acme/api', { kind: 'synced', at: '2026-10-14T10:52:00Z' }, 12, 2],
       ['acme/web', { kind: 'not_synced' }, null, undefined],
-      ['lab/tool', { kind: 'unavailable', provider: 'gitlab' }, null, undefined],
+      ['lab/tool', { kind: 'unavailable', provider: 'bitbucket' }, null, undefined],
     ]);
     expect(view.footer).toEqual({ sources: 3, specs: 12, openPullRequests: 2 });
     expect(view.windowDays).toBe(7);
