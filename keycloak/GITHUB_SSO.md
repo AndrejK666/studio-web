@@ -138,3 +138,9 @@ mapper, exactly as a GitHub user does, and no organization membership.
 The `constructor` broker (the IdP behind Constructor Research) is not in
 `realm-studio.json`: a Helm Job writes it from values and the vault key
 `studio_constructor-client-secret`. See [`CONSTRUCTOR_SSO.md`](CONSTRUCTOR_SSO.md).
+
+## GitLab
+
+The `gitlab` broker (gitlab.com or a self-hosted GitLab) is not in
+`realm-studio.json` either: a Helm Job writes it from values and the vault key
+`studio_gitlab-client-secret`. See [`GITLAB_SSO.md`](GITLAB_SSO.md).
