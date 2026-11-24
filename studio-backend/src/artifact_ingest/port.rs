@@ -587,6 +587,10 @@ pub struct BuildRecord {
     pub failure_step: Option<String>,
     /// Where it ran and with what, for a build Studio ran.
     pub place: BuildPlace,
+    /// When it started, RFC 3339: every record written says.
+    pub started_at: Option<String>,
+    /// The repository it built, `owner/name`.
+    pub repository: Option<String>,
 }
 
 /// Where a build Studio ran, and with what: the environment, the namespace,
@@ -706,6 +710,8 @@ impl BuildRecord {
             failure: text("failure"),
             failure_step: text("failure_step"),
             place: BuildPlace::of(value),
+            started_at: text("started_at"),
+            repository: text("repository"),
         }
     }
 }

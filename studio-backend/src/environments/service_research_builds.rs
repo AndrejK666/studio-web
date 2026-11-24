@@ -32,6 +32,64 @@ fn images_cache() -> &'static crate::ttl_cache::TtlCache<ImagesKey, std::sync::A
 }
 use crate::tasks::RunState;
 
+/// How long a Research build's record may say `running` with no run behind
+/// it before it is taken as lost: the record is written before its run is
+/// queued, so a record read right after the start has none yet.
+const LOST_AFTER: time::Duration = time::Duration::minutes(10);
+
+/// The platform's root tenant: where a run was queued for a platform
+/// administrator before runs went to the project's organization.
+const ROOT: Uuid = Uuid::from_u128(1);
+
+/// What a record that says `running` becomes when no run is queued for it
+/// any more -- in the organization nor in the root -- once it is older than
+/// [`LOST_AFTER`]: failed, saying its run is gone, with the images it had.
+/// `None` while it is young, or not a running Research build. A record
+/// that cannot say when it started is left alone.
+pub(super) fn lost(
+    record: &BuildRecord,
+    now: time::OffsetDateTime,
+) -> Option<crate::artifact_ingest::port::BuildOutcome> {
+    if record.status != "running" || record.r#where.as_deref() != Some("research") {
+        return None;
+    }
+    let started = time::OffsetDateTime::parse(
+        record.started_at.as_deref()?,
+        &time::format_description::well_known::Rfc3339,
+    )
+    .ok()?;
+    if now - started < LOST_AFTER {
+        return None;
+    }
+    Some(crate::artifact_ingest::port::BuildOutcome {
+        build_id: record.build_id.clone(),
+        r#where: Some("research".into()),
+        status: "failed".into(),
+        product: record.product.clone(),
+        profile: record.profile.clone(),
+        repository: record.repository.clone(),
+        commit: record.commit.clone(),
+        lock_hash: record.lock_hash.clone(),
+        failure: Some(format!(
+            "its run is gone: Studio has no background run for this build any more (it was \
+             never queued, or its history was swept), so nothing follows it in Constructor \
+             Research. {}",
+            if record.images.is_empty() {
+                "Build again"
+            } else {
+                "Build again, or deploy the images it had asked for once Research has built them"
+            }
+        )),
+        failure_step: Some("images".into()),
+        step: None,
+        images: record.images.clone(),
+        chart_ref: record.chart_ref.clone(),
+        chart_version: record.chart_version.clone(),
+        description_revision: None,
+        place: record.place.clone(),
+    })
+}
+
 /// What a record that says `running` becomes, given its run: `None` while
 /// the run may still record the end itself (queued, running, or it
 /// succeeded and recorded it).
@@ -65,9 +123,15 @@ impl EnvironmentService {
     /// `records` with every Research build whose record says `running`
     /// while its run has ended put right: recorded failed (or cancelled)
     /// with the run's reason, and answered so.
+    ///
+    /// A record whose run is gone altogether -- none under its key in the
+    /// organization, nor in the root where a platform administrator's runs
+    /// went before -- is recorded failed once it is old enough ([`lost`]),
+    /// so it no longer holds a deploy back as still running.
     pub(super) async fn reconcile_research_builds(
         &self,
         org: Uuid,
+        project: Uuid,
         mut records: Vec<BuildRecord>,
     ) -> Vec<BuildRecord> {
         if !records
@@ -91,8 +155,21 @@ impl EnvironmentService {
             if record.status != "running" || record.r#where.as_deref() != Some("research") {
                 continue;
             }
-            let Ok(Some(run)) = queue.run_by_key(org, &record.build_id).await else {
-                continue;
+            // In the organization; else in the root, where a platform
+            // administrator's run was queued before runs went to the
+            // project's organization.
+            let found = match queue.run_by_key(org, &record.build_id).await {
+                Ok(None) if org != ROOT => queue.run_by_key(ROOT, &record.build_id).await,
+                other => other,
+            };
+            let run = match found {
+                Ok(Some(run)) => run,
+                Ok(None) => {
+                    self.record_lost(&svc, org, project, record).await;
+                    continue;
+                }
+                // The queue did not answer: nothing is concluded.
+                Err(_) => continue,
             };
             let Some(outcome) = reconciled(record, &run) else {
                 continue;
@@ -113,6 +190,32 @@ impl EnvironmentService {
             research::record_research(&self.hub, &svc, &p, outcome).await;
         }
         records
+    }
+
+    /// `record`, whose run is gone, recorded failed when [`lost`] says it is,
+    /// and answered so; left as it is otherwise, or when it cannot be written.
+    async fn record_lost(
+        &self,
+        svc: &SecurityContext,
+        org: Uuid,
+        project: Uuid,
+        record: &mut BuildRecord,
+    ) {
+        let Some(outcome) = lost(record, time::OffsetDateTime::now_utc()) else {
+            return;
+        };
+        let written = match crate::environments::build_records::OrgBuilds::of(&self.hub, org) {
+            Ok(builds) => builds.record(svc, &project.to_string(), &outcome).await,
+            Err(e) => Err(e),
+        };
+        if let Err(e) = written {
+            tracing::warn!(build = %record.build_id, error = %e, "studio-environments: a Research build whose run is gone could not be recorded failed");
+            return;
+        }
+        tracing::info!(build = %record.build_id, "studio-environments: a Research build's run is gone; its record now says it failed");
+        record.status.clone_from(&outcome.status);
+        record.failure.clone_from(&outcome.failure);
+        record.failure_step.clone_from(&outcome.failure_step);
     }
 
     /// Deploy the images build `build_id` made to Research environment
@@ -156,7 +259,7 @@ impl EnvironmentService {
                 )
             })?;
         let record = self
-            .reconcile_research_builds(org, vec![record])
+            .reconcile_research_builds(org, project, vec![record])
             .await
             .into_iter()
             .next()
@@ -407,6 +510,47 @@ mod tests {
             ..running()
         };
         assert!(reconciled(&cluster, &run(RunState::Failed, None)).is_none());
+    }
+
+    #[test]
+    fn a_record_whose_run_is_gone_fails_once_it_is_old_enough_keeping_its_images() {
+        // research-e684c390ab39 on the stand (2026-11-24): running, no run
+        // under its key anywhere.
+        let now = time::OffsetDateTime::parse(
+            "2026-11-24T15:00:00Z",
+            &time::format_description::well_known::Rfc3339,
+        )
+        .unwrap();
+        let at = |s: &str| BuildRecord {
+            started_at: Some(s.into()),
+            images: vec![("api".into(), "registry/api@sha256:1".into())],
+            commit: Some("7e4706840d770a70e283dc8b52b13899652fd5d8".into()),
+            ..running()
+        };
+        // Just started: its run may not be queued yet.
+        assert!(lost(&at("2026-11-24T14:55:00Z"), now).is_none());
+        let out = lost(&at("2026-11-24T10:08:43Z"), now).expect("lost");
+        assert_eq!(out.status, "failed");
+        assert!(out.failure.as_deref().unwrap().contains("its run is gone"));
+        assert_eq!(out.images.len(), 1);
+        assert_eq!(out.r#where.as_deref(), Some("research"));
+        assert_eq!(
+            out.commit.as_deref(),
+            Some("7e4706840d770a70e283dc8b52b13899652fd5d8")
+        );
+        // Not when it cannot say when it started, nor once it has ended,
+        // nor for a build in the cluster.
+        assert!(lost(&running(), now).is_none());
+        let ended = BuildRecord {
+            status: "passed".into(),
+            ..at("2026-11-24T10:08:43Z")
+        };
+        assert!(lost(&ended, now).is_none());
+        let cluster = BuildRecord {
+            r#where: Some("studio".into()),
+            ..at("2026-11-24T10:08:43Z")
+        };
+        assert!(lost(&cluster, now).is_none());
     }
 
     #[test]
