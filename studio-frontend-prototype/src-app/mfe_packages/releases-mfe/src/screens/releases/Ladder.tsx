@@ -2,10 +2,11 @@
  * The ladder (ADR-0056 §4), the prototype's ReleaseLadder, StepDetail,
  * DeployProgress and PromoteBuild (releases-tab.tsx at 00828880): the newest
  * published build, then a row per environment in the order a release climbs
- * them -- what runs there, how its newest deploy went, what it takes from,
- * and the action that applies: Promote what the environment before it runs,
- * or Deploy… which opens the environment's actions under the row. A row
- * opens on its newest deploy as the deploy tells it.
+ * them -- what runs there, how its newest deploy went, whether the chosen
+ * images can go there, what it takes from -- and Choose, which makes it the
+ * environment the Deploy stage deploys to (the release map, 2026-11-24). A
+ * row opens on its newest deploy as the deploy tells it. DeployProgress and
+ * PromoteBuild are the Deploy stage's.
  */
 
 import React, { Fragment, useEffect, useState } from 'react';
@@ -30,27 +31,25 @@ const LADDER_TONE: Record<ReturnType<typeof stepStatus>['tone'], Tone> = {
 export function ReleaseLadder({
   steps,
   bindings,
-  open,
-  onOpen,
-  onChanged,
-  panel,
+  selected,
+  onSelect,
+  fitOf,
   head,
   targetOf,
   blocked = null,
 }: {
   steps: LadderStep[];
   bindings: ProjectTargets['bindings'];
-  /** The environment whose Deploy… panel is open. */
-  open: string | null;
-  onOpen: (environment: string) => void;
-  onChanged: (message: string) => void;
-  /** What Deploy… opens under an environment's row. */
-  panel: (step: LadderStep) => React.ReactNode;
+  /** The environment chosen for the deploy. */
+  selected: string | null;
+  onSelect: (environment: string) => void;
+  /** Whether the chosen images can go there: adds the column when given. */
+  fitOf?: (step: LadderStep) => React.ReactNode;
   /** What the card says above its rows; absent: the newest published build. */
   head?: React.ReactNode;
   /** Where a row's environment runs: adds the column when given. */
   targetOf?: (step: LadderStep) => React.ReactNode;
-  /** Why nothing can be deployed here yet: Deploy… and Promote wait, saying so. */
+  /** Why nothing can be deployed here yet: Choose waits, saying so. */
   blocked?: string | null;
 }) {
   const { t, language, projectId } = useReleases();
@@ -70,7 +69,7 @@ export function ReleaseLadder({
     };
   }, [api, projectId]);
   const newest = newestRelease(steps);
-  const columns = targetOf ? 7 : 6;
+  const columns = 6 + (targetOf ? 1 : 0) + (fitOf ? 1 : 0);
   return (
     <section className={styles.card} data-release-ladder>
       {head ?? (
@@ -94,6 +93,7 @@ export function ReleaseLadder({
               {targetOf && <TableHead>{t('col_target')}</TableHead>}
               <TableHead>{t('col_status')}</TableHead>
               <TableHead>{t('col_runs')}</TableHead>
+              {fitOf && <TableHead>{t('col_fits')}</TableHead>}
               <TableHead>{t('col_takes_from')}</TableHead>
               <TableHead>{t('col_last_deploy')}</TableHead>
               <TableHead />
@@ -110,6 +110,7 @@ export function ReleaseLadder({
                     onClick={() => setExpanded(expanded === id ? null : id)}
                     aria-expanded={expanded === id}
                     data-ladder-row={s.environment.name}
+                    data-ladder-selected={selected === id || undefined}
                   >
                     <TableCell>
                       <span className={styles.chips} data-ladder-step={s.environment.name} data-ladder-state={s.state}>
@@ -130,9 +131,6 @@ export function ReleaseLadder({
                       >
                         {status.text}
                       </Badge>
-                      {s.state === 'deploying' && s.latest && (
-                        <DeployProgress deployment={s.latest} onEnded={onChanged} />
-                      )}
                     </TableCell>
                     <TableCell>
                       {s.runs ? (
@@ -156,23 +154,23 @@ export function ReleaseLadder({
                         <span className={styles.muted}>{t('nothing')}</span>
                       )}
                     </TableCell>
+                    {fitOf && <TableCell>{fitOf(s)}</TableCell>}
                     <TableCell>{s.from ?? <span className={styles.muted}>{t('a_build')}</span>}</TableCell>
                     <TableCell>
                       <When iso={s.latest?.requested_at} />
                     </TableCell>
                     <TableCell onClick={(e) => e.stopPropagation()}>
                       <span className={styles.ladderActions}>
-                        {s.promote && !blocked && <PromoteBuild step={s} build={s.promote} onChanged={onChanged} />}
                         <Button
                           size="sm"
-                          variant={s.promote ? 'ghost' : 'default'}
-                          aria-expanded={open === id}
-                          disabled={!!blocked && open !== id}
-                          title={blocked ?? t('deploy_open_title')}
-                          onClick={() => onOpen(id)}
-                          data-ladder-deploy
+                          variant={selected === id ? 'default' : 'outline'}
+                          aria-pressed={selected === id}
+                          disabled={!!blocked}
+                          title={blocked ?? t('choose_environment_title')}
+                          onClick={() => onSelect(id)}
+                          data-ladder-choose
                         >
-                          {t('deploy_open')}
+                          {t(selected === id ? 'environment_chosen' : 'choose_environment')}
                         </Button>
                       </span>
                     </TableCell>
@@ -182,11 +180,6 @@ export function ReleaseLadder({
                       <TableCell colSpan={columns}>
                         <StepDetail step={s} bindings={bindings} connections={connections} />
                       </TableCell>
-                    </TableRow>
-                  )}
-                  {open === id && (
-                    <TableRow data-ladder-panel={s.environment.name}>
-                      <TableCell colSpan={columns}>{panel(s)}</TableCell>
                     </TableRow>
                   )}
                 </Fragment>
@@ -255,7 +248,7 @@ const PROGRESS_MS = 4000;
 /** Where a deploy that is under way is: waiting for a runner, the phase its
  *  run reported, and how many of the release's pods are ready. Read again
  *  every few seconds; the screen reads again once the deploy ends. */
-function DeployProgress({ deployment, onEnded }: { deployment: Deployment; onEnded: (message: string) => void }) {
+export function DeployProgress({ deployment, onEnded }: { deployment: Deployment; onEnded: (message: string) => void }) {
   const { t, organizationId } = useReleases();
   const api = useApi();
   const [run, setRun] = useState<TaskRun | null>(null);
@@ -330,9 +323,9 @@ function DeployProgress({ deployment, onEnded }: { deployment: Deployment; onEnd
 }
 
 /** Promote: deploy here the build the environment before it runs. */
-function PromoteBuild({ step, build, onChanged }: { step: LadderStep; build: IdeBuild; onChanged: (message: string) => void }) {
+export function PromoteBuild({ step, build, onChanged }: { step: LadderStep; build: IdeBuild; onChanged: (message: string) => void }) {
   const { t } = useReleases();
-  const { busy, error, ask } = useDeployRequest(onChanged);
+  const { busy, error, askBuild } = useDeployRequest(onChanged);
   const version = build.chartVersion ?? build.buildId;
   const replaces = step.runs ? versionOf(step.runs) : null;
   return (
@@ -345,12 +338,7 @@ function PromoteBuild({ step, build, onChanged }: { step: LadderStep; build: Ide
             ? t('promote_title_replaces', { version, from: step.from ?? '', environment: step.environment.name, replaces })
             : t('promote_title', { version, from: step.from ?? '', environment: step.environment.name })
         }
-        onClick={() =>
-          void ask(
-            { environment_id: step.environment.id, build: build.buildId },
-            t('what_promote', { version, environment: step.environment.name })
-          )
-        }
+        onClick={() => void askBuild(step.environment, build.buildId, t('what_promote', { version, environment: step.environment.name }))}
         data-ladder-promote
       >
         {t('promote', { version })}
