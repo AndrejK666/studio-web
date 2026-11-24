@@ -68,6 +68,185 @@ pub fn acting_in(
     b.build()
 }
 
+/// The caller acting in organization `org`: the caller's own context when
+/// that is its home already. What [`crate::environments::build_records`]
+/// and [`ScopeOrgs`] share; only after the caller has been shown to reach
+/// what it acts on there.
+pub fn acting_in_org(
+    ctx: &SecurityContext,
+    org: Uuid,
+) -> Result<SecurityContext, toolkit_security::SecurityContextBuildError> {
+    if ctx.subject_tenant_id() == org {
+        return Ok(ctx.clone());
+    }
+    acting_in(ctx, org)
+}
+
+/// Why [`ScopeOrgs`] gave no organization's context.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ScopeError {
+    /// The caller does not reach the scope: no tenant it can read.
+    NotReached(Uuid),
+    /// The scope was read, a tenant above it was not: try again later.
+    Unresolved(Uuid, String),
+    /// The organization's context could not be built.
+    Context(String),
+}
+
+impl std::fmt::Display for ScopeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotReached(scope) => {
+                write!(f, "{scope} is not a project or workspace this caller reaches")
+            }
+            Self::Unresolved(scope, why) => {
+                write!(f, "the organization of {scope} could not be read: {why}")
+            }
+            Self::Context(why) => write!(f, "cannot act in the organization: {why}"),
+        }
+    }
+}
+
+impl std::error::Error for ScopeError {}
+
+/// How long "this caller reaches this scope" is taken as known.
+const REACH_FOR: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Where a project's (or workspace's) records live: the model of the
+/// organization it hangs under, whoever asks (ADR-0066 §8a).
+///
+/// A gear that keyed a project's records on the caller's tenant wrote a
+/// platform administrator's into the platform root; the start-up sweep
+/// (`studio-domain-model rehome`) then moved them into the organization and
+/// marked the root's copies deleted, and every later read in the root found
+/// nothing (build records, then artifact ingest, 2026-11-24). A gear asks
+/// here instead, with the project, and acts in what it answers.
+///
+/// Access stays the caller's: the scope is read as the caller, so a caller
+/// who does not reach it gets [`ScopeError::NotReached`], never the
+/// organization's context. Only the storage scope changes; the subject (who
+/// asked, for audit) is kept.
+pub struct ScopeOrgs {
+    am: Arc<dyn account_management_sdk::AccountManagementClient>,
+    /// scope → its organization (`None`: under none, a platform scope). A
+    /// tenant does not change organization.
+    orgs: std::sync::Mutex<std::collections::HashMap<Uuid, Option<Uuid>>>,
+    /// (subject, home tenant, scope) → when the caller was last seen to reach it.
+    reached: std::sync::Mutex<std::collections::HashMap<(Uuid, Uuid, Uuid), std::time::Instant>>,
+}
+
+impl ScopeOrgs {
+    pub fn new(am: Arc<dyn account_management_sdk::AccountManagementClient>) -> Self {
+        Self {
+            am,
+            orgs: std::sync::Mutex::default(),
+            reached: std::sync::Mutex::default(),
+        }
+    }
+
+    fn reach_key(ctx: &SecurityContext, scope: Uuid) -> (Uuid, Uuid, Uuid) {
+        (ctx.subject_id(), ctx.subject_tenant_id(), scope)
+    }
+
+    fn note_reached(&self, ctx: &SecurityContext, scope: Uuid) {
+        if let Ok(mut r) = self.reached.lock() {
+            if r.len() > 10_000 {
+                r.retain(|_, at| at.elapsed() < REACH_FOR);
+            }
+            r.insert(Self::reach_key(ctx, scope), std::time::Instant::now());
+        }
+    }
+
+    /// Whether the caller reaches `scope`: read as the caller.
+    async fn reaches(&self, ctx: &SecurityContext, scope: Uuid) -> bool {
+        let fresh = self
+            .reached
+            .lock()
+            .ok()
+            .and_then(|r| r.get(&Self::reach_key(ctx, scope)).copied())
+            .is_some_and(|at| at.elapsed() < REACH_FOR);
+        if fresh {
+            return true;
+        }
+        let ok = self.am.get_tenant(ctx, scope).await.is_ok();
+        if ok {
+            self.note_reached(ctx, scope);
+        }
+        ok
+    }
+
+    /// The organization `scope` hangs under (itself, for an organization),
+    /// read as the caller; `None` for a scope under no organization.
+    pub async fn organization(
+        &self,
+        ctx: &SecurityContext,
+        scope: Uuid,
+    ) -> Result<Option<Uuid>, ScopeError> {
+        use crate::organizations::sdk::ORGANIZATION_TENANT_TYPE;
+        let known = self.orgs.lock().ok().and_then(|o| o.get(&scope).copied());
+        if let Some(org) = known {
+            // Nothing to check where the caller stays in its own tenant.
+            if org.is_none() || org == Some(ctx.subject_tenant_id()) {
+                return Ok(org);
+            }
+            return if self.reaches(ctx, scope).await {
+                Ok(org)
+            } else {
+                Err(ScopeError::NotReached(scope))
+            };
+        }
+        let mut tenant = self
+            .am
+            .get_tenant(ctx, scope)
+            .await
+            .map_err(|_| ScopeError::NotReached(scope))?;
+        self.note_reached(ctx, scope);
+        // The organization is the tenant typed so, else the child of the
+        // root the scope hangs under: the tenant whose model the start-up
+        // sweep fills and [`org_of`] names. The root itself is none.
+        let mut org = None;
+        for _ in 0..16 {
+            if tenant.id.0 == ROOT {
+                break;
+            }
+            if tenant.tenant_type.as_deref() == Some(ORGANIZATION_TENANT_TYPE) {
+                org = Some(tenant.id.0);
+                break;
+            }
+            let Some(parent) = tenant.parent_id.map(|p| p.0) else {
+                break;
+            };
+            if parent == ROOT {
+                org = Some(tenant.id.0);
+                break;
+            }
+            tenant = self
+                .am
+                .get_tenant(ctx, parent)
+                .await
+                .map_err(|e| ScopeError::Unresolved(scope, e.to_string()))?;
+        }
+        if let Ok(mut o) = self.orgs.lock() {
+            o.insert(scope, org);
+        }
+        Ok(org)
+    }
+
+    /// The caller acting in the organization `scope` hangs under: where the
+    /// scope's records are read and written. The caller's own context for a
+    /// scope under no organization, as before.
+    pub async fn acting_for(
+        &self,
+        ctx: &SecurityContext,
+        scope: Uuid,
+    ) -> Result<SecurityContext, ScopeError> {
+        match self.organization(ctx, scope).await? {
+            None => Ok(ctx.clone()),
+            Some(org) => acting_in_org(ctx, org).map_err(|e| ScopeError::Context(e.to_string())),
+        }
+    }
+}
+
 /// The platform's root tenant: an organization is one of its children.
 const ROOT: Uuid = Uuid::from_u128(1);
 

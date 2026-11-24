@@ -329,6 +329,10 @@ pub struct IngestService {
     /// Where a sync says its fetch of the shared checkout found the source's
     /// branch gone (#1071's clone status). `None` without the gear's database.
     clone_outcomes: Option<Arc<dyn super::port::CloneOutcomes>>,
+    /// Where a project's artifacts live: its organization's model, whoever
+    /// asks ([`Self::org_ctx`]). `None` (no account-management) keeps every
+    /// read and write in the caller's tenant, as before.
+    orgs: Option<Arc<crate::org_scope::ScopeOrgs>>,
 }
 
 /// This gear, as the kits' claims name it.
@@ -416,7 +420,91 @@ impl IngestService {
             platform: None,
             kits: None,
             clone_outcomes: None,
+            orgs: None,
         }
+    }
+
+    /// Read and write each project's artifacts in its organization's model
+    /// (see [`Self::org_ctx`]).
+    #[must_use]
+    pub fn with_orgs(mut self, orgs: Option<Arc<crate::org_scope::ScopeOrgs>>) -> Self {
+        self.orgs = orgs;
+        self
+    }
+
+    /// `ctx` acting where `scope`'s artifacts live: the organization the
+    /// project (or workspace) hangs under.
+    ///
+    /// Every write and read of a project's artifacts goes through here. They
+    /// used to act in the caller's tenant, which for a platform administrator
+    /// is the platform root: a sync of Studioweb wrote its 19 439 objects
+    /// there, the start-up sweep (`studio-domain-model rehome`) moved them
+    /// into the organization and marked the root's copies deleted, and every
+    /// read in the root then found deleted copies or nothing (2026-11-24).
+    ///
+    /// The caller must reach `scope` (read as the caller); only the storage
+    /// scope changes, the subject stays for `requested_by` and `recorded_by`.
+    /// A scope that is not a tenant id (`unscoped`), or a deployment without
+    /// account-management, stays in the caller's tenant.
+    pub async fn org_ctx(
+        &self,
+        ctx: &SecurityContext,
+        scope: Option<&str>,
+    ) -> anyhow::Result<SecurityContext> {
+        let (Some(orgs), Some(scope)) = (
+            self.orgs.as_ref(),
+            scope.and_then(|s| Uuid::parse_str(s.trim()).ok()),
+        ) else {
+            return Ok(ctx.clone());
+        };
+        orgs.acting_for(ctx, scope)
+            .await
+            .map_err(|e| anyhow!("the artifacts of {scope} cannot be reached: {e}"))
+    }
+
+    /// The tenant a run for `scope` is filed under: the organization its
+    /// artifacts live in, so the organization's Background work lists it and
+    /// the worker acts there. Who asked stays the run's `requested_by`.
+    pub async fn run_tenant(
+        &self,
+        ctx: &SecurityContext,
+        scope: Option<&str>,
+    ) -> anyhow::Result<Uuid> {
+        Ok(self.org_ctx(ctx, scope).await?.subject_tenant_id())
+    }
+
+    /// [`Self::org_ctx`] for a read: the caller's own context when the
+    /// organization cannot be had, which is what every read answered from
+    /// before -- for a caller who does not reach the scope, nothing.
+    async fn read_ctx(&self, ctx: &SecurityContext, scope: Option<&str>) -> SecurityContext {
+        match self.org_ctx(ctx, scope).await {
+            Ok(there) => there,
+            Err(e) => {
+                tracing::debug!(error = %format!("{e:#}"), "studio-artifact-ingest: read in the caller's tenant");
+                ctx.clone()
+            }
+        }
+    }
+
+    /// `projects` grouped by where their artifacts live, for a read across
+    /// several: one group per organization (in practice one, a workspace's).
+    async fn read_groups(
+        &self,
+        ctx: &SecurityContext,
+        projects: &[String],
+    ) -> Vec<(SecurityContext, Vec<String>)> {
+        let mut groups: Vec<(SecurityContext, Vec<String>)> = Vec::new();
+        for p in projects {
+            let there = self.read_ctx(ctx, Some(p)).await;
+            match groups
+                .iter_mut()
+                .find(|(c, _)| c.subject_tenant_id() == there.subject_tenant_id())
+            {
+                Some((_, ps)) => ps.push(p.clone()),
+                None => groups.push((there, vec![p.clone()])),
+            }
+        }
+        groups
     }
 
     /// Ask studio-kits, through `hub`, whether an opted-in claim's kit
@@ -623,6 +711,12 @@ impl IngestService {
             .drivers
             .get(provider)
             .ok_or_else(|| anyhow!("no driver for provider '{provider}' (plugin not linked?)"))?;
+        // Everything the sync reads and writes is the project's, in its
+        // organization's model -- never the tenant of whoever asked, which
+        // for a platform administrator (or a run queued in the root before
+        // runs were filed under the organization) is the platform root.
+        let org_ctx = self.org_ctx(ctx, project_id.or(workspace_id)).await?;
+        let ctx = &org_ctx;
 
         let base_url = match base_url.map(str::trim).filter(|s| !s.is_empty()) {
             Some(b) => b.to_string(),
@@ -2340,6 +2434,11 @@ impl IngestService {
         project_id: Option<&str>,
         stale: impl Fn(&GtsNode) -> bool,
     ) -> anyhow::Result<PruneSummary> {
+        // `/reconcile` and `artifact.source_detach` come here with the
+        // caller's (or the run's) context: the repository is forgotten where
+        // a sync of it wrote, the project's organization.
+        let org_ctx = self.org_ctx(ctx, project_id.or(workspace_id)).await?;
+        let ctx = &org_ctx;
         let listed = self.graph.list(ctx, Some(gts::REPO_TYPE)).await?;
         let repos: Vec<GtsNode> = listed
             .iter()
@@ -2528,6 +2627,8 @@ impl IngestService {
         if subjects.is_empty() {
             return Ok(0);
         }
+        let org_ctx = self.org_ctx(ctx, Some(scope)).await?;
+        let ctx = &org_ctx;
         let wanted: HashSet<&str> = subjects.iter().map(|s| s.trim()).collect();
         let doomed: Vec<GtsNode> = self
             .graph
@@ -2709,6 +2810,7 @@ impl IngestService {
         type_filter: Option<&str>,
         scope: &str,
     ) -> anyhow::Result<Vec<GtsNode>> {
+        let ctx = &self.read_ctx(ctx, Some(scope)).await;
         self.graph.list_in_scope(ctx, type_filter, scope).await
     }
 
@@ -2721,6 +2823,7 @@ impl IngestService {
         now: i64,
         days: usize,
     ) -> anyhow::Result<std::collections::BTreeMap<String, super::activity::RepoActivity>> {
+        let ctx = &self.read_ctx(ctx, Some(scope)).await;
         self.graph.repo_activity(ctx, scope, now, days).await
     }
 
@@ -2730,15 +2833,21 @@ impl IngestService {
         ctx: &SecurityContext,
         query: &super::graph::NodePageQuery<'_>,
     ) -> anyhow::Result<super::graph::NodePage> {
+        let ctx = &self.read_ctx(ctx, query.scope).await;
         self.graph.page(ctx, query).await
     }
 
     /// Read the relations between ingested nodes back for the portal
     /// (authored_by / modifies / artifact_of / contains) as endpoint id pairs.
+    ///
+    /// With `scope`, the relations of its organization's model, where the
+    /// scope's nodes are: the same tenant `list_in_scope` reads.
     pub async fn list_relations(
         &self,
         ctx: &SecurityContext,
+        scope: Option<&str>,
     ) -> anyhow::Result<Vec<super::graph::GtsEdgeView>> {
+        let ctx = &self.read_ctx(ctx, scope).await;
         self.graph.list_relations(ctx).await
     }
 
@@ -2782,6 +2891,8 @@ impl IngestService {
         artifact: ProjectArtifact<'_>,
     ) -> anyhow::Result<String> {
         use super::gts;
+        let org_ctx = self.org_ctx(ctx, Some(artifact.project_id)).await?;
+        let ctx = &org_ctx;
         let node = gts::project_artifact_file_node(
             artifact.organization_id,
             artifact.workspace_id,
@@ -2812,6 +2923,8 @@ impl IngestService {
         project_id: Option<&str>,
     ) -> anyhow::Result<(usize, usize)> {
         use super::gts;
+        let org_ctx = self.org_ctx(ctx, project_id.or(workspace_id)).await?;
+        let ctx = &org_ctx;
         let mut nodes: Vec<GtsNode> = Vec::new();
         let mut edges: Vec<GtsEdge> = Vec::new();
 
@@ -3001,6 +3114,10 @@ impl IngestService {
     ) -> Result<GtsNode, super::builds::BuildRefusal> {
         use super::{builds, gts};
         let id = builds::checked_id(report)?;
+        // Recorded by the caller (`recorded_by`), kept in the project's
+        // organization: what `OrgBuilds` reads.
+        let org_ctx = self.org_ctx(ctx, Some(project_id)).await?;
+        let ctx = &org_ctx;
         let instance = gts::build_instance_id(project_id, &id);
         // The project's builds, not the tenant's graph: one indexed read.
         let earlier = self
@@ -3241,6 +3358,12 @@ impl IngestService {
         decision: &MappingDecision,
     ) -> anyhow::Result<GtsNode> {
         use super::gts;
+        let scope = decision
+            .project_id
+            .as_deref()
+            .unwrap_or(decision.workspace_id.as_str());
+        let org_ctx = self.org_ctx(ctx, Some(scope)).await?;
+        let ctx = &org_ctx;
         let id = gts::mapping_decision_instance_id(
             &decision.document,
             &decision.section,
@@ -3339,6 +3462,7 @@ impl super::port::ArtifactCounter for IngestService {
         // The store's own count, through the same scope rule the listing
         // applies: two spellings of "in this scope" is how a count and a list
         // start disagreeing about the same project.
+        let ctx = &self.read_ctx(ctx, Some(scope)).await;
         let n = self
             .graph
             .count_in_scope(ctx, Some(type_leaf), scope)
@@ -3352,20 +3476,24 @@ impl super::port::ArtifactCounter for IngestService {
         type_leaf: &str,
         projects: &[String],
     ) -> HashMap<String, u32> {
-        match self
-            .graph
-            .count_in_projects(ctx, Some(type_leaf), projects)
-            .await
-        {
-            Ok(counts) => counts
-                .into_iter()
-                .map(|(p, n)| (p, u32::try_from(n).unwrap_or(u32::MAX)))
-                .collect(),
-            Err(e) => {
-                warn!(error = %format!("{e:#}"), "studio-artifact-ingest: the projects' counts could not be read");
-                HashMap::new()
+        let mut out = HashMap::new();
+        for (ctx, projects) in self.read_groups(ctx, projects).await {
+            match self
+                .graph
+                .count_in_projects(&ctx, Some(type_leaf), &projects)
+                .await
+            {
+                Ok(counts) => out.extend(
+                    counts
+                        .into_iter()
+                        .map(|(p, n)| (p, u32::try_from(n).unwrap_or(u32::MAX))),
+                ),
+                Err(e) => {
+                    warn!(error = %format!("{e:#}"), "studio-artifact-ingest: the projects' counts could not be read");
+                }
             }
         }
+        out
     }
 }
 
@@ -3467,24 +3595,35 @@ impl super::port::ProjectSignalSource for IngestService {
         projects: &[String],
         days: usize,
     ) -> HashMap<String, super::port::ProjectSignals> {
-        // The same four reads, each once for every project.
-        let read = async {
-            tokio::try_join!(
+        // The same four reads, each once for every project of an
+        // organization (in practice one: a workspace's projects).
+        let (mut findings, mut comments, mut pulls, mut repos) = (
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        );
+        for (ctx, group) in self.read_groups(ctx, projects).await {
+            let read = tokio::try_join!(
                 self.graph
-                    .list_in_projects(ctx, Some("spec_finding"), projects),
-                self.graph.list_in_projects(ctx, Some("comment"), projects),
+                    .list_in_projects(&ctx, Some("spec_finding"), &group),
+                self.graph.list_in_projects(&ctx, Some("comment"), &group),
                 self.graph
-                    .list_in_projects(ctx, Some("pull_request"), projects),
-                self.graph.list_in_projects(ctx, Some("repo"), projects),
-            )
-        };
-        let (findings, comments, pulls, repos) = match read.await {
-            Ok(read) => read,
-            Err(e) => {
-                warn!(error = %format!("{e:#}"), "studio-artifact-ingest: the projects' signals could not be read");
-                return HashMap::new();
+                    .list_in_projects(&ctx, Some("pull_request"), &group),
+                self.graph.list_in_projects(&ctx, Some("repo"), &group),
+            );
+            match read {
+                Ok((f, c, p, r)) => {
+                    findings.extend(f);
+                    comments.extend(c);
+                    pulls.extend(p);
+                    repos.extend(r);
+                }
+                Err(e) => {
+                    warn!(error = %format!("{e:#}"), "studio-artifact-ingest: the projects' signals could not be read");
+                }
             }
-        };
+        }
         // One instant for every row of the table.
         let now = now_ms();
         let entries = |nodes: Option<Vec<GtsNode>>| -> Vec<(String, serde_json::Value)> {
@@ -3542,7 +3681,6 @@ impl super::port::BuildRecords for IngestService {
     ) -> anyhow::Result<Option<super::port::BuildRecord>> {
         let instance = super::gts::build_instance_id(project_id, build_id);
         Ok(self
-            .graph
             .list_in_scope(ctx, Some(super::gts::BUILD_TYPE), project_id)
             .await?
             .into_iter()
@@ -3557,7 +3695,6 @@ impl super::port::BuildRecords for IngestService {
         limit: usize,
     ) -> anyhow::Result<Vec<super::port::BuildRecord>> {
         let mut nodes: Vec<serde_json::Value> = self
-            .graph
             .list_in_scope(ctx, Some(super::gts::BUILD_TYPE), project_id)
             .await?
             .into_iter()
@@ -3677,17 +3814,19 @@ impl super::port::OpenPullRequests for IngestService {
         ctx: &SecurityContext,
         projects: &[String],
     ) -> Vec<super::port::OpenPull> {
-        let mut by_project = match self
-            .graph
-            .list_in_projects(ctx, Some("pull_request"), projects)
-            .await
-        {
-            Ok(found) => found,
-            Err(e) => {
-                warn!(error = %format!("{e:#}"), "studio-artifact-ingest: the projects' pull requests could not be read");
-                return Vec::new();
+        let mut by_project = HashMap::new();
+        for (ctx, group) in self.read_groups(ctx, projects).await {
+            match self
+                .graph
+                .list_in_projects(&ctx, Some("pull_request"), &group)
+                .await
+            {
+                Ok(found) => by_project.extend(found),
+                Err(e) => {
+                    warn!(error = %format!("{e:#}"), "studio-artifact-ingest: the projects' pull requests could not be read");
+                }
             }
-        };
+        }
         let now = time::OffsetDateTime::now_utc().unix_timestamp() * 1000;
         projects
             .iter()
@@ -3735,6 +3874,7 @@ impl super::port::ArtifactFiles for IngestService {
         ctx: &SecurityContext,
         scope: &str,
     ) -> anyhow::Result<Vec<super::port::IngestedFile>> {
+        let ctx = &self.read_ctx(ctx, Some(scope)).await;
         self.graph.files_in_scope(ctx, scope).await
     }
 
@@ -3744,6 +3884,7 @@ impl super::port::ArtifactFiles for IngestService {
         scope: &str,
         node_ids: &[String],
     ) -> anyhow::Result<HashMap<String, String>> {
+        let ctx = &self.read_ctx(ctx, Some(scope)).await;
         self.graph.repos_of_files(ctx, scope, node_ids).await
     }
 
@@ -5312,3 +5453,7 @@ impl super::port::MappingDecisionStore for IngestService {
             .collect())
     }
 }
+
+#[cfg(test)]
+#[path = "org_scope_tests.rs"]
+mod org_scope_tests;
