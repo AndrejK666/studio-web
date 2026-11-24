@@ -47,6 +47,7 @@ pub use pipeline_service::{BuildView, SecretKeys};
 // (#1050, #1053).
 #[path = "service_path.rs"]
 mod path_service;
+pub use path_service::DeliveryStagesPort;
 
 // One Research environment per Research project: the duplicates made
 // before merged at start (#1053).

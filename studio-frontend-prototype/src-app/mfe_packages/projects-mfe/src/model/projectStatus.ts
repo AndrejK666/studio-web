@@ -49,6 +49,12 @@ export interface ProjectStatus {
   more: number;
   signals: ProjectSignal[];
   path: ProjectPathStep[];
+  /**
+   * The project's ONE path, sources to running product (`project_path.rs`),
+   * as every tab draws it (`PathStage` in mfe-shared/path). Absent from a
+   * server before it, and from a status kept before it until recomputed.
+   */
+  stages?: unknown;
   next?: string | null;
   unread: string[];
   /** The kits installed for the project the status was computed for; null when they could not be read. */
@@ -98,11 +104,6 @@ export const LEVEL_TONE: Record<SignalLevel, 'danger' | 'warn' | 'info'> = {
   risk: 'warn',
   info: 'info',
 };
-
-/** How many steps are done (`project-path.ts` `pathProgress`). */
-export function pathProgress(steps: readonly ProjectPathStep[]): { done: number; total: number } {
-  return { done: steps.filter((s) => s.state === 'done').length, total: steps.length };
-}
 
 /** The step the server names as next, or null when the path is done or unknown. */
 export function nextStep(status: ProjectStatus): ProjectPathStep | null {

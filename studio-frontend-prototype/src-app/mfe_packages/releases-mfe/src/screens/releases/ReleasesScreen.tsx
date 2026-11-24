@@ -1,8 +1,9 @@
 /**
- * Project › Releases as the release map (owner feedback, 2026-11-24): four
- * stages, left to right -- Build, Images, Environment, Deploy -- drawn as a
- * small pipeline on top, each node with its state and key fact; the node
- * picked shows its stage under the map, one at a time. The stage, the build
+ * Project › Releases as four stages of the project's one path -- Build,
+ * Images, Environment, Deploy, numbered 6-9 as on Overview -- drawn by the
+ * shared `ProjectPath` on top, each chip with its state and its cause as the
+ * server decides them (`GET /project-path` `stages`); the chip picked shows
+ * its stage under the strip, one at a time. The stage, the build
  * whose images go and the environment they go to are kept in the address;
  * without a stage named the page opens on the first that failed or runs,
  * else Deploy. Deploy to… stays: one dialog over every target.
@@ -23,20 +24,32 @@ import {
   writeListState,
   useScreenAvailability,
 } from '@constructor-studio/mfe-shared';
+import {
+  ProjectPath as PathStrip,
+  RELEASE_STAGES,
+  joinStages,
+  stageOf,
+  stagesFromDelivery,
+  stagesOf,
+  type PathStage,
+} from '@constructor-studio/mfe-shared/path';
 import type { Deployment, PathAction, PathStep, ProjectPath, ProjectTargets } from '../../api/types';
-import { ROUTES, deploymentFromSearch, type Intent } from '../../model/path';
+import { ROUTES, deploymentFromSearch, intentOf, type Intent } from '../../model/path';
 import { anyRunning, ideBuildsOf, type IdeBuild } from '@constructor-studio/mfe-shared';
 import { ladderSteps } from '../../model/releases';
 import {
+  STAGES,
   attentionStage,
   fitGap,
   hasDeployableImages,
   imagesFit,
+  isStage,
   productBuilds,
   readReleaseAddress,
   releaseMap,
   writeReleaseAddress,
   type ReleaseAddress,
+  type ReleaseMap,
   type StageId,
 } from '../../model/release-map';
 import { noProduct } from '../../model/environment-targets';
@@ -50,7 +63,6 @@ import { EnvironmentConfig, EnvironmentPreviews } from './DeployActions';
 import { NoProductLine, useTargetNames } from './Targets';
 import { ENVIRONMENTS_ADDRESS, EnvironmentsGrid, environmentRows } from './EnvironmentsGrid';
 import { EnvironmentDetail } from './Ladder';
-import { ReleaseMap } from './ReleaseMap';
 import { DeployStage, ImagesStage, StageHead } from './Stages';
 import { ErrorLine, ReleasesProvider, errText, useApi, useReleases, type ReleasesContextValue } from './parts';
 import styles from './ReleasesScreen.module.css';
@@ -123,6 +135,18 @@ function openingAddress(): ReleaseAddress {
 function replaceSearch(search: string): void {
   if (search === window.location.search) return;
   window.history.replaceState(window.history.state, '', `${window.location.pathname}${search}${window.location.hash}`);
+}
+
+/**
+ * Build to Deploy as the project's one path draws them: the server's
+ * `stages`; from a server before them, its own steps; with no path answer at
+ * all, the release map's states (what this screen read itself).
+ */
+export function releaseStages(path: ProjectPath | null, map: ReleaseMap): PathStage[] {
+  const server = stagesOf(path?.stages);
+  if (server) return server;
+  const read = STAGES.map((id) => stageOf(id, map[id].state, ''));
+  return joinStages(read, stagesFromDelivery(path?.steps));
 }
 
 /** How often the page reads again while a build runs or a deploy goes. */
@@ -365,7 +389,30 @@ function Releases({ projectId, onOrganization }: { projectId: string; onOrganiza
         </div>
       )}
       {(targets || unavailable) && (
-        <ReleaseMap map={map} names={names} selected={stage} onSelect={(s) => show(s)} productMissing={productMissing} />
+        <PathStrip
+          stages={releaseStages(path, map)}
+          only={RELEASE_STAGES}
+          selected={stage}
+          tabIdPrefix="release-stage-"
+          panelId="release-stage-panel"
+          onOpen={(route) => openScreen(bridge, route)}
+          // Build to Deploy are this screen's: the stage shows under the strip.
+          onSelect={(s) => {
+            if (!isStage(s.id)) return false;
+            show(s.id);
+            return true;
+          }}
+          // The stage's action as the path step's own (with its ids), through the screen's intents.
+          onAction={(s) => {
+            if (!s.action) return false;
+            const step = path?.steps.find((p) => p.action?.kind === s.action?.kind);
+            const action = step?.action ?? { kind: s.action.kind, label: s.action.label };
+            const intent = intentOf(action, step?.deployment_id);
+            if (intent.kind === 'none') return false;
+            onIntent(intent, action);
+            return true;
+          }}
+        />
       )}
       {(targets || unavailable || error) && (
         <section

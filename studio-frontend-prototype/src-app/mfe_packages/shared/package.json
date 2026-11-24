@@ -7,7 +7,8 @@
     ".": "./src/index.ts",
     "./grid": "./src/grid.ts",
     "./testing": "./src/data/testing.ts",
-    "./page": "./src/page.ts"
+    "./page": "./src/page.ts",
+    "./path": "./src/path.ts"
   },
   "scripts": {
     "type-check": "tsc --noEmit",

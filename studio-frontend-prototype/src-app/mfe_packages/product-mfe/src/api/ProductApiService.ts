@@ -54,6 +54,7 @@ import type {
   UnreadableSource,
 } from './types';
 import type { DerivedViewState } from '@constructor-studio/mfe-shared';
+import type { DeliveryPathStep } from '@constructor-studio/mfe-shared/path';
 import type { ProjectComponent } from '../model/project-checks';
 import type { GlossaryEntry, SpecModel } from '../model/spec-model';
 import type { GearCatalogue } from '../model/product-configurator';
@@ -326,6 +327,12 @@ export class ProductApiService extends BaseApiService {
   >(({ projectId }) => orgScoped(`/studio-product/v1/projects/${enc(projectId)}/gear-repo`));
 
   /* ── environments (studio-environments) ── */
+
+  /** The project's stages 5-9, Product to Deploy (`stages`), or an older server's own `steps`. */
+  readonly projectPath = this.protocol(RestEndpointProtocol).queryWith<
+    { stages?: unknown; steps?: DeliveryPathStep[] },
+    { projectId: string }
+  >(({ projectId }) => `/studio-environments/v1/project-path?${project(projectId)}`);
 
   readonly projectTargets = this.protocol(RestEndpointProtocol).queryWith<ProjectTargets, { projectId: string }>(
     ({ projectId }) => `/studio-environments/v1/targets?${project(projectId)}`

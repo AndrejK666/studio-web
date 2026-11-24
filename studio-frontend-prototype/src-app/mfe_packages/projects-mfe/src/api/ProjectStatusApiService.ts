@@ -14,6 +14,7 @@
  */
 
 import { BaseApiService, RestEndpointProtocol, RestProtocol } from '@gears-frontx/react';
+import type { DeliveryPathStep } from '@constructor-studio/mfe-shared/path';
 import type { ProjectStatus } from '../model/projectStatus';
 
 export const STUDIO_ORGANIZATIONS_API_BASE_URL = '/cf/studio-organizations/v1';
@@ -144,6 +145,30 @@ export interface ProjectRollup {
   activity_days?: number | null;
   /** The phase Project lifecycle has the project in (`idea`, `discovery`, `build`, `run`); null for none. */
   phase?: string | null;
+}
+
+/**
+ * A project's path from its product to running
+ * (`GET /studio-environments/v1/project-path`): `stages` 5-9 as the server
+ * decides them, or, from a server before `stages`, its own `steps`. The
+ * Overview reads it only when the status came without `stages`.
+ */
+export interface ProjectDeliveryPath {
+  stages?: unknown;
+  steps?: DeliveryPathStep[];
+}
+
+/** studio-environments' project path: the Overview's stages 5-9 from an older status. */
+export class ProjectDeliveryApiService extends BaseApiService {
+  constructor() {
+    const restProtocol = new RestProtocol({ timeout: 60000 });
+    const restEndpoints = new RestEndpointProtocol(restProtocol);
+    super({ baseURL: '/cf/studio-environments/v1' }, restProtocol, restEndpoints);
+  }
+
+  readonly path = this.protocol(RestEndpointProtocol).queryWith<ProjectDeliveryPath, { projectId: string }>(
+    ({ projectId }) => `/project-path?${new URLSearchParams({ project_id: projectId })}`
+  );
 }
 
 export class ProjectStatusApiService extends BaseApiService {

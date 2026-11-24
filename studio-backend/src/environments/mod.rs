@@ -47,7 +47,7 @@ mod mcp;
 pub(crate) use mcp::tools as mcp_tools;
 mod migrations;
 mod model;
-mod path; // a project's path from its product to running (#1050)
+pub(crate) mod path; // a project's path from its product to running (#1050)
 mod placement; // a project's slug, namespaces and registry path (ADR-0062 §3, §7)
 pub(crate) mod port; // what another gear asks of this one directly
 mod preflight; // what a deploy checks before and while it installs
@@ -220,6 +220,12 @@ impl RestApiCapability for StudioEnvironmentsGear {
             .register::<dyn port::ProjectDeployments>(Arc::new(port::DeploymentsPort(Arc::clone(
                 &service,
             ))));
+        // A project's stages from its product to running, for its status's
+        // whole path (`project_path.rs`).
+        ctx.client_hub()
+            .register::<dyn port::ProjectDeliveryStages>(Arc::new(port::DeliveryStagesPort(
+                Arc::clone(&service),
+            )));
         let router = rest::register_routes(router, openapi, service);
         // The write routes a kit claims answer KIT_NOT_INSTALLED without it
         // (ADR-0071 §4): studio-kits' one shared check.

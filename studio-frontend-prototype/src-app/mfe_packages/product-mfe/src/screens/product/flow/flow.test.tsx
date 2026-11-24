@@ -19,6 +19,15 @@ vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
   openScreen,
 }));
 
+// The shared path strip: its own dictionary, the shell's answer of what is here.
+vi.mock('@gears-frontx/react', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@gears-frontx/react')>()),
+  useMfeBridge: () => null,
+  useSharedProperty: () => null,
+  useScreenTranslations: () => ({ isLoaded: true }),
+  useTranslation: () => ({ language: 'en', t: (key: string) => `path.${key.split(':').pop()}` }),
+}));
+
 import { api, type ProductKindAnswer, type ProductPreview, type ProjectProduct } from '../../../api/client';
 import { ScopeContext, type Scope } from '../../common';
 import { ProductFlow } from './ProductFlow';
@@ -49,6 +58,16 @@ beforeEach(() => {
   });
   vi.spyOn(api, 'listArtifactNodes').mockResolvedValue({ nodes: [] } as never);
   vi.spyOn(api, 'deployments').mockResolvedValue({ items: [], total: 0 });
+  // A server before `stages`: its own steps.
+  vi.spyOn(api, 'projectPath').mockResolvedValue({
+    steps: [
+      { id: 'product', state: 'done', reason: 'The product is described (revision 2).' },
+      { id: 'build', state: 'next', reason: 'Nothing is built yet.', action: { kind: 'build', label: 'Build' } },
+      { id: 'image', state: 'later', reason: 'Waits for a build that passes.' },
+      { id: 'environment', state: 'blocked', reason: 'No environment takes this project yet.' },
+      { id: 'running', state: 'later', reason: 'Waits for the steps before it.' },
+    ],
+  });
 });
 
 afterEach(() => {
@@ -57,22 +76,55 @@ afterEach(() => {
 });
 
 describe('ProductFlow', () => {
-  it('draws the four steps and tells the page what it read', async () => {
+  it('draws the path from Product to Deploy, numbered as on the whole path, and tells the page what it read', async () => {
     const onSteps = vi.fn();
     wrap(<ProductFlow round={0} open={null} onOpen={() => undefined} onSection={() => undefined} onSaved={() => undefined} onSteps={onSteps} />);
-    await waitFor(() => expect(document.querySelectorAll('[data-step]')).toHaveLength(4));
+    await waitFor(() => expect(document.querySelectorAll('[data-stage]')).toHaveLength(5));
+    const chips = [...document.querySelectorAll('[data-stage]')].map((c) => c.getAttribute('data-stage'));
+    expect(chips).toEqual(['product', 'build', 'images', 'environment', 'deploy']);
+    // Product from the flow: revision 2 does not say its gear, so it is saved again first.
+    expect(document.querySelector('[data-stage="product"]')?.getAttribute('data-stage-state')).toBe('current');
+    expect(document.querySelector('[data-stage="product"] [data-mark]')?.textContent).toBe('5');
+    expect(document.querySelector('[data-stage-detail]')?.textContent).toContain('save it again');
+    expect(document.querySelector('[data-stage-action]')?.getAttribute('data-stage-action')).toBe('save_product');
+    // The older server's own steps after it, as stages 6-9.
+    expect(document.querySelector('[data-stage="environment"]')?.getAttribute('data-stage-state')).toBe('blocked');
     expect(onSteps).toHaveBeenCalled();
     expect(onSteps.mock.calls[0][0].map((s: { id: string }) => s.id)).toEqual(['configure', 'save', 'build', 'deploy']);
   });
 
-  it('opens the map for Configure and Releases for Build', async () => {
+  it("draws the server's stages when it sends them", async () => {
+    vi.spyOn(api, 'projectPath').mockResolvedValue({
+      stages: [
+        { id: 'product', number: 5, state: 'failed', cause: '1 gear, does not resolve (2 errors).', tab: 'product', focus: true },
+        { id: 'build', number: 6, state: 'todo', cause: 'Waits for the product.', tab: 'releases', focus: false },
+      ],
+    });
+    wrap(<ProductFlow round={0} open={null} onOpen={() => undefined} onSection={() => undefined} onSaved={() => undefined} />);
+    await waitFor(() => expect(document.querySelector('[data-stage="product"]')?.getAttribute('data-stage-state')).toBe('failed'));
+    expect(document.querySelectorAll('[data-stage]')).toHaveLength(2);
+    expect(document.querySelector('[data-stage-detail]')?.textContent).toContain('does not resolve');
+  });
+
+  it('opens its save for Product and Releases for Build', async () => {
+    const onOpen = vi.fn();
+    wrap(<ProductFlow round={0} open={null} onOpen={onOpen} onSection={() => undefined} onSaved={() => undefined} />);
+    await waitFor(() => expect(document.querySelector('[data-stage="product"]')).not.toBeNull());
+    fireEvent.click(document.querySelector('[data-stage="product"]')!);
+    expect(onOpen).toHaveBeenCalledWith('save');
+    fireEvent.click(document.querySelector('[data-stage="build"]')!);
+    expect(openScreen).toHaveBeenCalledWith(bridge, '/releases');
+  });
+
+  it('says the product unsaved when an older server knows of no description', async () => {
+    vi.spyOn(api, 'productDescription').mockResolvedValue({ latest: null } as never);
+    vi.spyOn(api, 'projectPath').mockRejectedValue(new Error('older backend'));
     const onSection = vi.fn();
     wrap(<ProductFlow round={0} open={null} onOpen={() => undefined} onSection={onSection} onSaved={() => undefined} />);
-    await waitFor(() => expect(document.querySelector('[data-step="configure"]')).not.toBeNull());
-    fireEvent.click(document.querySelector('[data-step="configure"]')!);
-    expect(onSection).toHaveBeenCalledWith('map');
-    fireEvent.click(document.querySelector('[data-step="build"]')!);
-    expect(openScreen).toHaveBeenCalledWith(bridge, '/releases');
+    await waitFor(() => expect(document.querySelector('[data-stage="product"]')).not.toBeNull());
+    const product = document.querySelector('[data-stage="product"]');
+    expect(product?.getAttribute('data-stage-state')).toBe('current');
+    expect(document.querySelector('[data-stage-action]')?.getAttribute('data-stage-action')).toBe('save_product');
   });
 
   it("checks what changes against the kept revision, then saves the next one", async () => {

@@ -130,6 +130,10 @@ pub enum SignInState {
     RunsOut(i64),
     Expired,
     None,
+    /// Not asked: the path is read by a gear as itself (the project's status,
+    /// `project_path.rs`), which has no sign-in of its own. Whoever deploys
+    /// brings theirs; the step is not held up by the gear's lack of one.
+    NotAsked,
 }
 
 /// One environment the project may deploy to, with what it lacks there.
@@ -404,6 +408,10 @@ fn environment_step(f: &PathFacts, target: Option<Uuid>) -> PathStep {
                     "A Research environment runs with your own sign-in: sign in to Constructor \
                      Research."
                         .to_owned(),
+                ),
+                SignInState::NotAsked => (
+                    true,
+                    "A Research environment runs with the sign-in of whoever deploys.".to_owned(),
                 ),
             };
             checks.push(Check {

@@ -13,7 +13,11 @@ pub fn tools() -> Vec<Tool> {
                 refused repository connection, a failed build or deploy, a product that does \
                 not resolve, high findings, failing specs, stuck pull requests), each with \
                 where to act on it, and the path from connecting a repository to a build with \
-                the step to do next. `unread` names the sources that could not be read.",
+                the step to do next. `stages` is the project's one path from its sources to \
+                its running product (Sources, Documents, Domain model, Findings, Product, \
+                Build, Images, Environment, Deploy), each with its state, cause, the tab that \
+                holds the evidence and what moves it on; the one to look at has `focus`. \
+                `unread` names the sources that could not be read.",
             input_schema: || object(json!({ "project_id": project_id() }), &["project_id"]),
             effect: Effect::Read,
             experimental: false,

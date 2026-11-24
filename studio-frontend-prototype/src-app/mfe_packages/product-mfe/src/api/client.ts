@@ -184,6 +184,8 @@ export const api = {
   getProjectGearRepo: (_token: string, projectId: string) => svc().projectGearRepo({ projectId }).fetch(FRESH),
 
   projectTargets: (_token: string, projectId: string) => svc().projectTargets({ projectId }).fetch(FRESH),
+  /** The project's path from its product to running, as every tab draws it. */
+  projectPath: (_token: string, projectId: string) => svc().projectPath({ projectId }).fetch(FRESH),
   infraPlan: (_token: string, projectId: string, environmentId: string) =>
     svc().infraPlan({ projectId, environmentId }).fetch(FRESH),
   /** Every environment's plan in one call, not one call per environment. */

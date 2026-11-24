@@ -2,7 +2,8 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectStatus } from '../../../../model/projectStatus';
 
-const { query, openScreen, phaseRead, phaseSet, available, live, nextSteps } = vi.hoisted(() => ({
+const { query, openScreen, phaseRead, phaseSet, available, live, nextSteps, deliveryRead } = vi.hoisted(() => ({
+  deliveryRead: vi.fn(),
   nextSteps: vi.fn((_props: Record<string, unknown>) => null),
   available: { value: null as unknown },
   live: { value: null as unknown },
@@ -29,10 +30,14 @@ vi.mock('@gears-frontx/react', async (importOriginal) => ({
       status: () => ({}),
       phase: () => ({ fetch: phaseRead }),
       setPhase: () => ({ fetch: phaseSet }),
+      path: () => ({ fetch: deliveryRead }),
     }),
   },
   useApiQuery: query,
   useMfeBridge: () => null,
+  // The shared path strip's own dictionary: its words as `path.<key>`.
+  useScreenTranslations: () => ({ isLoaded: true }),
+  useTranslation: () => ({ language: 'en', t: (key: string) => `path.${key.split(':').pop()}` }),
   useSharedProperty: (id: string) =>
     id.includes('screens.available') ? available.value : id.includes('last_event') ? live.value : null,
 }));
@@ -82,6 +87,8 @@ describe('OverviewSection', () => {
     query.mockReturnValue(ok(blocked));
     phaseRead.mockReset();
     phaseSet.mockReset();
+    deliveryRead.mockReset();
+    deliveryRead.mockResolvedValue({ steps: [] });
     // Project lifecycle not installed: no phase anywhere.
     phaseRead.mockResolvedValue({ project_id: 'p1', installed: false, phase: null, phase_owner: null, phase_since: null, states: [], next: [] });
   });
@@ -156,9 +163,10 @@ describe('OverviewSection', () => {
     // The next step's screen is missing too: Open IDE is the primary action.
     expect(document.querySelector('[data-next-step]')).toBeNull();
     expect(screen.getAllByRole('button', { name: 'open_ide' })).toHaveLength(1);
-    // A step whose screen shows keeps its button.
-    fireEvent.click(document.querySelector('[data-path-step="repos"]') as HTMLElement);
-    fireEvent.click(screen.getByRole('button', { name: 'Open Sources' }));
+    // A stage whose screen shows opens it; one whose kit is not here does not.
+    fireEvent.click(document.querySelector('[data-stage="documents"]') as HTMLElement);
+    expect(openScreen).not.toHaveBeenCalled();
+    fireEvent.click(document.querySelector('[data-stage="sources"]') as HTMLElement);
     expect(openScreen).toHaveBeenLastCalledWith(null, '/projects/sources');
   });
 
@@ -230,13 +238,45 @@ describe('OverviewSection', () => {
     expect(screen.getByText('not_read {"sources":"builds, deployments"}')).toBeTruthy();
   });
 
-  it('draws the path with its progress, and a step opens its line and button', () => {
+  it("draws the server's whole path, and reads nothing more for it", () => {
+    const stage = (id: string, number: number, state: string, focus = false) => ({
+      id,
+      number,
+      state,
+      cause: `${id} says so.`,
+      tab: id === 'sources' ? 'sources' : 'releases',
+      focus,
+    });
+    query.mockReturnValue(
+      ok({
+        ...blocked,
+        stages: [stage('sources', 1, 'done'), stage('product', 5, 'done'), stage('build', 6, 'failed', true), stage('deploy', 9, 'todo')],
+      })
+    );
     render(<OverviewSection projectId="p1" />);
-    expect(screen.getByText('path_progress {"done":1,"total":3}')).toBeTruthy();
-    const unknown = document.querySelector('[data-path-step="build"]') as HTMLElement;
-    expect(unknown.getAttribute('data-flow')).toBe('later');
-    fireEvent.click(unknown);
-    expect(screen.getByText('step_unknown {"status":"CI runs not readable"}')).toBeTruthy();
+    const chips = [...document.querySelectorAll('[data-stage]')].map((c) => c.getAttribute('data-stage'));
+    expect(chips).toEqual(['sources', 'product', 'build', 'deploy']);
+    expect(document.querySelector('[data-focus]')?.getAttribute('data-stage')).toBe('build');
+    expect(document.querySelector('[data-stage-detail]')?.textContent).toContain('build says so.');
+    expect(deliveryRead).not.toHaveBeenCalled();
+  });
+
+  it('draws the path from an older status and the delivery path until the server sends stages', async () => {
+    deliveryRead.mockResolvedValue({
+      steps: [
+        { id: 'product', state: 'done', reason: 'The product is described (revision 2).' },
+        { id: 'image', state: 'blocked', reason: 'The last build that passed published no chart.' },
+      ],
+    });
+    render(<OverviewSection projectId="p1" />);
+    // The status's own steps at once: Sources done, Documents the one to do now.
+    expect(document.querySelector('[data-stage="documents"]')?.getAttribute('data-stage-state')).toBe('current');
+    expect(document.querySelector('[data-stage="build"]')?.getAttribute('data-stage-state')).toBe('unknown');
+    // Then stages 5-9 from studio-environments, numbered as on the whole path.
+    await vi.waitFor(() => expect(document.querySelector('[data-stage="images"]')).toBeTruthy());
+    expect(document.querySelector('[data-stage="images"]')?.getAttribute('data-stage-state')).toBe('blocked');
+    expect(document.querySelector('[data-stage="images"]')?.textContent).toContain('7.');
+    expect(deliveryRead).toHaveBeenCalled();
   });
 
   it('shows a 503 as studio-mcp being down, not as an empty project', () => {

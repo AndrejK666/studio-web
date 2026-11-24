@@ -172,6 +172,10 @@ pub struct ProjectPathDto {
     /// With `include=deployments`: what `GET /deployments?project_id=`
     /// answers, the deploys the path was decided from.
     pub deployments: Option<super::DeploymentListDto>,
+    /// The project's path from its product to running as every tab draws
+    /// it (`project_path.rs`): Product, Build, Images, Environment, Deploy,
+    /// numbered 5-9 as on the whole path `GET /project-status` answers.
+    pub stages: Vec<crate::project_path::ProjectStageDto>,
 }
 
 /// `?project_id=&include=`.
@@ -226,6 +230,8 @@ fn sign_in_dto(state: SignInState, connection_id: Option<Uuid>) -> ResearchSignI
         SignInState::RunsOut(d) => ("runs_out", Some(d)),
         SignInState::Expired => ("expired", Some(0)),
         SignInState::None => ("none", None),
+        // A person's read always asks; only a gear's own read does not.
+        SignInState::NotAsked => ("not_asked", None),
     };
     ResearchSignInDto {
         state: state.to_owned(),
@@ -300,7 +306,9 @@ async fn get_project_path(
         .await
         .map_err(problem)?;
     let p = v.path;
+    let stages = crate::project_path::stages_dto(&v.stages);
     Ok(Json(ProjectPathDto {
+        stages,
         organization_id: v.organization_id,
         current: p.current.to_owned(),
         environment_id: p.environment_id,

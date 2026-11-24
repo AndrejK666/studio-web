@@ -36,8 +36,8 @@ mod rest;
 pub mod rollups;
 pub mod sdk;
 mod service;
-mod status;
-mod status_read;
+pub(crate) mod status;
+pub(crate) mod status_read;
 mod status_view; // a project's status kept, computed again in the background
 
 /// The types the kept project status needs in the model, for the kits' claims test.
