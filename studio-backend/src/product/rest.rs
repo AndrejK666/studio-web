@@ -32,6 +32,9 @@ mod explanations_rest;
 #[path = "descriptions_rest.rs"]
 mod descriptions_rest;
 
+#[path = "check_task.rs"]
+pub(super) mod check_task;
+
 #[path = "description_ops_rest.rs"]
 mod description_ops_rest;
 
@@ -132,6 +135,17 @@ impl Product {
         ctx: &SecurityContext,
         project: Uuid,
     ) -> anyhow::Result<Option<super::gearbox::HomeCheckout>> {
+        self.home_with(ctx, project, false).await
+    }
+
+    /// [`Self::home`], fetched first when `fetch`: only a queued check does,
+    /// a request reads the server's clone as it is.
+    pub(super) async fn home_with(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+        fetch: bool,
+    ) -> anyhow::Result<Option<super::gearbox::HomeCheckout>> {
         let (Some(gearbox), Ok(am)) = (
             self.gearbox.as_ref(),
             self.hub
@@ -140,7 +154,7 @@ impl Product {
             return Ok(None);
         };
         let connectors = crate::connectors::sdk::Connectors::new(Arc::clone(&self.hub));
-        super::project_roots::home_checkout(gearbox, &connectors, am.as_ref(), ctx, project)
+        super::project_roots::home_checkout(gearbox, &connectors, am.as_ref(), ctx, project, fetch)
             .await
             .transpose()
     }
@@ -2465,7 +2479,15 @@ async fn check_and_record(
     mut record: serde_json::Map<String, Value>,
 ) -> anyhow::Result<super::gearbox::Preview> {
     let profile = input.profile.clone();
-    let preview = gearbox.check(scope, input, described).await?;
+    // Nobody may be waiting any more (the gateway gives up at 30 s): a check
+    // that fails says why here, or its cause is lost with the request.
+    let preview = match gearbox.check(scope, input, described).await {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!(%project_id, %profile, error = %format!("{e:#}"), "gearbox: a check did not finish");
+            return Err(e);
+        }
+    };
     let (check, last) = check_record(&preview, &profile);
     record.insert("last_preview".into(), last);
     let mut checks = serde_json::Map::new();
@@ -3060,8 +3082,12 @@ pub fn register_routes(
     let router = gear_match_rest::register(router, openapi);
     let router = assembly_rest::register(router, openapi);
     let router = gear_match_usage_rest::register(router, openapi);
+    let router = check_task::register(router, openapi);
     let router = register_legacy_routes(router, openapi);
-    router.layer(Extension(Product::new(service, hub, gearbox)))
+    let product = Product::new(service, hub, gearbox);
+    // The queued checks run through the same handle the routes do.
+    check_task::serve(&product);
+    router.layer(Extension(product))
 }
 
 /// The paths these routes had under `studio-components-catalog` that a client

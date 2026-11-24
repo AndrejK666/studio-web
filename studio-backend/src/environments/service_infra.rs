@@ -97,44 +97,108 @@ impl EnvironmentService {
         let env = self
             .project_environment(ctx, org, project, environment)
             .await?;
-        // As a deploy of the newest build whose lock says its services
-        // (ADR-0065 §3), else of the project's records alone (ADR-0064).
         let list = self
             .store
             .read::<BindingList>(ctx, project, BINDINGS_METADATA_TYPE)
             .await?
             .0;
-        let services = match list.built_infra.first() {
-            Some(built) => infra::built_services(built, &list.infra),
-            None => list.infra.clone(),
+        let inputs = PlanInputs::of(&list);
+        let description = if inputs.needs_description(&[&env]) {
+            self.description_text(ctx, project).await
+        } else {
+            None
         };
-        let placement = env.boundaries.infra.clone().unwrap_or_default();
-        // The variables a deploy would give the release there, as
-        // `project_config` collects them.
-        let mut keys: Vec<String> = list
-            .secrets
-            .iter()
-            .filter(|s| s.environment_id == env.id)
-            .map(|s| s.key.clone())
-            .collect();
-        if env.kind == EnvironmentKind::Kubernetes {
-            let installs = infra::installs(
-                Some(&placement),
-                &services,
-                env.previews
-                    .as_ref()
-                    .and_then(|s| s.ingress_class.as_deref()),
-            );
-            for v in infra::produced_variables(&installs)
-                .into_iter()
-                .chain(infra::file_variables(&installs))
-            {
-                if !keys.contains(&v) {
-                    keys.push(v);
+        let slug = if env.kind == EnvironmentKind::Kubernetes {
+            Some(self.slug(ctx, org, project).await?)
+        } else {
+            None
+        };
+        self.plan_in(org, project, &env, &inputs, description.as_deref(), slug.as_deref())
+            .await
+    }
+
+    /// [`Self::infra_plan`] for every environment the project may deploy to
+    /// (the organization's that admit it, then its own), in the order the
+    /// targets list them. What every plan shares -- the organization, the
+    /// project's records, its latest description, its slug -- is read once,
+    /// and the environments are planned side by side: the page that drew one
+    /// plan per environment made N calls that each read all of it again.
+    /// An environment whose plan is refused (a namespace that cannot be
+    /// placed) is left out, as a page that ignored the one refused call did.
+    pub async fn infra_plans(&self, ctx: &SecurityContext, project: Uuid) -> Result<Vec<InfraPlan>> {
+        let (org, name) = tokio::join!(
+            self.organization_of_project(ctx, project),
+            self.project_name(ctx, project)
+        );
+        let org = org?;
+        let (visible, list) = tokio::join!(
+            self.visible(ctx, org, project),
+            self.store
+                .read::<BindingList>(ctx, project, BINDINGS_METADATA_TYPE)
+        );
+        let (admitted, own) = visible?;
+        let list = list?.0;
+        let envs: Vec<Environment> = admitted.into_iter().chain(own).collect();
+        let inputs = PlanInputs::of(&list);
+        let refs: Vec<&Environment> = envs.iter().collect();
+        let (description, slug) = tokio::join!(
+            async {
+                if inputs.needs_description(&refs) {
+                    self.description_text(ctx, project).await
+                } else {
+                    None
+                }
+            },
+            async {
+                if envs.iter().any(|e| e.kind == EnvironmentKind::Kubernetes) {
+                    match &name {
+                        Ok(name) => Some(self.slug_named(org, project, name).await),
+                        Err(_) => None,
+                    }
+                } else {
+                    None
+                }
+            }
+        );
+        // A project whose name cannot be read has no slug, so no Kubernetes
+        // plan: the refusal is the one a single plan would have said.
+        let slug = match (slug, name) {
+            (Some(s), _) => Some(s?),
+            (None, Err(e)) if envs.iter().any(|x| x.kind == EnvironmentKind::Kubernetes) => {
+                return Err(e);
+            }
+            (None, _) => None,
+        };
+        let plans = futures_util::future::join_all(envs.iter().map(|env| {
+            self.plan_in(org, project, env, &inputs, description.as_deref(), slug.as_deref())
+        }))
+        .await;
+        let mut out = Vec::with_capacity(plans.len());
+        for (env, plan) in envs.iter().zip(plans) {
+            match plan {
+                Ok(p) => out.push(p),
+                Err(e) => {
+                    tracing::debug!(%project, environment = %env.id, error = ?e, "studio-environments: an environment's infra plan is left out");
                 }
             }
         }
-        let configuration = self.config_clashes(ctx, project, &keys).await;
+        Ok(out)
+    }
+
+    /// One environment's plan from what [`Self::infra_plan`] and
+    /// [`Self::infra_plans`] read.
+    async fn plan_in(
+        &self,
+        org: Uuid,
+        project: Uuid,
+        env: &Environment,
+        inputs: &PlanInputs<'_>,
+        description: Option<&str>,
+        slug: Option<&str>,
+    ) -> Result<InfraPlan> {
+        let placement = env.boundaries.infra.clone().unwrap_or_default();
+        let keys = inputs.variable_keys(env, &placement);
+        let configuration = Self::clashes_with(description, &keys);
         if env.kind != EnvironmentKind::Kubernetes {
             return Ok(InfraPlan {
                 environment_id: env.id,
@@ -145,9 +209,10 @@ impl EnvironmentService {
                 configuration,
             });
         }
-        let place = self.place(ctx, org, project, &env).await?;
-        let items = infra::plan(Some(&placement), &services, |r| {
-            under_project(&env, &place.prefix, r)
+        let slug = slug.ok_or_else(|| Refusal::Internal("the project's slug is not read".into()))?;
+        let place = self.place_with_slug(org, project, env, slug).await?;
+        let items = infra::plan(Some(&placement), &inputs.services, |r| {
+            under_project(env, &place.prefix, r)
         });
         Ok(InfraPlan {
             environment_id: env.id,
@@ -226,5 +291,64 @@ impl EnvironmentService {
             }
         }
         Ok(())
+    }
+}
+
+/// What every environment's infra plan reads from the project's records.
+struct PlanInputs<'a> {
+    list: &'a BindingList,
+    /// As a deploy of the newest build whose lock says its services
+    /// (ADR-0065 §3), else of the project's records alone (ADR-0064).
+    services: Vec<InfraService>,
+}
+
+impl<'a> PlanInputs<'a> {
+    fn of(list: &'a BindingList) -> Self {
+        let services = match list.built_infra.first() {
+            Some(built) => infra::built_services(built, &list.infra),
+            None => list.infra.clone(),
+        };
+        Self { list, services }
+    }
+
+    /// The variables a deploy would give the release in `env`, as
+    /// `project_config` collects them.
+    fn variable_keys(&self, env: &Environment, placement: &InfraPlacement) -> Vec<String> {
+        let mut keys: Vec<String> = self
+            .list
+            .secrets
+            .iter()
+            .filter(|s| s.environment_id == env.id)
+            .map(|s| s.key.clone())
+            .collect();
+        if env.kind == EnvironmentKind::Kubernetes {
+            let installs = infra::installs(
+                Some(placement),
+                &self.services,
+                env.previews
+                    .as_ref()
+                    .and_then(|s| s.ingress_class.as_deref()),
+            );
+            for v in infra::produced_variables(&installs)
+                .into_iter()
+                .chain(infra::file_variables(&installs))
+            {
+                if !keys.contains(&v) {
+                    keys.push(v);
+                }
+            }
+        }
+        keys
+    }
+
+    /// Whether any of `envs` has a variable a gear's configuration could
+    /// clash with: only then is the description worth reading.
+    fn needs_description(&self, envs: &[&Environment]) -> bool {
+        envs.iter().any(|env| {
+            let placement = env.boundaries.infra.clone().unwrap_or_default();
+            self.variable_keys(env, &placement)
+                .iter()
+                .any(|k| crate::environments::gear_overrides::field_of(k).is_some())
+        })
     }
 }

@@ -971,16 +971,17 @@ fn latest_record(nodes: Vec<GtsNode>, key: &str) -> Option<GtsNode> {
         })
 }
 
-/// A patch laid over a product record: each field replaced, except `checks`,
-/// which is merged by profile -- a preview checks one profile and must not
-/// take the others' verdicts away (ADR-0057).
+/// A patch laid over a product record: each field replaced, except `checks`
+/// and `check_runs`, which are merged by profile -- a preview checks one
+/// profile and must not take the others' verdicts (or their queued checks)
+/// away (ADR-0057).
 fn merge_product_patch(
     value: &mut serde_json::Map<String, Value>,
     patch: serde_json::Map<String, Value>,
 ) {
     for (k, v) in patch {
         if let (true, Value::Object(new), Some(Value::Object(old))) =
-            (k == "checks", &v, value.get_mut(&k))
+            (k == "checks" || k == "check_runs", &v, value.get_mut(&k))
         {
             old.extend(new.clone());
             continue;
@@ -1023,6 +1024,23 @@ mod merge_tests {
                 .unwrap(),
         );
         assert_eq!(old["checks"]["prod"]["ok"], true);
+        // A queued check of one profile leaves the other's run in place.
+        merge_product_patch(
+            &mut old,
+            serde_json::json!({"check_runs": {"prod": {"state": "queued"}}})
+                .as_object()
+                .cloned()
+                .unwrap(),
+        );
+        merge_product_patch(
+            &mut old,
+            serde_json::json!({"check_runs": {"dev": {"state": "failed"}}})
+                .as_object()
+                .cloned()
+                .unwrap(),
+        );
+        assert_eq!(old["check_runs"]["prod"]["state"], "queued");
+        assert_eq!(old["check_runs"]["dev"]["state"], "failed");
     }
 }
 

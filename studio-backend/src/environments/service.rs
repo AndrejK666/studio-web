@@ -1745,18 +1745,45 @@ impl EnvironmentService {
         {
             return Vec::new();
         }
-        let Ok(products) = self.hub.get::<dyn crate::product::port::ProjectProducts>() else {
-            return Vec::new();
-        };
-        let text = match products.latest_description(ctx, project).await {
-            Ok(Some(d)) => d.text,
-            Ok(None) => return Vec::new(),
+        let text = self.description_text(ctx, project).await;
+        Self::clashes_with(text.as_deref(), secret_keys)
+    }
+
+    /// The project's latest description, for [`Self::clashes_with`]: `None`
+    /// when it has none or it cannot be read (said in the log).
+    pub(super) async fn description_text(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+    ) -> Option<String> {
+        let products = self
+            .hub
+            .get::<dyn crate::product::port::ProjectProducts>()
+            .ok()?;
+        match products.latest_description(ctx, project).await {
+            Ok(d) => d.map(|d| d.text),
             Err(e) => {
                 tracing::warn!(%project, error = %format!("{e:#}"), "studio-environments: the description could not be read; configuration secrets are not compared with it");
-                return Vec::new();
+                None
             }
+        }
+    }
+
+    /// [`Self::config_clashes`] against a description already read.
+    pub(super) fn clashes_with(
+        description: Option<&str>,
+        secret_keys: &[String],
+    ) -> Vec<super::gear_overrides::Clash> {
+        let Some(text) = description else {
+            return Vec::new();
         };
-        let configs = crate::product::port::gear_configs(&text);
+        if !secret_keys
+            .iter()
+            .any(|k| super::gear_overrides::field_of(k).is_some())
+        {
+            return Vec::new();
+        }
+        let configs = crate::product::port::gear_configs(text);
         let provided: std::collections::BTreeSet<String> = secret_keys.iter().cloned().collect();
         super::gear_overrides::clashes(&configs, secret_keys, &provided)
     }

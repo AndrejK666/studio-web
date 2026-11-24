@@ -772,32 +772,6 @@ async fn check_product_description(
     Query(ProductDescriptionQuery { project_id }): Query<ProductDescriptionQuery>,
     Json(body): Json<ProductDescriptionCheckRequest>,
 ) -> ApiResult<JsonBody<ProductDescriptionCheckDto>> {
-    product.require_descriptions()?;
-    let gearbox = Arc::clone(product.gearbox()?);
-    let invalid = |e: anyhow::Error| {
-        StudioProductError::invalid_argument()
-            .with_constraint(format!("{e:#}"))
-            .create()
-    };
-    let revision = match body.revision {
-        Some(n) => {
-            product
-                .service
-                .description_revision(&ctx, project_id, n)
-                .await
-        }
-        None => product.service.latest_description(&ctx, project_id).await,
-    }
-    .map_err(|e| internal(&e))?
-    .ok_or_else(|| {
-        let what = body.revision.map_or_else(
-            || "no revision yet".to_owned(),
-            |n| format!("no revision {n}"),
-        );
-        StudioProductError::not_found(format!("the project's description has {what}"))
-            .with_resource(format!("{project_id}/description"))
-            .create()
-    })?;
     let profile = body
         .profile
         .as_deref()
@@ -805,78 +779,21 @@ async fn check_product_description(
         .filter(|p| !p.is_empty())
         .unwrap_or("prod")
         .to_owned();
-    let project = project_id.to_string();
-    let (record, scope, home) = tokio::join!(
-        product.service.get_project_product(&ctx, &project),
-        product.scope(&ctx, project_id, false),
-        product.home(&ctx, project_id),
-    );
-    let record = record.map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
-    let record = record.as_ref().map(|n| &n.value);
-    // A home source the server cannot read is checked without, and said.
-    let (home, unreadable) = match home {
-        Ok(h) => (h, Vec::new()),
-        Err(e) => match e.downcast::<crate::product::project_roots::HomeUnreadable>() {
-            Ok(why) => (None, vec![UnreadableSourceDto::from(why.0)]),
-            Err(e)
-                if e.downcast_ref::<crate::product::gearbox::HomeStillReading>()
-                    .is_some() =>
-            {
-                return Err(CanonicalError::service_unavailable()
-                    .with_detail(format!("{e:#}"))
-                    .create());
-            }
-            Err(e) => return Err(invalid(e)),
-        },
-    };
-    let product_id = record
-        .and_then(|r| r.get("product_id"))
-        .and_then(Value::as_str)
-        .map(str::to_owned)
-        .or_else(|| declared_product_id(&revision.text))
-        .ok_or_else(|| invalid(anyhow::anyhow!("the description declares no product id")))?;
-    // The engine resolves the gears the text uses; the list only says
-    // there are some (a text with none has nothing to resolve).
-    let gears = used_gears(&revision.text);
-    if gears.is_empty() {
-        return Err(invalid(anyhow::anyhow!(
-            "revision {} uses no gear: there is nothing to resolve",
-            revision.revision
-        )));
-    }
-    let input = PreviewInput {
-        product_id: product_id.clone(),
-        product_path: product_path_for(record, &product_id),
-        name: product_id,
-        gears,
-        profile: profile.clone(),
-        config: Default::default(),
-        repo: None,
-        // The same text against the same commits answers as a fresh run.
-        reuse: true,
-        frontend: None,
-        home,
-        development: body.strictness.as_deref().map(str::trim) == Some("dev"),
-        latest: None,
-        removed: Vec::new(),
-        config_changed: Vec::new(),
-        frontend_change: crate::product::description_edit::FrontendChange::Keep,
-    };
-    let described = gearbox
-        .as_written(scope, &input, revision.text.clone())
-        .await
-        .map_err(invalid)?;
-    // On a task of its own, so a check the gateway gave up on still
-    // finishes, and the retry is answered from the engine's cache.
-    let preview = tokio::spawn(async move { gearbox.check(scope, input, described).await })
-        .await
-        .map_err(|e| CanonicalError::internal(format!("the check task failed: {e}")).create())?
-        .map_err(invalid)?;
-    let r = preview.resolution;
-    Ok(Json(ProductDescriptionCheckDto {
-        revision: revision.revision,
-        sha256: revision.sha256,
+    let checked = check_saved_revision(
+        &product,
+        &ctx,
+        project_id,
+        body.revision,
         profile,
+        body.strictness.as_deref(),
+        false,
+    )
+    .await?;
+    let r = checked.preview.resolution;
+    Ok(Json(ProductDescriptionCheckDto {
+        revision: checked.revision.revision,
+        sha256: checked.revision.sha256,
+        profile: checked.profile,
         ok: !r.diagnostics.iter().any(|d| d.is_error()),
         diagnostics: r
             .diagnostics
@@ -919,9 +836,142 @@ async fn check_product_description(
                 reasons: g.reasons,
             })
             .collect(),
-        corpus_commit: preview.corpus_commit,
-        unreadable,
+        corpus_commit: checked.preview.corpus_commit,
+        unreadable: checked.unreadable,
     }))
+}
+
+/// A saved revision as the engine judged it, with what it was judged against.
+pub(super) struct SavedCheck {
+    pub revision: Revision,
+    pub profile: String,
+    pub preview: crate::product::gearbox::Preview,
+    pub unreadable: Vec<UnreadableSourceDto>,
+    /// The home repository's commit the check read, when it read one.
+    pub home_commit: Option<String>,
+}
+
+/// The engine's check of a saved revision (`revision`, default the latest) as
+/// it is written, for `profile`, against the corpus the project reads and its
+/// own repository -- the server's clone of it as the last fetch left it, or
+/// fetched first when `fetch` (only a queued check fetches: a read never
+/// waits on the provider). Nothing is saved.
+pub(super) async fn check_saved_revision(
+    product: &Product,
+    ctx: &SecurityContext,
+    project_id: Uuid,
+    revision: Option<i64>,
+    profile: String,
+    strictness: Option<&str>,
+    fetch: bool,
+) -> Result<SavedCheck, CanonicalError> {
+    product.require_descriptions()?;
+    let gearbox = Arc::clone(product.gearbox()?);
+    let invalid = |e: anyhow::Error| {
+        StudioProductError::invalid_argument()
+            .with_constraint(format!("{e:#}"))
+            .create()
+    };
+    let unavailable = |e: anyhow::Error| {
+        CanonicalError::service_unavailable()
+            .with_detail(format!("{e:#}"))
+            .create()
+    };
+    let revision = match revision {
+        Some(n) => product.service.description_revision(ctx, project_id, n).await,
+        None => product.service.latest_description(ctx, project_id).await,
+    }
+    .map_err(|e| internal(&e))?
+    .ok_or_else(|| {
+        let what = revision.map_or_else(
+            || "no revision yet".to_owned(),
+            |n| format!("no revision {n}"),
+        );
+        StudioProductError::not_found(format!("the project's description has {what}"))
+            .with_resource(format!("{project_id}/description"))
+            .create()
+    })?;
+    let project = project_id.to_string();
+    let (record, scope, home) = tokio::join!(
+        product.service.get_project_product(ctx, &project),
+        product.scope(ctx, project_id, false),
+        product.home_with(ctx, project_id, fetch),
+    );
+    let record = record.map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+    let record = record.as_ref().map(|n| &n.value);
+    // A home source the server cannot read is checked without, and said.
+    let (home, unreadable) = match home {
+        Ok(h) => (h, Vec::new()),
+        Err(e) => match e.downcast::<crate::product::project_roots::HomeUnreadable>() {
+            Ok(why) => (None, vec![UnreadableSourceDto::from(why.0)]),
+            Err(e)
+                if e.downcast_ref::<crate::product::gearbox::HomeStillReading>()
+                    .is_some() =>
+            {
+                return Err(unavailable(e));
+            }
+            Err(e) => return Err(invalid(e)),
+        },
+    };
+    let home_commit = home.as_ref().and_then(|h| h.commit.clone());
+    let product_id = record
+        .and_then(|r| r.get("product_id"))
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .or_else(|| declared_product_id(&revision.text))
+        .ok_or_else(|| invalid(anyhow::anyhow!("the description declares no product id")))?;
+    // The engine resolves the gears the text uses; the list only says
+    // there are some (a text with none has nothing to resolve).
+    let gears = used_gears(&revision.text);
+    if gears.is_empty() {
+        return Err(invalid(anyhow::anyhow!(
+            "revision {} uses no gear: there is nothing to resolve",
+            revision.revision
+        )));
+    }
+    let input = PreviewInput {
+        product_id: product_id.clone(),
+        product_path: product_path_for(record, &product_id),
+        name: product_id,
+        gears,
+        profile: profile.clone(),
+        config: Default::default(),
+        repo: None,
+        // The same text against the same commits answers as a fresh run.
+        reuse: true,
+        frontend: None,
+        home,
+        development: strictness.map(str::trim) == Some("dev"),
+        latest: None,
+        removed: Vec::new(),
+        config_changed: Vec::new(),
+        frontend_change: crate::product::description_edit::FrontendChange::Keep,
+    };
+    let described = gearbox
+        .as_written(scope, &input, revision.text.clone())
+        .await
+        .map_err(|e| {
+            if e.downcast_ref::<crate::product::gearbox::HomeStillReading>()
+                .is_some()
+            {
+                unavailable(e)
+            } else {
+                invalid(e)
+            }
+        })?;
+    // On a task of its own, so a check the gateway gave up on still
+    // finishes, and the retry is answered from the engine's cache.
+    let preview = tokio::spawn(async move { gearbox.check(scope, input, described).await })
+        .await
+        .map_err(|e| CanonicalError::internal(format!("the check task failed: {e}")).create())?
+        .map_err(invalid)?;
+    Ok(SavedCheck {
+        revision,
+        profile,
+        preview,
+        unreadable,
+        home_commit,
+    })
 }
 
 #[cfg(test)]

@@ -137,6 +137,8 @@ impl Gear for StudioProductGear {
         crate::tasks::sdk::register(Arc::new(gear_match::task::GearMatchTask::new(Arc::clone(
             &matches,
         ))))?;
+        // A check of the product, queued rather than waited for over HTTP.
+        crate::tasks::sdk::register(Arc::new(rest::check_task::ProductCheckTask))?;
         let _ = self.matches.set(matches);
         let storage = crate::model_metadata::storage_of(ctx);
         crate::data_places::note(

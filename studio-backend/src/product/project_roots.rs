@@ -562,12 +562,18 @@ impl std::error::Error for HomeUnreadable {}
 /// is still running, or when it failed, and a [`HomeUnreadable`] when the
 /// project's config or its home source cannot be read -- which a check says
 /// rather than checking as if there were no home.
+///
+/// `fetch`: whether to bring the clone up to its branch first. Only a queued
+/// check (`product.check`) or a sync fetches; a request reads the clone as
+/// the last fetch left it and never waits on the provider -- with nothing
+/// cloned yet it answers [`super::gearbox::HomeStillReading`].
 pub async fn home_checkout(
     gearbox: &Arc<Gearbox>,
     connectors: &Connectors,
     am: &dyn account_management_sdk::AccountManagementClient,
     ctx: &SecurityContext,
     project: Uuid,
+    fetch: bool,
 ) -> Option<anyhow::Result<super::gearbox::HomeCheckout>> {
     let service = connectors.get()?;
     let sources = match crate::project_sources::read_checked(am, ctx, project).await {
@@ -602,6 +608,22 @@ pub async fn home_checkout(
         subdir: Some(String::new()),
     };
     let dir = checkout_dir(gearbox.workdir(), &probe);
+    if !fetch {
+        let (gb, at) = (Arc::clone(gearbox), dir.clone());
+        return Some(
+            match tokio::task::spawn_blocking(move || gb.home_as_cloned(&at)).await {
+                Ok(Some(clone)) => Ok(super::gearbox::HomeCheckout {
+                    id: home.dir.clone(),
+                    repo: home.full_path.clone(),
+                    url: home.clone_url.clone(),
+                    dir: clone.dir,
+                    commit: clone.commit,
+                }),
+                Ok(None) => Err(super::gearbox::HomeStillReading(home.full_path.clone()).into()),
+                Err(e) => Err(anyhow::anyhow!("the checkout task failed: {e}")),
+            },
+        );
+    }
     let (gb, at, src) = (Arc::clone(gearbox), dir.clone(), corpus.clone());
     let job = tokio::task::spawn_blocking(move || gb.home_checkout_at(&at, &src));
     let clone = match tokio::time::timeout(CHECKOUT_WAIT, job).await {

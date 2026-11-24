@@ -260,6 +260,17 @@ pub fn tools() -> Vec<Tool> {
             run: Run::Get("/studio-environments/v1/environments/{environment_id}/infra-plan"),
         },
         Tool {
+            name: "infra_plans",
+            description: "`infra_plan` for every environment the project may deploy to, in one \
+                call: one plan per environment, each with its items, `refusal_code`s, \
+                `warnings` and `configuration` clashes. Use it to compare environments; use \
+                `infra_plan` for the one you are about to deploy to.",
+            input_schema: || object(json!({ "project_id": project_id() }), &["project_id"]),
+            effect: Effect::Read,
+            experimental: false,
+            run: Run::Get("/studio-environments/v1/infra-plans"),
+        },
+        Tool {
             name: "infra_keycloak_realm",
             description: "The Keycloak realm the project's Keycloak infra service imports at \
                 start, made from its passport and the latest product description: a public \
@@ -960,6 +971,9 @@ mod tests {
             json!({"project_id": "p", "environment_id": "e"}),
         );
         assert_eq!(r.path, "/studio-environments/v1/environments/e/infra-plan");
+        assert_eq!(r.query, q(&[("project_id", "p")]));
+        let r = request_of(&all, "infra_plans", json!({"project_id": "p"}));
+        assert_eq!(r.path, "/studio-environments/v1/infra-plans");
         assert_eq!(r.query, q(&[("project_id", "p")]));
         let r = request_of(
             &all,

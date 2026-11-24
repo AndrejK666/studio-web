@@ -2623,6 +2623,16 @@ fn inside_home(dir: &Path, home: &Path) -> bool {
     canon(dir).starts_with(canon(home))
 }
 
+/// Whether `root` is the home repository's own (ADR-0060 §6): a directory
+/// inside its checkout, or another checkout of the same repository -- an
+/// organization's project root read from it at another commit. Either way
+/// the home stands in for it; kept beside it, the engine scanned the same
+/// gears twice (each declared twice, GBX0105) and took three times as long.
+fn of_home(root: &Root, home: &HomeCheckout) -> bool {
+    inside_home(&root.dir, &home.dir)
+        || (!root.repo.is_empty() && root.repo == repo_key(&home.url))
+}
+
 /// `corpus` with the home repository's own catalogue laid over it
 /// (ADR-0060 §6): the corpus's gears read from roots inside the home
 /// repository (`inside`) give way to the home's, which are named by the
@@ -2721,7 +2731,7 @@ impl std::fmt::Display for HomeStillReading {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "the project's repository {} is still being read for its gears; try again in a minute",
+            "the project's repository {} is not read on the server yet (its clone or its gear catalogue is still being made); a queued check reads it, try again in a minute",
             self.0
         )
     }
@@ -2894,6 +2904,10 @@ struct Root {
     id: String,
     dir: PathBuf,
     commit: Option<String>,
+    /// The repository it is a checkout of, as [`repo_key`] spells it: two
+    /// checkouts of one repository (a project root, and the project's home
+    /// read at another commit) are one source to the engine.
+    repo: String,
 }
 
 /// Whether a catalogue the engine read over `before` still describes
@@ -3105,6 +3119,7 @@ impl Syncer {
                         id: r.id.clone(),
                         dir,
                         commit: c.commit,
+                        repo: repo_key(&r.source.url),
                     });
                 }
                 Err(e) => match previous.and_then(|p| p.roots.iter().find(|x| x.id == r.id)) {
@@ -3514,6 +3529,32 @@ impl Gearbox {
             .unwrap_or_else(|p| p.into_inner())
             .insert(dir.to_path_buf(), (Instant::now(), c.clone()));
         Ok(c)
+    }
+
+    /// `dir`'s checkout as it already is on the server: no fetch, so a read
+    /// never waits on the provider (a fetch belongs to a sync or a queued
+    /// check). The commit is the one the last fetch left checked out; `None`
+    /// when nothing was cloned there yet. Blocking (one local `rev-parse`).
+    pub fn home_as_cloned(
+        &self,
+        dir: &Path,
+    ) -> Option<crate::connectors::sdk::git_checkout::CloneResult> {
+        if let Some((_, c)) = self
+            .home_fetches
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(dir)
+            && c.dir.is_dir()
+        {
+            return Some(c.clone());
+        }
+        if !dir.join(".git").exists() {
+            return None;
+        }
+        Some(crate::connectors::sdk::git_checkout::CloneResult {
+            dir: dir.to_path_buf(),
+            commit: crate::connectors::sdk::git_checkout::head_commit(dir),
+        })
     }
 
     /// The engine's catalogue of a home repository alone, read once per
@@ -4486,7 +4527,7 @@ impl Gearbox {
             Some(home) => loaded
                 .roots
                 .iter()
-                .filter(|r| inside_home(&r.dir, &home.dir))
+                .filter(|r| of_home(r, home))
                 .map(|r| r.id.clone())
                 .collect(),
             None => BTreeSet::new(),
@@ -4563,26 +4604,27 @@ impl Gearbox {
             .acquire()
             .await
             .context("the preview queue is closed")?;
-        let (mut named, catalogue) = (loaded.named(), &loaded.catalogue);
+        let catalogue = &loaded.catalogue;
         let mut keyed = loaded.roots.clone();
-        // The home repository instead of the corpus's roots inside it
-        // (ADR-0060 §6), so its `path(...)` sources resolve as in a build.
+        // The home repository instead of the corpus's roots of it (ADR-0060
+        // §6), so its `path(...)` sources resolve as in a build.
         if let Some(home) = &input.home {
-            named.retain(|(_, dir)| !inside_home(dir, &home.dir));
-            keyed.retain(|r| !inside_home(&r.dir, &home.dir));
-            named.push((home.id.clone(), home.dir.clone()));
+            keyed.retain(|r| !of_home(r, home));
             keyed.push(Root {
                 id: home.id.clone(),
                 dir: home.dir.clone(),
                 commit: home.commit.clone(),
+                repo: repo_key(&home.url),
             });
         }
+        let named: Vec<(String, PathBuf)> =
+            keyed.iter().map(|r| (r.id.clone(), r.dir.clone())).collect();
         let gdl_checked = if input.development {
             development_profile(&product_gdl, &input.profile)
         } else {
             product_gdl.clone()
         };
-        let home_dir = input.home.as_ref().map(|h| h.dir.clone());
+        let home_at = input.home.as_ref().map(|h| (h.id.clone(), h.dir.clone()));
         let key = input
             .reuse
             .then(|| {
@@ -4626,7 +4668,7 @@ impl Gearbox {
                         &product_path,
                         &gdl,
                         &profile,
-                        home_dir.as_deref(),
+                        home_at.as_ref().map(|(id, dir)| (id.as_str(), dir.as_path())),
                     )?;
                     if let Some(k) = key {
                         evaluations
@@ -4722,21 +4764,20 @@ fn evaluate(
     product_path: &str,
     gdl: &str,
     profile: &str,
-    home: Option<&Path>,
+    home: Option<(&str, &Path)>,
 ) -> anyhow::Result<Resolution> {
     let scratch = std::env::temp_dir().join(format!("studio-gearbox-{}", uuid::Uuid::new_v4()));
     let result = (|| {
-        let product_file = scratch.join(product_id).join(product_path);
         // The project's repository the description sits in: the home
-        // checkout seen whole (ADR-0060 §6), so a `path("../..")` from the
-        // file reaches it as a build's does; else an empty stand-in.
-        if let Some(home) = home {
+        // checkout seen whole (ADR-0060 §6), under the home's own source id,
+        // so a `path("../..")` from the file reaches the very root the engine
+        // reads it as -- one scan of it, as a build's. Else an empty stand-in
+        // named like the product.
+        let repo_dir = scratch.join(home.map_or(product_id, |(id, _)| id));
+        let product_file = repo_dir.join(product_path);
+        if let Some((_, home)) = home {
             let keep: Vec<&str> = product_path.split('/').filter(|s| !s.is_empty()).collect();
-            overlay(
-                home,
-                &scratch.join(product_id),
-                &keep[..keep.len().saturating_sub(1)],
-            )?;
+            overlay(home, &repo_dir, &keep[..keep.len().saturating_sub(1)])?;
         }
         if let Some(dir) = product_file.parent() {
             std::fs::create_dir_all(dir)?;
@@ -4747,8 +4788,8 @@ fn evaluate(
         let mut links: Vec<PathBuf> = Vec::new();
         for (id, dir) in roots {
             let link = scratch.join(id);
-            // The home named like the product is the stand-in itself.
-            if id == product_id && home.is_some() {
+            // The home's root is its overlay, laid out above.
+            if home.is_some_and(|(home_id, _)| home_id == id) {
                 links.push(link);
                 continue;
             }
@@ -6523,7 +6564,33 @@ mod tests {
             id: id.into(),
             dir: PathBuf::from(format!("/work/gearbox-roots/k/{id}")),
             commit: commit.map(str::to_owned),
+            repo: format!("owner/{id}"),
         }
+    }
+
+    #[test]
+    fn another_checkout_of_the_home_repository_gives_way_to_the_home() {
+        let home = HomeCheckout {
+            id: "studio-web".into(),
+            repo: "Owner/Studio-Web".into(),
+            url: "https://github.com/Owner/Studio-Web.git".into(),
+            dir: PathBuf::from("/work/gearbox-roots/home/repo"),
+            commit: Some("1".into()),
+        };
+        let project_root = Root {
+            id: "studio-backend".into(),
+            dir: PathBuf::from("/work/gearbox-roots/other/repo/studio-backend"),
+            commit: Some("0".into()),
+            repo: repo_key("https://github.com/owner/studio-web"),
+        };
+        assert!(of_home(&project_root, &home), "same repository, other checkout");
+        let inside = Root {
+            dir: PathBuf::from("/work/gearbox-roots/home/repo/studio-backend"),
+            repo: String::new(),
+            ..project_root.clone()
+        };
+        assert!(of_home(&inside, &home), "inside the home's checkout");
+        assert!(!of_home(&checked_out("gears-rust", Some("1")), &home));
     }
 
     #[test]
