@@ -6,6 +6,7 @@ import {
   useSharedProperty,
 } from '@gears-frontx/react';
 import {
+  STUDIO_SHARED_PROPERTY_CONTEXT_ORGANIZATION,
   STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT,
   STUDIO_SHARED_PROPERTY_CONTEXT_SECTION,
   useHostChrome,
@@ -16,6 +17,7 @@ import {
   NAV_SLICE_KEY,
   closeProject,
   openProject,
+  organizationSeen,
   selectSection,
   isProjectSection,
 } from './slices/navSlice';
@@ -53,6 +55,18 @@ export const ProjectsRoot: React.FC = () => {
     if (next === projectIdRef.current) return;
     dispatch(next ? openProject(next) : closeProject());
   }, [publishedProject, dispatch]);
+
+  // For the effects, which have no bridge: a project's syncs are filed under its organization.
+  const publishedOrganization = useSharedProperty(STUDIO_SHARED_PROPERTY_CONTEXT_ORGANIZATION);
+  const organizationId =
+    typeof publishedOrganization === 'object' &&
+    publishedOrganization !== null &&
+    typeof (publishedOrganization as { id?: unknown }).id === 'string'
+      ? (publishedOrganization as { id: string }).id || null
+      : null;
+  useEffect(() => {
+    dispatch(organizationSeen(organizationId));
+  }, [organizationId, dispatch]);
 
   const publishedSection = useSharedProperty(STUDIO_SHARED_PROPERTY_CONTEXT_SECTION);
 

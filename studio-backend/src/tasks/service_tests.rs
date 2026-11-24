@@ -338,3 +338,34 @@ async fn a_run_filed_under_an_organization_is_found_for_whoever_asked_for_it() {
     );
     handle.stop().await;
 }
+
+/// Cancel and retry act in the tenant the run is filed in, which the REST
+/// layer finds for the requester as GET does: the organization, not the
+/// administrator's home.
+#[tokio::test]
+async fn a_run_filed_under_an_organization_is_cancelled_and_retried_there() {
+    let (svc, _db, handle) = service("tasks_requested_control").await;
+    let root = Uuid::from_u128(1);
+    let org = Uuid::new_v4();
+    let admin = ctx(root);
+
+    let row = svc.enqueue(&admin, run(org, None)).await.unwrap();
+    assert!(
+        svc.cancel(&admin, root, row.id).await.is_err(),
+        "not in the administrator's home"
+    );
+    let filed = svc
+        .get_requested(admin.subject_id(), row.id)
+        .await
+        .unwrap()
+        .expect("found for its requester")
+        .tenant_id;
+    let cancelled = svc.cancel(&admin, filed, row.id).await.unwrap();
+    assert!(cancelled.cancel_requested);
+    let refused = svc.retry(&admin, filed, row.id).await.unwrap_err();
+    assert!(
+        format!("{refused:#}").contains("has not given up yet"),
+        "found, and refused for its state, not for its tenant: {refused:#}"
+    );
+    handle.stop().await;
+}

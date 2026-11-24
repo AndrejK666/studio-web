@@ -44,15 +44,18 @@ export interface RunsParams {
   state: StudioRunState;
   /** 1..=200; the gear's default is 50. */
   limit?: number;
+  /** The runs of one organization (its tenant, its workspaces' and its projects'), not the caller's home. */
+  organizationId?: string;
 }
 
 function runPath({ runId }: { runId: string }): string {
   return `/runs/${encodeURIComponent(runId)}`;
 }
 
-export function runsPath({ taskType, state, limit }: RunsParams): string {
+export function runsPath({ taskType, state, limit, organizationId }: RunsParams): string {
   const query = new URLSearchParams({ task_type: taskType, state });
   if (limit !== undefined) query.set('limit', String(limit));
+  if (organizationId) query.set('organization_id', organizationId);
   return `/runs?${query.toString()}`;
 }
 

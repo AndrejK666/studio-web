@@ -280,6 +280,42 @@ async fn list_runs(
     }))
 }
 
+/// Run `id` and the tenant it is filed in: `?tenant=` (the caller's home when
+/// absent), or — asked without `?tenant=` — the caller's own run filed
+/// elsewhere. A project's sync or detach is filed under the project's
+/// organization, which for a platform administrator is not home; it is still
+/// theirs to read, cancel and retry, once they reach the tenant it is filed in.
+async fn find_run(
+    tasks: &Tasks,
+    svc: &TaskService,
+    ctx: &SecurityContext,
+    scope: Option<Uuid>,
+    id: Uuid,
+) -> ApiResult<(Uuid, entity::Model)> {
+    let tenant = tasks.reached(ctx, scope).await?;
+    let mut found = svc
+        .get(ctx, tenant, id)
+        .await
+        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?
+        .map(|row| (tenant, row));
+    if found.is_none() && scope.is_none() {
+        let theirs = svc
+            .get_requested(ctx.subject_id(), id)
+            .await
+            .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+        if let Some(row) = theirs
+            && tasks.reached(ctx, Some(row.tenant_id)).await.is_ok()
+        {
+            found = Some((row.tenant_id, row));
+        }
+    }
+    found.ok_or_else(|| {
+        StudioTasksError::not_found("Run not found")
+            .with_resource(id.to_string())
+            .create()
+    })
+}
+
 async fn get_run(
     Extension(ctx): Extension<SecurityContext>,
     Extension(tasks): Extension<Tasks>,
@@ -287,31 +323,7 @@ async fn get_run(
     Query(q): Query<ScopeQuery>,
 ) -> ApiResult<JsonBody<RunDto>> {
     let svc = tasks.get()?;
-    let tenant = tasks.reached(&ctx, q.tenant).await?;
-    let mut row = svc
-        .get(&ctx, tenant, id)
-        .await
-        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
-    // The caller's own run, filed elsewhere: a project's sync or detach is
-    // filed under the project's organization, which for a platform
-    // administrator is not home. Polled without `?tenant=` it is still
-    // theirs to read, once they reach the tenant it is filed in.
-    if row.is_none() && q.tenant.is_none() {
-        let theirs = svc
-            .get_requested(ctx.subject_id(), id)
-            .await
-            .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
-        if let Some(found) = theirs
-            && tasks.reached(&ctx, Some(found.tenant_id)).await.is_ok()
-        {
-            row = Some(found);
-        }
-    }
-    let row = row.ok_or_else(|| {
-        StudioTasksError::not_found("Run not found")
-            .with_resource(id.to_string())
-            .create()
-    })?;
+    let (_, row) = find_run(&tasks, &svc, &ctx, q.tenant, id).await?;
     Ok(Json(to_dto(row)))
 }
 
@@ -322,7 +334,7 @@ async fn cancel_run(
     Query(q): Query<ScopeQuery>,
 ) -> ApiResult<(StatusCode, JsonBody<RunDto>)> {
     let svc = tasks.get()?;
-    let tenant = tasks.reached(&ctx, q.tenant).await?;
+    let (tenant, _) = find_run(&tasks, &svc, &ctx, q.tenant, id).await?;
     let row = svc.cancel(&ctx, tenant, id).await.map_err(|e| {
         StudioTasksError::failed_precondition()
             .with_precondition_violation(id.to_string(), format!("{e:#}"), "TASK_CANCEL_REFUSED")
@@ -340,7 +352,7 @@ async fn retry_run(
     Query(q): Query<ScopeQuery>,
 ) -> ApiResult<(StatusCode, JsonBody<RunDto>)> {
     let svc = tasks.get()?;
-    let tenant = tasks.reached(&ctx, q.tenant).await?;
+    let (tenant, _) = find_run(&tasks, &svc, &ctx, q.tenant, id).await?;
     let row = svc.retry(&ctx, tenant, id).await.map_err(|e| {
         StudioTasksError::failed_precondition()
             .with_precondition_violation(id.to_string(), format!("{e:#}"), "TASK_RETRY_REFUSED")

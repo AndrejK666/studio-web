@@ -84,6 +84,9 @@ export function initArtifactEffects(dispatch: AppDispatch, app: FrontXApp): void
   const openProjectId = (): string | null =>
     (app.store.getState() as RootState)[NAV_SLICE_KEY].projectId;
 
+  const openOrganizationId = (): string | null =>
+    (app.store.getState() as RootState)[NAV_SLICE_KEY].organizationId ?? null;
+
   const rowOf = (projectId: string, repo: string) =>
     projectImport((app.store.getState() as RootState)[ARTIFACT_SYNC_SLICE_KEY], projectId).repos.find(
       (row) => row.repo === repo
@@ -219,14 +222,27 @@ export function initArtifactEffects(dispatch: AppDispatch, app: FrontXApp): void
       // @cpt-begin:cpt-studiofrontend-algo-project-artifacts-sync-resume:p2:inst-2
       const cursor = await readCursor(events(), 'artifacts');
       // @cpt-end:cpt-studiofrontend-algo-project-artifacts-sync-resume:p2:inst-2
+      // A sync is filed under the project's organization, which for a
+      // platform administrator is not home: list both.
+      const organizationId = openOrganizationId();
+      const scopes = organizationId ? [null, organizationId] : [null];
       let listed: StudioRun[];
       try {
         // @cpt-begin:cpt-studiofrontend-algo-project-artifacts-sync-resume:p2:inst-3
         const pages = await Promise.all(
-          (['running', 'queued'] as const).map((state) =>
-            tasks()
-              .runs({ taskType: INGEST_TASK_TYPE, state, limit: RUNS_PAGE })
-              .fetch({ staleTime: 0 })
+          scopes.flatMap((organization) =>
+            (['running', 'queued'] as const).map((state) => {
+              const page = tasks()
+                .runs({
+                  taskType: INGEST_TASK_TYPE,
+                  state,
+                  limit: RUNS_PAGE,
+                  ...(organization ? { organizationId: organization } : {}),
+                })
+                .fetch({ staleTime: 0 });
+              // The organization's list is extra: one it refuses leaves the home's.
+              return organization ? page.catch(() => ({ items: [], total: 0 })) : page;
+            })
           )
         );
         // @cpt-end:cpt-studiofrontend-algo-project-artifacts-sync-resume:p2:inst-3
@@ -272,12 +288,17 @@ export function initArtifactEffects(dispatch: AppDispatch, app: FrontXApp): void
   };
 
   let opened: string | null = null;
+  let openedIn: string | null = null;
   const onNavigation = (): void => {
     const projectId = openProjectId();
-    if (projectId === opened) return;
+    const organizationId = openOrganizationId();
+    if (projectId === opened && organizationId === openedIn) return;
+    const reopened = projectId !== opened;
     opened = projectId;
+    openedIn = organizationId;
     if (!projectId) return;
-    dispatch(lookupStarted(projectId));
+    // The organization told after the project: list again, its runs included.
+    if (reopened) dispatch(lookupStarted(projectId));
     resume(projectId);
   };
   app.store.subscribe(onNavigation);
