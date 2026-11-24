@@ -1,6 +1,6 @@
 {
   "note": "The API surface studio-backend declares. Generated from source by `cargo run --quiet -- api-contract`; the rules it must follow are docs/api-conventions.md.",
-  "open_violations": 257,
+  "open_violations": 256,
   "operations": [
     {
       "method": "DELETE",
@@ -5421,7 +5421,7 @@
     {
       "method": "POST",
       "path": "/studio-components-catalog/v1/project-components/refresh",
-      "operation_id": "studio_components_catalog.refresh_project_components",
+      "operation_id": "studio_components_catalog.enqueue_project_components",
       "tag": "StudioComponentsCatalog",
       "summary": "Compute a project's components again from what its syncs stored",
       "authenticated": true,
