@@ -4805,33 +4805,27 @@ async fn list_domain_experts(
         String,
         (u32, std::collections::BTreeSet<String>, Option<String>),
     > = std::collections::BTreeMap::new();
-    if let Some(connectors) = crate::connectors::sdk::Connectors::new(quality.hub.clone()).get() {
-        for source in service.project_repositories(&ctx, project_id).await {
-            let Some(connection_id) = source.connection_id else {
-                continue;
-            };
-            let Some(tenant) = connectors.locate(&ctx, project_id, connection_id).await else {
-                continue;
-            };
-            let Ok(repo) = crate::connectors::sdk::Repository::open(
-                &connectors,
-                &ctx,
-                tenant,
-                Some(connection_id),
-                "github",
-                &source.full_path,
-                source.branch.as_deref(),
-            )
-            .await
-            else {
+    // Who changed the documents, from the server's one checkout of each
+    // project source (`ProjectCheckout`): `git log`, never the provider.
+    if let Ok(checkouts) = quality
+        .hub
+        .get::<dyn crate::artifact_ingest::port::ProjectCheckout>()
+    {
+        for (_, checkout) in checkouts.project_checkouts(&ctx, project_id).await {
+            let Some(checkout) = checkout else {
                 continue;
             };
             for path in &documents {
-                let Ok(commits) = repo.history(path, EXPERT_COMMITS).await else {
+                let Ok(commits) = checkout
+                    .log(Some(path.as_str()), EXPERT_COMMITS as usize)
+                    .await
+                else {
                     continue;
                 };
+                // A commit of another source that never had this path names
+                // nobody: `git log -- <path>` answers only its own.
                 for c in commits {
-                    let Some(who) = c.author.clone().or(c.author_name.clone()) else {
+                    let Some(who) = c.author_name.clone() else {
                         continue;
                     };
                     if is_bot_author(&who) {
@@ -4840,7 +4834,7 @@ async fn list_domain_experts(
                     let entry = people.entry(who).or_default();
                     entry.0 += 1;
                     entry.1.insert(path.clone());
-                    let at = c.committed_at.or(c.created_at);
+                    let at = c.committed_at.clone();
                     if at > entry.2 {
                         entry.2 = at;
                     }
@@ -5997,48 +5991,33 @@ pub struct ReviewBriefDto {
     pub model: String,
 }
 
-/// The document's text at `base_ref`, or before its latest commit, through
-/// the project's repository connection. `None` when nothing reaches it.
+/// The document's text at `base_ref`, or before its latest commit, from the
+/// server's one checkout of each project source (`ProjectCheckout`), never the
+/// provider. `None` when no checkout holds it -- a `base_ref` pushed since the
+/// last sync, say.
 async fn base_text(
-    service: &DocumentsService,
+    _service: &DocumentsService,
     quality: &Quality,
     ctx: &SecurityContext,
     project_id: Uuid,
     path: &str,
     base_ref: Option<&str>,
 ) -> Option<(String, String)> {
-    let connectors = crate::connectors::sdk::Connectors::new(quality.hub.clone()).get()?;
-    for source in service.project_repositories(ctx, project_id).await {
-        let Some(connection_id) = source.connection_id else {
+    let checkouts = quality
+        .hub
+        .get::<dyn crate::artifact_ingest::port::ProjectCheckout>()
+        .ok()?;
+    for (_, checkout) in checkouts.project_checkouts(ctx, project_id).await {
+        let Some(checkout) = checkout else {
             continue;
-        };
-        let Some(tenant) = connectors.locate(ctx, project_id, connection_id).await else {
-            continue;
-        };
-        let open = |git_ref: Option<String>| {
-            let connectors = connectors.clone();
-            let repo = source.full_path.clone();
-            async move {
-                crate::connectors::sdk::Repository::open(
-                    &connectors,
-                    ctx,
-                    tenant,
-                    Some(connection_id),
-                    "github",
-                    &repo,
-                    git_ref.as_deref(),
-                )
-                .await
-                .ok()
-            }
         };
         let base = match base_ref {
-            Some(r) => r.to_string(),
+            Some(r) => match checkout.resolve(r).await {
+                Some(found) => found,
+                None => continue,
+            },
             None => {
-                let Some(head) = open(source.branch.clone()).await else {
-                    continue;
-                };
-                let Ok(history) = head.history(path, 2).await else {
+                let Ok(history) = checkout.log(Some(path), 2).await else {
                     continue;
                 };
                 let Some(previous) = history.get(1) else {
@@ -6047,11 +6026,8 @@ async fn base_text(
                 previous.sha.clone()
             }
         };
-        let Some(at_base) = open(Some(base.clone())).await else {
-            continue;
-        };
-        if let Ok(Some(file)) = at_base.read_file(path).await {
-            return Some((base, file.text));
+        if let Ok(Some(text)) = checkout.read_file_at(&base, path).await {
+            return Some((base, text));
         }
     }
     None

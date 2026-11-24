@@ -203,6 +203,10 @@ impl RestApiCapability for StudioProductGear {
         sink = held;
         let connectors = crate::connectors::sdk::Connectors::new(ctx.client_hub());
         let service = Arc::new(ProductService::new(sink, connectors));
+        // A project's repository is read from the server's checkout, which
+        // studio-artifact-ingest keeps: resolved per read, since that gear
+        // may publish it after this one starts.
+        service.set_hub(ctx.client_hub());
         if let Some(store) = self.descriptions.get().cloned().flatten() {
             service.set_descriptions(store);
         }

@@ -146,17 +146,27 @@ impl Product {
         project: Uuid,
         fetch: bool,
     ) -> anyhow::Result<Option<super::gearbox::HomeCheckout>> {
-        let (Some(gearbox), Ok(am)) = (
+        let (Some(gearbox), Ok(am), Ok(checkouts)) = (
             self.gearbox.as_ref(),
             self.hub
                 .get::<dyn account_management_sdk::AccountManagementClient>(),
+            self.hub
+                .get::<dyn crate::artifact_ingest::port::ProjectCheckout>(),
         ) else {
             return Ok(None);
         };
         let connectors = crate::connectors::sdk::Connectors::new(Arc::clone(&self.hub));
-        super::project_roots::home_checkout(gearbox, &connectors, am.as_ref(), ctx, project, fetch)
-            .await
-            .transpose()
+        super::project_roots::home_checkout(
+            gearbox,
+            &connectors,
+            checkouts.as_ref(),
+            am.as_ref(),
+            ctx,
+            project,
+            fetch,
+        )
+        .await
+        .transpose()
     }
 
     fn gearbox(&self) -> ApiResult<&Arc<Gearbox>> {
@@ -3212,6 +3222,7 @@ mod tests {
                 username: String::new(),
                 token: String::new(),
                 git_ref: "main".into(),
+                local: None,
             },
             connection_id: None,
             organization: true,

@@ -2,11 +2,14 @@
 //! connector source into the graph as typed GTS nodes.
 //!
 //! Three channels feed the artifact graph: the connector API (issues, pull
-//! requests) and files. Files are read from the studio-session workspace
-//! checkout when the IDE has already cloned the repo (one shared clone,
-//! `STUDIO_WORKSPACES_ROOT`); otherwise from our own shallow clone
-//! (`STUDIO_ARTIFACT_WORKDIR`, opt-in), otherwise the connector tree API
-//! (metadata only). Entities are normalized to `gts.cf.studio.artifact.*`
+//! requests) and files. Files are read from the project's ONE checkout of the
+//! source on this server, `{STUDIO_WORKSPACES_ROOT}/{project_id}/{dir}` --
+//! the directory the IDE works in -- which the sync fetches, or clones when
+//! nobody has, and marks at the commit it read (`refs/studio/synced`). Only
+//! the sync fetches it; every other gear reads it through
+//! [`port::ProjectCheckout`], never the provider. Without a project, or when
+//! that clone fails, our own legacy shallow clone (`STUDIO_ARTIFACT_WORKDIR`,
+//! opt-in), otherwise the connector tree API (metadata only). Entities are normalized to `gts.cf.studio.artifact.*`
 //! instances with deterministic ids and upserted into a graph store (an
 //! in-memory store, readable back by the portal, until the real
 //! `hypothesis/graph-storage` adapter lands).
@@ -440,6 +443,11 @@ impl RestApiCapability for StudioArtifactIngestGear {
         if let Some(service) = &service {
             ctx.client_hub()
                 .register::<dyn port::RepoFileReader>(service.clone());
+            // The project's one checkout of each source, at the commit the
+            // last sync read: what every gear reads a project's repository
+            // from, instead of the provider.
+            ctx.client_hub()
+                .register::<dyn port::ProjectCheckout>(service.clone());
             // The portfolio's finding count, for whoever composes the rollup.
             ctx.client_hub()
                 .register::<dyn port::ArtifactCounter>(service.clone());

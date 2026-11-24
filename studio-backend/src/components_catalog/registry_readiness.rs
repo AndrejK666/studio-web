@@ -1269,7 +1269,10 @@ impl ReadinessFiles<'_> {
         )
         .ok_or_else(|| anyhow::anyhow!("the occurrence names no repository"))?;
         Ok(match &self.checkout {
-            Some(dir) => reader.with_checkout(dir.clone()),
+            Some(dir) => reader.with_checkout(dir.clone()).offline(),
+            // A project's code is read from the server's checkout only: one
+            // not synced yet says so rather than being read from the provider.
+            None if occ.project_id.is_some() => reader.offline(),
             None => reader,
         })
     }

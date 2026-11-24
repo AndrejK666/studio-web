@@ -287,9 +287,20 @@ repository twice is refused at save (§2); a save composes from the whole
 product record and never drops a picked gear or the frontend silently (§4).
 
 **How the server checks a description** (ADR-0060 §6). The engine runs on
-the description laid in an overlay of the project's home checkout, at its
-branch, with the home repository's own catalogue over the organization's
-corpus: a `path("../..")` source resolves as it does in a build. An
+the description laid in an overlay of the project's home checkout, at the
+commit its last sync read, with the home repository's own catalogue over the
+organization's corpus: a `path("../..")` source resolves as it does in a
+build.
+
+**A project's repository is never fetched here.** The project's home and the
+roots its `product.gdl` names are read from the project's one checkout on the
+server (`artifact_ingest::port::ProjectCheckout`, see
+`cpt-studio-principle-artifact-ingest-one-checkout`): the copy under
+`gearbox-roots/<key>/repo` that the engine reads is filled from that checkout
+on the local disk at the synced commit (`CorpusSource::local`), on a request
+or a `product.check` alike. Only the artifact sync fetches from the host. A
+source no sync has cloned yet is unreadable "not synced", and the project
+keeps the product file it had. An
 environment of dev strictness has the checked profile marked
 `development = True` (§5).
 

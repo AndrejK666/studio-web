@@ -3178,8 +3178,6 @@ fn checkout_root(
     locks: &CheckoutLocks,
     r: &GearRoot,
 ) -> anyhow::Result<crate::connectors::sdk::git_checkout::CloneResult> {
-    let s = &r.source;
-    let git_ref = Some(s.git_ref.as_str()).filter(|g| !g.trim().is_empty());
     // `gearbox-roots/<key>/<source id>`: the engine names a root by its
     // directory -- the real one, after links are followed -- so the checkout
     // itself carries the id; the key keeps two repositories apart.
@@ -3192,13 +3190,9 @@ fn checkout_root(
             .or_default(),
     );
     let _held = lock.lock().unwrap_or_else(|p| p.into_inner());
-    crate::connectors::sdk::git_checkout::clone_or_update_into(
-        &dir,
-        &s.url,
-        &s.username,
-        &s.token,
-        git_ref,
-    )
+    // A project's root is copied from the project's checkout on this server;
+    // a gear repository's is fetched (in the background refresh).
+    fetch_source(&dir, &r.source)
 }
 
 /// Keys with a refresh running, so a second one is not started beside it.
@@ -3367,6 +3361,40 @@ pub struct CorpusSource {
     /// Held in memory only, for the refresh fetch; never logged or returned.
     pub token: String,
     pub git_ref: String,
+    /// A project source's one checkout on this server
+    /// (`artifact_ingest::port::ProjectCheckout`). Set, the copy under the
+    /// engine's working directory is filled from it, at the commit its last
+    /// sync read, from the local disk alone: `url` and `token` then only name
+    /// the repository (and serve the IDE's corpus relay), and the provider is
+    /// never fetched for it here.
+    pub local: Option<PathBuf>,
+}
+
+/// Bring `dir` to what `s` names: from its project checkout when it has one
+/// ([`CorpusSource::local`], local disk only), else fetched from its URL.
+/// Blocking.
+fn fetch_source(
+    dir: &Path,
+    s: &CorpusSource,
+) -> anyhow::Result<crate::connectors::sdk::git_checkout::CloneResult> {
+    use crate::connectors::sdk::git_checkout;
+    if let Some(local) = &s.local {
+        let rev = git_checkout::synced_commit(local).ok_or_else(|| {
+            anyhow::anyhow!(
+                "{} has no checkout on this server yet: sync the project first",
+                s.repo
+            )
+        })?;
+        if git_checkout::head_commit(dir).as_deref() == Some(rev.as_str()) {
+            return Ok(git_checkout::CloneResult {
+                dir: dir.to_path_buf(),
+                commit: Some(rev),
+            });
+        }
+        return git_checkout::mirror_local_into(dir, local, &rev);
+    }
+    let git_ref = Some(s.git_ref.as_str()).filter(|g| !g.trim().is_empty());
+    git_checkout::clone_or_update_into(dir, &s.url, &s.username, &s.token, git_ref)
 }
 
 /// Home repositories' catalogues by checkout and commit (ADR-0060 §6).
@@ -3463,6 +3491,7 @@ fn deployment_roots(cfg: &GearboxConfig) -> Vec<GearRoot> {
             username: "x-access-token".to_string(),
             token: String::new(),
             git_ref: cfg.corpus_ref.clone(),
+            local: None,
         },
         connection_id: None,
         organization: false,
@@ -3513,11 +3542,14 @@ impl Gearbox {
         dir: &Path,
         source: &CorpusSource,
     ) -> anyhow::Result<crate::connectors::sdk::git_checkout::CloneResult> {
-        if let Some((at, c)) = self
-            .home_fetches
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .get(dir)
+        // A copy of a project's checkout is cheap to bring up to date (local
+        // disk) and must follow its sync, so it is never served from here.
+        if source.local.is_none()
+            && let Some((at, c)) = self
+                .home_fetches
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .get(dir)
             && at.elapsed() < self.cfg.refresh
             && c.dir.is_dir()
         {
@@ -3676,14 +3708,7 @@ impl Gearbox {
                 .or_default(),
         );
         let _held = lock.lock().unwrap_or_else(|p| p.into_inner());
-        let git_ref = Some(source.git_ref.as_str()).filter(|g| !g.trim().is_empty());
-        crate::connectors::sdk::git_checkout::clone_or_update_into(
-            dir,
-            &source.url,
-            &source.username,
-            &source.token,
-            git_ref,
-        )
+        fetch_source(dir, source)
     }
 
     /// Replace organization `org`'s projects' product files.
@@ -3944,8 +3969,23 @@ impl Gearbox {
         Some((root.source.url, root.source.token))
     }
 
+    /// Where [`Self::checkout`] keeps `source`, when a checkout of it is there
+    /// already: no fetch, for a request that must not wait on the provider.
+    pub fn checkout_as_is(&self, source: &CorpusSource) -> Option<PathBuf> {
+        let dir = self
+            .cfg
+            .workdir
+            .join(crate::connectors::sdk::git_checkout::checkout_key(
+                &source.key,
+                &source.repo,
+            ));
+        dir.join(".git").is_dir().then_some(dir)
+    }
+
     /// Check `source` out (or bring its checkout up to date) under the engine's
-    /// working directory, and say where.
+    /// working directory, and say where. A background sync's call (the
+    /// catalogue's), never a request's: a request takes
+    /// [`Self::checkout_as_is`].
     ///
     /// The component catalogue reads its gears' files from here too, so one
     /// clone serves the catalogue, the previews and the IDE: the key namespaces
@@ -6223,6 +6263,7 @@ mod tests {
                 username: "x-access-token".into(),
                 token: String::new(),
                 git_ref: String::new(),
+                local: None,
             },
             connection_id: Some(uuid::Uuid::new_v4()),
             organization: false,

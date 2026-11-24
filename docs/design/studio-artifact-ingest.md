@@ -90,11 +90,64 @@ Postgres table of this gear's, and scoped reads are one indexed query each.
 Files come from three channels, tried in order, because cloning a repository
 twice wastes the disk that already holds it:
 
-1. the studio-session workspace checkout (`STUDIO_WORKSPACES_ROOT`, default
-   `~/.cf-studio-workspaces`), when the IDE has already cloned it;
-2. the gear's own shallow clone (`STUDIO_ARTIFACT_WORKDIR`, opt-in), `--depth
-   1` on a single branch, fast-forwarded when already on disk;
+1. the project's one checkout of the source (below), fetched up to the
+   remote when it is there and cloned by the sync when it is not;
+2. the gear's own legacy shallow clone (`STUDIO_ARTIFACT_WORKDIR`, opt-in),
+   `--depth 1` on a single branch -- only for a sync that names no project
+   or workspace, or when the clone in 1 failed;
 3. the connector tree API, metadata only, when there is no disk to use.
+
+#### One server clone per project source; reads never go to the provider
+
+- [x] `p1` - **ID**: `cpt-studio-principle-artifact-ingest-one-checkout`
+
+Each project source has ONE clone on the server:
+`{STUDIO_WORKSPACES_ROOT}/{project_id}/{dir}` (default root
+`~/.cf-studio-workspaces`; `dir` is the source's directory from
+`project.config`, `project_sources::checkout_dir`). It is the directory the
+IDE's session works in (`studio_session::config::k8s_workspace_shared_claim`
+mounts the same volume in the backend), so the IDE and the sync agree on one
+path. A sync that is not told the directory (the portal's Re-sync sends none)
+reads it from the project's config; it used to guess none, miss the IDE's
+checkout and fall back to the tree API.
+
+- **Only the artifact sync fetches it from the provider.** When the checkout
+  is there it is fetched and fast-forwarded (`update_shared_checkout`, never
+  over local edits); when it is not, the sync clones it there -- every branch
+  and the whole history, or `STUDIO_CHECKOUT_DEPTH` commits of the source's
+  branch when that is set. A clone that fails says why on the project's
+  Sources (clone status) and the sync falls back as above.
+- **The sync marks what it read**: `refs/studio/synced` points at the commit
+  it walked. Readers read that commit (`git cat-file`, `ls-tree`, `log`),
+  never the working tree, which the IDE may have moved or edited since.
+- **Every other gear reads through `port::ProjectCheckout`**:
+  `project_checkouts(ctx, project)` gives each source of the project (its
+  config read as the caller) with its `SourceCheckout` -- the directory, the
+  synced commit, whether it is shallow -- whose `read_file`, `read_file_at`,
+  `resolve`, `ls_tree`, `log`, `log_at` and `authors` run local git off the
+  async runtime. No method touches the network. A source never synced answers
+  `None`, and the reader says "not synced yet: Re-sync the project"; it never
+  asks the provider instead.
+- **A copy that has to sit elsewhere is filled from the checkout, locally.**
+  The Gearbox engine names a root by its directory, so a project's roots and
+  home live under `STUDIO_GEARBOX_WORKDIR/gearbox-roots/<key>/repo`: that copy
+  is fetched from `file://<checkout>` at the synced commit
+  (`git_checkout::mirror_local_into`, `--depth 1`), never from the host.
+  A server-side Research build copies the code the same way.
+- **Old layouts are read, not written.** A legacy `STUDIO_ARTIFACT_WORKDIR`
+  clone (`{secret_ref}__{owner_repo}`) is read while it is a project source's
+  only clone (`CheckoutLayout::LegacySyncClone`); the next sync of the project
+  clones the project layout beside it, after which it is unused and can be
+  deleted. Gearbox's old `gearbox-roots/<key>/repo` clones of project sources
+  are refilled from the checkout on the next read.
+
+What is NOT a project source keeps its own clone, refreshed in the background
+and never fetched on a request: the platform's and the organizations' gear
+repositories (Gearbox's corpus, the components catalogue's sync), an
+organization's kit shelf, a report's plan file. Provider calls that remain on
+a request path are writes (commits, pull requests, tags, workflow dispatch,
+issue creation), CI-artifact downloads, and review threads
+(`studio-documents` remarks), which are not repository content.
 
 #### The graph keeps what a file is, not what it says
 
@@ -394,7 +447,9 @@ and unscoped listings.
 
 Without a connector driver linked the routes stay mounted and answer 503 with
 the reason. In process the gear
-publishes seven ports on the ClientHub (`port.rs`): `RepoFileReader` (a
+publishes eight ports on the ClientHub (`port.rs`): `ProjectCheckout` (the
+project's one checkout of each source at the commit its last sync read; see
+`cpt-studio-principle-artifact-ingest-one-checkout`), `RepoFileReader` (a
 checkout's text files, and the commit and branch it is at), `ArtifactFiles` (a scope's file nodes),
 `ArtifactCounter` and `ProjectSignalSource` (portfolio and projects-table
 rollups), `ProjectWork` (a scope's issues, pull requests and commits with their

@@ -230,10 +230,13 @@ pub async fn read(
             )]);
         }
     };
-    let outcomes = hub
-        .get::<dyn crate::artifact_ingest::port::CloneOutcomes>()
-        .ok();
-    let outcomes = &outcomes;
+    // The project's one checkout of each source, as the last sync left it:
+    // the corpus copies its roots from there, never from the provider.
+    let Ok(checkouts) = hub.get::<dyn crate::artifact_ingest::port::ProjectCheckout>() else {
+        warn!(organization_id = %org, "studio-product: no project checkouts on this server (studio-artifact-ingest is not running); the projects' last product files stand");
+        return kept(Vec::new());
+    };
+    let checkouts = &checkouts;
     let deadline = tokio::time::Instant::now() + READ_DEADLINE;
     let reads: Vec<(Uuid, (ProjectRead, Vec<UnreadableSource>))> = futures_util::stream::iter(projects)
         .map(|project| {
@@ -241,7 +244,7 @@ pub async fn read(
             async move {
                 let read = tokio::time::timeout_at(
                     deadline,
-                    read_project(gearbox, service, am.as_ref(), outcomes.as_ref(), ctx, org, project.id),
+                    read_project(gearbox, service, am.as_ref(), checkouts.as_ref(), ctx, org, project.id),
                 )
                 .await
                 .unwrap_or_else(|_| {
@@ -270,73 +273,27 @@ pub async fn read(
     }
 }
 
+/// Why a project source has no checkout to read: no sync has cloned it to
+/// this server yet. Reads never go to the provider instead; the sync does.
+pub fn not_synced_reason() -> String {
+    "it has not been synced to the server yet: Re-sync the project to clone it".to_owned()
+}
+
 /// One project's product file and the roots it names: its first source that
 /// keeps one. Every source that could not be read is returned beside it, with
 /// why.
-/// What a failed fetch of a project source says on the project's Sources
-/// (clone status), when git's answer names a cause a person can fix: the
-/// branch the source names is gone, or the host says the repository is not
-/// there. Anything else (a timeout, a full disk) is the server's, not the
-/// source's, and is only logged.
-fn fetch_failure(error: &str, branch: &str) -> Option<crate::artifact_ingest::port::CloneFailure> {
-    use crate::artifact_ingest::port::{CloneCause, CloneFailure};
-    if crate::connectors::sdk::git_checkout::is_missing_ref(error) {
-        return Some(CloneFailure::new(CloneCause::BranchNotFound).with_detail(branch));
-    }
-    if error.to_ascii_lowercase().contains("repository not found") {
-        return Some(CloneFailure::new(CloneCause::RepositoryNotFound));
-    }
-    None
-}
-
-/// Record `failure` for the source, as the server's own fetch (channel
-/// `sync`). The product's fetch is often the only one a stand makes of a
-/// source: without this a deleted branch read as "8 errors" on Product and
-/// "Starting the editor…" on IDE, with nothing saying why. Best-effort.
-async fn note_failure(
-    outcomes: Option<&Arc<dyn crate::artifact_ingest::port::CloneOutcomes>>,
-    project: Uuid,
-    clone_url: &str,
-    failure: crate::artifact_ingest::port::CloneFailure,
-    order: i64,
-) {
-    use crate::artifact_ingest::port::{CloneChannel, CloneOutcome};
-    let Some(outcomes) = outcomes else {
-        return;
-    };
-    let failed = CloneOutcome::failed(CloneChannel::Sync, failure);
-    if let Err(e) = outcomes
-        .record(project, clone_url, CloneOutcome { order, ..failed })
-        .await
-    {
-        warn!(project_id = %project, error = %format!("{e:#}"), "studio-product: the source's clone status was not recorded");
-    }
-}
-
-/// The fetch worked: a failure the server's fetch recorded no longer holds.
-async fn note_fetched(
-    outcomes: Option<&Arc<dyn crate::artifact_ingest::port::CloneOutcomes>>,
-    project: Uuid,
-    clone_url: &str,
-    order: i64,
-) {
-    use crate::artifact_ingest::port::CloneChannel;
-    let Some(outcomes) = outcomes else {
-        return;
-    };
-    if let Err(e) = outcomes
-        .clear_failure(project, clone_url, CloneChannel::Sync, order)
-        .await
-    {
-        warn!(project_id = %project, error = %format!("{e:#}"), "studio-product: the source's clone status was not recorded");
-    }
-}
-
+///
+/// Read from the project's one checkout of each source (`ProjectCheckout`),
+/// at the commit the last sync read: the corpus's copy of the repository is
+/// filled from that checkout on this server's disk, and the provider is never
+/// asked. A source no sync has cloned yet is unreadable "not synced", and the
+/// project keeps what it had. Whether the provider could be reached is the
+/// sync's to say (clone status), not this read's.
 async fn read_project(
     gearbox: &Arc<Gearbox>,
     service: &Arc<crate::connectors::sdk::ConnectorService>,
     am: &dyn account_management_sdk::AccountManagementClient,
-    outcomes: Option<&Arc<dyn crate::artifact_ingest::port::CloneOutcomes>>,
+    checkouts: &dyn crate::artifact_ingest::port::ProjectCheckout,
     ctx: &SecurityContext,
     org: Uuid,
     project: Uuid,
@@ -350,10 +307,24 @@ async fn read_project(
         Ok(s) => s,
         Err(why) => return (ProjectRead::Unread, vec![why]),
     };
+    let synced = checkouts.project_checkouts(ctx, project).await;
     let mut unread = false;
     let mut unreadable = Vec::new();
     for source in sources {
-        let (corpus, connection) = match source_corpus(service, ctx, project, &source).await {
+        let Some(checkout) = synced
+            .iter()
+            .find(|(s, _)| s.full_path.eq_ignore_ascii_case(&source.full_path))
+            .and_then(|(_, c)| c.clone())
+        else {
+            unreadable.push(UnreadableSource::new(
+                Some(project),
+                &source.full_path,
+                not_synced_reason(),
+            ));
+            unread = true;
+            continue;
+        };
+        let (mut corpus, connection) = match source_corpus(service, ctx, project, &source).await {
             Ok(found) => found,
             Err(reason) => {
                 unreadable.push(UnreadableSource::new(
@@ -364,8 +335,10 @@ async fn read_project(
                 continue;
             }
         };
+        corpus.local = Some(checkout.dir.clone());
         let branch = corpus.git_ref.clone();
-        // Where the corpus reads the repository's roots from too: one clone.
+        // Where the corpus reads the repository's roots from too: one copy,
+        // filled from the project's checkout.
         let probe = GearRoot {
             id: String::new(),
             source: corpus.clone(),
@@ -374,27 +347,20 @@ async fn read_project(
             subdir: Some(String::new()),
         };
         let dir = checkout_dir(gearbox.workdir(), &probe);
-        let order = crate::artifact_ingest::port::clone_order();
         let clone = match gearbox_checkout(gearbox, &dir, &corpus).await {
-            Some(Ok(c)) => {
-                note_fetched(outcomes, project, &source.clone_url, order).await;
-                c
-            }
+            Some(Ok(c)) => c,
             None => {
-                warn!(project_id = %project, repo = %source.full_path, "studio-product: a project source is still being cloned; its gears are read on the next refresh");
+                warn!(project_id = %project, repo = %source.full_path, "studio-product: a project source is still being copied from its checkout; its gears are read on the next refresh");
                 unread = true;
                 continue;
             }
             Some(Err(e)) => {
                 let error = format!("{e:#}");
-                if let Some(failure) = fetch_failure(&error, &branch) {
-                    note_failure(outcomes, project, &source.clone_url, failure, order).await;
-                }
-                warn!(project_id = %project, repo = %source.full_path, %error, "studio-product: a project source could not be checked out for its product file");
+                warn!(project_id = %project, repo = %source.full_path, %error, "studio-product: a project source could not be copied from its checkout for its product file");
                 unreadable.push(UnreadableSource::new(
                     Some(project),
                     &source.full_path,
-                    format!("could not be checked out: {e:#}"),
+                    format!("could not be read from the server's checkout: {e:#}"),
                 ));
                 unread = true;
                 continue;
@@ -523,6 +489,7 @@ async fn source_corpus(
             username: username.to_owned(),
             token: token.to_owned(),
             git_ref: branch,
+            local: None,
         },
         connection,
     ))
@@ -563,13 +530,17 @@ impl std::error::Error for HomeUnreadable {}
 /// project's config or its home source cannot be read -- which a check says
 /// rather than checking as if there were no home.
 ///
-/// `fetch`: whether to bring the clone up to its branch first. Only a queued
-/// check (`product.check`) or a sync fetches; a request reads the clone as
-/// the last fetch left it and never waits on the provider -- with nothing
-/// cloned yet it answers [`super::gearbox::HomeStillReading`].
+/// Read from the project's one checkout of the home source
+/// (`ProjectCheckout`), at the commit the last sync read: the corpus's copy is
+/// filled from it on this server's disk, never from the provider. Only the
+/// sync fetches. `fetch` (a queued `product.check`) refreshes the copy from
+/// the checkout even when it looks current; a request reuses the copy when it
+/// is at the synced commit already. A home no sync has cloned yet is a
+/// [`HomeUnreadable`] "not synced".
 pub async fn home_checkout(
     gearbox: &Arc<Gearbox>,
     connectors: &Connectors,
+    checkouts: &dyn crate::artifact_ingest::port::ProjectCheckout,
     am: &dyn account_management_sdk::AccountManagementClient,
     ctx: &SecurityContext,
     project: Uuid,
@@ -589,7 +560,15 @@ pub async fn home_checkout(
         }
     };
     let home = crate::project_sources::description_home(&sources)?.clone();
-    let (corpus, connection) = match source_corpus(&service, ctx, project, &home).await {
+    let Some(checkout) = checkouts.checkout_of(ctx, project, &home.full_path).await else {
+        return Some(Err(HomeUnreadable(UnreadableSource::new(
+            Some(project),
+            &home.full_path,
+            not_synced_reason(),
+        ))
+        .into()));
+    };
+    let (mut corpus, connection) = match source_corpus(&service, ctx, project, &home).await {
         Ok(found) => found,
         Err(reason) => {
             return Some(Err(HomeUnreadable(UnreadableSource::new(
@@ -600,6 +579,7 @@ pub async fn home_checkout(
             .into()));
         }
     };
+    corpus.local = Some(checkout.dir.clone());
     let probe = GearRoot {
         id: String::new(),
         source: corpus.clone(),
@@ -608,30 +588,33 @@ pub async fn home_checkout(
         subdir: Some(String::new()),
     };
     let dir = checkout_dir(gearbox.workdir(), &probe);
+    let found = |clone: crate::connectors::sdk::git_checkout::CloneResult|
+     -> Option<anyhow::Result<super::gearbox::HomeCheckout>> {
+        Some(Ok(super::gearbox::HomeCheckout {
+            id: home.dir.clone(),
+            repo: home.full_path.clone(),
+            url: home.clone_url.clone(),
+            dir: clone.dir,
+            commit: clone.commit,
+        }))
+    };
     if !fetch {
         let (gb, at) = (Arc::clone(gearbox), dir.clone());
-        return Some(
-            match tokio::task::spawn_blocking(move || gb.home_as_cloned(&at)).await {
-                Ok(Some(clone)) => Ok(super::gearbox::HomeCheckout {
-                    id: home.dir.clone(),
-                    repo: home.full_path.clone(),
-                    url: home.clone_url.clone(),
-                    dir: clone.dir,
-                    commit: clone.commit,
-                }),
-                Ok(None) => Err(super::gearbox::HomeStillReading(home.full_path.clone()).into()),
-                Err(e) => Err(anyhow::anyhow!("the checkout task failed: {e}")),
-            },
-        );
+        if let Ok(Some(clone)) = tokio::task::spawn_blocking(move || gb.home_as_cloned(&at)).await
+            && clone.commit.as_deref() == Some(checkout.commit.as_str())
+        {
+            return found(clone);
+        }
     }
     let (gb, at, src) = (Arc::clone(gearbox), dir.clone(), corpus.clone());
     let job = tokio::task::spawn_blocking(move || gb.home_checkout_at(&at, &src));
     let clone = match tokio::time::timeout(CHECKOUT_WAIT, job).await {
         Ok(Ok(Ok(c))) => c,
         Ok(Ok(Err(e))) => {
-            return Some(Err(
-                e.context(format!("{} could not be checked out", home.full_path))
-            ));
+            return Some(Err(e.context(format!(
+                "{} could not be read from the server's checkout",
+                home.full_path
+            ))));
         }
         Ok(Err(e)) => return Some(Err(anyhow::anyhow!("the checkout task failed: {e}"))),
         Err(_) => {
@@ -641,13 +624,7 @@ pub async fn home_checkout(
             .into()));
         }
     };
-    Some(Ok(super::gearbox::HomeCheckout {
-        id: home.dir.clone(),
-        repo: home.full_path.clone(),
-        url: home.clone_url.clone(),
-        dir: clone.dir,
-        commit: clone.commit,
-    }))
+    found(clone)
 }
 
 /// How long a request waits for a project's repository to be cloned or
@@ -699,6 +676,7 @@ mod tests {
                 username: String::new(),
                 token: String::new(),
                 git_ref: "main".into(),
+                local: None,
             },
             connection_id: None,
             organization: true,
@@ -879,24 +857,10 @@ mod tests {
         std::fs::remove_dir_all(&scratch).unwrap();
     }
 
-    /// The stand's two sources: one pinned to a deleted branch, one whose
-    /// repository the host does not show. Both say why on Sources and IDE.
     #[test]
-    fn a_fetch_that_failed_on_the_source_says_why() {
-        use crate::artifact_ingest::port::CloneCause;
-        let gone = fetch_failure(
-            "git fetch failed (exit status: 128): fatal: couldn't find remote ref AndrejK666/product-infra-gdl",
-            "AndrejK666/product-infra-gdl",
-        )
-        .expect("a deleted branch");
-        assert_eq!(gone.cause, CloneCause::BranchNotFound);
-        assert_eq!(gone.detail, "AndrejK666/product-infra-gdl");
-        let missing = fetch_failure(
-            "git fetch failed (exit status: 128): remote: Repository not found.",
-            "main",
-        )
-        .expect("a repository the host does not show");
-        assert_eq!(missing.cause, CloneCause::RepositoryNotFound);
-        assert!(fetch_failure("the checkout task timed out", "main").is_none());
+    fn a_source_without_a_checkout_says_to_sync_not_to_ask_the_provider() {
+        let why = not_synced_reason();
+        assert!(why.contains("not been synced"), "{why}");
+        assert!(why.contains("Re-sync"), "{why}");
     }
 }

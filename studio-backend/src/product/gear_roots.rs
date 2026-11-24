@@ -56,6 +56,7 @@ pub fn root_of(r: GearRepositorySource) -> GearRoot {
             username: r.username,
             token: r.token,
             git_ref: r.git_ref,
+            local: None,
         },
         id: r.source_id,
         connection_id: Some(r.connection_id),
