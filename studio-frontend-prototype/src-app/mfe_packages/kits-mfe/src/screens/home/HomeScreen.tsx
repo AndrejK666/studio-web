@@ -17,6 +17,7 @@ import {
   loadScreenPreviews,
   modelOf,
   modelTabs,
+  refusalText,
   shellTabsOf,
   type ModelTab,
 } from '@constructor-studio/mfe-shared';
@@ -33,6 +34,7 @@ import { AddFromRepository } from './AddFromRepository';
 import { IdeKits } from './IdeKits';
 import { KitsGrid, kitRows, statusOf, type KitCells } from './KitsGrid';
 import { useHomeTranslations } from '../../i18n';
+import { installWithRequired } from '../../model/requires';
 import { PageLoading, ProjectPage } from '@constructor-studio/mfe-shared/page';
 import styles from './HomeScreen.module.css';
 
@@ -182,7 +184,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
     try {
       await run();
     } catch (e) {
-      setProblem({ slug, text: e instanceof Error ? e.message : String(e) });
+      // The gear's own sentence (a failed precondition says why), not a bare status.
+      setProblem({ slug, text: refusalText(e) ?? (e instanceof Error ? e.message : String(e)) });
     } finally {
       setBusy(null);
       setTick((n) => n + 1);
@@ -233,12 +236,12 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
       busy={busy === kit.slug}
       problem={problem?.slug === kit.slug ? problem.text : null}
       t={t}
-      onMakeBase={() => void act(kit.slug, () => api.installBase(kit.slug).fetch({}))}
+      onMakeBase={() => void act(kit.slug, () => installWithRequired(kit.slug, (s) => api.installBase(s).fetch({})))}
       onRemoveBase={() => void act(kit.slug, () => api.removeBase(kit.slug).fetch(undefined))}
-      onInstall={(org) => void act(kit.slug, () => api.installForOrganization(kit.slug, org).fetch({}))}
+      onInstall={(org) => void act(kit.slug, () => installWithRequired(kit.slug, (s) => api.installForOrganization(s, org).fetch({})))}
       onRemove={(org) => void act(kit.slug, () => api.removeFromOrganization(kit.slug, org).fetch(undefined))}
       onInstallProject={() =>
-        projectId && void act(kit.slug, () => api.installForProject(kit.slug, projectId).fetch({}))
+        projectId && void act(kit.slug, () => installWithRequired(kit.slug, (s) => api.installForProject(s, projectId).fetch({})))
       }
       onRemoveProject={() =>
         projectId && void act(kit.slug, () => api.removeFromProject(kit.slug, projectId).fetch(undefined))
