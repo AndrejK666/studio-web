@@ -43,5 +43,6 @@
   "methods_from_few": "Включены методы китов {kits}.",
   "methods_from_many": "Включены методы китов {kits}.",
   "methods_unread": "Не прочитаны: {kits}.",
-  "methods_failed": "Методы китов не прочитаны: {error}"
+  "methods_failed": "Методы китов не прочитаны: {error}",
+  "help_label": "Об этой вкладке"
 }

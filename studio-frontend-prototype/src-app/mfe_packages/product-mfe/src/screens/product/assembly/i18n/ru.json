@@ -120,5 +120,6 @@
   "service_connect_url": "Адрес сервиса (https://…)",
   "service_connect_secret": "Общий секрет",
   "service_connect": "Подключить",
-  "service_connect_admin": "Сервис подключает администратор организации."
+  "service_connect_admin": "Сервис подключает администратор организации.",
+  "help_label": "Об этой странице"
 }

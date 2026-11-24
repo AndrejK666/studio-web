@@ -56,6 +56,7 @@ import {
   type Milestone,
 } from '../../model/timeline';
 import { MilestoneDialog } from './MilestoneDialog';
+import { PageLoading, ProjectPage } from '@constructor-studio/mfe-shared/page';
 import styles from '../Screen.module.css';
 
 const errText = (e: unknown) => refusalText(e) ?? errorMessage(e);
@@ -138,8 +139,8 @@ export const TimelineScreen: React.FC<{
     status === null || status === undefined ? t('no_status') : String(status).replace(/_/g, ' ');
 
   const body = () => {
-    if (!orgId) return orgLoading ? <p className={styles.muted}>{t('loading_milestones')}</p> : null;
-    if (modelRead === null) return <p className={styles.muted}>{t('loading_milestones')}</p>;
+    if (!orgId) return orgLoading ? <PageLoading label={t('loading_milestones')} /> : null;
+    if (modelRead === null) return <PageLoading label={t('loading_milestones')} />;
     if ('error' in modelRead) return <p className={styles.error}>{t('model_failed', { error: modelRead.error })}</p>;
     if (!installed) {
       return (
@@ -148,7 +149,7 @@ export const TimelineScreen: React.FC<{
         </p>
       );
     }
-    if (items === null) return <p className={styles.muted}>{t('loading_milestones')}</p>;
+    if (items === null) return <PageLoading label={t('loading_milestones')} />;
     if (items.length === 0) {
       return error ? null : (
         <p className={styles.muted} data-timeline-empty>
@@ -197,22 +198,24 @@ export const TimelineScreen: React.FC<{
   };
 
   return (
-    <>
-      <header className={styles.header}>
-        <h2 className={styles.title}>{t('timeline_title')}</h2>
-        <div className={`${styles.chips} ${styles.grow}`}>
-          {installed &&
-            counts.map((g) => (
-              <Badge key={String(g.key[0])} variant="secondary" data-timeline-count>
-                {t('status_count', { status: label(g.key[0]), count: g.count })}
-              </Badge>
-            ))}
-        </div>
+    <ProjectPage
+      title={t('timeline_title')}
+      help={t('timeline_about')}
+      helpLabel={t('help_label')}
+      chips={
+        installed &&
+        counts.map((g) => (
+          <Badge key={String(g.key[0])} variant="secondary" data-timeline-count>
+            {t('status_count', { status: label(g.key[0]), count: g.count })}
+          </Badge>
+        ))
+      }
+      actions={
         <Button onClick={() => setEditing('new')} disabled={!installed} data-timeline-add>
           {t('add_milestone')}
         </Button>
-      </header>
-      <p className={styles.about}>{t('timeline_about')}</p>
+      }
+    >
       {error && (
         <p className={styles.error} role="alert">
           {error}
@@ -261,7 +264,7 @@ export const TimelineScreen: React.FC<{
           </DialogContent>
         </Dialog>
       )}
-    </>
+    </ProjectPage>
   );
 };
 

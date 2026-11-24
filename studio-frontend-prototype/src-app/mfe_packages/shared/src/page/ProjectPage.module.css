@@ -1,0 +1,95 @@
+/* A project tab's frame and the states of its body, over the kit's semantic tokens. */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  background: var(--card);
+}
+
+/*
+ * The title sits where a one-line header centres it (the default header's
+ * 64 less the title's line, halved), whatever wraps under it: the kit centres
+ * a one-line header and tops a taller one, so in its narrow layout a tab with
+ * chips or actions put its title higher than a tab with none.
+ */
+.page > .header {
+  flex: none;
+  align-items: flex-start;
+  padding-block-start: calc((var(--space-8) * 2 - var(--text-heading-1-line-height)) / 2);
+}
+
+.meta {
+  align-items: center;
+}
+
+.titleSkeleton {
+  width: 8rem;
+  height: var(--text-heading-1-line-height);
+}
+
+/* As tall as the title's line, so the row beside the title does not move it. */
+.meta .helpTrigger {
+  block-size: var(--text-heading-1-line-height);
+  inline-size: var(--text-heading-1-line-height);
+  min-block-size: 0;
+  color: var(--muted-foreground);
+}
+
+.help {
+  display: grid;
+  gap: var(--space-2);
+  width: auto;
+  max-width: 28rem;
+  font-size: var(--text-body-size);
+  line-height: var(--text-body-line-height);
+}
+
+.help p,
+.help ul {
+  margin: 0;
+}
+
+.body {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-6);
+}
+
+.loading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.stripSkeleton {
+  height: var(--space-8);
+}
+
+.blockSkeleton {
+  height: calc(var(--space-8) * 4);
+}
+
+.empty {
+  padding-block: var(--space-6);
+  white-space: normal;
+}
+
+.failed {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.error {
+  margin: 0;
+  color: var(--destructive);
+}

@@ -80,5 +80,7 @@
   "services_never": "not computed yet",
   "services_refresh": "Compute the services again from the last sync",
   "code_by_commit": "code by commit {commits}",
-  "code_refresh": "Compare the code again"
+  "code_refresh": "Compare the code again",
+  "title": "Components",
+  "help_label": "About this tab"
 }

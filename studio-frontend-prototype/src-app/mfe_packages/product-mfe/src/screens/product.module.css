@@ -7,13 +7,10 @@
 
 .screen {
   --font-sans: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  min-height: 100%;
-  padding: var(--space-6);
   color: var(--foreground);
   font-size: 0.875rem;
+  height: 100%;
+  min-height: 0;
 }
 
 /* The kit's theme.css paints `[data-theme]`; the shell's screen keeps its own. */
@@ -98,37 +95,6 @@
   border: 0;
   background: none;
   cursor: pointer;
-}
-
-.pageHeader {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-3);
-}
-
-.pageHeaderMain {
-  display: grid;
-  gap: var(--space-2);
-  min-width: 0;
-}
-
-.pageTitle {
-  margin: 0;
-  font-size: 1.25rem;
-  font-weight: 600;
-}
-
-.info {
-  display: grid;
-  gap: var(--space-1);
-  max-width: 60rem;
-  color: var(--muted-foreground);
-}
-
-.info p {
-  margin: 0;
 }
 
 .tabs {

@@ -25,7 +25,6 @@ import {
   DialogTitle,
   NativeSelect,
   NativeSelectOption,
-  Skeleton,
 } from '@gears-frontx/ui-kit';
 import {
   ACCESS_CONFIG_TYPE,
@@ -55,6 +54,7 @@ import {
   type ScreenText,
 } from '@constructor-studio/mfe-shared';
 import { GridFailed } from '@constructor-studio/mfe-shared/grid';
+import { PageEmpty, PageLoading, ProjectPage } from '@constructor-studio/mfe-shared/page';
 import { useTeamTranslations } from '../../i18n';
 import { TeamGrid, type TeamCells, type TeamGridRow } from './TeamGrid';
 import styles from './TeamScreen.module.css';
@@ -109,7 +109,9 @@ export const TeamScreen: React.FC<{ bridge: ChildMfeBridge }> = ({ bridge }) => 
   return (
     <div ref={containerRef} className={styles.screen} data-theme={dataTheme}>
       {loading ? (
-        <Skeleton className={styles.skeleton} />
+        <ProjectPage title={null} busy>
+          <PageLoading />
+        </ProjectPage>
       ) : (
         <OrganizationProvider>
           <InScope t={t} bridge={bridge} projectId={projectId} container={containerRef} />
@@ -130,9 +132,13 @@ interface ScopeProps {
 
 function InScope({ t, bridge, projectId, container }: ScopeProps) {
   const { org, loading } = useOrganization();
-  if (loading) return <p className={styles.muted}>{t('loading')}</p>;
-  if (!projectId) return <p className={styles.muted}>{t('no_project')}</p>;
-  if (!org) return <p className={styles.muted}>{t('no_org')}</p>;
+  if (loading || !projectId || !org) {
+    return (
+      <ProjectPage title={t('title')}>
+        {loading ? <PageLoading label={t('loading')} /> : <PageEmpty title={t(projectId ? 'no_org' : 'no_project')} />}
+      </ProjectPage>
+    );
+  }
   // Keyed by the scope: another project is another read, from nothing.
   return <Team key={`${org.id}:${projectId}`} t={t} bridge={bridge} org={org} projectId={projectId} container={container} />;
 }
@@ -223,11 +229,19 @@ function Team({
   };
 
   return (
-    <>
-      <header className={styles.header}>
-        <h2 className={styles.title}>{t('title')}</h2>
-        {people !== null && cfg !== null && (
-          <div className={styles.chips} data-team-status>
+    <ProjectPage
+      title={t('title')}
+      help={
+        <>
+          <p>{t('about_1', { project: project.name, org: org.name })}</p>
+          <p>{t('about_2', { org: org.name })}</p>
+        </>
+      }
+      helpLabel={t('help_label')}
+      chips={
+        people !== null &&
+        cfg !== null && (
+          <span className={styles.chips} data-team-status>
             {roleBased ? (
               <Badge variant={teamGrants.length > 0 ? 'secondary' : 'warning'} data-team-count>
                 {t.count('people', teamGrants.length)}
@@ -237,26 +251,22 @@ function Team({
                 {t('tenant_access')}
               </Badge>
             )}
-          </div>
-        )}
-        {roleBased && (
-          <div className={styles.headerAction}>
-            <Button
-              disabled={busy || candidates.length === 0}
-              title={candidates.length === 0 ? t('everyone_on_team') : undefined}
-              onClick={() => setAdding(true)}
-              data-team-add-open
-            >
-              {t('add')}
-            </Button>
-          </div>
-        )}
-      </header>
-      <div className={styles.about}>
-        <p>{t('about_1', { project: project.name, org: org.name })}</p>
-        <p>{t('about_2', { org: org.name })}</p>
-      </div>
-
+          </span>
+        )
+      }
+      actions={
+        roleBased && (
+          <Button
+            disabled={busy || candidates.length === 0}
+            title={candidates.length === 0 ? t('everyone_on_team') : undefined}
+            onClick={() => setAdding(true)}
+            data-team-add-open
+          >
+            {t('add')}
+          </Button>
+        )
+      }
+    >
       {error && (
         <p role="alert" className={styles.error}>
           {error}
@@ -266,7 +276,7 @@ function Team({
       {readError ? (
         <GridFailed message={readError} retry={t('retry')} onRetry={() => setAttempt((n) => n + 1)} />
       ) : people === null || cfg === null || cells === null ? (
-        <p className={styles.muted}>{t('loading_team')}</p>
+        <PageLoading label={t('loading_team')} />
       ) : !roleBased ? (
         <div className={styles.empty} data-team-tenant>
           <strong>{t('tenant_title', { org: org.name })}</strong>
@@ -333,7 +343,7 @@ function Team({
           </DialogContent>
         </Dialog>
       )}
-    </>
+    </ProjectPage>
   );
 }
 

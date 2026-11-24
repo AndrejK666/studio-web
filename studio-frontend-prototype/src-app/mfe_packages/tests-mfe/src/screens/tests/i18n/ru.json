@@ -75,5 +75,6 @@
   "no_runs_match": "Ни один запуск не подходит.",
   "no_pulls_match": "Ни один pull request не подходит.",
   "clear_search": "Сбросить поиск",
-  "no_data": "Неизвестно"
+  "no_data": "Неизвестно",
+  "help_label": "Об этой вкладке"
 }

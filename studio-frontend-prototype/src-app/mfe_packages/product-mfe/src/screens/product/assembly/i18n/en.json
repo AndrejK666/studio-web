@@ -120,5 +120,6 @@
   "service_connect_url": "Service address (https://…)",
   "service_connect_secret": "Shared secret",
   "service_connect": "Connect",
-  "service_connect_admin": "An organization administrator connects its service here."
+  "service_connect_admin": "An organization administrator connects its service here.",
+  "help_label": "About this page"
 }

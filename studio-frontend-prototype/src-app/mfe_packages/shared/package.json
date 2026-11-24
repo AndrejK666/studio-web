@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./grid": "./src/grid.ts",
-    "./testing": "./src/data/testing.ts"
+    "./testing": "./src/data/testing.ts",
+    "./page": "./src/page.ts"
   },
   "scripts": {
     "type-check": "tsc --noEmit",

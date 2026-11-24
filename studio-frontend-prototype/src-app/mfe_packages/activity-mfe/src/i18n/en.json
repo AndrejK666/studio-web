@@ -63,5 +63,7 @@
   "save": "Save",
   "saving": "Saving…",
   "save_failed": "Couldn't save the milestone: {error}",
-  "clear_search": "Clear search"
+  "clear_search": "Clear search",
+  "help_label": "About this tab",
+  "loading": "Loading…"
 }

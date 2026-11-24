@@ -7,13 +7,13 @@
 
 import React, { useMemo } from 'react';
 import { useSharedProperty, type ChildMfeBridge } from '@gears-frontx/react';
-import { Skeleton } from '@gears-frontx/ui-kit';
 import {
   STUDIO_SHARED_PROPERTY_CONTEXT_ORGANIZATION,
   STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT,
   STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE,
   useHostChrome,
 } from '@constructor-studio/mfe-shared';
+import { PageEmpty, PageLoading, ProjectPage } from '@constructor-studio/mfe-shared/page';
 import { useDomainTranslations } from './i18n';
 import { ScopeContext, type Scope } from './screens/common/ui';
 import { DomainModelScreen } from './screens/domain/DomainModelScreen';
@@ -43,9 +43,13 @@ export const DomainModelRoot: React.FC<{ bridge: ChildMfeBridge }> = ({ bridge }
   return (
     <div ref={containerRef} className={styles.screen} data-theme={dataTheme}>
       {loading ? (
-        <Skeleton className={styles.skeleton} />
+        <ProjectPage title={null} busy>
+          <PageLoading />
+        </ProjectPage>
       ) : !scope ? (
-        <p className={styles.muted}>{t('no_project')}</p>
+        <ProjectPage title={t('title')}>
+          <PageEmpty title={t('no_project')} />
+        </ProjectPage>
       ) : (
         <ScopeContext.Provider value={scope}>
           <DomainModelScreen key={`${projectId}:${orgId ?? ''}`} />

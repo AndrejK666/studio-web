@@ -7,7 +7,7 @@ import {
   FRONTX_SHARED_PROPERTY_THEME,
   FRONTX_SHARED_PROPERTY_LANGUAGE,
 } from '@gears-frontx/react';
-import { Badge, Button, Skeleton } from '@gears-frontx/ui-kit';
+import { Badge, Button } from '@gears-frontx/ui-kit';
 import {
   STUDIO_SHARED_PROPERTY_CONTEXT_ORGANIZATION,
   STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT,
@@ -33,6 +33,7 @@ import { AddFromRepository } from './AddFromRepository';
 import { IdeKits } from './IdeKits';
 import { KitsGrid, kitRows, statusOf, type KitCells } from './KitsGrid';
 import { useHomeTranslations } from '../../i18n';
+import { PageLoading, ProjectPage } from '@constructor-studio/mfe-shared/page';
 import styles from './HomeScreen.module.css';
 
 
@@ -269,63 +270,64 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ bridge }) => {
   if (loading) {
     return (
       <div ref={containerRef} className={styles.screen} data-theme={toKitTheme(theme)}>
-        <Skeleton className={styles.skeletonTitle} />
-        <Skeleton className={styles.skeletonLine} />
+        <ProjectPage title={null} busy>
+          <PageLoading />
+        </ProjectPage>
       </div>
     );
   }
 
   return (
     <div ref={containerRef} className={styles.screen} data-theme={toKitTheme(theme)}>
-      <h2 className={styles.title}>{t('title')}</h2>
-      <p className={styles.description}>{t(`description_${scope}`)}</p>
-      {scope === 'organization' && orgId && !open && (
-        adding ? (
-          <AddFromRepository
+      <ProjectPage title={t('title')} help={t(`description_${scope}`)} helpLabel={t('help_label')}>
+        {scope === 'organization' && orgId && !open && (
+          adding ? (
+            <AddFromRepository
+              organizationId={orgId}
+              t={t}
+              onCancel={() => setAdding(false)}
+              onAdded={(kit) => {
+                setAdding(false);
+                setSelected(kit.kit.slug);
+                setTick((n) => n + 1);
+              }}
+            />
+          ) : (
+            <div className={styles.actions}>
+              <Button size="sm" variant="outline" data-add-kit onClick={() => setAdding(true)}>
+                {t('add_open')}
+              </Button>
+            </div>
+          )
+        )}
+        {scope === 'project' && projectId && !open && (
+          <details key={projectId} className={styles.ideDisclosure} data-kit-ide-disclosure>
+            <summary>{t('ide_manage')}</summary>
+            <IdeKits projectId={projectId} shelf={shelf} t={t} />
+          </details>
+        )}
+        {catalog.isLoading ? (
+          <PageLoading label={t('loading')} />
+        ) : catalog.isError ? (
+          <p role="alert" className={styles.error}>
+            {t('loading_failed', { error: String(catalog.error) })}
+          </p>
+        ) : open ? (
+          <KitPage
+            bridge={bridge}
             organizationId={orgId}
+            kit={open}
+            detail={detailOf(open.slug)}
+            failed={!onShelf(open.slug) && open.slug in details && details[open.slug] === null}
+            controls={controlsFor(open)}
+            onBack={() => setSelected(null)}
             t={t}
-            onCancel={() => setAdding(false)}
-            onAdded={(kit) => {
-              setAdding(false);
-              setSelected(kit.kit.slug);
-              setTick((n) => n + 1);
-            }}
+            status={statusOf(open, installed)}
           />
         ) : (
-          <div className={styles.actions}>
-            <Button size="sm" variant="outline" data-add-kit onClick={() => setAdding(true)}>
-              {t('add_open')}
-            </Button>
-          </div>
-        )
-      )}
-      {scope === 'project' && projectId && !open && (
-        <details key={projectId} className={styles.ideDisclosure} data-kit-ide-disclosure>
-          <summary>{t('ide_manage')}</summary>
-          <IdeKits projectId={projectId} shelf={shelf} t={t} />
-        </details>
-      )}
-      {catalog.isLoading ? (
-        <Skeleton className={styles.skeletonLine} />
-      ) : catalog.isError ? (
-        <p role="alert" className={styles.error}>
-          {t('loading_failed', { error: String(catalog.error) })}
-        </p>
-      ) : open ? (
-        <KitPage
-          bridge={bridge}
-          organizationId={orgId}
-          kit={open}
-          detail={detailOf(open.slug)}
-          failed={!onShelf(open.slug) && open.slug in details && details[open.slug] === null}
-          controls={controlsFor(open)}
-          onBack={() => setSelected(null)}
-          t={t}
-          status={statusOf(open, installed)}
-        />
-      ) : (
-        <KitsGrid rows={rows} cells={cells} bridge={bridge} />
-      )}
+          <KitsGrid rows={rows} cells={cells} bridge={bridge} />
+        )}
+      </ProjectPage>
     </div>
   );
 };

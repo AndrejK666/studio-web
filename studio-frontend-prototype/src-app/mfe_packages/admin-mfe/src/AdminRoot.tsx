@@ -12,6 +12,7 @@ import {
   useHostChrome,
 } from '@constructor-studio/mfe-shared';
 import { Skeleton } from '@gears-frontx/ui-kit';
+import { PageLoading, ProjectPage } from '@constructor-studio/mfe-shared/page';
 import { useAdminTranslations } from './i18n';
 import { AdminContext } from './screens/admin/common';
 import { OrganizationsSection } from './screens/admin/OrganizationsSection';
@@ -81,12 +82,20 @@ export const AdminRoot: React.FC<AdminRootProps> = ({ bridge }) => {
   return (
     <div
       ref={containerRef}
-      className={styles.screen}
+      // A model tab (Attributes, a type's objects) draws itself in the shared
+      // page frame, which pads its own body.
+      className={modelLevel ? `${styles.screen} ${styles.framed}` : styles.screen}
       data-theme={dataTheme}
       data-admin-section={modelLevel ? (typeof published === 'string' ? published : MODEL_ATTRIBUTES) : section}
     >
       {loading ? (
-        <Skeleton className={styles.skeleton} />
+        modelLevel ? (
+          <ProjectPage title={null} busy>
+            <PageLoading />
+          </ProjectPage>
+        ) : (
+          <Skeleton className={styles.skeleton} />
+        )
       ) : (
         <AdminContext.Provider value={{ t, language, container: containerRef, bridge }}>
           <OrganizationProvider>

@@ -97,6 +97,34 @@ each MFE's build bundles them into its own stylesheet, as it does its own.
   `useThemedRoot` finds a popup's `container`: the screen's `[data-theme]`
   root, or else the shadow root's top element.
 
+## Project tabs on one frame
+
+Every project tab, whichever MFE draws it, draws itself in `ProjectPage`, from
+its own entry `@constructor-studio/mfe-shared/page` (`src/page.ts`; CSS
+modules, bundled by each MFE like the `grid` entry's). So the titles of
+Overview, Tests, Product and the rest sit at the same place, in the same
+type, over the same rule, and their bodies have the same padding.
+
+- **`ProjectPage`**: the kit's `PageHeader` (an `h2` title on the Heading 1
+  role) over a body padded `--space-6` that scrolls on its own while the
+  header stays. `title` is the tab's name, as the tab bar says it, never the
+  name of what the tab shows (Product's product id is a chip). `chips` sit
+  beside the title: counts, states, a name. `actions` are the tab's buttons,
+  at the end. `help` is what the tab is for, a click away behind a "?" next to
+  the title, with `helpLabel` its accessible name: the paragraph a tab used to
+  open with goes there, not into the body. `description` is one short line
+  under the title, when a tab needs one. `busy` holds the title, chips and
+  actions back while the tab's words load. `section` is `data-section` on the
+  body, for a frame that holds several tabs.
+- **States of the body**: `PageLoading` (Skeleton blocks in a `status`
+  region; `label`, "Loading…", is said to a screen reader), `PageEmpty`
+  (icon, title, note, actions), `PageError` (the message and a retry). A
+  list's own states stay `GridEmpty`/`GridFailed` inside the grid.
+- **The MFE's root** keeps its `data-theme` and fonts but no padding: it is
+  `height: 100%`, and the frame pads. A tab that has not loaded its words yet
+  renders `<ProjectPage title={null} busy><PageLoading /></ProjectPage>`, so
+  the rule does not jump when the title arrives.
+
 ## The Inbox count
 
 A screen that reads the person's open Inbox (`GET /studio-user/v1/me/inbox`)

@@ -23,7 +23,7 @@ import {
   FRONTX_SCREEN_DOMAIN,
   FRONTX_SHARED_PROPERTY_THEME,
 } from '@gears-frontx/react';
-import { Badge, Button, Skeleton } from '@gears-frontx/ui-kit';
+import { Badge, Button } from '@gears-frontx/ui-kit';
 import {
   sendToHost,
   STUDIO_ACTION_ARTIFACT_OPEN,
@@ -33,6 +33,7 @@ import {
   usePollWhileVisible,
 } from '@constructor-studio/mfe-shared';
 import { GridFailed } from '@constructor-studio/mfe-shared/grid';
+import { PageEmpty, PageLoading, ProjectPage } from '@constructor-studio/mfe-shared/page';
 import { IssuesApiService } from '../../api/IssuesApiService';
 import type {
   DocQualityRow,
@@ -81,9 +82,13 @@ export const IssuesScreen: React.FC<{ bridge: ChildMfeBridge }> = ({ bridge }) =
       data-theme={typeof theme === 'string' && DARK_HOST_THEMES.includes(theme) ? 'dark' : 'light'}
     >
       {loading ? (
-        <Skeleton className={styles.skeleton} />
+        <ProjectPage title={null} busy>
+          <PageLoading />
+        </ProjectPage>
       ) : !projectId ? (
-        <p className={styles.muted}>{t('no_project')}</p>
+        <ProjectPage title={t('title')}>
+          <PageEmpty title={t('no_project')} />
+        </ProjectPage>
       ) : (
         // Keyed by the scope: another project is another read, from nothing.
         <ProjectIssues
@@ -274,11 +279,11 @@ function ProjectIssues({
   const line = model ? buildLine(model.build) : '';
   const note = model ? unreadNote(model) : null;
   return (
-    <>
-      <header className={styles.header}>
-        <h2 className={styles.title} title={t('about')}>
-          {t('title')}
-        </h2>
+    <ProjectPage
+      title={t('title')}
+      help={t('about')}
+      helpLabel={t('help_label')}
+      chips={
         <div className={styles.chips} data-issues-status>
           {model && <span className={styles.muted}>{t.count('documents', model.documents.length)}</span>}
           {line && (
@@ -293,8 +298,9 @@ function ProjectIssues({
             </span>
           )}
         </div>
+      }
+      actions={
         <Button
-          className={styles.build}
           disabled={running || starting || model?.documents.length === 0}
           onClick={() => void startBuild()}
           title={
@@ -310,9 +316,8 @@ function ProjectIssues({
               ? t('build_on_key_estimate', { estimate: estimateLabel(estimate) })
               : t('build_on_key')}
         </Button>
-      </header>
-      <p className={styles.about}>{t('about')}</p>
-
+      }
+    >
       {error &&
         (read ? (
           <p role="alert" className={styles.error}>
@@ -322,7 +327,7 @@ function ProjectIssues({
           // Nothing read yet: the list's own failure, with a retry.
           <GridFailed message={error} retry={t('retry')} onRetry={() => void load()} />
         ))}
-      {!read && !error && <p className={styles.muted}>{t('loading')}</p>}
+      {!read && !error && <PageLoading label={t('loading')} />}
       {note && (
         <p className={styles.hint} data-no-documentation data-unread={model?.unread_documents ?? 0}>
           {note}
@@ -346,6 +351,6 @@ function ProjectIssues({
           onOpenFile={onOpenFile}
         />
       )}
-    </>
+    </ProjectPage>
   );
 }

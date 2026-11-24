@@ -7,7 +7,8 @@ import {
   useAppSelector,
   useMfeBridge,
 } from '@gears-frontx/react';
-import { Button, Card, CardContent, Input, Skeleton } from '@gears-frontx/ui-kit';
+import { Button, Card, CardContent, Input } from '@gears-frontx/ui-kit';
+import { PageLoading, ProjectPage } from '@constructor-studio/mfe-shared/page';
 import { useOrganization, useWorkspace } from '@constructor-studio/mfe-shared';
 import { useProjectScreenTranslations, useProjectText } from '../../i18n';
 import { useArtifactCount } from '../../shared/useArtifacts';
@@ -15,7 +16,6 @@ import { useArtifactImport } from '../../shared/useArtifactImport';
 import { useSourcesSync } from '../../shared/useSourcesSync';
 import { NAV_SLICE_KEY, landOnFirstImport, type ProjectSection } from '../../slices/navSlice';
 import { announceSection } from '../../actions/projectsActions';
-import { SectionHeader } from '../../components/SectionHeader';
 import { PlaceholderSection } from './sections/PlaceholderSection';
 import { ArtifactsSection } from './sections/ArtifactsSection';
 import { OverviewSection } from './sections/overview/OverviewSection';
@@ -117,14 +117,7 @@ export const ProjectScreen: React.FC<ProjectScreenProps> = ({ projectId }) => {
   };
 
   const body = () => {
-    if (busy) {
-      return (
-        <div className={styles.sectionBody}>
-          <Skeleton className={styles.blockSkeleton} />
-          <Skeleton className={styles.blockSkeleton} />
-        </div>
-      );
-    }
+    if (busy) return <PageLoading label={t('loading')} />;
     if (isError || !project) {
       return <PlaceholderSection title={t('error_title')} note={t('error_hint')} />;
     }
@@ -148,30 +141,29 @@ export const ProjectScreen: React.FC<ProjectScreenProps> = ({ projectId }) => {
     }
   };
 
+  const help = section === 'overview' ? t('help_overview') : undefined;
+
   return (
-    <div className={styles.frame}>
-      <div className={styles.content}>
-        {org && (
-          <ImportWatch
-            projectId={projectId}
-            orgId={org.id}
-            workspaceId={workspace?.id ?? null}
-            artifactCount={artifactCount}
-            sources={sources}
-            artifactsRead={artifactsRead}
-          />
-        )}
-        <SectionHeader
-          className={styles.header}
-          title={t(`section_${section}`)}
-          busy={busy}
-          actions={actions()}
+    <ProjectPage
+      title={t(`section_${section}`)}
+      busy={busy}
+      help={help}
+      helpLabel={t('help_label')}
+      actions={actions()}
+      section={section}
+    >
+      {org && (
+        <ImportWatch
+          projectId={projectId}
+          orgId={org.id}
+          workspaceId={workspace?.id ?? null}
+          artifactCount={artifactCount}
+          sources={sources}
+          artifactsRead={artifactsRead}
         />
-        <div className={styles.body} data-section={section}>
-          {body()}
-        </div>
-      </div>
-    </div>
+      )}
+      {body()}
+    </ProjectPage>
   );
 };
 

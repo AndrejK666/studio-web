@@ -60,8 +60,8 @@ import { GlossaryScreen } from '../glossary/GlossaryScreen';
 import { PrioritiesScreen } from '../priorities/PrioritiesScreen';
 import { RequirementsView } from '../requirements/RequirementsView';
 import { AgainstTheCode, Coverage, Elsewhere, relatedKey, Uploads, Work, type ProductRead } from '../sources/SourcesViews';
-import { ErrorLine, errText, Hint, keyOf, Loading, PageHeader, Segmented, StatusChip, useScope } from '../common/ui';
-import common from '../common/common.module.css';
+import { ProjectPage } from '@constructor-studio/mfe-shared/page';
+import { ErrorLine, errText, Hint, keyOf, Loading, Segmented, StatusChip, useScope } from '../common/ui';
 import styles from './domain.module.css';
 
 type View =
@@ -477,59 +477,58 @@ export function DomainModelScreen() {
 
   return (
     <FactReviewContext.Provider value={factReview}>
-      <div className={common.stack} data-domain-model>
-        <PageHeader
-          title={t('title')}
-          info={
-            <>
-              <p>{t('info')}</p>
-              <ul>
-                {tabs.map((x) => (
-                  <li key={x.id}>
-                    <b>{t(`tab_${x.id}`)}</b>: {t(`why_${x.id}`)}
-                  </li>
-                ))}
-              </ul>
-            </>
-          }
-          status={
-            <>
-              {model && <span>{t.count('documents', model.documents.length)}</span>}
-              {line && (
-                <StatusChip tone={running ? 'running' : model?.build.error ? 'danger' : 'ok'} data-build-line="">
-                  {line}
-                </StatusChip>
-              )}
-              {model && running && model.build.documents > 0 && model.build.done < model.build.documents && (
-                <span className={styles.progress} data-build-progress>
-                  <progress value={readFraction(model.build)} max={1} />
-                  {etaLabel(model.build, readAt)}
-                </span>
-              )}
-            </>
-          }
-          actions={
-            <Button
-              type="button"
-              disabled={running || starting || model?.documents.length === 0}
-              onClick={() => void startBuild()}
-              title={
-                t('build_title') +
-                (estimate && estimate.documents > 0
-                  ? ` (${tokensLabel(estimate.input_tokens)}; ${estimate.measured ? t('timed_earlier') : t('first_guess')})`
-                  : '')
-              }
-              data-build-button
-            >
-              {running
-                ? t('building')
-                : estimate && estimate.documents > 0
-                  ? t('build_estimate', { estimate: estimateLabel(estimate) })
-                  : t('build')}
-            </Button>
-          }
-        />
-
+      <ProjectPage
+        title={t('title')}
+        helpLabel={t('help_label')}
+        help={
+          <>
+            <p>{t('info')}</p>
+            <ul>
+              {tabs.map((x) => (
+                <li key={x.id}>
+                  <b>{t(`tab_${x.id}`)}</b>: {t(`why_${x.id}`)}
+                </li>
+              ))}
+            </ul>
+          </>
+        }
+        chips={
+          <>
+            {model && <span>{t.count('documents', model.documents.length)}</span>}
+            {line && (
+              <StatusChip tone={running ? 'running' : model?.build.error ? 'danger' : 'ok'} data-build-line="">
+                {line}
+              </StatusChip>
+            )}
+            {model && running && model.build.documents > 0 && model.build.done < model.build.documents && (
+              <span className={styles.progress} data-build-progress>
+                <progress value={readFraction(model.build)} max={1} />
+                {etaLabel(model.build, readAt)}
+              </span>
+            )}
+          </>
+        }
+        actions={
+          <Button
+            type="button"
+            disabled={running || starting || model?.documents.length === 0}
+            onClick={() => void startBuild()}
+            title={
+              t('build_title') +
+              (estimate && estimate.documents > 0
+                ? ` (${tokensLabel(estimate.input_tokens)}; ${estimate.measured ? t('timed_earlier') : t('first_guess')})`
+                : '')
+            }
+            data-build-button
+          >
+            {running
+              ? t('building')
+              : estimate && estimate.documents > 0
+                ? t('build_estimate', { estimate: estimateLabel(estimate) })
+                : t('build')}
+          </Button>
+        }
+      >
         <Segmented
           label={t('title')}
           value={current.id}
@@ -691,7 +690,7 @@ export function DomainModelScreen() {
         {model && view === 'coverage' && (
           <Coverage model={model} busy={running || starting} onRebuild={(path) => void startBuild(path)} />
         )}
-      </div>
+      </ProjectPage>
     </FactReviewContext.Provider>
   );
 }

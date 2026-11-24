@@ -34,13 +34,6 @@
   flex-wrap: wrap;
 }
 
-.about {
-  margin: 0;
-  max-width: 60rem;
-  color: var(--muted-foreground);
-  font-size: 0.8125rem;
-}
-
 .muted {
   color: var(--muted-foreground);
   font-size: 0.8125rem;

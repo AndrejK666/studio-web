@@ -26,7 +26,6 @@ import {
   CardContent,
   CardHeader,
   CardTitle,
-  Skeleton,
 } from '@gears-frontx/ui-kit';
 import {
   useScreenAvailability,
@@ -35,6 +34,7 @@ import {
   STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE,
 } from '@constructor-studio/mfe-shared';
 import { GridFailed } from '@constructor-studio/mfe-shared/grid';
+import { PageEmpty, PageLoading, ProjectPage } from '@constructor-studio/mfe-shared/page';
 import { TestsApiService } from '../../api/TestsApiService';
 import type { CiRunList, Conformance, OpenPullRequest, PullRequestChecks } from '../../api/types';
 import {
@@ -112,9 +112,13 @@ export const TestsScreen: React.FC<{ bridge: ChildMfeBridge }> = ({ bridge }) =>
   return (
     <div className={styles.screen} data-theme={DARK_HOST_THEMES.includes(theme) ? 'dark' : 'light'}>
       {loading ? (
-        <Skeleton className={styles.skeleton} />
+        <ProjectPage title={null} busy>
+          <PageLoading />
+        </ProjectPage>
       ) : !projectId ? (
-        <p className={styles.muted}>{t('no_project')}</p>
+        <ProjectPage title={t('title')}>
+          <PageEmpty title={t('no_project')} />
+        </ProjectPage>
       ) : (
         // Keyed by the scope: another project is another read, from nothing.
         <ProjectTests
@@ -253,12 +257,12 @@ function ProjectTests({
 
   const status = (s: BuildStatus) => t(`status_${s}`);
   return (
-    <>
-      <header className={styles.header}>
-        <h2 className={styles.title} title={t('about')}>
-          {t('title')}
-        </h2>
-        {read && (
+    <ProjectPage
+      title={t('title')}
+      help={t('about')}
+      helpLabel={t('help_label')}
+      chips={
+        read && (
           <div className={styles.chips} data-tests-status>
             {main ? (
               <Badge variant={tone(main.status)} dot data-tests-status="mainline">
@@ -284,12 +288,11 @@ function ProjectTests({
               </Badge>
             ))}
           </div>
-        )}
-      </header>
-      <p className={styles.about}>{t('about')}</p>
-
+        )
+      }
+    >
       {error && <GridFailed message={t('load_failed', { error })} retry={t('retry')} onRetry={retry} />}
-      {!error && !read && <p className={styles.muted}>{t('loading')}</p>}
+      {!error && !read && <PageLoading label={t('loading')} />}
 
       {read && (
         <div className={styles.cards} data-tests-cards>
@@ -445,6 +448,6 @@ function ProjectTests({
           <PullsGrid rows={pullRows} checking={checks === null} t={t} />
         </section>
       )}
-    </>
+    </ProjectPage>
   );
 }

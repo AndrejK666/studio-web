@@ -11,7 +11,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChildMfeBridge } from '@gears-frontx/react';
 import { useSharedProperty } from '@gears-frontx/react';
-import { Badge, Button, Skeleton } from '@gears-frontx/ui-kit';
+import { Badge, Button } from '@gears-frontx/ui-kit';
+import { PageEmpty, PageLoading, ProjectPage } from '@constructor-studio/mfe-shared/page';
 import {
   STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT,
   isNotFound,
@@ -67,9 +68,13 @@ export const ReleasesScreen: React.FC<{ bridge: ChildMfeBridge | null }> = ({ br
   return (
     <div ref={containerRef} className={styles.screen} data-theme={dataTheme} data-project-releases>
       {loading ? (
-        <Skeleton className={styles.skeleton} />
+        <ProjectPage title={null} busy>
+          <PageLoading />
+        </ProjectPage>
       ) : !projectId ? (
-        <p className={styles.muted}>{t('no_project')}</p>
+        <ProjectPage title={t('title')}>
+          <PageEmpty title={t('no_project')} />
+        </ProjectPage>
       ) : (
         // Keyed by the project: another project is another read, from nothing.
         <ProjectReleases
@@ -322,18 +327,18 @@ function Releases({ projectId, onOrganization }: { projectId: string; onOrganiza
   const environmentNote = pathStep('environment');
 
   return (
-    <div className={styles.stack}>
-      <header className={styles.header}>
-        <h1 className={styles.title}>{t('title')}</h1>
-        <span className={styles.grow} />
-        {!ready && !error && deploymentError === null && <span className={styles.muted}>{t('reading')}</span>}
-        {unavailable && <Badge variant="secondary">{t('no_environments_here')}</Badge>}
-        {targets && (
+    <ProjectPage
+      title={t('title')}
+      chips={unavailable && <Badge variant="secondary">{t('no_environments_here')}</Badge>}
+      actions={
+        targets && (
           <Button size="sm" variant="outline" onClick={() => setDialog({ environmentId: null, research: false })} data-deploy-to>
             {t('deploy_to')}
           </Button>
-        )}
-      </header>
+        )
+      }
+    >
+      {!ready && !error && deploymentError === null && <PageLoading label={t('reading')} />}
       {productMissing && targets && <NoProductLine action={productAction} onIntent={onIntent} />}
       {shown && <DeploymentDetail key={shown} id={shown} onClose={() => setShown(null)} onIntent={onIntent} />}
       {dialog && targets && (
@@ -503,6 +508,6 @@ function Releases({ projectId, onOrganization }: { projectId: string; onOrganiza
           )}
         </section>
       )}
-    </div>
+    </ProjectPage>
   );
 }

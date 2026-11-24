@@ -106,7 +106,8 @@ describe('HomeScreen', () => {
 
     // The key-echoing translation mock makes the i18n keys directly assertable.
     expect(await screen.findByText('title')).toBeTruthy();
-    expect(screen.getByText('description_platform')).toBeTruthy();
+    // The scope's description is the help behind the title's "?".
+    expect(screen.getByRole('button', { name: 'help_label' })).toBeTruthy();
     // The table is the default view: the kit's row, with its icon, version and the search.
     const name = await screen.findByRole('button', { name: 'SDLC' });
     const row = name.closest('tr')!;
@@ -264,8 +265,7 @@ describe('HomeScreen', () => {
 
     const { container } = render(<HomeScreen bridge={bridge} />);
 
-    // The kit Skeleton's compiled CSS-module class is stable up to its hash.
-    expect(container.querySelectorAll('[class*="_skeleton_"]')).toHaveLength(2);
+    expect(container.querySelector('[data-page-loading]')).toBeTruthy();
     expect(screen.queryByText('title')).toBeNull();
   });
 

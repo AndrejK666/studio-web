@@ -19,7 +19,8 @@ import { productApi } from '../../api/client';
 import { offeredStrategies, strategyName, type AssemblyStrategy, type StrategyId } from '../../model/assembly';
 import { serviceState, servicesOf, type GearMatchUsage, type MatcherService } from '../../model/gear-match-usage';
 import { useAssemblyTranslations } from '../../i18n';
-import { errText, PageHeader, Segmented, StatusChip } from '../common';
+import { ProjectPage } from '@constructor-studio/mfe-shared/page';
+import { errText, Segmented, StatusChip } from '../common';
 import { PeriodSwitch, UsageGrid, UsageTiles, useAddressPeriod } from './GearsMatcherUsage';
 import page from '../product.module.css';
 import styles from './matcher.module.css';
@@ -220,79 +221,80 @@ export function GearsMatcherSettings({
   const current = (a?.organization_default ?? (a?.chosen !== 'manual' ? a?.chosen : null)) as StrategyId | null;
 
   return (
-    <div className={page.stack} data-gears-matcher-settings>
-      <PageHeader title={t('org_title')} info={<p>{t('org_lead')}</p>} />
-      {!a && !err && <Skeleton className={page.skeleton} />}
-      {err && <p className={page.error}>{t('error', { error: err })}</p>}
-      {a && (
-        <>
-          {(usage ? servicesOf(usage) : [null]).map((service) => (
-            <ServiceCard
-              key={service?.strategy ?? 'gears_matcher'}
-              service={service}
-              fallback={a.gears_matcher}
-              t={t}
-              language={language}
-              orgId={orgId}
-              mayConnect={a.may_set_default}
-              onConnected={() => setRound((r) => r + 1)}
-            />
-          ))}
-          <div className={page.card} data-gears-matcher-default={a.organization_default ?? 'kits'}>
-            <b>{t('org_default')}</b>
-            {!a.settable ? (
-              <span className={page.muted}>{t('org_not_settable')}</span>
-            ) : kits.length === 0 ? (
-              <span className={page.muted} data-gears-matcher-default-none>
-                {t('org_default_none')}
-              </span>
-            ) : kits.length === 1 ? (
-              <span className={page.small} data-gears-matcher-default-only={kits[0].id}>
-                {t('org_default_only', { strategy: label(kits[0].id) })}
-              </span>
-            ) : (
-              <Segmented
-                label={t('org_default')}
-                value={(current ?? kits[0].id) as StrategyId}
-                onChange={(c) => void choose(c)}
-                dataAttr="data-gears-matcher-default-choice"
-                items={kits.map((k) => ({
-                  id: k.id,
-                  label: label(k.id),
-                  title: k.offered ? (k.description || t(`hint_${k.id}`)) : (k.reason ?? k.description),
-                  disabled: busy || !a.may_set_default,
-                }))}
-              />
-            )}
-            {a.settable && kits.length > 1 && !a.may_set_default && (
-              <span className={`${page.small} ${page.muted}`}>{t('org_may_not')}</span>
-            )}
-            {kits.length > 0 && <span className={page.small}>{t('org_effective', { strategy: label(a.strategy) })}</span>}
-            {a.fallback && (
-              <span className={`${page.small} ${page.error}`} data-gears-matcher-fallback={a.fallback.code}>
-                {a.strategy === 'manual'
-                  ? t('fallback_manual', { chosen: label(a.chosen), reason: a.fallback.reason })
-                  : t('fallback', { chosen: label(a.chosen), used: label(a.strategy), reason: a.fallback.reason })}
-              </span>
-            )}
-            {busy && <span className={`${page.small} ${page.muted}`}>{t('saving')}</span>}
-          </div>
-        </>
-      )}
-      <section className={page.stack} data-gears-matcher-usage>
-        <div className={styles.heading}>
-          <h3>{t('usage_title')}</h3>
-          <PeriodSwitch period={period} onChange={setPeriod} t={t} />
-        </div>
-        {!usage && !usageErr && <Skeleton className={page.skeleton} />}
-        {usageErr && <p className={`${page.small} ${page.error}`}>{t('usage_error', { error: usageErr })}</p>}
-        {usage && (
+    <ProjectPage title={t('org_title')} help={<p>{t('org_lead')}</p>} helpLabel={t('help_label')}>
+      <div className={page.stack} data-gears-matcher-settings>
+        {!a && !err && <Skeleton className={page.skeleton} />}
+        {err && <p className={page.error}>{t('error', { error: err })}</p>}
+        {a && (
           <>
-            <UsageTiles usage={usage} t={t} />
-            <UsageGrid usage={usage} t={t} language={language} bridge={bridge} organizationId={orgId} />
+            {(usage ? servicesOf(usage) : [null]).map((service) => (
+              <ServiceCard
+                key={service?.strategy ?? 'gears_matcher'}
+                service={service}
+                fallback={a.gears_matcher}
+                t={t}
+                language={language}
+                orgId={orgId}
+                mayConnect={a.may_set_default}
+                onConnected={() => setRound((r) => r + 1)}
+              />
+            ))}
+            <div className={page.card} data-gears-matcher-default={a.organization_default ?? 'kits'}>
+              <b>{t('org_default')}</b>
+              {!a.settable ? (
+                <span className={page.muted}>{t('org_not_settable')}</span>
+              ) : kits.length === 0 ? (
+                <span className={page.muted} data-gears-matcher-default-none>
+                  {t('org_default_none')}
+                </span>
+              ) : kits.length === 1 ? (
+                <span className={page.small} data-gears-matcher-default-only={kits[0].id}>
+                  {t('org_default_only', { strategy: label(kits[0].id) })}
+                </span>
+              ) : (
+                <Segmented
+                  label={t('org_default')}
+                  value={(current ?? kits[0].id) as StrategyId}
+                  onChange={(c) => void choose(c)}
+                  dataAttr="data-gears-matcher-default-choice"
+                  items={kits.map((k) => ({
+                    id: k.id,
+                    label: label(k.id),
+                    title: k.offered ? (k.description || t(`hint_${k.id}`)) : (k.reason ?? k.description),
+                    disabled: busy || !a.may_set_default,
+                  }))}
+                />
+              )}
+              {a.settable && kits.length > 1 && !a.may_set_default && (
+                <span className={`${page.small} ${page.muted}`}>{t('org_may_not')}</span>
+              )}
+              {kits.length > 0 && <span className={page.small}>{t('org_effective', { strategy: label(a.strategy) })}</span>}
+              {a.fallback && (
+                <span className={`${page.small} ${page.error}`} data-gears-matcher-fallback={a.fallback.code}>
+                  {a.strategy === 'manual'
+                    ? t('fallback_manual', { chosen: label(a.chosen), reason: a.fallback.reason })
+                    : t('fallback', { chosen: label(a.chosen), used: label(a.strategy), reason: a.fallback.reason })}
+                </span>
+              )}
+              {busy && <span className={`${page.small} ${page.muted}`}>{t('saving')}</span>}
+            </div>
           </>
         )}
-      </section>
-    </div>
+        <section className={page.stack} data-gears-matcher-usage>
+          <div className={styles.heading}>
+            <h3>{t('usage_title')}</h3>
+            <PeriodSwitch period={period} onChange={setPeriod} t={t} />
+          </div>
+          {!usage && !usageErr && <Skeleton className={page.skeleton} />}
+          {usageErr && <p className={`${page.small} ${page.error}`}>{t('usage_error', { error: usageErr })}</p>}
+          {usage && (
+            <>
+              <UsageTiles usage={usage} t={t} />
+              <UsageGrid usage={usage} t={t} language={language} bridge={bridge} organizationId={orgId} />
+            </>
+          )}
+        </section>
+      </div>
+    </ProjectPage>
   );
 }

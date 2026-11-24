@@ -41,5 +41,6 @@
   "search": "Search the team",
   "no_matches": "Nobody on the team matches.",
   "clear_search": "Clear search",
-  "retry": "Try again"
+  "retry": "Try again",
+  "help_label": "About this tab"
 }

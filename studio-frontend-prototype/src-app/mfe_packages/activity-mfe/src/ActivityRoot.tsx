@@ -12,7 +12,7 @@ import {
   STUDIO_SHARED_PROPERTY_CONTEXT_SECTION,
   useHostChrome,
 } from '@constructor-studio/mfe-shared';
-import { Skeleton } from '@gears-frontx/ui-kit';
+import { PageEmpty, PageLoading, ProjectPage } from '@constructor-studio/mfe-shared/page';
 import { useActivityTranslations } from './i18n';
 import { ActivityScreen } from './screens/activity/ActivityScreen';
 import { TimelineScreen } from './screens/timeline/TimelineScreen';
@@ -26,8 +26,20 @@ export const ActivityRoot: React.FC = () => {
   const { t, loading } = useActivityTranslations();
 
   const body = () => {
-    if (loading) return <Skeleton className={styles.skeleton} />;
-    if (!projectId) return <p className={styles.muted}>{t('no_project')}</p>;
+    if (loading) {
+      return (
+        <ProjectPage title={null} busy>
+          <PageLoading />
+        </ProjectPage>
+      );
+    }
+    if (!projectId) {
+      return (
+        <ProjectPage title={t(section === 'timeline' ? 'timeline_title' : 'activity_title')}>
+          <PageEmpty title={t('no_project')} />
+        </ProjectPage>
+      );
+    }
     // Keyed by the project: another project is another read, from nothing.
     return section === 'timeline' ? (
       <TimelineScreen key={projectId} projectId={projectId} t={t} container={containerRef} />

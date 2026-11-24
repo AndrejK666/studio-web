@@ -63,6 +63,7 @@ import {
   type MapOverlay,
 } from '../../../model/product-map';
 import { infrastructureOf, type ProductSectionId } from '../../../model/product-sections';
+import { PageLoading } from '@constructor-studio/mfe-shared/page';
 import { useMapTranslations } from '../../../i18n';
 import { errText, Segmented, StatusChip, useScope } from '../../common';
 import { useGearCatalogue } from '../catalogue';
@@ -361,7 +362,7 @@ export function ProductMap({
   }
 
   if (readErr) return <section className={`${styles.card} ${styles.error}`}>{t('read_failed', { error: readErr })}</section>;
-  if (!read || !map) return <section className={`${styles.card} ${styles.muted}`}>{t('drawing')}</section>;
+  if (!read || !map) return <PageLoading label={t('drawing')} blocks={1} />;
 
   const shown = selected ? (nodeById.get(selected) ?? null) : null;
   const engineErrors = product?.last_preview?.errors ?? 0;

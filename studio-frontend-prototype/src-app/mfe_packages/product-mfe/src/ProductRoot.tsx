@@ -12,7 +12,6 @@
 
 import React, { useMemo } from 'react';
 import { useSharedProperty, type ChildMfeBridge } from '@gears-frontx/react';
-import { Skeleton } from '@gears-frontx/ui-kit';
 import {
   STUDIO_SHARED_PROPERTY_CONTEXT_ORGANIZATION,
   STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT,
@@ -20,6 +19,7 @@ import {
   STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE,
   useHostChrome,
 } from '@constructor-studio/mfe-shared';
+import { PageEmpty, PageLoading, ProjectPage } from '@constructor-studio/mfe-shared/page';
 import { setOrganization } from './api/ProductApiService';
 import { useProductTranslations } from './i18n';
 import { ScopeContext, type Scope } from './screens/common';
@@ -64,14 +64,18 @@ export const ProductRoot: React.FC<{ bridge: ChildMfeBridge }> = ({ bridge }) =>
   return (
     <div ref={containerRef} className={styles.screen} data-theme={dataTheme} data-product-view={view}>
       {loading ? (
-        <Skeleton className={styles.skeleton} />
+        <ProjectPage title={null} busy>
+          <PageLoading />
+        </ProjectPage>
       ) : !scope ? (
-        <p className={styles.muted}>{t('no_project')}</p>
+        <ProjectPage title={t(view === 'components' ? 'components_title' : 'title')}>
+          <PageEmpty title={t('no_project')} />
+        </ProjectPage>
       ) : (
         <ScopeContext.Provider value={scope}>
           {/* Keyed by the scope: another project is another read, from nothing. */}
           {view === 'components' ? (
-            <ProjectComponentsInventory key={`${projectId}:${orgId ?? ''}`} />
+            <ProjectComponentsInventory key={`${projectId}:${orgId ?? ''}`} framed />
           ) : (
             <ProductPage key={`${projectId}:${orgId ?? ''}`} />
           )}
