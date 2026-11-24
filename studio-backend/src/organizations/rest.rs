@@ -1540,9 +1540,9 @@ async fn get_project_status(
     let org = org.ok_or_else(not_found)?;
     let model_ctx = crate::derived_view::in_org_of(&hub, &ctx, id).await;
     let port = crate::derived_view::port(&hub);
-    if let (Some(port), false) = (&port, query.refresh)
+    if let (Some(kept_in), false) = (&port, query.refresh)
         && let Ok(shown) =
-            super::status_view::read_for(reaches, port.as_ref(), &model_ctx, id).await
+            super::status_view::read_for(reaches, kept_in.as_ref(), &model_ctx, id).await
     {
         let (state, mut kept) = match shown {
             super::status_view::Shown::NotReached => return Err(not_found()),
