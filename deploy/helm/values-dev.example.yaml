@@ -36,8 +36,11 @@ backend:
   resources:
     requests: { cpu: 200m, memory: 256Mi }
     limits: { cpu: "2", memory: 4Gi }
-  # The clones outlive a restart (#835). One replica, rolled out in place
-  # (maxSurge 0 below), so ReadWriteOnce is enough.
+  # The project checkouts (whole history, the sync's synced commit) outlive a
+  # restart (#835): with no shared workspaces root they live on this claim.
+  # One replica, rolled out in place (maxSurge 0 below), so ReadWriteOnce is
+  # enough. The chart's 20Gi grows Dev's claim from 8Gi in place
+  # (cinder-default allows volume expansion).
   artifactClone:
     persistence:
       enabled: true

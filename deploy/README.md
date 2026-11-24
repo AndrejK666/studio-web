@@ -123,6 +123,37 @@ One image, any environment:
   `gear.gdl` until constructorfabric/gears-rust#4793 merges. The published
   backend image carries the `gearbox` binary at the pin the session image
   uses; it does nothing until this is on.
+- **The project checkouts live on the artifact-clones claim**
+  (`backend.artifactClone`, a `ReadWriteOnce` claim of 20Gi by default,
+  mounted at `STUDIO_ARTIFACT_WORKDIR`). Each project source has one clone on
+  the server, `{root}/{project_id}/{dir}`, whole history, fetched only by the
+  artifact sync and read by everything else at `refs/studio/synced`; the root
+  is `STUDIO_WORKSPACES_ROOT` when `sessions.sharedWorkspaces` is on and this
+  claim otherwise (every deployed environment). The claim is handed to uid
+  1000 by `claim-owner` in the rollout that creates it
+  (`backend.claimOwner`), and while it is mounted the chart refuses
+  `backend.rollingUpdate.maxSurge` other than 0: a surged Pod on another node
+  cannot attach it. `persistence.enabled: false` puts it back on an emptyDir
+  that each restart empties.
+
+  After the release that moved the checkouts here (Dev, Test, in order):
+
+  1. Deploy. On Dev the existing 8Gi claim grows to 20Gi in place
+     (`kubectl -n studio-dev get pvc studio-studio-web-artifact-clones`
+     shows the new capacity once the resize finishes; `cinder-default`
+     allows expansion). On Test the claim is new.
+  2. Re-sync every project once (the project's Sources, Re-sync). Each sync
+     clones `{project_id}/{dir}` with full history; until then readers fall
+     back to the old shallow `{secret_ref}__{owner_repo}` clone where one
+     exists, and say "not synced yet" where none does.
+  3. Once every project has synced, delete the legacy clones by hand. The
+     server never does: a legacy clone is keyed by connection and repository,
+     so one project's sync cannot tell whether another still reads it.
+
+     ```bash
+     kubectl -n studio-dev exec deploy/studio-studio-web-backend -c backend -- \
+       sh -c 'ls -d /var/lib/studio/artifact-clones/*__* && rm -rf /var/lib/studio/artifact-clones/*__*'
+     ```
 - **IDE sessions are environment-controlled** (`backend.sessions.enabled`).
   Dev enables the Kubernetes Pod driver and launches the immutable
   `cf-studio-theia` image matching the backend SHA. The backend needs a

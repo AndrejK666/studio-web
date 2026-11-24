@@ -16,6 +16,8 @@ backend:
   image:
     tag: "sha-REPLACE_ME"
   replicas: 1
+  # maxSurge 0 is also what the artifact-clones claim needs (ReadWriteOnce):
+  # the chart's default claim holds the project checkouts here, as on dev.
   rollingUpdate: { maxUnavailable: 1, maxSurge: 0 }
   # As on dev (values-dev.example.yaml says why): with the chart's 1Gi the
   # backend was OOM-killed on test (2026-10-27) while a new organization's

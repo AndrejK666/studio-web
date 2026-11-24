@@ -302,10 +302,11 @@ pub struct IngestService {
     /// ingested but unclassified, which is what a deployment without the
     /// documents database gets.
     classifier: Option<Arc<dyn DocumentClassifier>>,
-    /// The studio-session workspaces root (`STUDIO_WORKSPACES_ROOT`). When a
-    /// sync names a workspace + repo dir and the session gear has already
-    /// cloned it here, ingest reads that checkout instead of cloning its own —
-    /// one clone, always consistent with what the IDE shows.
+    /// The root of the project checkouts, `{root}/{project}/{dir}`:
+    /// `STUDIO_WORKSPACES_ROOT` when set — the studio-session workspaces
+    /// root, so the sync and the IDE share one clone — else the clone volume
+    /// (`STUDIO_ARTIFACT_WORKDIR`, the same path as `work_root`), else
+    /// `~/.cf-studio-workspaces` (`mod.rs`, `checkout_root`).
     workspaces_root: Option<PathBuf>,
     /// Fallback own-clone volume (`STUDIO_ARTIFACT_WORKDIR`). `None` = no
     /// fallback clone → tree-API metadata when no workspace checkout exists.
@@ -5945,6 +5946,38 @@ mod project_checkout_tests {
             vec![("t".to_owned(), 1)]
         );
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A cluster names no workspaces root, so the project checkouts live on
+    /// the clone volume, beside the legacy clones: one root, both layouts,
+    /// and the project's checkout still wins.
+    #[tokio::test]
+    async fn the_clone_volume_holds_project_checkouts_beside_legacy_clones() {
+        let volume = std::env::temp_dir().join(format!("clones-{}", Uuid::new_v4()));
+        let project = Uuid::new_v4();
+        let svc = service(&volume, &volume);
+        let app = source("acme/app", "app");
+
+        repo_at(&volume.join(git_checkout::checkout_key("ref", "acme/app")));
+        let found = svc
+            .source_checkout(project, &app, Some("ref"))
+            .await
+            .expect("the legacy clone");
+        assert_eq!(found.layout, CheckoutLayout::LegacySyncClone);
+
+        let here = volume.join(project.to_string()).join("app");
+        assert_eq!(
+            svc.project_checkout_path(&project.to_string(), "app"),
+            Some(here.clone())
+        );
+        repo_at(&here);
+        let found = svc
+            .source_checkout(project, &app, Some("ref"))
+            .await
+            .expect("the project checkout");
+        assert_eq!(found.layout, CheckoutLayout::Project);
+        assert_eq!(found.dir, here);
+        let _ = std::fs::remove_dir_all(&volume);
     }
 }
 

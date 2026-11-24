@@ -558,6 +558,14 @@ jobs:
           refuses --set backend.preStopDrainSeconds=60
           refuses --set backend.preStopDrainSeconds=60 --set backend.terminationGracePeriodSeconds=60
 
+          # A surge with a ReadWriteOnce claim mounted (the artifact-clones
+          # claim is on by default) hangs the rollout when the new Pod lands
+          # on another node; without the claim the surge renders.
+          refuses --set backend.rollingUpdate.maxSurge=1 --set backend.rollingUpdate.maxUnavailable=0
+          helm template guard "$chart" "${base[@]}" \
+            --set backend.artifactClone.persistence.enabled=false \
+            --set backend.rollingUpdate.maxSurge=1 --set backend.rollingUpdate.maxUnavailable=0 >/dev/null
+
       # A claim the pod's fsGroup does not reach mounts root:root 755, and the
       # backend (uid 1000) then fails every clone with "Permission denied"
       # while lint and a dry-run stay green (#854). Every claim the backend
@@ -581,6 +589,7 @@ jobs:
           done
           # With no claim, no root init container.
           if helm template guard "$chart" --set backend.image.tag=t --set frontend.image.tag=t \
+               --set backend.artifactClone.persistence.enabled=false \
                --show-only templates/backend/deployment.yaml | grep -q 'name: claim-owner'; then
             echo "claim-owner rendered with no claim to hand over" >&2
             exit 1

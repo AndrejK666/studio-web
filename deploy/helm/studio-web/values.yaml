@@ -12,14 +12,17 @@ backend:
     repository: ghcr.io/constructorfabric/studio-web/studio-backend
     tag: ""                # REQUIRED: fixed at chart publication (no latest)
   replicas: 1
+  # The old pod goes first: the artifact-clones claim (on by default) is
+  # ReadWriteOnce, and the chart refuses a surge while the backend mounts one
+  # (a surged Pod on another node could not attach it, and the rollout hangs).
+  # `maxSurge: 1, maxUnavailable: 0` is possible only with both claims off.
   rollingUpdate:
-    maxUnavailable: 0
-    maxSurge: 1
+    maxUnavailable: 1
+    maxSurge: 0
   # ── Rollout and shutdown ──────────────────────────────────────────────────
   #
-  # THE HONEST POSITION, because the numbers above do not state it on their own:
-  # every deployed environment runs ONE backend replica with
-  # `maxUnavailable: 1, maxSurge: 0`, which means the old pod is stopped before
+  # THE HONEST POSITION: every deployed environment runs ONE backend replica
+  # with `maxUnavailable: 1, maxSurge: 0`, which means the old pod is stopped before
   # the new one starts and the API is down for the length of a boot. That is a
   # deliberate trade, not an oversight — surge capacity is scarce on a stand
   # running IDE sessions, and a second replica is refused anyway while sessions
@@ -175,33 +178,40 @@ backend:
     fetchResources:
       requests: { cpu: 50m, memory: 64Mi }
       limits: { cpu: 500m, memory: 256Mi }
-  # Where artifact-ingest clones repositories so File nodes carry their text.
+  # The server's one clone of each project source (STUDIO_ARTIFACT_WORKDIR).
   #
-  # Text reaches the graph from a checkout on disk, and the gear looks in two
-  # places: the studio-session workspaces root, then its own clone volume
-  # (STUDIO_ARTIFACT_WORKDIR). In Kubernetes the first one is unreachable by
-  # construction — the IDE's clone lands in the session Pod's own per-workspace
-  # claim, which the backend Pod cannot mount — so without this volume every
-  # sync degrades to the connector's tree API: paths and sizes, no content, and
-  # the Specs tab has nothing to classify. It is why that tab works under
-  # docker-compose (one shared filesystem) and not here.
+  # Each project source has ONE checkout on the server,
+  # `{root}/{project_id}/{dir}`, which only the artifact sync fetches and
+  # every other reader (documents, component authors, Gearbox roots, builds)
+  # reads at the commit the sync marked (`refs/studio/synced`). The root is
+  # STUDIO_WORKSPACES_ROOT when the backend shares the IDE's workspaces
+  # (`sessions.sharedWorkspaces`), and THIS volume otherwise — which is every
+  # deployed environment: the IDE's clone lands in the session Pod's own
+  # claim, which the backend Pod cannot mount. Without this volume every sync
+  # degrades to the connector's tree API: paths and sizes, no content.
   #
-  # `emptyDir` on purpose: the clones are shallow and single-branch, and a
-  # re-clone after a pod restart costs less than a per-environment claim. Switch
-  # to a PVC if that stops being true. `sizeLimit` is a real limit — the kubelet
-  # evicts the pod for exceeding it — so size it for the repositories this
-  # environment actually syncs, not for the largest one imaginable.
+  # The checkouts hold the whole history (owners, last changes and expert
+  # lists read `git log`), unless STUDIO_CHECKOUT_DEPTH says otherwise. The
+  # legacy shallow `{secret_ref}__{repo}` clones sit beside them and are read
+  # only until a project's first sync after the switch; delete them by hand
+  # once every project has synced (deploy/README.md).
   artifactClone:
     enabled: true
+    # The emptyDir's limit, used only with `persistence.enabled: false`. A
+    # real limit: the kubelet evicts the pod for exceeding it.
     sizeLimit: 4Gi
     mountPath: /var/lib/studio/artifact-clones
-    # A claim instead of the emptyDir, so the clones outlive the Pod: with
-    # the emptyDir, every restart left the Domain model reading none of a
-    # project's documents until somebody synced again (#835). One replica
-    # only (ReadWriteOnce); `sizeLimit` does not apply to it, `size` does.
+    # A claim, so the checkouts and their synced commits outlive the Pod: on
+    # the emptyDir every restart left the Domain model reading none of a
+    # project's documents until somebody synced again (#835). One replica,
+    # ReadWriteOnce: the chart then refuses a rollout surge (`rollingUpdate`
+    # above). `sizeLimit` does not apply to it, `size` does — size it for the
+    # full-history clones of the repositories the environment syncs. Growing
+    # it later is an in-place resize when the class allows volume expansion
+    # (cinder-default does); shrinking is not possible.
     persistence:
-      enabled: false
-      size: 8Gi
+      enabled: true
+      size: 20Gi
       # Empty leaves it to the cluster default.
       storageClass: ""
   # Who hands the artifact-clones and gearbox claims to the backend user

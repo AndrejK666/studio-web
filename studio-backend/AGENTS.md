@@ -73,7 +73,10 @@ the artifact index follow from it:
 ## Reading repositories: never the provider on a request path
 
 A project's repository has ONE clone on the server,
-`{STUDIO_WORKSPACES_ROOT}/{project_id}/{source dir}`, shared with the IDE.
+`{root}/{project_id}/{source dir}`. The root is chosen at startup:
+`STUDIO_WORKSPACES_ROOT` when set (compose: shared with the IDE), else
+`STUDIO_ARTIFACT_WORKDIR` (a cluster: the chart's artifact-clones claim) --
+one code path either way.
 Only the artifact sync fetches it, and it marks the commit it read
 (`refs/studio/synced`). Everything else reads it through
 `artifact_ingest::port::ProjectCheckout` (`SourceCheckout::read_file`,

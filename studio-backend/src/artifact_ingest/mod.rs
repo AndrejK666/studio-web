@@ -3,8 +3,9 @@
 //!
 //! Three channels feed the artifact graph: the connector API (issues, pull
 //! requests) and files. Files are read from the project's ONE checkout of the
-//! source on this server, `{STUDIO_WORKSPACES_ROOT}/{project_id}/{dir}` --
-//! the directory the IDE works in -- which the sync fetches, or clones when
+//! source on this server, `{root}/{project_id}/{dir}` -- under
+//! `STUDIO_WORKSPACES_ROOT`, the directory the IDE works in, or, when that is
+//! unset (a cluster), under `STUDIO_ARTIFACT_WORKDIR` -- which the sync fetches, or clones when
 //! nobody has, and marks at the commit it read (`refs/studio/synced`). Only
 //! the sync fetches it; every other gear reads it through
 //! [`port::ProjectCheckout`], never the provider. Without a project, or when
@@ -264,6 +265,29 @@ fn checked_mirror_base_url(raw: &str) -> anyhow::Result<String> {
     }
 }
 
+/// The root every project checkout lives under, `{root}/{project_id}/{dir}`
+/// (`port::ProjectCheckout`), in this order:
+///
+/// 1. `STUDIO_WORKSPACES_ROOT` when it is set: the IDE's sessions clone there
+///    too (compose, or a cluster with `sessions.sharedWorkspaces`), so the
+///    sync and the IDE share one checkout;
+/// 2. otherwise the clone volume (`STUDIO_ARTIFACT_WORKDIR`): on a cluster
+///    whose sessions keep volumes the backend cannot mount, it is the only
+///    disk of the backend's own that outlives a restart (the chart's
+///    `backend.artifactClone` claim). The project layout sits beside the
+///    legacy `{secret_ref}__{owner_repo}` clones without colliding: a
+///    project id is a UUID, never a `__`-joined key;
+/// 3. otherwise the session gear's default, `~/.cf-studio-workspaces`.
+fn checkout_root(
+    workspaces_root: Option<PathBuf>,
+    work_root: Option<&std::path::Path>,
+    home_default: Option<PathBuf>,
+) -> Option<PathBuf> {
+    workspaces_root
+        .or_else(|| work_root.map(std::path::Path::to_path_buf))
+        .or(home_default)
+}
+
 /// `$HOME/<rel>`, or `None` when `$HOME` is unset.
 fn resolve_home_relative(rel: &str) -> Option<PathBuf> {
     std::env::var("HOME")
@@ -327,18 +351,9 @@ impl RestApiCapability for StudioArtifactIngestGear {
                 Arc::new(model_store::ReturningGraph(held))
             };
 
-            // Preferred file source: the studio-session workspaces root. When
-            // the IDE has cloned a repo into `{root}/{workspace_id}/{repo_dir}`,
-            // ingest reads that same checkout — one shared clone. Mirrors the
-            // session gear's default (`~/.cf-studio-workspaces`).
-            let workspaces_root = resolve_dir("STUDIO_WORKSPACES_ROOT")
-                .or_else(|| resolve_home_relative(".cf-studio-workspaces"));
-            if let Some(r) = &workspaces_root {
-                info!(dir = %r.display(), "studio-artifact-ingest: reading files from the session workspaces root when present");
-            }
-
-            // Optional fallback: our own shallow clone volume (off unless
-            // STUDIO_ARTIFACT_WORKDIR is set).
+            // The clone volume (off unless STUDIO_ARTIFACT_WORKDIR is set):
+            // where the legacy shallow clones live, and the root of the
+            // project checkouts when no workspaces root is named (below).
             let mut work_root_failure = None;
             let work_root = match resolve_dir("STUDIO_ARTIFACT_WORKDIR") {
                 Some(path) => match std::fs::create_dir_all(&path) {
@@ -363,6 +378,17 @@ impl RestApiCapability for StudioArtifactIngestGear {
                 },
                 None => None,
             };
+
+            // The root of every project checkout (`port::ProjectCheckout`),
+            // chosen once here: see `checkout_root`.
+            let workspaces_root = checkout_root(
+                resolve_dir("STUDIO_WORKSPACES_ROOT"),
+                work_root.as_deref(),
+                resolve_home_relative(".cf-studio-workspaces"),
+            );
+            if let Some(r) = &workspaces_root {
+                info!(dir = %r.display(), "studio-artifact-ingest: project checkouts live under this root");
+            }
 
             // studio-documents, if this deployment runs it. Resolved here, in
             // the REST phase, where every gear has initialized — the same
@@ -509,7 +535,46 @@ impl RestApiCapability for StudioArtifactIngestGear {
 
 #[cfg(test)]
 mod tests {
-    use super::checked_mirror_base_url;
+    use super::{checked_mirror_base_url, checkout_root};
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn checkout_root_is_the_workspaces_root_when_set() {
+        assert_eq!(
+            checkout_root(
+                Some(PathBuf::from("/srv/cf-studio-workspaces")),
+                Some(Path::new("/var/lib/studio/artifact-clones")),
+                Some(PathBuf::from("/home/studio/.cf-studio-workspaces")),
+            ),
+            Some(PathBuf::from("/srv/cf-studio-workspaces"))
+        );
+    }
+
+    #[test]
+    fn checkout_root_is_the_clone_volume_without_a_workspaces_root() {
+        // A cluster: no shared workspaces, the clone volume is the claim.
+        assert_eq!(
+            checkout_root(
+                None,
+                Some(Path::new("/var/lib/studio/artifact-clones")),
+                Some(PathBuf::from("/home/studio/.cf-studio-workspaces")),
+            ),
+            Some(PathBuf::from("/var/lib/studio/artifact-clones"))
+        );
+    }
+
+    #[test]
+    fn checkout_root_falls_back_to_the_session_default() {
+        assert_eq!(
+            checkout_root(
+                None,
+                None,
+                Some(PathBuf::from("/home/me/.cf-studio-workspaces"))
+            ),
+            Some(PathBuf::from("/home/me/.cf-studio-workspaces"))
+        );
+        assert_eq!(checkout_root(None, None, None), None);
+    }
 
     #[test]
     fn mirror_base_url_empty_stays_empty() {

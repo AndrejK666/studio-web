@@ -23,6 +23,16 @@
 {{- if ge (int .Values.backend.preStopDrainSeconds) (int .Values.backend.terminationGracePeriodSeconds) }}
 {{- fail "backend.preStopDrainSeconds must be smaller than backend.terminationGracePeriodSeconds (the drain runs inside the grace period, not beside it)" }}
 {{- end }}
+{{- /*
+  The artifact-clones and gearbox claims are ReadWriteOnce. A surged Pod that
+  lands on another node cannot attach them while the old Pod holds them, and
+  with maxUnavailable 0 the old Pod waits for the new one to be Ready: the
+  rollout hangs until its deadline. With a claim, the old Pod goes first.
+*/}}
+{{- $rwoClaim := or (and .Values.backend.artifactClone.enabled .Values.backend.artifactClone.persistence.enabled) (and .Values.backend.gearbox.enabled .Values.backend.gearbox.persistence.enabled) }}
+{{- if and $rwoClaim (not (has (toString .Values.backend.rollingUpdate.maxSurge) (list "0" "0%"))) }}
+{{- fail "backend.rollingUpdate.maxSurge must be 0 while the backend mounts a ReadWriteOnce claim (backend.artifactClone.persistence / backend.gearbox.persistence): a surged Pod on another node cannot attach it" }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -240,9 +250,10 @@ spec:
               value: {{ . | quote }}
             {{- end }}
             {{- if .Values.backend.artifactClone.enabled }}
-            # Turns on artifact-ingest's own shallow clones. Unset, the gear
-            # reads whatever checkout it can find and otherwise falls back to
-            # the connector's tree API — metadata with no file content.
+            # The root of the project checkouts when STUDIO_WORKSPACES_ROOT
+            # is unset (`{root}/{project_id}/{dir}`, whole history), and of
+            # the legacy shallow clones. Unset too, a sync falls back to the
+            # connector's tree API — metadata with no file content.
             - name: STUDIO_ARTIFACT_WORKDIR
               value: {{ .Values.backend.artifactClone.mountPath | quote }}
             {{- end }}
@@ -540,11 +551,12 @@ spec:
             sizeLimit: 512Mi
         {{- end }}
         {{- if .Values.backend.artifactClone.enabled }}
-        # Shallow, single-branch clones for artifact ingest. Disposable: a
-        # restart re-clones, which is the trade this emptyDir makes against a
-        # per-environment claim. The pod's fsGroup (1000) makes the emptyDir
-        # writable by a container that runs as uid 1000; the claim is handed
-        # over by `claim-owner` once (backend.claimOwner): fsGroup misses some.
+        # The project checkouts (`{project_id}/{dir}`, whole history) when no
+        # workspaces root is shared, beside the legacy shallow clones. On the
+        # claim they outlive the Pod; on the emptyDir every restart leaves
+        # them to the next sync. The claim is handed over by `claim-owner`
+        # once (backend.claimOwner): the pod's fsGroup (1000) misses some
+        # claims, and only reaches the emptyDir.
         - name: artifact-clones
           {{- if .Values.backend.artifactClone.persistence.enabled }}
           persistentVolumeClaim:

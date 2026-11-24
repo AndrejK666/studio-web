@@ -101,13 +101,23 @@ twice wastes the disk that already holds it:
 
 - [x] `p1` - **ID**: `cpt-studio-principle-artifact-ingest-one-checkout`
 
-Each project source has ONE clone on the server:
-`{STUDIO_WORKSPACES_ROOT}/{project_id}/{dir}` (default root
-`~/.cf-studio-workspaces`; `dir` is the source's directory from
-`project.config`, `project_sources::checkout_dir`). It is the directory the
-IDE's session works in (`studio_session::config::k8s_workspace_shared_claim`
-mounts the same volume in the backend), so the IDE and the sync agree on one
-path. A sync that is not told the directory (the portal's Re-sync sends none)
+Each project source has ONE clone on the server: `{root}/{project_id}/{dir}`
+(`dir` is the source's directory from `project.config`,
+`project_sources::checkout_dir`). The root is chosen once, at startup, and
+the layout and code path are the same whichever it is:
+
+1. `STUDIO_WORKSPACES_ROOT` when it is set -- the directory the IDE's
+   sessions work in (docker-compose; on a cluster,
+   `studio_session::config::k8s_workspace_shared_claim` mounts the same
+   volume in the backend), so the IDE and the sync agree on one path;
+2. otherwise `STUDIO_ARTIFACT_WORKDIR` -- a cluster whose sessions keep
+   their own volumes (Dev, Test). The chart mounts it as the persistent
+   `backend.artifactClone` claim, so the checkouts, their whole history and
+   `refs/studio/synced` outlive a backend restart. The IDE then keeps its own
+   copy; the server's readers still read one clone;
+3. otherwise `~/.cf-studio-workspaces`, the session gear's default.
+
+A sync that is not told the directory (the portal's Re-sync sends none)
 reads it from the project's config; it used to guess none, miss the IDE's
 checkout and fall back to the tree API.
 
@@ -138,8 +148,12 @@ checkout and fall back to the tree API.
   clone (`{secret_ref}__{owner_repo}`) is read while it is a project source's
   only clone (`CheckoutLayout::LegacySyncClone`); the next sync of the project
   clones the project layout beside it, after which it is unused and can be
-  deleted. Gearbox's old `gearbox-roots/<key>/repo` clones of project sources
-  are refilled from the checkout on the next read.
+  deleted. The server never deletes one itself: a legacy clone is keyed by
+  connection and repository, not by project, so one project's sync cannot
+  tell whether another project still reads it. An operator deletes them once
+  every project has synced (`deploy/README.md`). Gearbox's old
+  `gearbox-roots/<key>/repo` clones of project sources are refilled from the
+  checkout on the next read.
 
 What is NOT a project source keeps its own clone, refreshed in the background
 and never fetched on a request: the platform's and the organizations' gear

@@ -709,7 +709,8 @@ pub fn ls_tree_at(dir: &Path, rev: &str) -> Option<Vec<(String, String, Option<i
 // ── The project checkout, read offline at the commit a sync read ─────────────
 //
 // One clone of each project source lives on the server
-// (`{STUDIO_WORKSPACES_ROOT}/{project_id}/{source dir}`, shared with the IDE),
+// (`{STUDIO_WORKSPACES_ROOT}/{project_id}/{source dir}`, shared with the IDE;
+// under `STUDIO_ARTIFACT_WORKDIR` instead when no workspaces root is set),
 // and only the artifact sync fetches it from the provider. Everything else
 // reads it here, locally, at [`SYNCED_REF`]: never the working tree, which
 // the IDE may have moved on or edited, and never the provider.

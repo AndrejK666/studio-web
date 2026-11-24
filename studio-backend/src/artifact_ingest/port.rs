@@ -221,8 +221,9 @@ pub struct GitRevision {
 /// Which layout a [`SourceCheckout`] was found in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CheckoutLayout {
-    /// `{STUDIO_WORKSPACES_ROOT}/{project_id}/{source dir}`: the project's one
-    /// checkout, which the IDE works in and the sync fetches.
+    /// `{root}/{project_id}/{source dir}`: the project's one checkout, which
+    /// the sync fetches. The root is `STUDIO_WORKSPACES_ROOT` when set (the
+    /// IDE works in the same directory), else `STUDIO_ARTIFACT_WORKDIR`.
     Project,
     /// `{STUDIO_ARTIFACT_WORKDIR}/{secret_ref}__{owner_repo}`: the sync's own
     /// shallow clone from before the one-checkout rule. Read while it is all
@@ -345,8 +346,10 @@ impl SourceCheckout {
 /// **The project's one checkout of each source, as the last sync left it.**
 ///
 /// Reads never go to GitHub or GitLab. A project source has one clone on this
-/// server, `{STUDIO_WORKSPACES_ROOT}/{project_id}/{source dir}` -- the
-/// directory the IDE's session works in -- and only the artifact sync fetches
+/// server, `{root}/{project_id}/{source dir}` -- the root is
+/// `STUDIO_WORKSPACES_ROOT` when set, the directory the IDE's session works
+/// in, and otherwise `STUDIO_ARTIFACT_WORKDIR` (a cluster whose sessions keep
+/// their own volumes) -- and only the artifact sync fetches
 /// it from the provider, marking the commit it read (`refs/studio/synced`).
 /// Every other gear reads that commit through this port: files, tree,
 /// history, authors. Nothing here touches the network; a source never synced
