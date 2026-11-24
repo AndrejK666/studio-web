@@ -897,7 +897,136 @@ mod graph_backend {
             .into_expr())
     }
 
+    /// `row` as this tenant's object of `read`, or `None`.
+    ///
+    /// The projection answers every tenant the caller reaches (a platform
+    /// administrator reaches them all, a member of two organizations both),
+    /// but a tenant's model and records are its own: another tenant's node
+    /// with the same key would stand in for this one's.
+    fn own_row(
+        ctx: &SecurityContext,
+        read: &ObjectRead<'_>,
+        row: graph_storage_sdk::models::NodeRow,
+    ) -> Option<ObjectNode> {
+        if row.envelope.tenant_id != ctx.subject_tenant_id() {
+            return None;
+        }
+        let (_, our_type) = read.reverse.iter().find(|(g, _)| *g == row.type_id)?;
+        let value = row.payload.unwrap_or_else(|| serde_json::json!({}));
+        // Checked here even when filtered: the filter is the graph's reading
+        // of the same rule, and this one is ours.
+        if !super::in_scope(&value, read.scope) || !super::is_live(&value) {
+            return None;
+        }
+        Some(ObjectNode {
+            type_id: our_type.clone(),
+            instance_id: row.node_key,
+            value,
+        })
+    }
+
+    /// The key whose rows the next page may have skipped for `tenant`, given
+    /// one page's `(tenant, node_key)` rows in order.
+    ///
+    /// The projection pages on `node_key` alone, and a key is the same in
+    /// every tenant (a model's type nodes are named by the type). A caller
+    /// reaching several tenants gets one row per tenant for each key, and the
+    /// next page starts after the last key: the rows of that key that did not
+    /// fit are never served. For this tenant only its own row of the last key
+    /// can be lost, and only when the page ended in that key's run without
+    /// it. On the stand (2026-11-24) an administrator's read of an
+    /// organization's model lost `glossary-decision` this way, and the next
+    /// edit stored the model without it.
+    pub(super) fn straddled_key(
+        rows: &[(uuid::Uuid, String)],
+        tenant: uuid::Uuid,
+    ) -> Option<String> {
+        let (_, last) = rows.last()?;
+        let run = rows.iter().rev().take_while(|(_, k)| k == last);
+        let mut others = false;
+        for (t, _) in run {
+            if *t == tenant {
+                return None;
+            }
+            others = true;
+        }
+        others.then(|| last.clone())
+    }
+
+    /// Pages one hub's edge listing may take before it is given up as cut:
+    /// at the listing's page size, far more edges than any node here holds.
+    const EDGE_LIST_PAGES: usize = 1_000;
+
     impl GraphStorageBackend {
+        /// Every edge of node `key` in this tenant, from the graph's edge
+        /// listing a page at a time: what a walk cannot carry whole.
+        async fn edges_listed(
+            &self,
+            ctx: &SecurityContext,
+            key: &str,
+        ) -> anyhow::Result<Vec<graph_storage_sdk::models::EdgeView>> {
+            let mut out = Vec::new();
+            let mut cursor: Option<String> = None;
+            for _ in 0..EDGE_LIST_PAGES {
+                let page = self
+                    .client
+                    .list_node_edges(
+                        ctx,
+                        graph_storage_sdk::models::NodeEdgesRequest {
+                            node_key: key.to_owned(),
+                            cursor: cursor.take(),
+                            ..Default::default()
+                        },
+                    )
+                    .await
+                    .map_err(|e| anyhow::anyhow!("graph-storage edge listing: {e}"))?;
+                out.extend(
+                    page.items
+                        .into_iter()
+                        .filter(|e| e.envelope.tenant_id == ctx.subject_tenant_id()),
+                );
+                match page.next_cursor {
+                    Some(next) => cursor = Some(next),
+                    None => return Ok(out),
+                }
+            }
+            anyhow::bail!("{key} has more than {EDGE_LIST_PAGES} pages of edges")
+        }
+
+        /// This tenant's objects of `read` keyed `key`, asked for by the key
+        /// alone ([`straddled_key`]). No payload filter rides along: the rows
+        /// are narrowed here, as every row is.
+        async fn rows_keyed(
+            &self,
+            ctx: &SecurityContext,
+            read: &ObjectRead<'_>,
+            key: &str,
+        ) -> Result<Vec<ObjectNode>, ReadError> {
+            let raw = format!("node_key eq '{}'", key.replace('\'', "''"));
+            let filter = toolkit_odata::parse_filter_string(&raw)
+                .map_err(|e| ReadError::Failed(anyhow::anyhow!("key filter `{raw}`: {e}")))?
+                .into_expr();
+            let page = self
+                .client
+                .project_nodes(
+                    ctx,
+                    &read.patterns,
+                    ODataQuery::default()
+                        .with_filter(filter)
+                        .with_limit(u64::from(LIST_PAGE)),
+                )
+                .await
+                .map_err(|e| {
+                    ReadError::Failed(anyhow::anyhow!("graph-storage domain projection: {e}"))
+                })?;
+            Ok(page
+                .items
+                .into_iter()
+                .filter(|r| r.node_key == key)
+                .filter_map(|row| own_row(ctx, read, row))
+                .collect())
+        }
+
         /// Page the projection to the end (or to `limit`), keeping the
         /// tenant's live objects in scope. With a filter, every page sends it
         /// again: a cursor is bound to the filter it was minted under.
@@ -947,37 +1076,25 @@ mod graph_backend {
                     }
                 };
                 pages += 1;
-                for row in page.items {
-                    // The projection answers every tenant the caller reaches
-                    // (a platform administrator reaches them all, a member of
-                    // two organizations both), but a tenant's model and records
-                    // are its own: another tenant's node with the same key
-                    // would stand in for this one's.
-                    if row.envelope.tenant_id != ctx.subject_tenant_id() {
-                        continue;
-                    }
-                    let Some((_, our_type)) = read.reverse.iter().find(|(g, _)| *g == row.type_id)
-                    else {
-                        continue;
-                    };
-                    let value = row.payload.unwrap_or_else(|| serde_json::json!({}));
-                    // Checked here even when filtered: the filter is the
-                    // graph's reading of the same rule, and this one is ours.
-                    if !super::in_scope(&value, read.scope) || !super::is_live(&value) {
-                        continue;
-                    }
-                    out.push(ObjectNode {
-                        type_id: our_type.clone(),
-                        instance_id: row.node_key,
-                        value,
-                    });
-                }
+                let rows: Vec<(uuid::Uuid, String)> = page
+                    .items
+                    .iter()
+                    .map(|r| (r.envelope.tenant_id, r.node_key.clone()))
+                    .collect();
+                out.extend(
+                    page.items
+                        .into_iter()
+                        .filter_map(|row| own_row(ctx, read, row)),
+                );
                 if read.limit.is_some_and(|n| out.len() >= n) {
                     break;
                 }
                 let Some(next) = page.page_info.next_cursor else {
                     break;
                 };
+                if let Some(key) = straddled_key(&rows, ctx.subject_tenant_id()) {
+                    out.extend(self.rows_keyed(ctx, read, &key).await?);
+                }
                 let cursor = toolkit_odata::CursorV1::decode(&next).map_err(|e| {
                     ReadError::Failed(anyhow::anyhow!(
                         "graph-storage returned an undecodable cursor: {e}"
@@ -1391,7 +1508,30 @@ mod graph_backend {
                     continue;
                 }
                 if cut {
-                    read.cut.extend(chunk);
+                    // One node with more edges than one walk carries (an
+                    // artifact hub): its edges are listed page by page
+                    // instead. On the stand two such nodes kept an
+                    // organization's read model unfilled for good.
+                    match self.edges_listed(ctx, &chunk[0]).await {
+                        Ok(listed) => {
+                            for e in listed {
+                                if seen.insert(e.edge_key.clone()) {
+                                    read.edges.push(EdgeView {
+                                        type_id: gts::our_type_from_graph(&e.edge_type_id),
+                                        from: e.src,
+                                        to: e.dst,
+                                        relation: e.discriminator.filter(|d| !d.is_empty()),
+                                        key: Some(e.edge_key),
+                                    });
+                                }
+                            }
+                            continue;
+                        }
+                        Err(e) => {
+                            tracing::debug!(seed = %chunk[0], error = %format!("{e:#}"), "studio-domain-model: a hub's edges could not be listed");
+                            read.cut.extend(chunk);
+                        }
+                    }
                 }
                 for e in res.edges {
                     if seen.insert(e.edge_key.clone()) {
@@ -1552,6 +1692,29 @@ mod graph_backend {
                 }
             }
             Ok(out)
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::straddled_key;
+        use uuid::Uuid;
+
+        #[test]
+        fn a_page_ending_in_other_tenants_rows_of_a_key_is_read_again_for_it() {
+            let (ours, a, b) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+            let row = |t: Uuid, k: &str| (t, k.to_owned());
+            // The stand's page: root's and another's `glossary-decision` type
+            // node last, the organization's own on the page after.
+            let cut = [row(ours, "1"), row(a, "2"), row(a, "3"), row(b, "3")];
+            assert_eq!(straddled_key(&cut, ours).as_deref(), Some("3"));
+            // Its own row of the last key came: nothing was skipped for it.
+            let whole = [row(a, "2"), row(b, "3"), row(ours, "3")];
+            assert_eq!(straddled_key(&whole, ours), None);
+            // Only this tenant's rows: one row per key, nothing to lose.
+            let alone = [row(ours, "1"), row(ours, "2")];
+            assert_eq!(straddled_key(&alone, ours), None);
+            assert_eq!(straddled_key(&[], ours), None);
         }
     }
 }

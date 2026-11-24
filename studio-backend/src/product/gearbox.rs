@@ -4164,19 +4164,32 @@ impl Gearbox {
                 return Ok(loaded);
             }
         }
-        let _syncing = cell.sync.lock().await;
-        // Another request may have brought it in while this one waited.
-        if let Some(loaded) = cell
-            .corpus
-            .lock()
-            .await
-            .as_ref()
-            .filter(|c| c.generation == generation)
-            .and_then(Corpus::loaded)
-        {
-            return Ok(loaded);
-        }
-        self.syncer().sync(&cell, &wanted, generation, true).await
+        // The sync runs on a task of its own, never in the request's future.
+        // The gateway drops a request at 30 s; a sync dropped with it stored
+        // nothing, and the next request waiting on `sync` started over with
+        // whatever was left of its own 30 s. On the stand (2026-11-24) a cold
+        // organization corpus took ~17 s, so every request of a screen took
+        // the lock late, was cut off in turn, and the scope never loaded: a
+        // 504 for every call, warm or cold. Detached, the first sync finishes
+        // whoever waits for it, and the next request reads what it stored.
+        let syncer = self.syncer();
+        tokio::spawn(async move {
+            let _syncing = cell.sync.lock().await;
+            // Another request may have brought it in while this one waited.
+            if let Some(loaded) = cell
+                .corpus
+                .lock()
+                .await
+                .as_ref()
+                .filter(|c| c.generation == generation)
+                .and_then(Corpus::loaded)
+            {
+                return Ok(loaded);
+            }
+            syncer.sync(&cell, &wanted, generation, true).await
+        })
+        .await
+        .context("corpus sync task")?
     }
 
     /// Refresh `cell` on a task of its own, unless a refresh of it is running
@@ -6860,6 +6873,66 @@ mod tests {
         let _ = std::fs::remove_dir_all(&scratch);
         let gdl = answer_gdl(&answer.expect("the engine answers")).expect("a scaffold");
         assert!(gdl.contains("my-gear"), "{gdl}");
+    }
+
+    /// A request the gateway cuts off while the corpus is first read must not
+    /// take the read down with it: on the stand every request of a screen was
+    /// cut off in turn, each sync started over, and the scope never loaded.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_corpus_read_cut_off_with_its_request_still_lands_for_the_next() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let scratch =
+            std::env::temp_dir().join(format!("gearbox-detached-{}", uuid::Uuid::new_v4()));
+        let corpus = scratch.join("corpus");
+        std::fs::create_dir_all(&corpus).unwrap();
+        std::fs::write(corpus.join("README.md"), "gears\n").unwrap();
+        let git = |args: &[&str]| {
+            let ok = Command::new("git")
+                .arg("-C")
+                .arg(&corpus)
+                .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+                .args(args)
+                .status()
+                .expect("git runs")
+                .success();
+            assert!(ok, "git {args:?}");
+        };
+        git(&["init", "-q"]);
+        git(&["add", "."]);
+        git(&["commit", "-q", "-m", "gears"]);
+        // An engine that takes its time, and counts its runs.
+        let runs = scratch.join("runs");
+        let bin = scratch.join("gearbox");
+        std::fs::write(
+            &bin,
+            format!(
+                "#!/bin/sh\necho run >> '{}'\nsleep 1\necho '{{\"gears\":{{}}}}'\n",
+                runs.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let gearbox = Gearbox::new(GearboxConfig {
+            bin,
+            workdir: scratch.join("work"),
+            corpus_url: format!("file://{}", corpus.display()),
+            corpus_ref: String::new(),
+            corpus_id: "gears".into(),
+            refresh: DEFAULT_REFRESH,
+        });
+
+        let cut_off =
+            tokio::time::timeout(Duration::from_millis(300), gearbox.catalogue_json(None)).await;
+        assert!(cut_off.is_err(), "the first read outlasts its request");
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        let next = tokio::time::timeout(Duration::from_millis(500), gearbox.catalogue_json(None))
+            .await
+            .expect("the next request reads what the cut-off read stored");
+        let ran = std::fs::read_to_string(&runs).unwrap_or_default();
+        let _ = std::fs::remove_dir_all(&scratch);
+        next.expect("a catalogue");
+        assert_eq!(ran.lines().count(), 1, "the engine ran once");
     }
 }
 

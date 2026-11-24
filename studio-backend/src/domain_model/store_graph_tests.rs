@@ -461,7 +461,8 @@ async fn a_cut_walk_is_walked_again_in_halves_until_every_edge_is_read() {
     assert_eq!(whole.edges.len(), 4, "every edge, after halving");
     assert!(whole.cut.is_empty());
 
-    // A team with more edges than one walk carries is named, not hidden.
+    // A team with more edges than one walk carries has them listed instead,
+    // page by page: the fill reads it whole rather than staying unfilled.
     for p in ["e", "f", "g"] {
         let n = object(&person.type_id, p, json!({}));
         store
@@ -474,7 +475,12 @@ async fn a_cut_walk_is_walked_again_in_halves_until_every_edge_is_read() {
             .expect("edge");
     }
     let whole = store.read_edges_whole(&ctx, &seeds).await.expect("edges");
-    assert_eq!(whole.cut, vec![key(0)]);
+    assert!(whole.cut.is_empty(), "{:?}", whole.cut);
+    assert_eq!(
+        whole.edges.len(),
+        7,
+        "the hub's five and the other team's two"
+    );
 }
 
 /// A kit's Project subtype as the model registers it (ADR-0073 amendment):

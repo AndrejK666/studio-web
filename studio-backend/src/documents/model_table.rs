@@ -401,7 +401,22 @@ impl ModelTable {
         if let Some(limit) = limit {
             body["limit"] = json!(limit);
         }
-        let (mut rows, total) = port.query(ctx, body).await?;
+        let (mut rows, total) = match port.query(ctx, body.clone()).await {
+            Ok(found) => found,
+            // Declared once per process, the type may still have left the
+            // model since: on the stand (2026-11-24) a model read that missed
+            // `glossary-decision`'s type node was stored without it, and every
+            // read of the glossary failed until a restart. Declared again,
+            // the read is asked once more.
+            Err(e) if format!("{e:#}").contains("unknown domain type") => {
+                if let Ok(mut t) = self.typed.lock() {
+                    t.remove(&(ctx.subject_tenant_id(), T::ENTITY));
+                }
+                self.ensure::<T>(ctx, port).await?;
+                port.query(ctx, body).await?
+            }
+            Err(e) => return Err(e),
+        };
         self.join(ctx, port, &mut rows).await?;
         let rows = rows
             .into_iter()
