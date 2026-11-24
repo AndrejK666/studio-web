@@ -96,9 +96,15 @@ function refusal(status: number, violationType?: string): Error {
 const inFlightRun = (id: string, state: StudioRun['state'], repo: string, projectId = PROJECT) =>
   run(id, state, { payload: { project_id: projectId, repo_full_path: repo } });
 
-function harness(repos = REPOS, inFlight: StudioRun[] = []) {
+function harness(
+  repos = REPOS,
+  inFlight: StudioRun[] = [],
+  inOrganization: StudioRun[] = [],
+  shownOrganization: string | null = null
+) {
   let state: ArtifactSyncState = artifactSyncSlice.reducer(undefined, { type: '@@init' });
   let openProject: string | null = PROJECT;
+  let organization: string | null = shownOrganization;
   const subscribers = new Set<() => void>();
   const dispatch = vi.fn((action: { type: string; payload?: unknown }) => {
     state = artifactSyncSlice.reducer(state, action as never);
@@ -107,7 +113,10 @@ function harness(repos = REPOS, inFlight: StudioRun[] = []) {
   });
   const app = {
     store: {
-      getState: () => ({ [NAV_SLICE_KEY]: { projectId: openProject }, [ARTIFACT_SYNC_SLICE_KEY]: state }),
+      getState: () => ({
+        [NAV_SLICE_KEY]: { projectId: openProject, organizationId: organization },
+        [ARTIFACT_SYNC_SLICE_KEY]: state,
+      }),
       subscribe: (listener: () => void) => {
         subscribers.add(listener);
         return () => subscribers.delete(listener);
@@ -136,12 +145,17 @@ function harness(repos = REPOS, inFlight: StudioRun[] = []) {
   const runRead = vi.fn(({ runId }: { runId: string }) => ({
     fetch: vi.fn().mockResolvedValue(inFlight.find((listed) => listed.id === runId) ?? run(runId, 'queued')),
   }));
-  const runsList = vi.fn(({ state: listed }: { state: StudioRun['state'] }) => ({
-    fetch: vi.fn().mockResolvedValue({
-      items: inFlight.filter((entry) => entry.state === listed),
-      total: inFlight.length,
-    }),
-  }));
+  const runsList = vi.fn(
+    ({ state: listed, organizationId }: { state: StudioRun['state']; organizationId?: string }) => {
+      const scope = organizationId ? inOrganization : inFlight;
+      return {
+        fetch: vi.fn().mockResolvedValue({
+          items: scope.filter((entry) => entry.state === listed),
+          total: scope.length,
+        }),
+      };
+    }
+  );
   const cancelFetch = vi.fn().mockResolvedValue(run('r-1', 'running', { cancel_requested: true }));
   const retryFetch = vi.fn().mockResolvedValue(run('r-1', 'queued'));
   const tasks = {
@@ -180,6 +194,10 @@ function harness(repos = REPOS, inFlight: StudioRun[] = []) {
     },
     returnToProject: () => {
       openProject = PROJECT;
+      dispatch({ type: 'test/nav-changed' });
+    },
+    showOrganization: (id: string) => {
+      organization = id;
       dispatch({ type: 'test/nav-changed' });
     },
     requestSync: () =>
@@ -246,6 +264,10 @@ describe('a repository sync, followed on the event stream', () => {
     const h = harness();
     h.requestSync();
     await vi.advanceTimersByTimeAsync(0);
+    // Replayed from the cursor: the stream has each run from its first event.
+    for (const [seq, runId] of [[5, 'r-1'], [6, 'r-2'], [7, 'r-3']] as const) {
+      h.stream.onEvent?.(taskEvent(seq, runId, 'task.queued'));
+    }
 
     h.stream.onEvent?.(taskEvent(8, 'r-1', 'task.running'));
     await vi.advanceTimersByTimeAsync(25 * MINUTE);
@@ -627,6 +649,39 @@ describe('an import found again on the gear', () => {
 
     expect(h.tasks.runs).toHaveBeenCalledTimes(2);
     expect(h.tasks.runs.mock.calls.map(([params]) => params.state).sort()).toEqual(['queued', 'running']);
+  });
+
+  it("finds the project's syncs filed under its organization, told after the project", async () => {
+    const h = harness(REPOS, [], [inFlightRun('r-9', 'running', 'acme/api')]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.rows()).toEqual([]);
+
+    h.showOrganization('o-1');
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(h.tasks.runs.mock.calls.map(([params]) => params.organizationId ?? null)).toEqual([
+      null,
+      null,
+      null,
+      null,
+      'o-1',
+      'o-1',
+    ]);
+    expect(h.rows().map((row) => [row.repo, row.runId, row.status])).toEqual([['acme/api', 'r-9', 'running']]);
+    expect(h.lookedUp()).toBe(true);
+  });
+
+  it("keeps the home's syncs when the organization's list is refused", async () => {
+    const h = harness(REPOS, [inFlightRun('r-9', 'running', 'acme/api')], [], 'o-1');
+    h.tasks.runs.mockImplementation(({ state: listed, organizationId }) => ({
+      fetch: organizationId
+        ? vi.fn().mockRejectedValue(new Error('404'))
+        : vi.fn().mockResolvedValue({ items: listed === 'running' ? [inFlightRun('r-9', 'running', 'acme/api')] : [], total: 1 }),
+    }));
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(h.tasks.runs).toHaveBeenCalledTimes(4);
+    expect(h.rows().map((row) => row.runId)).toEqual(['r-9']);
   });
 
   it('leaves a sync asked for while the runs were being listed to its own runs', async () => {

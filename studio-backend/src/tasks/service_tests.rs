@@ -308,3 +308,64 @@ async fn a_run_given_up_on_tells_its_handler_and_is_found_by_its_key() {
     assert_eq!(found.payload["build_id"], "research-1");
     handle.stop().await;
 }
+
+/// A platform administrator's sync of an organization's project is filed
+/// under the organization (2026-11-24), not their home, the root. Polled
+/// without the tenant it is still theirs to read, and nobody else's.
+#[tokio::test]
+async fn a_run_filed_under_an_organization_is_found_for_whoever_asked_for_it() {
+    let (svc, _db, handle) = service("tasks_requested_by").await;
+    let root = Uuid::from_u128(1);
+    let org = Uuid::new_v4();
+    let admin = ctx(root);
+
+    let row = svc.enqueue(&admin, run(org, None)).await.unwrap();
+    assert_eq!(row.tenant_id, org, "filed under the organization");
+    assert_eq!(row.requested_by, admin.subject_id(), "asked by the administrator");
+
+    assert!(
+        svc.get(&admin, root, row.id).await.unwrap().is_none(),
+        "not in the administrator's home"
+    );
+    let theirs = svc.get_requested(admin.subject_id(), row.id).await.unwrap();
+    assert_eq!(theirs.map(|r| r.tenant_id), Some(org));
+    assert!(
+        svc.get_requested(Uuid::new_v4(), row.id)
+            .await
+            .unwrap()
+            .is_none(),
+        "somebody else's run is not found by its id"
+    );
+    handle.stop().await;
+}
+
+/// Cancel and retry act in the tenant the run is filed in, which the REST
+/// layer finds for the requester as GET does: the organization, not the
+/// administrator's home.
+#[tokio::test]
+async fn a_run_filed_under_an_organization_is_cancelled_and_retried_there() {
+    let (svc, _db, handle) = service("tasks_requested_control").await;
+    let root = Uuid::from_u128(1);
+    let org = Uuid::new_v4();
+    let admin = ctx(root);
+
+    let row = svc.enqueue(&admin, run(org, None)).await.unwrap();
+    assert!(
+        svc.cancel(&admin, root, row.id).await.is_err(),
+        "not in the administrator's home"
+    );
+    let filed = svc
+        .get_requested(admin.subject_id(), row.id)
+        .await
+        .unwrap()
+        .expect("found for its requester")
+        .tenant_id;
+    let cancelled = svc.cancel(&admin, filed, row.id).await.unwrap();
+    assert!(cancelled.cancel_requested);
+    let refused = svc.retry(&admin, filed, row.id).await.unwrap_err();
+    assert!(
+        format!("{refused:#}").contains("has not given up yet"),
+        "found, and refused for its state, not for its tenant: {refused:#}"
+    );
+    handle.stop().await;
+}

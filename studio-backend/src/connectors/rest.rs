@@ -1757,6 +1757,15 @@ async fn graph_sync(
             .create()
     })?;
 
+    // Filed, and written, in the organization the import is for (its
+    // project's, else the tenant's), read as the caller: a platform
+    // administrator's home is the root, where nobody in the organization
+    // sees the run or the graph. The connection is still looked up from
+    // `tenant`. A scope under no organization stays where it was.
+    let run_tenant = svc
+        .organization_of(&ctx, body.project_id.unwrap_or(tenant))
+        .await
+        .unwrap_or(tenant);
     let payload = serde_json::to_value(SyncPayload {
         connection_id: id,
         repo_full_path: repo_full_path.clone(),
@@ -1765,6 +1774,7 @@ async fn graph_sync(
         max_contributors: body.max_contributors,
         project_id: body.project_id,
         project_name: body.project_name,
+        connection_tenant: Some(tenant),
     })
     .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
 
@@ -1772,7 +1782,7 @@ async fn graph_sync(
         .enqueue(
             &ctx,
             crate::tasks::sdk::NewRun {
-                tenant,
+                tenant: run_tenant,
                 task_type: GRAPH_SYNC_TASK_TYPE,
                 payload,
                 // One repository's imports never run concurrently with each
@@ -1796,7 +1806,7 @@ async fn graph_sync(
         })?;
 
     if body.wait {
-        return wait_for_import(&queue, tenant, run_id, repo_full_path).await;
+        return wait_for_import(&queue, run_tenant, run_id, repo_full_path).await;
     }
 
     Ok((

@@ -115,14 +115,54 @@ describe('createRunFollower', () => {
     const h = harness();
     h.follower.follow(['r-1'], 7);
     await vi.advanceTimersByTimeAsync(0);
+    h.stream.onEvent?.(taskEvent('r-1', 'queued'));
 
     h.follower.follow(['r-2'], 9);
+    await vi.advanceTimersByTimeAsync(0);
+    h.stream.onEvent?.(taskEvent('r-2', 'queued'));
     await vi.advanceTimersByTimeAsync(5 * RUN_POLL_INTERVAL_MS);
 
     expect(h.events.streamFrom).toHaveBeenCalledTimes(1);
     expect(h.read).toHaveBeenCalledTimes(1);
     expect(h.read).toHaveBeenCalledWith('r-2');
-    expect(h.updates).toEqual([expect.objectContaining({ runId: 'r-2', state: 'running' })]);
+    expect(h.updates).toContainEqual(expect.objectContaining({ runId: 'r-2', state: 'running' }));
+  });
+
+  it('reads a run the stream never mentions on the interval until it settles, keeping the stream', async () => {
+    // A run filed in another tenant than the caller's home: its events go to that tenant's stream.
+    const h = harness();
+    h.read.mockResolvedValueOnce(run('r-1', 'running')).mockResolvedValueOnce(run('r-1', 'succeeded'));
+    h.follower.follow(['r-1', 'r-2'], 7);
+    await vi.advanceTimersByTimeAsync(0);
+    h.stream.onEvent?.(taskEvent('r-2', 'running'));
+
+    await vi.advanceTimersByTimeAsync(RUN_POLL_INTERVAL_MS);
+    expect(h.read.mock.calls.map(([runId]) => runId)).toEqual(['r-1']);
+    expect(h.disconnect).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(5 * RUN_POLL_INTERVAL_MS);
+
+    expect(h.read).toHaveBeenCalledTimes(2);
+    expect(h.updates.map((u) => [u.runId, u.state])).toEqual([
+      ['r-2', 'running'],
+      ['r-1', 'running'],
+      ['r-1', 'succeeded'],
+    ]);
+    h.stream.onEvent?.(taskEvent('r-2', 'succeeded'));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.disconnect).toHaveBeenCalledWith('connection-1');
+  });
+
+  it('stops reading a run once the stream mentions it', async () => {
+    const h = harness();
+    h.follower.follow(['r-1'], 7);
+    await vi.advanceTimersByTimeAsync(RUN_POLL_INTERVAL_MS);
+    expect(h.read).toHaveBeenCalledTimes(1);
+
+    h.stream.onEvent?.(taskEvent('r-1', 'running'));
+    await vi.advanceTimersByTimeAsync(5 * RUN_POLL_INTERVAL_MS);
+
+    expect(h.read).toHaveBeenCalledTimes(1);
+    expect(h.events.streamFrom).toHaveBeenCalledTimes(1);
   });
 
   it('reads every run on an interval when the read of a run joining the stream fails', async () => {
@@ -178,6 +218,7 @@ describe('createRunFollower', () => {
 
     h.follower.follow(['r-2'], 9);
     await vi.advanceTimersByTimeAsync(0);
+    h.streams[1]?.onEvent?.(taskEvent('r-2', 'queued'));
     first?.onComplete?.();
     await vi.advanceTimersByTimeAsync(5 * RUN_POLL_INTERVAL_MS);
 
@@ -187,6 +228,7 @@ describe('createRunFollower', () => {
     h.streams[1]?.onEvent?.(taskEvent('r-2', 'succeeded'));
     expect(h.updates.map((u) => [u.runId, u.state])).toEqual([
       ['r-1', 'succeeded'],
+      ['r-2', 'queued'],
       ['r-2', 'succeeded'],
     ]);
   });

@@ -67,6 +67,18 @@ pub struct IngestPayload {
     pub project_id: Option<String>,
     #[serde(default)]
     pub repo_dir: Option<String>,
+    /// The organization the run is filed under and writes in: the project's
+    /// (`IngestService::run_tenant`). For the record: the sync resolves it
+    /// again from the project, which also covers a run queued before this
+    /// field, in whichever tenant that was filed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub organization_id: Option<Uuid>,
+    /// The home tenant of whoever asked, for the token check: whose rights
+    /// the sync reads with is decided as the caller
+    /// (`connectors::sdk::ownership`), not as the organization the run is
+    /// filed under. Absent: the run's own tenant, as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested_in: Option<Uuid>,
 }
 
 impl IngestPayload {
@@ -131,13 +143,14 @@ impl TaskHandler for IngestTask {
         };
 
         // The token must be the organization's own, whoever enqueued the run
-        // (`connectors::sdk::ownership`). Permanent: retrying cannot change
-        // whose connection it is.
+        // (`connectors::sdk::ownership`), decided as the caller: the run is
+        // filed under the organization, the caller's home may be another.
+        // Permanent: retrying cannot change whose connection it is.
         if let Err(refused) = self
             .service
             .ensure_token_owned(
                 &ctx.security,
-                ctx.tenant,
+                payload.requested_in.unwrap_or(ctx.tenant),
                 payload.tenant(ctx.tenant),
                 &payload.secret_ref,
             )
@@ -314,6 +327,8 @@ mod tests {
             workspace_id: None,
             project_id: Some("11111111-1111-1111-1111-111111111111".to_owned()),
             repo_dir: Some("repo".to_owned()),
+            organization_id: None,
+            requested_in: None,
         };
         let back: IngestPayload =
             serde_json::from_value(serde_json::to_value(&payload).unwrap()).unwrap();
@@ -343,6 +358,8 @@ mod tests {
             workspace_id: None,
             project_id: None,
             repo_dir: None,
+            organization_id: None,
+            requested_in: None,
         })
         .unwrap();
         assert!(json.get("token").is_none(), "{json}");
@@ -362,6 +379,8 @@ mod tests {
             workspace_id: Some(workspace.to_string()),
             project_id: Some(project.to_string()),
             repo_dir: None,
+            organization_id: None,
+            requested_in: None,
         };
         assert_eq!(payload.tenant(run), project);
         payload.project_id = None;

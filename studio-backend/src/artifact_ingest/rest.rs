@@ -539,6 +539,14 @@ async fn sync(
         );
     }
 
+    // Filed under the project's organization, where the sync writes and the
+    // organization's Background work lists it; never the caller's home, which
+    // for a platform administrator is the root. The caller must reach the
+    // project; they stay the run's `requested_by`.
+    let org = svc
+        .run_tenant(&ctx, project_id.as_deref().or(workspace_id.as_deref()))
+        .await
+        .map_err(|e| scope_not_found(tenant, &e))?;
     let run = IngestPayload {
         provider,
         base_url: trimmed(req.base_url.as_deref()),
@@ -548,6 +556,8 @@ async fn sync(
         workspace_id,
         project_id: project_id.clone(),
         repo_dir: trimmed(req.repo_dir.as_deref()),
+        organization_id: Some(org),
+        requested_in: Some(caller),
     };
     let partition_key = run.partition_key();
     let payload = serde_json::to_value(run)
@@ -557,7 +567,7 @@ async fn sync(
         .enqueue(
             &ctx,
             crate::tasks::sdk::NewRun {
-                tenant: ctx.subject_tenant_id(),
+                tenant: org,
                 task_type: TASK_TYPE,
                 payload,
                 partition_key: Some(&partition_key),
@@ -598,6 +608,15 @@ fn sync_tenant(
                 .create()
         }),
     }
+}
+
+/// A project or workspace the caller does not reach (or whose organization
+/// cannot be read), as the API says it: 404, "not yours" and "not there"
+/// being one answer.
+fn scope_not_found(scope: Uuid, e: &anyhow::Error) -> CanonicalError {
+    StudioArtifactIngestError::not_found(format!("{e:#}"))
+        .with_resource(scope.to_string())
+        .create()
 }
 
 /// A sync refused for its token, as the API says it (400
@@ -965,15 +984,26 @@ async fn detach_source(
             workspace_id: None,
             project_id: Some(project_id.to_string()),
             repo_dir: None,
+            organization_id: None,
+            requested_in: None,
         }
         .partition_key(),
         None => format!("source_detach:{project_id}:{}", source.full_path),
     };
+    // The tenant a sync of the repository writes its nodes in: the
+    // project's organization.
+    let project = project_id.to_string();
+    let org = ingest
+        .get()?
+        .run_tenant(&ctx, Some(project.as_str()))
+        .await
+        .map_err(|e| scope_not_found(project_id, &e))?;
     let payload = serde_json::to_value(DetachPayload {
         project_id,
         clone_url: source.clone_url.clone(),
         full_path: source.full_path.clone(),
         asked_by: ctx.subject_id().to_string(),
+        organization_id: Some(org),
     })
     .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
 
@@ -981,8 +1011,7 @@ async fn detach_source(
         .enqueue(
             &ctx,
             crate::tasks::sdk::NewRun {
-                // The tenant a sync of the repository writes its nodes in.
-                tenant: ctx.subject_tenant_id(),
+                tenant: org,
                 task_type: DETACH_TASK_TYPE,
                 payload,
                 partition_key: Some(&partition_key),
@@ -1093,7 +1122,7 @@ async fn list_edges(
         None => None,
     };
     let edges = svc
-        .list_relations(&ctx)
+        .list_relations(&ctx, scope)
         .await
         .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
     let mut edges: Vec<ArtifactEdgeDto> = edges
