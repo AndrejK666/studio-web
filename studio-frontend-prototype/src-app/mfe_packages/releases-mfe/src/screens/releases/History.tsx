@@ -208,7 +208,7 @@ export function DeployHistory({
 
 /** The rollout read back from the cluster, on demand. */
 function StatusButton({ d }: { d: Deployment }) {
-  const { t, organizationId } = useReleases();
+  const { t, projectId } = useReleases();
   const api = useApi();
   const [status, setStatus] = useState<DeploymentStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -217,7 +217,7 @@ function StatusButton({ d }: { d: Deployment }) {
     setBusy(true);
     setError(null);
     try {
-      setStatus(await api.deploymentStatus({ organizationId, id: d.id }).fetch({ staleTime: 0 }));
+      setStatus(await api.deploymentStatus({ projectId, id: d.id }).fetch({ staleTime: 0 }));
     } catch (e) {
       setError(errText(e));
     } finally {
@@ -227,7 +227,7 @@ function StatusButton({ d }: { d: Deployment }) {
   return (
     <div className={styles.stack}>
       <span>
-        <Button size="sm" variant="ghost" disabled={busy || !organizationId} onClick={() => void read()} data-deployment-status>
+        <Button size="sm" variant="ghost" disabled={busy} onClick={() => void read()} data-deployment-status>
           {busy ? t('status_asking') : status ? t('status_again') : t('status_read')}
         </Button>
       </span>

@@ -1040,6 +1040,9 @@ pub struct DeploymentLogsDto {
 pub struct LogsQuery {
     #[serde(default)]
     lines: Option<i64>,
+    /// The project the deployment is of: its organization is the one read.
+    #[serde(default)]
+    project_id: Option<Uuid>,
 }
 
 fn status_dto(d: Deployment, r: Rollout) -> DeploymentStatusDto {
@@ -1832,6 +1835,24 @@ async fn remove_preview(
     Ok((StatusCode::ACCEPTED, Json(PreviewRemovalDto { run_id })))
 }
 
+/// The organization whose deployments a request reads: the project's when it
+/// names one (refused when the caller cannot see the project), else the one
+/// `?organization_id=` resolved to, the caller's own by default.
+pub(super) async fn deployments_org(
+    envs: &Environments,
+    ctx: &SecurityContext,
+    project: Option<Uuid>,
+) -> ApiResult<Uuid> {
+    match project {
+        Some(project) => envs
+            .0
+            .organization_of_project(ctx, project)
+            .await
+            .map_err(problem),
+        None => Ok(ctx.subject_tenant_id()),
+    }
+}
+
 async fn list_deployments(
     OrgCtx(ctx): OrgCtx,
     Extension(envs): Extension<Environments>,
@@ -1839,14 +1860,7 @@ async fn list_deployments(
 ) -> ApiResult<JsonBody<DeploymentListDto>> {
     // A project's history is its organization's, filtered: the organization is
     // found from the project when the request names one.
-    let org = match f.project_id {
-        Some(project) => envs
-            .0
-            .organization_of_project(&ctx, project)
-            .await
-            .map_err(problem)?,
-        None => ctx.subject_tenant_id(),
-    };
+    let org = deployments_org(&envs, &ctx, f.project_id).await?;
     let items = envs
         .0
         .deployments(&ctx, org, f.project_id, f.environment_id)
@@ -1892,10 +1906,13 @@ async fn get_deployment_status(
     OrgCtx(ctx): OrgCtx,
     Extension(envs): Extension<Environments>,
     Path(deployment_id): Path<Uuid>,
+    Query(f): Query<DeploymentFilter>,
 ) -> ApiResult<JsonBody<DeploymentStatusDto>> {
+    // As `GET /deployments/{id}`: a project's deployment is its organization's.
+    let org = deployments_org(&envs, &ctx, f.project_id).await?;
     let (d, r) = envs
         .0
-        .status(&ctx, &caller, ctx.subject_tenant_id(), deployment_id)
+        .status(&ctx, &caller, org, f.project_id, deployment_id)
         .await
         .map_err(problem)?;
     Ok(Json(status_dto(d, r)))
@@ -1908,12 +1925,15 @@ async fn get_deployment_logs(
     Path(deployment_id): Path<Uuid>,
     Query(q): Query<LogsQuery>,
 ) -> ApiResult<JsonBody<DeploymentLogsDto>> {
+    // As `GET /deployments/{id}`: a project's deployment is its organization's.
+    let org = deployments_org(&envs, &ctx, q.project_id).await?;
     let logs = envs
         .0
         .logs(
             &ctx,
             &caller,
-            ctx.subject_tenant_id(),
+            org,
+            q.project_id,
             deployment_id,
             super::deploy::log_lines(q.lines),
         )
@@ -2648,13 +2668,15 @@ pub fn register_routes(
         .description(
             "Reads the release's workloads (ready of desired, images) and the hosts its \
              ingresses answer on from the environment's cluster, through the environment's \
-             connection. Asked on demand: the cluster is not polled.",
+             connection. Asked on demand: the cluster is not polled. Name the project with \
+             `?project_id=`, or the organization with `?organization_id=`.",
         )
         .tag(TAG)
         .authenticated()
         .require_license_features::<License>([])
         .path_param("deployment_id", "Deployment id")
         .query_param_typed("organization_id", false, "The organization", "string")
+        .query_param_typed("project_id", false, "The project it is of", "string")
         .handler(get_deployment_status)
         .json_response_with_schema::<DeploymentStatusDto>(openapi, StatusCode::OK, "Status")
         .error_400(openapi)
@@ -2670,13 +2692,15 @@ pub fn register_routes(
             "Reads the last `lines` lines (200 unless asked, at most 2000) of every container \
              of the release's pods from the environment's cluster, through the environment's \
              connection; for a container that restarted and is not running, also the run \
-             before. A container that never started answers with the cluster's reason.",
+             before. A container that never started answers with the cluster's reason. Name \
+             the project with `?project_id=`, or the organization with `?organization_id=`.",
         )
         .tag(TAG)
         .authenticated()
         .require_license_features::<License>([])
         .path_param("deployment_id", "Deployment id")
         .query_param_typed("organization_id", false, "The organization", "string")
+        .query_param_typed("project_id", false, "The project it is of", "string")
         .query_param_typed("lines", false, "Lines of each log, from its end", "integer")
         .handler(get_deployment_logs)
         .json_response_with_schema::<DeploymentLogsDto>(openapi, StatusCode::OK, "Logs")

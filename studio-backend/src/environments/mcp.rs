@@ -576,10 +576,15 @@ pub fn tools() -> Vec<Tool> {
             name: "deployment_status",
             description: "A deployed release as its cluster reports it now: the record, each \
                 workload's ready of desired replicas and images, the hosts its ingresses answer \
-                on, and the containers that cannot start with why.",
+                on, and the containers that cannot start with why. Name the project it is of \
+                with `project_id` (or its organization with `organization_id`).",
             input_schema: || {
                 object(
-                    json!({ "deployment_id": { "type": "string" }, "organization_id": { "type": "string" } }),
+                    json!({
+                        "deployment_id": { "type": "string" },
+                        "project_id": project_id(),
+                        "organization_id": { "type": "string" }
+                    }),
                     &["deployment_id"],
                 )
             },
@@ -591,11 +596,13 @@ pub fn tools() -> Vec<Tool> {
             name: "deployment_logs",
             description: "The end of each container's log of a deployed release, read from its \
                 cluster now (200 lines unless `lines` says, at most 2000); for a container that \
-                restarted, also the run before.",
+                restarted, also the run before. Name the project it is of with `project_id` (or \
+                its organization with `organization_id`).",
             input_schema: || {
                 object(
                     json!({
                         "deployment_id": { "type": "string" },
+                        "project_id": project_id(),
                         "organization_id": { "type": "string" },
                         "lines": { "type": "integer", "minimum": 1, "maximum": 2000 }
                     }),

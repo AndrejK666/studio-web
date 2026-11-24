@@ -61,7 +61,7 @@ impl EnvironmentService {
             })?;
         // A record that says `running` while its run has ended says so now.
         let record = match self
-            .reconcile_research_builds(org, vec![record.clone()])
+            .reconcile_research_builds(org, project, vec![record.clone()])
             .await
             .pop()
         {

@@ -3862,6 +3862,25 @@ impl EnvironmentService {
         Ok(d)
     }
 
+    /// One deployment of `org`; with `project`, only when it is that
+    /// project's, as [`Self::deployment_view`] answers.
+    async fn deployment_of(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        project: Option<Uuid>,
+        id: Uuid,
+    ) -> Result<Deployment> {
+        let d = self.deployment(ctx, org, id).await?;
+        match project {
+            Some(p) if d.project_id != p => Err(Refusal::NotFound(
+                id.to_string(),
+                format!("project {p} has no deployment {id}"),
+            )),
+            _ => Ok(d),
+        }
+    }
+
     async fn deployment(&self, ctx: &SecurityContext, org: Uuid, id: Uuid) -> Result<Deployment> {
         self.store
             .read::<DeploymentList>(ctx, org, DEPLOYMENTS_METADATA_TYPE)
@@ -3948,15 +3967,17 @@ impl EnvironmentService {
         Ok(items)
     }
 
-    /// The release's rollout as its cluster reports it now.
+    /// The release's rollout as its cluster reports it now. With `project`,
+    /// the deployment must be one of that project's.
     pub async fn status(
         &self,
         ctx: &SecurityContext,
         caller: &SecurityContext,
         org: Uuid,
+        project: Option<Uuid>,
         id: Uuid,
     ) -> Result<(Deployment, Rollout)> {
-        let d = self.deployment(ctx, org, id).await?;
+        let d = self.deployment_of(ctx, org, project, id).await?;
         let env = self
             .project_environment(ctx, org, d.project_id, d.environment_id)
             .await?;
@@ -3998,10 +4019,11 @@ impl EnvironmentService {
         ctx: &SecurityContext,
         caller: &SecurityContext,
         org: Uuid,
+        project: Option<Uuid>,
         id: Uuid,
         lines: i64,
     ) -> Result<Vec<deploy::ContainerLog>> {
-        let d = self.deployment(ctx, org, id).await?;
+        let d = self.deployment_of(ctx, org, project, id).await?;
         let env = self
             .project_environment(ctx, org, d.project_id, d.environment_id)
             .await?;
