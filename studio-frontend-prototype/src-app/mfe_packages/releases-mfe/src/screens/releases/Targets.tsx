@@ -4,23 +4,19 @@
  * clusters, deployed to with Deploy… -- and Constructor Research --
  * applications in Research projects, built and run with Build and run in
  * Research -- and names the place on every row: the cluster and namespace,
- * or the Research project, its hardware and the Research account. The groups
- * are the release map's Environment stage: a row's Choose picks where the
- * chosen images go.
+ * or the Research project, its hardware and the Research account. The
+ * Environment stage lists them on the shared grid (EnvironmentsGrid.tsx).
  */
 
-import React, { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { Connection, DeployEnvironment, PathAction, ProjectPath, ResearchHardware, ResearchProject } from '../../api/types';
 import {
-  byTargetKind,
   environmentTarget,
   researchProjectsWithHardware,
   type TargetKind,
   type TargetNames,
 } from '../../model/environment-targets';
 import type { Intent } from '../../model/path';
-import type { LadderStep } from '../../model/releases';
-import { ReleaseLadder } from './Ladder';
 import { ActionButton } from './ProjectPath';
 import { useApi, useReleases } from './parts';
 import styles from './ReleasesScreen.module.css';
@@ -149,91 +145,6 @@ export function TargetCell({ env, namespace, names }: { env: DeployEnvironment; 
         )}
       </span>
     </span>
-  );
-}
-
-/** One group's heading: its icon, its name, what it is, and its action. */
-function GroupHead({
-  kind,
-  about,
-  action,
-}: {
-  kind: TargetKind;
-  about: string;
-  action?: React.ReactNode;
-}) {
-  const { t } = useReleases();
-  return (
-    <div className={styles.groupHead} data-environment-group-head>
-      <span className={styles.groupIcon} data-group-icon={kind}>
-        <TargetIcon kind={kind} />
-      </span>
-      <span className={styles.groupText}>
-        <h3 className={styles.subTitle}>{t(kind === 'kubernetes' ? 'group_kubernetes' : 'group_research')}</h3>
-        <span className={styles.muted}>{about}</span>
-      </span>
-      {action && <span data-environment-group-action>{action}</span>}
-    </div>
-  );
-}
-
-type LadderProps = Pick<React.ComponentProps<typeof ReleaseLadder>, 'bindings' | 'selected' | 'onSelect' | 'fitOf'>;
-
-/** The environments in two groups, each with its place and its action. */
-export function EnvironmentGroups({
-  steps,
-  path,
-  names,
-  blocked,
-  noEnvironment,
-  ...ladder
-}: LadderProps & {
-  steps: LadderStep[];
-  path: ProjectPath | null;
-  names: TargetNames;
-  /** Why nothing can be built or deployed yet (no product); null: it can. */
-  blocked: string | null;
-  /** What the Kubernetes group says with no cluster environment. */
-  noEnvironment: React.ReactNode;
-}) {
-  const { t } = useReleases();
-  const groups = byTargetKind(steps, (s) => s.environment);
-  const kit = !!path?.research_kit;
-  const targetOf = (s: LadderStep) => <TargetCell env={s.environment} namespace={s.namespace} names={names} />;
-  return (
-    <>
-      <div data-environment-group="kubernetes">
-        <ReleaseLadder
-          {...ladder}
-          steps={groups.kubernetes}
-          targetOf={targetOf}
-          blocked={blocked}
-          head={
-            <>
-              <GroupHead kind="kubernetes" about={t('group_kubernetes_about')} />
-              {groups.kubernetes.length === 0 && noEnvironment}
-            </>
-          }
-        />
-      </div>
-      {(kit || groups.research.length > 0) && (
-        <div data-environment-group="research">
-          <ReleaseLadder
-            {...ladder}
-            steps={groups.research}
-            targetOf={targetOf}
-            blocked={blocked}
-            head={
-              <>
-                <GroupHead kind="research" about={t('group_research_about')} />
-                {!kit && <p className={styles.muted}>{t('group_research_no_kit')}</p>}
-                {kit && groups.research.length === 0 && <p className={styles.muted}>{t('group_research_empty')}</p>}
-              </>
-            }
-          />
-        </div>
-      )}
-    </>
   );
 }
 

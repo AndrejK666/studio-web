@@ -19,12 +19,13 @@ import {
   screenView,
   useHostChrome,
   usePollWhileVisible,
+  writeListState,
   useScreenAvailability,
 } from '@constructor-studio/mfe-shared';
 import type { Deployment, PathAction, PathStep, ProjectPath, ProjectTargets } from '../../api/types';
 import { ROUTES, deploymentFromSearch, type Intent } from '../../model/path';
 import { anyRunning, ideBuildsOf, type IdeBuild } from '../../model/builds';
-import { ladderSteps, type LadderStep } from '../../model/releases';
+import { ladderSteps } from '../../model/releases';
 import {
   attentionStage,
   fitGap,
@@ -45,7 +46,9 @@ import { PathStepNote } from './ProjectPath';
 import { ProjectBindings } from './Bindings';
 import { ProjectBuilds } from './Builds';
 import { EnvironmentConfig, EnvironmentPreviews } from './DeployActions';
-import { EnvironmentGroups, NoProductLine, useTargetNames } from './Targets';
+import { NoProductLine, useTargetNames } from './Targets';
+import { ENVIRONMENTS_ADDRESS, EnvironmentsGrid, environmentRows } from './EnvironmentsGrid';
+import { EnvironmentDetail } from './Ladder';
 import { ReleaseMap } from './ReleaseMap';
 import { DeployStage, ImagesStage, StageHead } from './Stages';
 import { ErrorLine, ReleasesProvider, errText, useApi, useReleases, type ReleasesContextValue } from './parts';
@@ -295,15 +298,24 @@ function Releases({ projectId, onOrganization }: { projectId: string; onOrganiza
   };
 
   const imagesBuild = map.images.build;
-  const fitOf = (s: LadderStep) => {
-    if (!imagesBuild || !hasDeployableImages(imagesBuild)) return <span className={styles.muted}>—</span>;
-    const { gap } = fitGap(imagesBuild, s.environment, deployments);
-    return (
-      <Badge variant={gap === null ? 'success' : gap === 'promotion' ? 'warning' : 'secondary'} data-ladder-fit={gap ?? 'yes'}>
-        {gap === null ? t('fits_yes', { build: imagesBuild.buildId }) : t(`map_gap_${gap}`)}
-      </Badge>
+  const environmentList = useMemo(
+    () =>
+      environmentRows(steps, (s) =>
+        imagesBuild && hasDeployableImages(imagesBuild) ? fitGap(imagesBuild, s.environment, deployments).gap : 'none'
+      ),
+    [steps, imagesBuild, deployments]
+  );
+  const chooseEnvironment = useCallback((id: string) => choose({ env: id }), [choose]);
+  // The Environment stage on the environments the chosen images can go to.
+  const showFits = () => {
+    replaceSearch(
+      writeListState(window.location.search, { q: '', filters: { fits: 'yes' }, sort: null, page: 0 }, ENVIRONMENTS_ADDRESS)
     );
+    show('environment');
   };
+  const kit = !!path?.research_kit;
+  const hasKubernetes = environmentList.some((r) => r.kind === 'kubernetes');
+  const hasResearch = environmentList.some((r) => r.kind === 'research');
   const chosen = map.environment.step;
   // Build's own line says what comes next; the path speaks there only of what failed or blocks.
   const buildNote = [pathStep('build')].find((s) => s?.state === 'failed' || s?.state === 'blocked');
@@ -399,6 +411,7 @@ function Releases({ projectId, onOrganization }: { projectId: string; onOrganiza
               pathStep={pathStep('image')}
               onPick={(id) => choose({ build: id })}
               onDeploy={deployImages}
+              onFits={showFits}
               onStage={(s) => show(s)}
               onIntent={onIntent}
             />
@@ -423,13 +436,9 @@ function Releases({ projectId, onOrganization }: { projectId: string; onOrganiza
                 <p className={styles.muted}>{t('no_environments_backend')}</p>
               ) : (
                 targets && (
-                  <EnvironmentGroups
-                    steps={steps}
-                    path={path}
-                    names={names}
-                    blocked={blocked}
-                    noEnvironment={
-                      <div className={styles.stack}>
+                  <>
+                    {!hasKubernetes && (
+                      <div className={styles.stack} data-releases-empty="kubernetes">
                         <p className={styles.muted}>{t(noEnvironmentKey)}</p>
                         {noEnvironmentKey === 'no_environment' && (
                           <div className={styles.row}>
@@ -439,17 +448,26 @@ function Releases({ projectId, onOrganization }: { projectId: string; onOrganiza
                           </div>
                         )}
                       </div>
-                    }
-                    bindings={targets.bindings}
-                    selected={chosen?.environment.id ?? null}
-                    onSelect={(id) => choose({ env: id })}
-                    fitOf={fitOf}
-                  />
+                    )}
+                    {kit && !hasResearch && <p className={styles.muted} data-releases-empty="research">{t('group_research_empty')}</p>}
+                    {!kit && hasResearch && <p className={styles.muted}>{t('group_research_no_kit')}</p>}
+                    {environmentList.length > 0 && (
+                      <EnvironmentsGrid
+                        rows={environmentList}
+                        names={names}
+                        selected={chosen?.environment.id ?? null}
+                        blocked={blocked}
+                        build={imagesBuild?.buildId ?? null}
+                        onSelect={chooseEnvironment}
+                      />
+                    )}
+                  </>
                 )
               )}
               {targets && chosen && (
                 <section className={styles.stack} data-environment-chosen={chosen.environment.name}>
                   <h3 className={styles.subTitle}>{t('environment_settings', { environment: chosen.environment.name })}</h3>
+                  <EnvironmentDetail step={chosen} bindings={targets.bindings} />
                   <EnvironmentPreviews env={chosen.environment} deployments={deployments} onChanged={changed} />
                   <EnvironmentConfig
                     key={`${chosen.environment.id}-${round}`}

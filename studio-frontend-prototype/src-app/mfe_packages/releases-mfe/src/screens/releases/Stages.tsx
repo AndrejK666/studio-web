@@ -1,9 +1,10 @@
 /**
  * The release map's Images and Deploy stages (owner feedback, 2026-11-24).
  *
- * Images: what a build made -- its images per app, where they live (Research's
- * own registry or the organization's), its chart -- and where they can go. A
- * build picker chooses whose images the Deploy stage takes, and "Deploy these
+ * Images: what a build made, on the shared grid -- its images per app, where
+ * they live (Research's own registry or the organization's), its chart -- and
+ * how many environments they can go to, which opens the Environment stage on
+ * those. A build picker chooses whose images the Deploy stage takes, and "Deploy these
  * images" takes them there: a passed build's as well as the images a failed
  * Research build had asked for.
  *
@@ -24,7 +25,7 @@ import { hasDeployableImages, type ReleaseMap, type StageId } from '../../model/
 import { rollbackTarget, runsNow } from '../../model/project-deploys';
 import { versionOf, type LadderStep } from '../../model/releases';
 import type { Intent } from '../../model/path';
-import { BuildImages } from './Builds';
+import { ImagesGrid } from './ImagesGrid';
 import { buildTone } from './BuildsGrids';
 import { PendingDecisions, PreviewForm, isResearch, useDeployRequest } from './DeployActions';
 import { DeployHistory } from './History';
@@ -48,13 +49,15 @@ export function StageHead({ stage, children }: { stage: StageId; children?: Reac
   );
 }
 
-/** The build's images, the build picker, and Deploy these images. */
+/** The build picker, the build's images on the shared grid, where they can
+ *  go, and Deploy these images. */
 export function ImagesStage({
   builds,
   map,
   pathStep,
   onPick,
   onDeploy,
+  onFits,
   onStage,
   onIntent,
 }: {
@@ -64,6 +67,8 @@ export function ImagesStage({
   pathStep?: PathStep;
   onPick: (buildId: string) => void;
   onDeploy: (build: IdeBuild) => void;
+  /** The Environment stage, showing the environments these images can go to. */
+  onFits: () => void;
   onStage: (stage: StageId) => void;
   onIntent: (intent: Intent, action: Partial<PathAction>) => void;
 }) {
@@ -76,19 +81,16 @@ export function ImagesStage({
   return (
     <section className={styles.stack} data-stage-panel="images">
       <StageHead stage="images">
-        {pickable.length > 0 && (
-          <NativeSelect
-            aria-label={t('images_build')}
-            value={b?.buildId ?? ''}
-            onChange={(e) => onPick(e.target.value)}
-            data-images-build-picker
+        {b && (
+          <Button
+            size="sm"
+            disabled={fits.length === 0}
+            title={fits.length === 0 ? t('images_nowhere') : undefined}
+            onClick={() => onDeploy(b)}
+            data-images-deploy
           >
-            {pickable.map((x) => (
-              <NativeSelectOption key={x.id} value={x.buildId}>
-                {x.buildId} · {x.status} · {relTime(x.finishedAt ?? x.startedAt, language)}
-              </NativeSelectOption>
-            ))}
-          </NativeSelect>
+            {t('images_deploy')}
+          </Button>
         )}
       </StageHead>
       {pathStep && <PathStepNote step={pathStep} onIntent={onIntent} />}
@@ -102,56 +104,53 @@ export function ImagesStage({
           </div>
         </div>
       ) : (
-        <div className={styles.card} data-images-build={b.buildId}>
-          <div className={styles.headRow}>
-            <span className={styles.chips}>
-              <code>{b.buildId}</code>
-              <Badge variant={TONE_BADGE[buildTone(b.status)]}>{b.status}</Badge>
-              <span className={styles.muted}>
-                {b.where} · <When iso={b.finishedAt ?? b.startedAt} />
-              </span>
-            </span>
-            <Button
-              size="sm"
-              disabled={fits.length === 0}
-              title={fits.length === 0 ? t('images_nowhere') : undefined}
-              onClick={() => onDeploy(b)}
-              data-images-deploy
-            >
-              {t('images_deploy')}
-            </Button>
-          </div>
-          <dl className={styles.facts}>
-            <dt>{t('images_live_in')}</dt>
-            <dd data-images-place={map.images.place?.kind ?? 'none'}>
-              {map.images.place
-                ? map.images.place.kind === 'research'
-                  ? t('map_images_in_research')
-                  : map.images.place.host
-                    ? t('map_images_in_registry', { host: map.images.place.host })
-                    : t('map_images_in_default_registry')
-                : '—'}
-            </dd>
+        <div className={styles.stack} data-images-build={b.buildId}>
+          <div className={styles.toolbar}>
+            <label className={styles.toolbarField}>
+              <span className={styles.muted}>{t('images_build')}</span>
+              <NativeSelect value={b.buildId} onChange={(e) => onPick(e.target.value)} data-images-build-picker>
+                {pickable.map((x) => (
+                  <NativeSelectOption key={x.id} value={x.buildId}>
+                    {x.buildId} · {x.status} · {relTime(x.finishedAt ?? x.startedAt, language)}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+            </label>
+            <Badge variant={TONE_BADGE[buildTone(b.status)]}>{b.status}</Badge>
             {b.chartRef && (
-              <>
-                <dt>{t('chart')}</dt>
-                <dd data-build-chart>
-                  <code>
-                    {b.chartRef}
-                    {b.chartVersion ? `:${b.chartVersion}` : ''}
-                  </code>
-                </dd>
-              </>
+              <span className={styles.muted} data-build-chart>
+                {t('chart')}{' '}
+                <code>
+                  {b.chartRef}
+                  {b.chartVersion ? `:${b.chartVersion}` : ''}
+                </code>
+              </span>
             )}
-            <dt>{t('images_can_go')}</dt>
-            <dd data-images-fits>{fits.length > 0 ? fits.map((e) => e.name).join(', ') : t('images_nowhere')}</dd>
-          </dl>
-          {b.images.length > 0 ? (
-            <BuildImages build={b} />
-          ) : (
-            <p className={styles.muted}>{b.status === 'running' ? t('map_images_waiting') : t('images_none_made')}</p>
-          )}
+            <span className={styles.grow} />
+            {fits.length > 0 ? (
+              <button
+                type="button"
+                className={styles.link}
+                title={fits.map((e) => e.name).join(', ')}
+                onClick={onFits}
+                data-images-fits={fits.length}
+              >
+                {t.count('images_fits_count', fits.length)}
+              </button>
+            ) : (
+              <span className={styles.warn} data-images-fits={0}>
+                {t('images_nowhere')}
+              </span>
+            )}
+          </div>
           {deployable && b.status === 'failed' && <p className={styles.warn}>{t('map_images_failed_build')}</p>}
+          {b.images.length > 0 ? (
+            <ImagesGrid build={b} />
+          ) : (
+            <p className={styles.muted} data-releases-empty="build-images">
+              {b.status === 'running' ? t('map_images_waiting') : t('images_none_made')}
+            </p>
+          )}
         </div>
       )}
     </section>

@@ -199,17 +199,6 @@
   text-decoration: underline;
 }
 
-.clickable {
-  cursor: pointer;
-}
-
-.ladderActions {
-  display: inline-flex;
-  flex-wrap: nowrap;
-  justify-content: flex-end;
-  gap: var(--space-2);
-}
-
 .outcome,
 .log {
   margin: var(--space-1, 0.25rem) 0 0;
@@ -587,7 +576,6 @@
 
 /* Where each environment runs: the Kubernetes and Constructor Research
  * groups, each row's place, and the sections' own heads and empty states. */
-.groupHead,
 .sectionHead {
   display: flex;
   flex-wrap: wrap;
@@ -601,23 +589,6 @@
   flex-direction: column;
   gap: var(--space-1);
   min-width: 0;
-}
-
-.groupIcon {
-  display: inline-flex;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  width: 2rem;
-  height: 2rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md, 8px);
-  background: var(--muted);
-  color: var(--foreground);
-}
-
-.groupIcon[data-group-icon='research'] {
-  color: var(--primary);
 }
 
 .targetIcon {
@@ -1003,7 +974,36 @@
   align-items: center;
 }
 
-/* The environment chosen for the deploy. */
-[data-ladder-selected] > td {
+/* A stage's controls above its list: the build picker, its state, where it can go. */
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+
+.toolbarField {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.stackTight {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* The environment chosen for the deploy, in the shared grid. */
+tr:has([data-ladder-selected]) > td {
   background: color-mix(in srgb, var(--primary) 7%, transparent);
+}
+
+/* A chip with a sentence in a grid cell: it wraps instead of running into the next column. */
+.wrapBadge {
+  max-width: 100%;
+  height: auto;
+  white-space: normal;
+  text-align: left;
 }

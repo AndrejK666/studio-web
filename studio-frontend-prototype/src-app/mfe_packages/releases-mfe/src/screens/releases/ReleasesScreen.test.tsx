@@ -277,7 +277,23 @@ describe('ReleasesScreen', () => {
       const panel = await el('[data-release-stage="images"]');
       await waitFor(() => expect(panel.querySelector('[data-images-build]')?.getAttribute('data-images-build')).toBe('studio-2'));
       expect(panel.querySelector('[data-build-chart]')?.textContent).toContain('oci://ghcr.io/acme/charts/shop:0.2.0');
-      expect(panel.querySelector('[data-images-fits]')?.textContent).toBe('dev, prod');
+      expect(panel.querySelector('[data-images-fits]')?.textContent).toBe('images_fits_count_many 2');
+    });
+
+    it('Can go to opens Environment on the environments that take the images', async () => {
+      setUp({
+        extraEnvironments: [
+          { environment: env({ id: 'e-research', name: 'research-ml', kind: 'research', research_project: 'rp', project_id: 'p1' }), namespace: 'shop' },
+        ],
+      });
+      window.history.replaceState(null, '', '/?rel.stage=images&rel.build=studio-2');
+      render(<ReleasesScreen bridge={null} />);
+      fireEvent.click(await el('[data-images-fits="2"]'));
+      const envs = await el('[data-release-stage="environment"]');
+      expect(window.location.search).toContain('rel.envs.f.fits=yes');
+      await waitFor(() =>
+        expect([...envs.querySelectorAll('[data-ladder-row]')].map((r) => r.getAttribute('data-ladder-row'))).toEqual(['dev', 'prod'])
+      );
     });
   });
 
@@ -285,14 +301,15 @@ describe('ReleasesScreen', () => {
     it('deploys the chosen images to the chosen environment, which waits for approval when protected', async () => {
       render(<ReleasesScreen bridge={null} />);
       const envs = await openStage('environment');
+      const prodRow = () => envs.querySelector('[data-ladder-row="prod"]')?.closest('tr') as HTMLElement | null;
       const prod = await waitFor(() => {
-        const row = envs.querySelector('[data-ladder-row="prod"]');
+        const row = prodRow();
         if (!row) throw new Error('not yet');
-        return row as HTMLElement;
+        return row;
       });
       expect(prod.querySelector('[data-ladder-fit]')?.getAttribute('data-ladder-fit')).toBe('yes');
       fireEvent.click(prod.querySelector('[data-ladder-choose]') as HTMLElement);
-      await waitFor(() => expect(prod.hasAttribute('data-ladder-selected')).toBe(true));
+      await waitFor(() => expect(prodRow()?.querySelector('[data-ladder-selected]')).toBeTruthy());
       expect(window.location.search).toContain('rel.env=e-prod');
       fireEvent.click(await el('[data-environment-next]'));
       const deploy = await el('[data-release-stage="deploy"]');
@@ -320,9 +337,9 @@ describe('ReleasesScreen', () => {
             started_at: '2026-11-10T09:00:00Z',
             finished_at: '2026-11-10T09:20:00Z',
             images: [
-              { app: 'api-gateway', image: 'research-image://1' },
-              { app: 'ui', image: 'research-image://2' },
-              { app: 'database', image: 'research-image://3' },
+              { app: 'api-gateway', image: 'research-image/studioweb/api-gateway:i1' },
+              { app: 'ui', image: 'research-image/studioweb/ui:i2' },
+              { app: 'studio-database-postgres', image: 'research-image/studioweb/postgres:i3' },
             ],
           }),
         ],
@@ -332,8 +349,22 @@ describe('ReleasesScreen', () => {
       const images = await openStage('images');
       await waitFor(() => expect(images.querySelector('[data-images-build]')?.getAttribute('data-images-build')).toBe('research-1'));
       expect(document.querySelector('[data-map-stage="images"]')?.textContent).toContain('map_images_count {"done":3,"total":3}');
-      expect(images.querySelector('[data-images-place]')?.getAttribute('data-images-place')).toBe('research');
-      expect(images.querySelectorAll('[data-build-image]').length).toBe(3);
+      // One row per image on the shared grid: where it lives, whether it can run.
+      await waitFor(() => expect(images.querySelectorAll('[data-build-image]').length).toBe(3));
+      expect([...images.querySelectorAll('[data-image-place]')].map((e) => e.getAttribute('data-image-place'))).toEqual([
+        'research',
+        'research',
+        'research',
+      ]);
+      expect([...images.querySelectorAll('[data-image-status]')].map((e) => e.getAttribute('data-image-status'))).toEqual([
+        'ready',
+        'ready',
+        'ready',
+      ]);
+      // The search narrows the rows.
+      fireEvent.change(screen.getByPlaceholderText('search_images'), { target: { value: 'postgres' } });
+      await waitFor(() => expect(images.querySelectorAll('[data-build-image]').length).toBe(1));
+      fireEvent.change(screen.getByPlaceholderText('search_images'), { target: { value: '' } });
       // A passed build is deployable from Images.
       fireEvent.click(images.querySelector('[data-images-deploy]') as HTMLElement);
       const deploy = await el('[data-release-stage="deploy"]');
@@ -783,44 +814,45 @@ describe('ReleasesScreen', () => {
       namespace: 'shop-research-ml',
     };
     const kit = { research_kit: true, research: { state: 'signed_in' as const, connection_id: 'c-research' } };
-    const group = (kind: string, rows = true) =>
-      waitFor(() => {
-        const g = document.querySelector(`[data-environment-group="${kind}"]`);
-        if (!g || (rows && !g.querySelector('[data-ladder-row]'))) throw new Error('not yet');
-        return g as HTMLElement;
-      });
+    const rows = (root: ParentNode) => [...root.querySelectorAll('[data-ladder-row]')].map((r) => r.getAttribute('data-ladder-row'));
+    const rowOf = (name: string) => document.querySelector(`[data-ladder-row="${name}"]`)?.closest('tr') as HTMLElement;
 
-    it('groups the environments into Kubernetes and Research, each row with its place', async () => {
+    it('lists every environment on the shared grid, Kubernetes first, each with where it runs', async () => {
       setUp({ path: readyPath(kit), extraEnvironments: [researchEnv] });
       render(<ReleasesScreen bridge={null} />);
-      await openStage('environment');
-      const kube = await group('kubernetes');
-      expect([...kube.querySelectorAll('[data-ladder-row]')].map((r) => r.getAttribute('data-ladder-row'))).toEqual(['dev', 'prod']);
-      await waitFor(() => expect(kube.querySelector('[data-environment-target="kubernetes"]')?.textContent).toContain('Acme cluster'));
-      expect(kube.textContent).toContain('shop-dev');
-      const research = await group('research');
-      expect([...research.querySelectorAll('[data-ladder-row]')].map((r) => r.getAttribute('data-ladder-row'))).toEqual(['research-ml']);
+      const envs = await openStage('environment');
+      await waitFor(() => expect(rows(envs)).toEqual(['dev', 'prod', 'research-ml']));
+      const dev = rowOf('dev');
+      expect(dev.querySelector('[data-environment-kind]')?.getAttribute('data-environment-kind')).toBe('kubernetes');
+      await waitFor(() => expect(rowOf('dev').querySelector('[data-environment-target="kubernetes"]')?.textContent).toContain('Acme cluster'));
+      expect(rowOf('dev').textContent).toContain('shop-dev');
+      const research = rowOf('research-ml');
+      expect(research.querySelector('[data-environment-kind]')?.getAttribute('data-environment-kind')).toBe('research');
       // studio-2 has a chart and no Research images: the Research row says so.
       expect(research.querySelector('[data-ladder-fit]')?.getAttribute('data-ladder-fit')).toBe('research_only');
-      const target = research.querySelector('[data-environment-target="research"]') as HTMLElement;
-      await waitFor(() => expect(target.textContent).toContain('ML team'));
-      await waitFor(() => expect(target.textContent).toContain('GPU'));
-      expect(target.textContent).toContain('Research account');
+      await waitFor(() => expect(rowOf('research-ml').querySelector('[data-environment-target="research"]')?.textContent).toContain('ML team'));
+      await waitFor(() => expect(rowOf('research-ml').querySelector('[data-environment-target="research"]')?.textContent).toContain('GPU'));
+      expect(rowOf('research-ml').textContent).toContain('Research account');
+      // The search narrows the list; a row's click chooses it.
+      fireEvent.change(screen.getByPlaceholderText('search_environments'), { target: { value: 'research' } });
+      await waitFor(() => expect(rows(envs)).toEqual(['research-ml']));
+      fireEvent.click(rowOf('research-ml'));
+      await waitFor(() => expect(window.location.search).toContain('rel.env=e-research'));
+      expect(await el('[data-environment-chosen="research-ml"] [data-ladder-detail="research-ml"]')).toBeTruthy();
     });
 
-    it('the Research group says how to get an environment there', async () => {
+    it('says how to get a Research environment when the kit applies and there is none', async () => {
       setUp({ path: readyPath(kit) });
       render(<ReleasesScreen bridge={null} />);
       await openStage('environment');
-      const research = await group('research', false);
-      expect(research.textContent).toContain('group_research_empty');
+      expect((await el('[data-releases-empty="research"]')).textContent).toContain('group_research_empty');
     });
 
-    it('without the kit there is no Research group unless an environment is one', async () => {
+    it('without the kit says nothing of Research', async () => {
       render(<ReleasesScreen bridge={null} />);
-      await openStage('environment');
-      await group('kubernetes');
-      expect(document.querySelector('[data-environment-group="research"]')).toBeNull();
+      const envs = await openStage('environment');
+      await waitFor(() => expect(rows(envs)).toEqual(['dev', 'prod']));
+      expect(document.querySelector('[data-releases-empty="research"]')).toBeNull();
     });
 
     it('without a product says why and leaves Choose and Build and run waiting', async () => {
@@ -836,12 +868,11 @@ describe('ReleasesScreen', () => {
       render(<ReleasesScreen bridge={null} />);
       const line = await el('[data-releases-no-product]');
       expect(line.textContent).toContain('no_product_actions');
-      expect(document.querySelector('[data-map-stage="build"]')?.getAttribute('data-map-state')).toBe('blocked');
-      await openStage('build');
-      expect((await el('[data-research-open]') as HTMLButtonElement).disabled).toBe(true);
+      await waitFor(() => expect(document.querySelector('[data-map-stage="build"]')?.getAttribute('data-map-state')).toBe('blocked'));
+      expect(document.querySelector('[data-release-stage]')?.getAttribute('data-release-stage')).toBe('build');
+      expect(((await el('[data-research-open]')) as HTMLButtonElement).disabled).toBe(true);
       await openStage('environment');
-      await group('kubernetes');
-      const choose = document.querySelector('[data-ladder-choose]') as HTMLButtonElement;
+      const choose = (await el('[data-ladder-choose]')) as HTMLButtonElement;
       expect(choose.disabled).toBe(true);
       expect(choose.title).toBe('no_product_short');
       fireEvent.click(line.querySelector('[data-path-action="open_product"]') as HTMLElement);

@@ -13,7 +13,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { Badge, Button, NativeSelect, NativeSelectOption } from '@gears-frontx/ui-kit';
 import { isNotFound, openScreen, runWhenVisible, useScreenAvailability } from '@constructor-studio/mfe-shared';
-import type { BuildLog, DeployEnvironment, ProjectBuildConfig, ProjectImage } from '../../api/types';
+import type { BuildLog, DeployEnvironment, ProjectBuildConfig } from '../../api/types';
 import {
   buildWorkflowOf,
   buildsHeadline,
@@ -32,7 +32,6 @@ import {
   type IdeBuild,
   type StageState,
 } from '../../model/builds';
-import { recordFor, whereItRuns } from '../../model/images';
 import { recordedProgress } from '../../model/environment-targets';
 import { ResearchProgress } from './ResearchProgress';
 import { buildsHint } from '../../model/pipeline';
@@ -505,47 +504,6 @@ function BuildDetails({
         <div className={styles.muted}>{b.outputs.join(', ')}</div>
       ) : null}
     </div>
-  );
-}
-
-/** The images a build published, each with what Studio recorded of it:
- *  where it runs now, whether it is pinned or gone. An image Studio did not
- *  record (a build from before the records, or one the IDE pushed) is its
- *  reference alone. */
-export function BuildImages({ build: b }: { build: IdeBuild }) {
-  const { projectId } = useReleases();
-  const api = useApi();
-  const [records, setRecords] = useState<ProjectImage[]>([]);
-  useEffect(() => {
-    let live = true;
-    api
-      .buildImages({ projectId, buildId: b.buildId })
-      .fetch({ staleTime: 0 })
-      .then((page) => live && setRecords(page.items))
-      .catch(() => live && setRecords([]));
-    return () => {
-      live = false;
-    };
-  }, [api, projectId, b.buildId]);
-  return (
-    <ul className={styles.list} data-build-images>
-      {b.images.map((i) => {
-        const record = recordFor(i, records, b.buildId);
-        return (
-          <li key={i.app} data-build-image={i.app}>
-            {i.app} → <code>{i.image}</code>
-            {record && (
-              <span className={styles.muted} data-build-image-record={record.id}>
-                {' '}
-                · {whereItRuns(record.running_in)}
-                {record.pinned ? ' Pinned.' : ''}
-                {record.state !== 'present' && ` (${record.state})`}
-              </span>
-            )}
-          </li>
-        );
-      })}
-    </ul>
   );
 }
 

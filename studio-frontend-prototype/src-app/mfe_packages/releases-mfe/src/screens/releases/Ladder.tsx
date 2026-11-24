@@ -1,61 +1,29 @@
 /**
- * The ladder (ADR-0056 §4), the prototype's ReleaseLadder, StepDetail,
- * DeployProgress and PromoteBuild (releases-tab.tsx at 00828880): the newest
- * published build, then a row per environment in the order a release climbs
- * them -- what runs there, how its newest deploy went, whether the chosen
- * images can go there, what it takes from -- and Choose, which makes it the
- * environment the Deploy stage deploys to (the release map, 2026-11-24). A
- * row opens on its newest deploy as the deploy tells it. DeployProgress and
- * PromoteBuild are the Deploy stage's.
+ * What the ladder (ADR-0056 §4) kept once its table moved onto the shared
+ * grid (EnvironmentsGrid.tsx): the prototype's StepDetail, DeployProgress and
+ * PromoteBuild (releases-tab.tsx at 00828880) -- the chosen environment's
+ * detail under the Environment stage's list, and the Deploy stage's progress
+ * and Promote.
  */
 
-import React, { Fragment, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { pollWhileVisible } from '@constructor-studio/mfe-shared';
-import { Badge, Button, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@gears-frontx/ui-kit';
+import { Button } from '@gears-frontx/ui-kit';
 import type { Connection, Deployment, DeploymentStatus, ProjectTargets, TaskRun } from '../../api/types';
 import type { IdeBuild } from '../../model/builds';
-import { productUrls, profilesBoundTo } from '../../model/project-deploys';
-import { stepStatus, versionOf, type LadderStep } from '../../model/releases';
+import { profilesBoundTo } from '../../model/project-deploys';
+import { versionOf, type LadderStep } from '../../model/releases';
 import { RungPlace, useDeployRequest } from './DeployActions';
-import { ErrorLine, TONE_BADGE, When, personLabel, relTime, useApi, usePeople, useReleases, type Tone } from './parts';
+import { ErrorLine, personLabel, relTime, useApi, usePeople, useReleases } from './parts';
 import styles from './ReleasesScreen.module.css';
 
-/** A ladder step's tone (releases.ts) as a chip's. */
-const LADDER_TONE: Record<ReturnType<typeof stepStatus>['tone'], Tone> = {
-  ok: 'ok',
-  warn: 'warn',
-  bad: 'danger',
-  idle: 'neutral',
-};
-
-export function ReleaseLadder({
-  steps,
-  bindings,
-  selected,
-  onSelect,
-  fitOf,
-  head,
-  targetOf,
-  blocked = null,
-}: {
-  steps: LadderStep[];
-  bindings: ProjectTargets['bindings'];
-  /** The environment chosen for the deploy. */
-  selected: string | null;
-  onSelect: (environment: string) => void;
-  /** Whether the chosen images can go there: adds the column when given. */
-  fitOf?: (step: LadderStep) => React.ReactNode;
-  /** What the card says above its rows: the group's heading. */
-  head: React.ReactNode;
-  /** Where a row's environment runs: adds the column when given. */
-  targetOf?: (step: LadderStep) => React.ReactNode;
-  /** Why nothing can be deployed here yet: Choose waits, saying so. */
-  blocked?: string | null;
-}) {
-  const { t, projectId } = useReleases();
+/** The chosen environment: where it is, what it still needs, which profile
+ *  it runs, and its newest deploy as that deploy tells it -- the reason it
+ *  was asked for and its outcome, a crashed container's error first. */
+export function EnvironmentDetail({ step: s, bindings }: { step: LadderStep; bindings: ProjectTargets['bindings'] }) {
+  const { t, language, organizationId, projectId } = useReleases();
   const api = useApi();
-  const [expanded, setExpanded] = useState<string | null>(null);
-  // Every rung asks which place it stands on: read once for the ladder.
+  // The place a rung stands on, and whether the member is signed in to Research.
   const [connections, setConnections] = useState<Connection[] | null>(null);
   useEffect(() => {
     let live = true;
@@ -68,130 +36,6 @@ export function ReleaseLadder({
       live = false;
     };
   }, [api, projectId]);
-  const columns = 6 + (targetOf ? 1 : 0) + (fitOf ? 1 : 0);
-  return (
-    <section className={styles.card} data-release-ladder>
-      {head}
-      {steps.length > 0 && (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>{t('col_environment')}</TableHead>
-              {targetOf && <TableHead>{t('col_target')}</TableHead>}
-              <TableHead>{t('col_status')}</TableHead>
-              <TableHead>{t('col_runs')}</TableHead>
-              {fitOf && <TableHead>{t('col_fits')}</TableHead>}
-              <TableHead>{t('col_takes_from')}</TableHead>
-              <TableHead>{t('col_last_deploy')}</TableHead>
-              <TableHead />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {steps.map((s) => {
-              const id = s.environment.id;
-              const status = stepStatus(s);
-              return (
-                <Fragment key={id}>
-                  <TableRow
-                    className={styles.clickable}
-                    onClick={() => setExpanded(expanded === id ? null : id)}
-                    aria-expanded={expanded === id}
-                    data-ladder-row={s.environment.name}
-                    data-ladder-selected={selected === id || undefined}
-                  >
-                    <TableCell>
-                      <span className={styles.chips} data-ladder-step={s.environment.name} data-ladder-state={s.state}>
-                        <b>{s.environment.name}</b>
-                        {s.environment.protected && <Badge variant="info">{t('needs_approval')}</Badge>}
-                        {s.environment.project_id && (
-                          <Badge variant="secondary" data-own-environment>
-                            {t('projects_own')}
-                          </Badge>
-                        )}
-                      </span>
-                    </TableCell>
-                    {targetOf && <TableCell>{targetOf(s)}</TableCell>}
-                    <TableCell>
-                      <Badge
-                        variant={TONE_BADGE[s.state === 'deploying' ? 'running' : LADDER_TONE[status.tone]]}
-                        data-ladder-status
-                      >
-                        {status.text}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      {s.runs ? (
-                        <>
-                          <code>{versionOf(s.runs) ?? s.runs.product}</code>
-                          {productUrls(s.runs.outcome).map((u) => (
-                            <div key={u}>
-                              <a
-                                href={u}
-                                target="_blank"
-                                rel="noreferrer"
-                                onClick={(e) => e.stopPropagation()}
-                                data-product-url
-                              >
-                                {t('open_product')}
-                              </a>
-                            </div>
-                          ))}
-                        </>
-                      ) : (
-                        <span className={styles.muted}>{t('nothing')}</span>
-                      )}
-                    </TableCell>
-                    {fitOf && <TableCell>{fitOf(s)}</TableCell>}
-                    <TableCell>{s.from ?? <span className={styles.muted}>{t('a_build')}</span>}</TableCell>
-                    <TableCell>
-                      <When iso={s.latest?.requested_at} />
-                    </TableCell>
-                    <TableCell onClick={(e) => e.stopPropagation()}>
-                      <span className={styles.ladderActions}>
-                        <Button
-                          size="sm"
-                          variant={selected === id ? 'default' : 'outline'}
-                          aria-pressed={selected === id}
-                          disabled={!!blocked}
-                          title={blocked ?? t('choose_environment_title')}
-                          onClick={() => onSelect(id)}
-                          data-ladder-choose
-                        >
-                          {t(selected === id ? 'environment_chosen' : 'choose_environment')}
-                        </Button>
-                      </span>
-                    </TableCell>
-                  </TableRow>
-                  {expanded === id && (
-                    <TableRow data-ladder-expanded={s.environment.name}>
-                      <TableCell colSpan={columns}>
-                        <StepDetail step={s} bindings={bindings} connections={connections} />
-                      </TableCell>
-                    </TableRow>
-                  )}
-                </Fragment>
-              );
-            })}
-          </TableBody>
-        </Table>
-      )}
-    </section>
-  );
-}
-
-/** An environment's row, opened: where it is, which profile it runs, and its
- *  newest deploy as that deploy tells it -- the reason it was asked for and
- *  its outcome, a crashed container's error first. */
-function StepDetail({
-  step: s,
-  bindings,
-  connections,
-}: {
-  step: LadderStep;
-  bindings: ProjectTargets['bindings'];
-  connections: Connection[] | null;
-}) {
-  const { t, language, organizationId, projectId } = useReleases();
   const e = s.environment;
   const profiles = profilesBoundTo(bindings, e.id);
   const people = usePeople([organizationId, projectId]);
