@@ -562,6 +562,20 @@ impl CatalogService {
         ctx: &SecurityContext,
         occ: &super::registry::OccurrenceRecord,
     ) -> Option<std::path::PathBuf> {
+        // A project's code: the project's one checkout of the source, as the
+        // last sync left it. Never fetched here.
+        if let Some(project) = occ.project_id {
+            let dirs = self.clone_dirs(ctx, &project.to_string()).await;
+            if let Some(found) = dirs.get(&occ.repo.trim().to_ascii_lowercase()) {
+                if found.is_none() {
+                    tracing::warn!(repo = %occ.repo, %project, "components-catalog: the project source has not been synced to the server; the readiness check cannot read it");
+                }
+                return found.clone();
+            }
+        }
+        // Not a project source (an organization's gear repository): the
+        // engine's clone of it as the catalogue's background sync left it,
+        // without fetching on this request.
         let gearbox = self.gearbox.get()?;
         let source = RepoSource {
             tenant: occ.tenant?,
@@ -570,17 +584,12 @@ impl CatalogService {
             git_ref: occ.git_ref.clone().unwrap_or_default(),
             mode: "gears".into(),
         };
-        let mut corpus = self.corpus_source(ctx, &source).await?;
-        // No ref is the repository's default branch, as the API reads it --
-        // not `main`, which `corpus_source` assumes for a catalogue source.
-        corpus.git_ref = source.git_ref.trim().to_owned();
-        match gearbox.checkout(&corpus).await {
-            Ok(dir) => Some(dir),
-            Err(e) => {
-                tracing::warn!(error = %format!("{e:#}"), repo = %occ.repo, "components-catalog: no checkout for the readiness check; reading through the API");
-                None
-            }
+        let corpus = self.corpus_source(ctx, &source).await?;
+        let found = gearbox.checkout_as_is(&corpus);
+        if found.is_none() {
+            tracing::warn!(repo = %occ.repo, "components-catalog: no clone of the gear repository on the server yet; the readiness check reads through the API");
         }
+        found
     }
 
     /// The catalogue's gears repository as a place the engine can check out:
@@ -617,6 +626,7 @@ impl CatalogService {
             username,
             token,
             git_ref,
+            local: None,
         })
     }
 
@@ -2029,11 +2039,14 @@ impl CatalogService {
         Ok(out)
     }
 
-    /// [`Self::enrichers`], each reading the server's own clone of its
-    /// repository when there is one (the checkout a sync and the IDE share):
-    /// its tree is `git ls-tree` and its files are read from disk, so the
-    /// provider is not asked. A clone on another branch than the one the
-    /// project names is not used. Without a clone, the API as before.
+    /// [`Self::enrichers`], each reading the server's one checkout of its
+    /// repository (`artifact_ingest::port::ProjectCheckout`): its tree is
+    /// `git ls-tree`, its files are read from disk and its history is
+    /// `git log`, so the provider is not asked. A project source no sync has
+    /// cloned yet fails as "not synced" rather than being read through the
+    /// provider. Only a gear repository recorded apart from the sources --
+    /// not a project source, so it has no project checkout -- is still read
+    /// through its connection.
     pub(super) async fn enrichers_on_clones(
         &self,
         ctx: &SecurityContext,
@@ -2042,86 +2055,66 @@ impl CatalogService {
     ) -> anyhow::Result<Vec<(ProjectRepo, RepoEnricher)>> {
         let enrichers = self.enrichers(repos)?;
         let dirs = self.clone_dirs(ctx, project_id).await;
-        if dirs.is_empty() {
-            return Ok(enrichers);
-        }
         let mut out = Vec::with_capacity(enrichers.len());
         for (target, enricher) in enrichers {
-            let dir = dirs.get(&target.repo.trim().to_ascii_lowercase()).cloned();
-            let usable = match &dir {
-                Some(d) if !target.branch.trim().is_empty() => {
-                    let d = d.clone();
-                    let head = tokio::task::spawn_blocking(move || {
-                        crate::connectors::sdk::git_checkout::head_ref(&d)
-                    })
-                    .await
-                    .ok()
-                    .flatten();
-                    head.as_deref() == Some(target.branch.trim())
-                }
-                Some(_) => true,
-                None => false,
+            let enricher = match dirs.get(&target.repo.trim().to_ascii_lowercase()) {
+                Some(Some(dir)) => enricher.with_checkout(dir.clone()).offline(),
+                Some(None) => enricher.offline(),
+                None => enricher,
             };
-            out.push(match (dir, usable) {
-                (Some(d), true) => (target, enricher.with_checkout(d)),
-                _ => (target, enricher),
-            });
+            out.push((target, enricher));
         }
         Ok(out)
     }
 
-    /// `(owner/repo, HEAD commit)` of the server's clone of each project
-    /// source, sorted: what the code is read at.
+    /// `(owner/repo, commit)` of the server's checkout of each project
+    /// source, sorted: the commit the last sync read, which the code is read
+    /// at.
     pub async fn clone_commits(
         &self,
         ctx: &SecurityContext,
         project_id: &str,
     ) -> Vec<(String, String)> {
-        let mut out = Vec::new();
-        for (repo, dir) in self.clone_dirs(ctx, project_id).await {
-            let commit = tokio::task::spawn_blocking(move || {
-                crate::connectors::sdk::git_checkout::head_commit(&dir)
-            })
+        let mut out: Vec<(String, String)> = self
+            .project_checkouts(ctx, project_id)
             .await
-            .ok()
-            .flatten();
-            if let Some(c) = commit {
-                out.push((repo, c));
-            }
-        }
+            .into_iter()
+            .filter_map(|(s, c)| Some((s.full_path.trim().to_ascii_lowercase(), c?.commit)))
+            .collect();
         out.sort();
         out
     }
 
-    /// `owner/repo` (lowercase) -> the server's clone of each project source.
+    /// `owner/repo` (lowercase) -> the server's checkout of each project
+    /// source, `None` for a source no sync has cloned yet.
     async fn clone_dirs(
         &self,
         ctx: &SecurityContext,
         project_id: &str,
-    ) -> std::collections::HashMap<String, std::path::PathBuf> {
-        let mut out = std::collections::HashMap::new();
-        let (Some(am), Some(hub), Ok(project)) = (
-            self.account_management.get(),
-            self.hub.get(),
-            Uuid::parse_str(project_id.trim()),
-        ) else {
-            return out;
+    ) -> std::collections::HashMap<String, Option<std::path::PathBuf>> {
+        self.project_checkouts(ctx, project_id)
+            .await
+            .into_iter()
+            .map(|(s, c)| (s.full_path.trim().to_ascii_lowercase(), c.map(|c| c.dir)))
+            .collect()
+    }
+
+    /// The project's sources with the server's checkout of each.
+    async fn project_checkouts(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+    ) -> Vec<(
+        crate::project_sources::ProjectSource,
+        Option<crate::artifact_ingest::port::SourceCheckout>,
+    )> {
+        let (Some(hub), Ok(project)) = (self.hub.get(), Uuid::parse_str(project_id.trim())) else {
+            return Vec::new();
         };
-        let Ok(reader) = hub.get::<dyn crate::artifact_ingest::port::RepoFileReader>() else {
-            return out;
+        let Ok(checkouts) = hub.get::<dyn crate::artifact_ingest::port::ProjectCheckout>() else {
+            return Vec::new();
         };
-        let Ok(Some(sources)) =
-            crate::project_sources::read_checked(am.as_ref(), ctx, project).await
-        else {
-            return out;
-        };
-        let scope = project.to_string();
-        for s in sources {
-            if let Some(dir) = reader.checkout_dir(&scope, &s.dir) {
-                out.insert(s.full_path.trim().to_ascii_lowercase(), dir);
-            }
-        }
-        out
+        checkouts.project_checkouts(ctx, project).await
     }
 
     /// Where the project's code is: the gear repository when one is

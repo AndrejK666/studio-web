@@ -156,29 +156,49 @@ impl Drop for Tree {
 
 /// Clone the product's repository at `git_ref` and prepare it, as a cluster
 /// build's `prepare` step does.
+///
+/// The code comes from the project's one checkout on this server
+/// (`ProjectCheckout`) when it holds the commit asked for -- copied from the
+/// local disk, at the synced commit for the source's own branch -- and only
+/// otherwise (a commit or product branch pushed since the last sync) from
+/// the provider, in this background run.
+#[allow(clippy::too_many_arguments)]
 async fn prepare(
     hub: &Arc<ClientHub>,
     ctx: &SecurityContext,
+    project: Uuid,
     repo: &RepoRef,
     git_ref: Option<String>,
     description: Option<(Option<i64>, String)>,
     product_file: &str,
     profile: &str,
 ) -> anyhow::Result<Tree> {
-    let connectors = crate::connectors::sdk::Connectors::new(Arc::clone(hub))
-        .get()
-        .ok_or_else(|| anyhow!("connections are not available in this deployment"))?;
-    let (driver, auth, _) = connectors
-        .driver_and_auth(ctx, repo.tenant, repo.connection_id)
-        .await
-        .map_err(|e| anyhow!("the repository's connection cannot be used by the server: {e:#}"))?;
-    let url = driver.clone_url(&auth.base_url, &repo.repo)?;
-    let (username, password) = driver.clone_credentials(&auth.token);
-    let (username, password) = (username.to_owned(), password.to_owned());
     // A product branch lends only its description; the code is the base
     // branch's (ADR-0053 §4).
     let (git_ref, description_ref) =
         build::code_and_description_refs(git_ref.as_deref(), &repo.branch);
+    let local = match description_ref {
+        // A product branch's description is read from the provider's ref.
+        Some(_) => None,
+        None => local_code(hub, ctx, project, repo, &git_ref).await,
+    };
+    let (url, username, password, git_ref) = match local {
+        Some((url, commit)) => (url, String::new(), String::new(), commit),
+        None => {
+            let connectors = crate::connectors::sdk::Connectors::new(Arc::clone(hub))
+                .get()
+                .ok_or_else(|| anyhow!("connections are not available in this deployment"))?;
+            let (driver, auth, _) = connectors
+                .driver_and_auth(ctx, repo.tenant, repo.connection_id)
+                .await
+                .map_err(|e| {
+                    anyhow!("the repository's connection cannot be used by the server: {e:#}")
+                })?;
+            let url = driver.clone_url(&auth.base_url, &repo.repo)?;
+            let (username, password) = driver.clone_credentials(&auth.token);
+            (url, username.to_owned(), password.to_owned(), git_ref)
+        }
+    };
     let (product_file, profile) = (product_file.to_owned(), profile.to_owned());
     let work = std::env::temp_dir().join(format!("studio-research-{}", Uuid::new_v4().simple()));
     let at = work.clone();
@@ -216,6 +236,30 @@ async fn prepare(
             Err(e)
         }
     }
+}
+
+/// The project's checkout of `repo` as a URL to copy from on this server,
+/// and the commit to copy: the synced commit when `git_ref` is the source's
+/// own branch, else `git_ref` itself when the checkout holds it. `None` when
+/// there is no checkout, or it does not hold what is asked.
+async fn local_code(
+    hub: &Arc<ClientHub>,
+    ctx: &SecurityContext,
+    project: Uuid,
+    repo: &RepoRef,
+    git_ref: &str,
+) -> Option<(String, String)> {
+    let checkouts = hub
+        .get::<dyn crate::artifact_ingest::port::ProjectCheckout>()
+        .ok()?;
+    let checkout = checkouts.checkout_of(ctx, project, &repo.repo).await?;
+    let wanted = git_ref.trim();
+    let commit = if wanted.is_empty() || wanted == repo.branch.trim() {
+        checkout.commit.clone()
+    } else {
+        checkout.resolve(wanted).await?
+    };
+    Some((checkout.local_url(), commit))
 }
 
 /// The prepared chart rendered as `release` in `namespace` with `values`.
@@ -923,6 +967,7 @@ impl ResearchBuildTask {
             let prepared = prepare(
                 &self.hub,
                 &ctx.security,
+                p.project_id,
                 &p.repo,
                 p.git_ref.clone(),
                 p.description_text
@@ -1613,6 +1658,7 @@ async fn put(
     let tree = prepare(
         hub,
         &ctx.security,
+        p.project_id,
         &r.repo,
         Some(r.commit.clone()),
         // The chart is rendered from the revision the build took, laid at

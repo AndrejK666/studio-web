@@ -542,8 +542,11 @@ impl ProductService {
         .await
     }
 
-    /// The text of `path` in the project's repository at `git_ref` (its base
-    /// branch when `None`); `None` when there is no such file there.
+    /// The text of `path` in the project's repository at `git_ref` (the
+    /// commit its last sync read when `None`), from the server's checkout --
+    /// never the provider; `None` when there is no such file there. A ref the
+    /// checkout does not hold yet (pushed since the last sync) is an error
+    /// saying so.
     pub async fn read_project_file_at(
         &self,
         ctx: &SecurityContext,
@@ -558,9 +561,17 @@ impl ProductService {
         };
         self.ensure_owned(ctx, super::scope_of(ctx, project_id), &target)
             .await?;
-        let at = git_ref.unwrap_or(&target.base_branch).to_owned();
-        let repo = self.open_target(ctx, &target, Some(&at)).await?;
-        Ok(repo.read_file(path).await?.map(|f| f.text))
+        let checkout = self.project_checkout(ctx, project_id, &target.repo).await?;
+        let Some(at) = git_ref.map(str::trim).filter(|r| !r.is_empty()) else {
+            return checkout.read_file(path).await;
+        };
+        let commit = checkout.resolve(at).await.ok_or_else(|| {
+            anyhow!(
+                "{} at `{at}` is not on the server yet: Re-sync the project",
+                target.repo
+            )
+        })?;
+        checkout.read_file_at(&commit, path).await
     }
 }
 

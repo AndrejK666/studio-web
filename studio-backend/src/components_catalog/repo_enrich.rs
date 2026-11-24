@@ -190,6 +190,11 @@ pub struct RepoEnricher {
     /// file is then read from disk, and the source-code fields -- which need
     /// every file -- are filled too.
     checkout: Option<std::path::PathBuf>,
+    /// Whether this reader may ask the provider when it has no checkout.
+    /// A project's repository is read on a request path only from the
+    /// server's checkout ([`Self::offline`]); the catalogue's own background
+    /// sync of a gear repository still may.
+    provider_reads: bool,
 }
 
 impl RepoEnricher {
@@ -216,6 +221,7 @@ impl RepoEnricher {
             git_ref,
             mode,
             checkout: None,
+            provider_reads: true,
         })
     }
 
@@ -223,6 +229,14 @@ impl RepoEnricher {
     /// comes from it too, so every number is one commit's.
     pub fn with_checkout(mut self, dir: std::path::PathBuf) -> Self {
         self.checkout = Some(dir);
+        self
+    }
+
+    /// Never ask the provider: without a checkout every read fails with
+    /// "not synced yet" instead. What a request reading a project's
+    /// repository uses -- the sync is the only thing that fetches it.
+    pub fn offline(mut self) -> Self {
+        self.provider_reads = false;
         self
     }
 
@@ -501,7 +515,19 @@ impl RepoEnricher {
     async fn repo_wide(&self, src: &Repository) -> RepoWide {
         const MAX_PAGES: usize = 40;
         let mut tags: Vec<String> = Vec::new();
-        for page in 1..=MAX_PAGES {
+        // The checkout holds the tags it was cloned with: no request at all.
+        let local_tags = match self.checkout.clone() {
+            Some(dir) => tokio::task::spawn_blocking(move || {
+                crate::connectors::sdk::git_checkout::tags(&dir)
+            })
+            .await
+            .ok()
+            .flatten(),
+            None => None,
+        };
+        let pages = if local_tags.is_some() { 0 } else { MAX_PAGES };
+        tags.extend(local_tags.unwrap_or_default());
+        for page in 1..=pages {
             let Ok(batch) = src.tags(page as u32, 100).await else {
                 break;
             };
@@ -826,6 +852,12 @@ impl RepoEnricher {
     /// The repository through the chosen GitHub connection -- the token stays
     /// in credstore; the connection's driver speaks to the provider.
     async fn open(&self, ctx: &SecurityContext) -> Result<Repository> {
+        if !self.provider_reads && self.checkout.is_none() {
+            anyhow::bail!(
+                "{} has not been synced to the server yet: Re-sync the project to clone it",
+                self.repo
+            );
+        }
         Repository::open(
             &self.connectors,
             ctx,
@@ -1007,6 +1039,14 @@ impl RepoEnricher {
     /// The newest commit on the ref, best effort: one request, and `None`
     /// when the host does not say.
     pub async fn head_commit(&self, ctx: &SecurityContext) -> Option<String> {
+        if let Some(dir) = self.checkout.clone() {
+            return tokio::task::spawn_blocking(move || {
+                crate::connectors::sdk::git_checkout::head_commit(&dir)
+            })
+            .await
+            .ok()
+            .flatten();
+        }
         let src = self.open(ctx).await.ok()?;
         src.history("", 1)
             .await
@@ -1324,8 +1364,41 @@ impl RepoEnricher {
         None
     }
 
+    /// The checkout's own history of `dir`, newest first: `git log`, never
+    /// the provider. Empty without a checkout or when git cannot read it.
+    async fn local_history(
+        &self,
+        dir: &str,
+        max: usize,
+    ) -> Vec<crate::connectors::sdk::RemoteCommit> {
+        let Some(checkout) = self.checkout.clone() else {
+            return Vec::new();
+        };
+        let dir = dir.to_owned();
+        tokio::task::spawn_blocking(move || {
+            crate::connectors::sdk::git_checkout::history_at(
+                &checkout,
+                "HEAD",
+                Some(dir.as_str()),
+                max,
+            )
+        })
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default()
+    }
+
     /// The last commit ISO date that touched a directory.
     async fn last_change(&self, src: &Repository, dir: &str) -> Option<String> {
+        if self.checkout.is_some() {
+            return self
+                .local_history(dir, 1)
+                .await
+                .into_iter()
+                .next()
+                .and_then(|c| c.committed_at);
+        }
         src.history(dir, 1)
             .await
             .ok()?
@@ -1339,8 +1412,13 @@ impl RepoEnricher {
     /// how much of it is signed off, in the one call the last-change date
     /// already cost.
     async fn history(&self, src: &Repository, dir: &str) -> (Option<String>, Vec<CommitFacts>) {
-        let Ok(commits) = src.history(dir, 100).await else {
-            return (None, Vec::new());
+        let commits = if self.checkout.is_some() {
+            self.local_history(dir, 100).await
+        } else {
+            let Ok(commits) = src.history(dir, 100).await else {
+                return (None, Vec::new());
+            };
+            commits
         };
         let last = commits.first().and_then(|c| c.committed_at.clone());
         let facts = commits

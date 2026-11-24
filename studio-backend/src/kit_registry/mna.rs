@@ -18,8 +18,9 @@
 //!
 //! **Evidence** is computed here from what Studio already holds, read as the
 //! caller: the project's sources (`project.config`), the repositories' sync
-//! state, contributors and the truck factor from the provider through the
-//! source's connection, active contributors from Insight, CI runs, spec
+//! state, contributors and the truck factor from the server's checkout of
+//! each source (its history, never the provider), active contributors from
+//! Insight, CI runs, spec
 //! checks and the kit's own objects. Each fact names where it came from, and
 //! one whose source could not be asked is `available: false` with the
 //! reason: never a number made up.
@@ -228,7 +229,7 @@ pub struct EvidenceRepository {
     pub branch: Option<String>,
     /// When its last sync finished; `None` when it never did.
     pub synced_at: Option<String>,
-    /// Contributors the provider lists (up to [`CONTRIBUTORS`]); `None` when
+    /// Commit authors in the server's checkout (up to [`CONTRIBUTORS`]); `None` when
     /// it could not be asked.
     pub contributors: Option<u32>,
     pub truck_factor: Option<u32>,
@@ -249,8 +250,9 @@ pub trait DealProjects: Send + Sync {
     /// reason when it could not be read, `Ok(None)` when there is none.
     async fn config(&self, ctx: &SecurityContext, project: Uuid) -> Result<Option<Value>, String>;
 
-    /// A source's contributors as the provider lists them, `(login,
-    /// commits)`, read through the source's connection as the caller.
+    /// A source's contributors, `(author, commits)`, from the history of the
+    /// server's checkout of it (`ProjectCheckout`) -- never the provider. An
+    /// author is the commit's name, not a host login.
     async fn contributors(
         &self,
         ctx: &SecurityContext,
@@ -275,10 +277,10 @@ impl GearReads for crate::mcp::sdk::Api {
 }
 
 /// The real [`DealProjects`]: account-management for the configuration,
-/// the connectors for the contributors.
+/// the project's checkouts for the contributors.
 pub struct HubProjects {
     am: Arc<dyn account_management_sdk::AccountManagementClient>,
-    connectors: crate::connectors::sdk::Connectors,
+    hub: Arc<toolkit::client_hub::ClientHub>,
 }
 
 impl HubProjects {
@@ -286,10 +288,7 @@ impl HubProjects {
         am: Arc<dyn account_management_sdk::AccountManagementClient>,
         hub: Arc<toolkit::client_hub::ClientHub>,
     ) -> Self {
-        Self {
-            am,
-            connectors: crate::connectors::sdk::Connectors::new(hub),
-        }
+        Self { am, hub }
     }
 }
 
@@ -317,38 +316,30 @@ impl DealProjects for HubProjects {
         project: Uuid,
         source: &ProjectSource,
     ) -> Result<Vec<(String, u64)>, String> {
-        let service = self
-            .connectors
-            .get()
-            .ok_or_else(|| "the connectors are not running here".to_owned())?;
-        // The provider names the default connection only; a source names its
-        // own, which is what is used.
-        let provider = if source.clone_url.contains("gitlab") {
-            "gitlab"
-        } else {
-            "github"
-        };
-        let repository = crate::connectors::sdk::Repository::open(
-            &service,
-            ctx,
-            project,
-            source.connection_id,
-            provider,
-            &source.full_path,
-            None,
-        )
-        .await
-        .map_err(|e| format!("{e:#}"))?;
-        let people = repository
-            .contributors(CONTRIBUTORS)
+        let checkouts = self
+            .hub
+            .get::<dyn crate::artifact_ingest::port::ProjectCheckout>()
+            .map_err(|_| "the project checkouts are not kept on this server".to_owned())?;
+        let checkout = checkouts
+            .checkout_of(ctx, project, &source.full_path)
+            .await
+            .ok_or_else(|| {
+                format!(
+                    "{} has not been synced to the server yet: Re-sync the project",
+                    source.full_path
+                )
+            })?;
+        let mut people = checkout
+            .authors(HISTORY_COMMITS)
             .await
             .map_err(|e| format!("{e:#}"))?;
-        Ok(people
-            .into_iter()
-            .map(|p| (p.login, p.contributions))
-            .collect())
+        people.truncate(CONTRIBUTORS as usize);
+        Ok(people)
     }
 }
+
+/// How many of a source's newest commits its contributors are counted over.
+const HISTORY_COMMITS: usize = 5_000;
 
 fn text(v: &Value, key: &str) -> Option<String> {
     v.get(key)
@@ -994,9 +985,9 @@ impl Mna {
             (None, Ok(_)) => {}
         }
 
-        // People: contributors and the truck factor, from the provider.
-        const PROVIDER: &str =
-            "the provider's contributor list, through each source's connection (whole history)";
+        // People: contributors and the truck factor, from the history of the
+        // server's checkout of each source (never the provider).
+        const FROM_HISTORY: &str = "the commit history of the server's checkout of each source";
         let all = sources.clone().unwrap_or_default();
         let lists = futures_util::future::join_all(
             all.iter()
@@ -1023,12 +1014,12 @@ impl Mna {
         let asked = lists.iter().filter(|l| l.is_ok()).count();
         if all.is_empty() {
             let why = "no repository is connected to the deal yet";
-            facts.push(Fact::missing("contributors", PROVIDER, why));
-            facts.push(Fact::missing("truck_factor", PROVIDER, why));
+            facts.push(Fact::missing("contributors", FROM_HISTORY, why));
+            facts.push(Fact::missing("truck_factor", FROM_HISTORY, why));
         } else if asked == 0 {
             let why = failures.join("; ");
-            facts.push(Fact::missing("contributors", PROVIDER, why.clone()));
-            facts.push(Fact::missing("truck_factor", PROVIDER, why));
+            facts.push(Fact::missing("contributors", FROM_HISTORY, why.clone()));
+            facts.push(Fact::missing("truck_factor", FROM_HISTORY, why));
         } else {
             let partial = (!failures.is_empty()).then(|| {
                 format!(
@@ -1036,12 +1027,16 @@ impl Mna {
                     failures.join("; ")
                 )
             });
-            let mut c = Fact::known("contributors", commits_by.len() as f64, PROVIDER);
+            let mut c = Fact::known("contributors", commits_by.len() as f64, FROM_HISTORY);
             let commits: Vec<u64> = commits_by.values().copied().collect();
             let mut t = match truck_factor(&commits) {
-                Some(n) => Fact::known("truck_factor", f64::from(n), PROVIDER)
+                Some(n) => Fact::known("truck_factor", f64::from(n), FROM_HISTORY)
                     .with_detail("the fewest people who made more than half of the commits"),
-                None => Fact::missing("truck_factor", PROVIDER, "the repositories have no commits"),
+                None => Fact::missing(
+                    "truck_factor",
+                    FROM_HISTORY,
+                    "the repositories have no commits",
+                ),
             };
             if let Some(p) = partial {
                 c = c.with_detail(p.clone());

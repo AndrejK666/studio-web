@@ -218,6 +218,10 @@ pub fn clone_or_update(
 
 /// [`clone_or_update`] into exactly `dir`, for a caller whose directory's
 /// name means something: the Gearbox engine names a source root by it.
+///
+/// A `file://` URL names a project checkout on this server ([`local_url`]):
+/// `dir` is then brought to `git_ref` of it from the local disk alone
+/// ([`mirror_local_into`]), and the provider is never asked.
 pub fn clone_or_update_into(
     dir: &Path,
     clone_url: &str,
@@ -225,6 +229,9 @@ pub fn clone_or_update_into(
     token: &str,
     git_ref: Option<&str>,
 ) -> anyhow::Result<CloneResult> {
+    if let Some(source) = local_source(clone_url) {
+        return mirror_local_into(dir, &source, git_ref.unwrap_or("HEAD"));
+    }
     if let Some(parent) = dir.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| anyhow::anyhow!("cannot create clone root {}: {e}", parent.display()))?;
@@ -654,22 +661,30 @@ pub struct LoggedCommit {
 /// A shallow checkout answers only the commits it holds; [`is_shallow`]
 /// tells a caller that the history is cut.
 pub fn log_with_files(dir: &Path, max: usize) -> Option<Vec<LoggedCommit>> {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args([
-            "log",
-            "--no-merges",
-            "--no-renames",
-            "-n",
-            &max.max(1).to_string(),
-            "--format=%x1e%H%x1f%an%x1f%ae%x1f%cI",
-            "--name-only",
-            "HEAD",
-        ])
-        .output()
-        .ok()
-        .filter(|o| o.status.success())?;
+    log_at(dir, "HEAD", None, max)
+}
+
+/// [`log_with_files`] from `rev` rather than `HEAD`, and only the commits
+/// that touched `path` (a file or a directory) when one is given: the
+/// history a reader asks of the commit a sync read ([`SYNCED_REF`]).
+/// Blocking.
+pub fn log_at(dir: &Path, rev: &str, path: Option<&str>, max: usize) -> Option<Vec<LoggedCommit>> {
+    let rev = checked_rev(rev)?;
+    let mut cmd = local_git(dir);
+    cmd.args([
+        "log",
+        "--no-merges",
+        "--no-renames",
+        "-n",
+        &max.max(1).to_string(),
+        "--format=%x1e%H%x1f%an%x1f%ae%x1f%cI",
+        "--name-only",
+        rev,
+    ]);
+    if let Some(path) = history_path(path) {
+        cmd.arg("--").arg(checked_rel(path)?);
+    }
+    let out = cmd.output().ok().filter(|o| o.status.success())?;
     Some(parse_log(&String::from_utf8_lossy(&out.stdout)))
 }
 
@@ -677,14 +692,287 @@ pub fn log_with_files(dir: &Path, max: usize) -> Option<Vec<LoggedCommit>> {
 /// size)`: `git ls-tree`, what a provider's tree listing answers, read from
 /// the clone. `None` when the directory is not a checkout. Blocking.
 pub fn ls_tree(dir: &Path) -> Option<Vec<(String, String, Option<i64>)>> {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(["ls-tree", "-r", "-l", "-z", "HEAD"])
+    ls_tree_at(dir, "HEAD")
+}
+
+/// [`ls_tree`] at `rev`. Blocking.
+pub fn ls_tree_at(dir: &Path, rev: &str) -> Option<Vec<(String, String, Option<i64>)>> {
+    let rev = checked_rev(rev)?;
+    let out = local_git(dir)
+        .args(["ls-tree", "-r", "-l", "-z", rev])
         .output()
         .ok()
         .filter(|o| o.status.success())?;
     Some(parse_ls_tree(&String::from_utf8_lossy(&out.stdout)))
+}
+
+// ── The project checkout, read offline at the commit a sync read ─────────────
+//
+// One clone of each project source lives on the server
+// (`{STUDIO_WORKSPACES_ROOT}/{project_id}/{source dir}`, shared with the IDE),
+// and only the artifact sync fetches it from the provider. Everything else
+// reads it here, locally, at [`SYNCED_REF`]: never the working tree, which
+// the IDE may have moved on or edited, and never the provider.
+
+/// The ref a sync leaves on the commit it read. Readers read the checkout at
+/// this commit (`cat-file`, `ls-tree`, `log`), so what the portal shows is
+/// what the sync ingested. Local only: never fetched, pushed or shown by the
+/// IDE's branch lists.
+pub const SYNCED_REF: &str = "refs/studio/synced";
+
+/// A local git command in `dir`, which may belong to the IDE's user:
+/// `safe.directory` names it so git does not refuse it.
+fn local_git(dir: &Path) -> Command {
+    let mut cmd = Command::new("git");
+    cmd.env("GIT_TERMINAL_PROMPT", "0")
+        .arg("-c")
+        .arg(format!("safe.directory={}", dir.display()))
+        .arg("-C")
+        .arg(dir);
+    cmd
+}
+
+/// A revision as a reader names it, refused when git could read it as an
+/// option or it is empty.
+fn checked_rev(rev: &str) -> Option<&str> {
+    let rev = rev.trim();
+    (!rev.is_empty() && !rev.starts_with('-') && !rev.contains(char::is_whitespace)).then_some(rev)
+}
+
+/// A repo-relative path a reader may ask git for: no absolute path, no `..`
+/// and no empty segment.
+fn checked_rel(rel: &str) -> Option<&str> {
+    let rel = rel.trim();
+    let rel = rel.strip_prefix("./").unwrap_or(rel);
+    let ok = !rel.is_empty()
+        && !rel.starts_with('/')
+        && !rel.starts_with('-')
+        && !rel.contains('\\')
+        && !rel
+            .split('/')
+            .any(|s| s.is_empty() || s == "." || s == "..");
+    ok.then_some(rel)
+}
+
+/// A history path: `None` for the whole repository (`""`, `.`, `/`).
+fn history_path(path: Option<&str>) -> Option<&str> {
+    path.map(|p| p.trim().trim_end_matches('/'))
+        .filter(|p| !p.is_empty() && *p != ".")
+}
+
+/// `file://` and the checkout's path: what [`clone_or_update_into`] mirrors
+/// from the local disk instead of a provider.
+pub fn local_url(dir: &Path) -> String {
+    format!("file://{}", dir.display())
+}
+
+/// The checkout a [`local_url`] names.
+fn local_source(url: &str) -> Option<PathBuf> {
+    url.trim()
+        .strip_prefix("file://")
+        .filter(|p| !p.is_empty())
+        .map(PathBuf::from)
+}
+
+/// Point [`SYNCED_REF`] at `commit`: what a sync does once it has read the
+/// checkout at it. Blocking.
+pub fn mark_synced(dir: &Path, commit: &str) -> anyhow::Result<()> {
+    let commit = checked_rev(commit).ok_or_else(|| anyhow::anyhow!("no commit to mark"))?;
+    let mut cmd = local_git(dir);
+    cmd.args(["update-ref", SYNCED_REF, commit]);
+    run(cmd, "update-ref")
+}
+
+/// `rev` as a full commit id, read from the checkout alone: a commit, a tag,
+/// a local branch or else `origin/<rev>`. `None` when the checkout does not
+/// hold it -- a branch pushed since the last sync, say. Blocking.
+pub fn resolve_commit(dir: &Path, rev: &str) -> Option<String> {
+    let rev = checked_rev(rev)?;
+    [rev.to_owned(), format!("origin/{rev}")]
+        .iter()
+        .find_map(|r| {
+            local(
+                dir,
+                &["rev-parse", "--verify", "-q", &format!("{r}^{{commit}}")],
+            )
+            .filter(|s| !s.is_empty())
+        })
+}
+
+/// The commit the last sync read: [`SYNCED_REF`], else `HEAD` for a checkout
+/// no sync has marked yet (the IDE's own, or one cloned before the ref
+/// existed). `None` when `dir` is not a checkout. Blocking.
+pub fn synced_commit(dir: &Path) -> Option<String> {
+    resolve_commit(dir, SYNCED_REF).or_else(|| head_commit(dir))
+}
+
+/// One file's text at `rev`, from the checkout's objects -- the working tree
+/// is not looked at. `None` when `rev` holds no such file (a directory is not
+/// one), or the path would leave the repository. Bytes that are not UTF-8
+/// are replaced. Blocking.
+pub fn show_file_at(dir: &Path, rev: &str, rel: &str) -> Option<String> {
+    let (rev, rel) = (checked_rev(rev)?, checked_rel(rel)?);
+    let out = local_git(dir)
+        .arg("cat-file")
+        .arg("blob")
+        .arg(format!("{rev}:{rel}"))
+        .output()
+        .ok()
+        .filter(|o| o.status.success())?;
+    Some(utf8(out.stdout))
+}
+
+/// The newest `max` non-merge commits from `rev`, touching `path` when one is
+/// given, each with its message: what a provider's commit history answers,
+/// from the checkout. The login is never known locally (`author` is `None`);
+/// the name is. Blocking.
+pub fn history_at(
+    dir: &Path,
+    rev: &str,
+    path: Option<&str>,
+    max: usize,
+) -> Option<Vec<super::driver::RemoteCommit>> {
+    let rev = checked_rev(rev)?;
+    let mut cmd = local_git(dir);
+    cmd.args([
+        "log",
+        "--no-merges",
+        "-n",
+        &max.max(1).to_string(),
+        "--format=%x1e%H%x1f%an%x1f%aI%x1f%cI%x1f%B",
+        rev,
+    ]);
+    if let Some(path) = history_path(path) {
+        cmd.arg("--").arg(checked_rel(path)?);
+    }
+    let out = cmd.output().ok().filter(|o| o.status.success())?;
+    Some(parse_history(&String::from_utf8_lossy(&out.stdout)))
+}
+
+/// [`history_at`]'s output, read: records start with `\x1e`, fields are split
+/// by `\x1f`, and the message is the last field, whole.
+fn parse_history(text: &str) -> Vec<super::driver::RemoteCommit> {
+    let nonempty = |s: &str| Some(s.trim().to_owned()).filter(|s| !s.is_empty());
+    text.split('\x1e')
+        .filter_map(|record| {
+            let mut fields = record.splitn(5, '\x1f');
+            let sha = nonempty(fields.next()?)?;
+            Some(super::driver::RemoteCommit {
+                sha,
+                author_name: fields.next().and_then(nonempty),
+                created_at: fields.next().and_then(nonempty),
+                committed_at: fields.next().and_then(nonempty),
+                message: fields.next().and_then(nonempty),
+                author: None,
+                url: None,
+            })
+        })
+        .collect()
+}
+
+/// Every tag the checkout holds. A shallow checkout holds only the tags on
+/// the history it has. Blocking.
+pub fn tags(dir: &Path) -> Option<Vec<String>> {
+    let out = local_git(dir)
+        .args(["tag", "--list"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())?;
+    Some(
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .map(str::to_owned)
+            .collect(),
+    )
+}
+
+/// Clone `clone_url` into exactly `dir` as a project source's one checkout on
+/// the server: every branch with its whole history, or the last `depth`
+/// commits of `branch` when a depth is given. A directory that is there and
+/// is not a checkout is refused rather than cloned over. Blocking.
+pub fn clone_project_checkout(
+    dir: &Path,
+    clone_url: &str,
+    username: &str,
+    token: &str,
+    branch: Option<&str>,
+    depth: Option<u32>,
+) -> anyhow::Result<CloneResult> {
+    if dir.join(".git").exists() {
+        anyhow::bail!("{} is already a checkout", dir.display());
+    }
+    if std::fs::read_dir(dir).is_ok_and(|mut d| d.next().is_some()) {
+        anyhow::bail!(
+            "{} is there and is not a git checkout; it is left alone",
+            dir.display()
+        );
+    }
+    if let Some(parent) = dir.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| anyhow::anyhow!("cannot create clone root {}: {e}", parent.display()))?;
+    }
+    let mut clone = git(username, token);
+    clone.arg("clone").arg("--quiet");
+    if let Some(depth) = depth.filter(|d| *d > 0) {
+        clone.arg("--depth").arg(depth.to_string());
+    }
+    if let Some(b) = branch.map(str::trim).filter(|b| !b.is_empty()) {
+        clone.arg("--branch").arg(b);
+    }
+    clone.arg(clone_url).arg(dir);
+    run(clone, "clone")?;
+    Ok(CloneResult {
+        dir: dir.to_path_buf(),
+        commit: head_commit(dir),
+    })
+}
+
+/// Bring `dir` to `rev` of the checkout at `source`, from the local disk
+/// alone: how a copy of a project's checkout that has to sit somewhere else
+/// (the Gearbox engine names a root by its directory) is refreshed. Shallow,
+/// since the copy is read for its tree, never its history. Blocking.
+pub fn mirror_local_into(dir: &Path, source: &Path, rev: &str) -> anyhow::Result<CloneResult> {
+    let rev = checked_rev(rev)
+        .ok_or_else(|| anyhow::anyhow!("no revision of {} to read", source.display()))?;
+    if !source.join(".git").exists() {
+        anyhow::bail!(
+            "{} is not a checkout on this server: sync the project first",
+            source.display()
+        );
+    }
+    std::fs::create_dir_all(dir)
+        .map_err(|e| anyhow::anyhow!("cannot create {}: {e}", dir.display()))?;
+    if !dir.join(".git").is_dir() {
+        let mut init = local_git(dir);
+        init.args(["init", "-q"]);
+        run(init, "init")?;
+    }
+    // The source may belong to the IDE's user. The upload-pack this fetch
+    // starts on it does not inherit `-c` settings (git clears them for the
+    // other repository), so it is given its own.
+    let mut fetch = local_git(dir);
+    fetch
+        .arg("fetch")
+        .arg("--quiet")
+        .arg("--no-tags")
+        .arg("--depth")
+        .arg("1")
+        .arg(format!(
+            "--upload-pack=git -c safe.directory='{}' upload-pack",
+            source.display()
+        ))
+        .arg(local_url(source))
+        .arg(rev);
+    run(fetch, "fetch from the project checkout")?;
+    let mut reset = local_git(dir);
+    reset.args(["reset", "--hard", "--quiet", "FETCH_HEAD"]);
+    run(reset, "reset")?;
+    Ok(CloneResult {
+        dir: dir.to_path_buf(),
+        commit: head_commit(dir),
+    })
 }
 
 /// `git ls-tree -r -l -z` read: `<mode> <type> <sha> <size>\t<path>\0`.
@@ -933,6 +1221,117 @@ mod tests {
             None
         );
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// What a reader sees is the commit the sync read, not where the IDE's
+    /// working copy has gone since.
+    #[test]
+    fn a_reader_reads_the_synced_commit_not_the_working_tree() {
+        let root = std::env::temp_dir().join(format!("synced-{}", uuid::Uuid::new_v4()));
+        let (seed, ide) = init_pair(&root);
+        let first = head_commit(&ide).expect("head");
+        // Before any sync marked it, HEAD stands in.
+        assert_eq!(synced_commit(&ide).as_deref(), Some(first.as_str()));
+        mark_synced(&ide, &first).expect("mark");
+        push_prd(&seed);
+        update_shared_checkout(&ide, "", "").expect("update");
+        std::fs::write(ide.join("README.md"), "edited in the IDE\n").expect("write");
+
+        assert_eq!(synced_commit(&ide).as_deref(), Some(first.as_str()));
+        assert_eq!(
+            show_file_at(&ide, SYNCED_REF, "README.md").as_deref(),
+            Some("one\n")
+        );
+        assert_eq!(show_file_at(&ide, SYNCED_REF, "docs/prd/p.md"), None);
+        assert!(show_file_at(&ide, "HEAD", "docs/prd/p.md").is_some());
+        assert_eq!(show_file_at(&ide, SYNCED_REF, "../README.md"), None);
+        assert_eq!(show_file_at(&ide, "--output=x", "README.md"), None);
+        let listed = ls_tree_at(&ide, SYNCED_REF).expect("tree");
+        assert_eq!(listed.len(), 1);
+        let log = log_at(&ide, "HEAD", Some("docs"), 10).expect("log");
+        assert_eq!(log.len(), 1, "only the commit that touched docs/");
+        let history = history_at(&ide, "HEAD", None, 10).expect("history");
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0].message.as_deref(), Some("two"));
+        assert_eq!(history[1].author_name.as_deref(), Some("t"));
+        assert_eq!(resolve_commit(&ide, "main"), head_commit(&ide));
+        assert_eq!(resolve_commit(&ide, "no-such-branch"), None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The copy Gearbox reads a project root from is filled from the server's
+    /// checkout, at the commit asked for, without a provider.
+    #[test]
+    fn a_copy_is_mirrored_from_the_local_checkout() {
+        let root = std::env::temp_dir().join(format!("mirror-{}", uuid::Uuid::new_v4()));
+        let (seed, ide) = init_pair(&root);
+        let first = head_commit(&ide).expect("head");
+        push_prd(&seed);
+        update_shared_checkout(&ide, "", "").expect("update");
+        let second = head_commit(&ide).expect("head");
+
+        let copy = root.join("gearbox-roots/k/repo");
+        let at =
+            clone_or_update_into(&copy, &local_url(&ide), "", "", Some(&first)).expect("mirror");
+        assert_eq!(at.commit.as_deref(), Some(first.as_str()));
+        assert!(!copy.join("docs/prd/p.md").exists());
+        let at = clone_or_update_into(&copy, &local_url(&ide), "", "", Some(&second))
+            .expect("mirror again");
+        assert_eq!(at.commit.as_deref(), Some(second.as_str()));
+        assert!(copy.join("docs/prd/p.md").is_file());
+        assert!(
+            mirror_local_into(&copy, &root.join("nowhere"), "HEAD").is_err(),
+            "no checkout, no copy"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The sync's own clone keeps the whole history unless a depth is set, and
+    /// never clones over a directory it does not recognise.
+    #[test]
+    fn a_project_checkout_is_cloned_whole_and_never_over_a_stranger() {
+        let root = std::env::temp_dir().join(format!("project-{}", uuid::Uuid::new_v4()));
+        let (seed, _) = init_pair(&root);
+        push_prd(&seed);
+        let bare = root.join("origin.git");
+        let url = format!("file://{}", bare.display());
+        let whole = root.join("checkouts/p1/app");
+        let cloned =
+            clone_project_checkout(&whole, &url, "", "", Some("main"), None).expect("clone");
+        assert!(cloned.commit.is_some());
+        assert!(!is_shallow(&whole));
+        assert_eq!(log_with_files(&whole, 10).expect("log").len(), 2);
+        assert!(clone_project_checkout(&whole, &url, "", "", None, None).is_err());
+
+        let shallow = root.join("checkouts/p1/shallow");
+        clone_project_checkout(&shallow, &url, "", "", None, Some(1)).expect("clone");
+        assert!(is_shallow(&shallow));
+
+        let stranger = root.join("checkouts/p1/stranger");
+        std::fs::create_dir_all(&stranger).expect("dir");
+        std::fs::write(stranger.join("notes.txt"), "mine\n").expect("write");
+        assert!(clone_project_checkout(&stranger, &url, "", "", None, None).is_err());
+        assert!(stranger.join("notes.txt").is_file());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_history_with_messages_is_read_commit_by_commit() {
+        let text = "\x1eaaa\x1fAnn\x1f2026-11-20T10:00:00+01:00\x1f2026-11-20T11:00:00+01:00\x1ffix: a\n\nSigned-off-by: Ann <a@x>\n\n\
+                    \x1ebbb\x1fBob\x1f\x1f\x1f\n";
+        let log = parse_history(text);
+        assert_eq!(log.len(), 2);
+        assert_eq!(log[0].sha, "aaa");
+        assert_eq!(log[0].author_name.as_deref(), Some("Ann"));
+        assert!(
+            log[0]
+                .message
+                .as_deref()
+                .is_some_and(|m| m.contains("Signed-off-by"))
+        );
+        assert_eq!(log[0].author, None, "no login is known locally");
+        assert_eq!(log[1].message, None);
+        assert_eq!(log[1].committed_at, None);
     }
 
     /// Somebody's unsaved work is never overwritten to get there.

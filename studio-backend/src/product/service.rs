@@ -116,6 +116,10 @@ pub struct ProductService {
     /// The product's description by revision (ADR-0053), when the gear has a
     /// database ([`description_service`]).
     descriptions: std::sync::OnceLock<Arc<super::descriptions::DescriptionStore>>,
+    /// Where the project's checkouts (`artifact_ingest::port::ProjectCheckout`)
+    /// are resolved from, when a read needs one: a project's repository is
+    /// read from the server's checkout, never from the provider.
+    hub: std::sync::OnceLock<Arc<toolkit::client_hub::ClientHub>>,
     /// Which organization a project hangs under, when a test says so instead
     /// of account-management.
     #[cfg(test)]
@@ -134,6 +138,7 @@ impl ProductService {
             ownership: std::sync::OnceLock::new(),
             registered: std::sync::Mutex::new(std::collections::HashSet::new()),
             descriptions: std::sync::OnceLock::new(),
+            hub: std::sync::OnceLock::new(),
             #[cfg(test)]
             project_organizations: std::sync::Mutex::new(std::collections::HashMap::new()),
         }
@@ -199,6 +204,38 @@ impl ProductService {
         client: Arc<dyn account_management_sdk::AccountManagementClient>,
     ) {
         let _ = self.account_management.set(client);
+    }
+
+    /// Where the project checkouts are resolved from (see the field).
+    pub fn set_hub(&self, hub: Arc<toolkit::client_hub::ClientHub>) {
+        let _ = self.hub.set(hub);
+    }
+
+    /// The server's checkout of `repo`, one of `project_id`'s sources, as
+    /// its last sync left it. An error saying so when there is none: the
+    /// provider is not asked instead.
+    pub(super) async fn project_checkout(
+        &self,
+        ctx: &SecurityContext,
+        project_id: &str,
+        repo: &str,
+    ) -> anyhow::Result<crate::artifact_ingest::port::SourceCheckout> {
+        let project = Uuid::parse_str(project_id.trim())
+            .map_err(|_| anyhow!("`{project_id}` is not a project id"))?;
+        let checkouts = self
+            .hub
+            .get()
+            .and_then(|hub| {
+                hub.get::<dyn crate::artifact_ingest::port::ProjectCheckout>()
+                    .ok()
+            })
+            .ok_or_else(|| anyhow!("the project checkouts are not kept on this server"))?;
+        checkouts
+            .checkout_of(ctx, project, repo)
+            .await
+            .ok_or_else(|| {
+                anyhow!("{repo} has not been synced to the server yet: Re-sync the project")
+            })
     }
 
     /// The connector service, when `studio-connector` has published one.
@@ -491,7 +528,8 @@ impl ProductService {
         Ok(target)
     }
 
-    /// The text of `path` in the project's home repository, on its branch;
+    /// The text of `path` in the project's home repository, at the commit
+    /// its last sync read, from the server's checkout (never the provider);
     /// `None` when the repository has no such file.
     pub async fn read_project_file(
         &self,
@@ -502,20 +540,10 @@ impl ProductService {
         let target = self.home_target(ctx, project_id).await?;
         self.ensure_owned(ctx, scope_of(ctx, project_id), &target)
             .await?;
-        let connectors = self
-            .connector_service()
-            .ok_or_else(|| anyhow!("connectors service unavailable"))?;
-        let repo = Repository::open(
-            &connectors,
-            ctx,
-            target.tenant,
-            target.connection_id,
-            "github",
-            &target.repo,
-            Some(&target.base_branch),
-        )
-        .await?;
-        Ok(repo.read_file(path).await?.map(|f| f.text))
+        self.project_checkout(ctx, project_id, &target.repo)
+            .await?
+            .read_file(path)
+            .await
     }
 
     /// Commit files onto a new `branch` off `target`'s base branch in the

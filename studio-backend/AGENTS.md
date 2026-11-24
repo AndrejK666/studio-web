@@ -70,6 +70,24 @@ the artifact index follow from it:
 - **Never delete a domain node** in graph-storage: its key could never be
   written again. Mark it (`store::DELETED_FIELD`), as `POST /mutate` does.
 
+## Reading repositories: never the provider on a request path
+
+A project's repository has ONE clone on the server,
+`{STUDIO_WORKSPACES_ROOT}/{project_id}/{source dir}`, shared with the IDE.
+Only the artifact sync fetches it, and it marks the commit it read
+(`refs/studio/synced`). Everything else reads it through
+`artifact_ingest::port::ProjectCheckout` (`SourceCheckout::read_file`,
+`ls_tree`, `log`, `authors`, ...), which is local git only. Never
+`connectors::sdk::Repository::open(...).read_file/tree/history/contributors`
+on a request path for a project source: a source not synced yet answers
+"not synced, Re-sync", not a provider call. A copy that must live elsewhere
+(Gearbox roots) is filled from the checkout (`CorpusSource::local`,
+`git_checkout::mirror_local_into`). Writes (commits, pull requests, tags,
+dispatch) still go to the provider. A repository that is not a project
+source keeps its own background-refreshed clone and is never fetched inside
+a request. Design: `../docs/design/studio-artifact-ingest.md`,
+`cpt-studio-principle-artifact-ingest-one-checkout`.
+
 ## Gear databases
 
 - A gear with a `database:` section in one profile needs it in every profile,

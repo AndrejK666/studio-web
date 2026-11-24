@@ -928,11 +928,19 @@ impl IngestService {
             repo_full_path,
         ));
 
-        // Files come from, in order of preference:
-        //   1. the studio-session workspace checkout, if the IDE already cloned
-        //      it — one shared clone, always what the IDE shows;
-        //   2. our own shallow clone, if a fallback volume is configured;
-        //   3. the connector tree API (metadata only).
+        // Files come from the project's ONE checkout on this server
+        // (`port::ProjectCheckout`): `{workspaces_root}/{project_id}/{dir}`,
+        // the directory the IDE works in too. In order:
+        //   1. that checkout, fetched up to the remote when it is there (the
+        //      IDE may have cloned it first);
+        //   2. that checkout, cloned here when it is not -- whole, or
+        //      `STUDIO_CHECKOUT_DEPTH` commits deep;
+        //   3. our own legacy shallow clone, when there is no project to put
+        //      the checkout under or the clone above failed and a fallback
+        //      volume is configured;
+        //   4. the connector tree API (metadata only).
+        // This is the only place a project's repository is fetched from the
+        // provider; every reader reads the commit it marks (`SYNCED_REF`).
         // Best-effort: a failure here never discards the issue/PR nodes.
         let mut files = 0usize;
         // Whether `file_paths` ends up holding EVERY file the repository has.
@@ -940,20 +948,97 @@ impl IngestService {
         // below reads as an empty or short listing, and forgetting against one
         // of those would wipe the repository's files from the graph.
         let mut listing_complete = false;
-        // The IDE materializes each repo under the tenant that opened Studio —
-        // the project tenant when opened from a project. Prefer `project_id`
-        // for the checkout path; fall back to `workspace_id` for a
-        // workspace-level open.
-        let on_disk: Option<(PathBuf, git_checkout::Walk, Option<String>)> = if let Some(dir) =
-            self.shared_checkout_dir(project_id.or(workspace_id), repo_dir)
+        // The directory is the source's, as the project's config names it:
+        // the portal's Re-sync sends none, and a sync that guessed none used
+        // to miss the IDE's checkout and fall back to the tree API.
+        let source = match project_id {
+            Some(project) => self.project_source(ctx, project, repo_full_path).await,
+            None => None,
+        };
+        let repo_dir: Option<String> = repo_dir
+            .map(str::trim)
+            .filter(|d| !d.is_empty())
+            .map(str::to_owned)
+            .or_else(|| source.as_ref().map(|s| s.dir.clone()))
+            .or_else(|| project_id.map(|_| crate::project_sources::checkout_dir(repo_full_path)));
+        // A workspace-level sync (no project) keeps the workspace's layout,
+        // as the IDE opened at the workspace does.
+        let canonical = project_id
+            .or(workspace_id)
+            .zip(repo_dir.as_deref())
+            .and_then(|(project, dir)| self.project_checkout_path(project, dir));
+        let present = canonical.clone().filter(|d| d.join(".git").exists());
+        let mut cloned_here: Option<(PathBuf, git_checkout::Walk, Option<String>)> = None;
+        if present.is_none()
+            && let Some(dir) = canonical.clone()
         {
+            progress.set("cloning repository…");
+            let branch = source.as_ref().and_then(|s| s.branch.clone());
+            let order = super::port::clone_order();
+            match self
+                .clone_project_files(
+                    driver,
+                    dir,
+                    repo_full_path,
+                    clone_base_url,
+                    token,
+                    branch.clone(),
+                )
+                .await
+            {
+                Ok(v) => {
+                    self.note_clone(connector_id, repo_full_path, None);
+                    cloned_here = Some(v);
+                }
+                Err(e) => {
+                    let error = format!("{e:#}");
+                    tracing::warn!(
+                        %error,
+                        repo = repo_full_path,
+                        "studio-artifact-ingest: the project checkout could not be cloned — trying the legacy clone volume, then the tree API"
+                    );
+                    self.note_clone(
+                        connector_id,
+                        repo_full_path,
+                        Some(format!("the last clone failed: {error}")),
+                    );
+                    // A cause a person can fix is said on the project's
+                    // Sources (clone status): the sync is the server's only
+                    // fetch of a project source now.
+                    let url = source
+                        .as_ref()
+                        .map(|s| s.clone_url.clone())
+                        .or_else(|| driver.clone_url(clone_base_url, repo_full_path).ok());
+                    if let (Some(outcomes), Some(project), Some(url), Some(failure)) = (
+                        &self.clone_outcomes,
+                        project_id.and_then(|p| Uuid::parse_str(p).ok()),
+                        url,
+                        clone_failure_cause(&error, branch.as_deref().unwrap_or_default()),
+                    ) {
+                        use super::port::{CloneChannel, CloneOutcome};
+                        let failed = CloneOutcome::failed(CloneChannel::Sync, failure);
+                        if let Err(e) = outcomes
+                            .record(project, &url, CloneOutcome { order, ..failed })
+                            .await
+                        {
+                            tracing::warn!(%project, error = %format!("{e:#}"), "studio-artifact-ingest: the source's clone status was not recorded");
+                        }
+                    }
+                }
+            }
+        }
+        let on_disk: Option<(PathBuf, git_checkout::Walk, Option<String>)> = if let Some(read) =
+            cloned_here
+        {
+            Some(read)
+        } else if let Some(dir) = present {
             progress.set("reading workspace files…");
             let (username, password) = driver.clone_credentials(token);
-            let source = project_id
+            let status_of = project_id
                 .and_then(|p| Uuid::parse_str(p).ok())
                 .zip(driver.clone_url(clone_base_url, repo_full_path).ok());
             match self
-                .walk_shared_checkout(dir, username.to_string(), password.to_string(), source)
+                .walk_shared_checkout(dir, username.to_string(), password.to_string(), status_of)
                 .await
             {
                 Ok(v) => Some(v),
@@ -1002,6 +1087,28 @@ impl IngestService {
         } else {
             None
         };
+
+        // Say which commit was read, in the checkout itself: every reader of
+        // it (`port::ProjectCheckout`) reads that commit, not wherever the
+        // IDE has taken the working copy since.
+        if let Some((dir, _, Some(commit))) = on_disk.as_ref()
+            && !dir.as_os_str().is_empty()
+        {
+            let (dir, commit) = (dir.clone(), commit.clone());
+            match tokio::task::spawn_blocking(move || git_checkout::mark_synced(&dir, &commit))
+                .await
+            {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => tracing::warn!(
+                    error = %format!("{e:#}"),
+                    repo = repo_full_path,
+                    "studio-artifact-ingest: the synced commit could not be marked; readers read the checkout's HEAD"
+                ),
+                Err(e) => {
+                    tracing::warn!(error = %e, repo = repo_full_path, "studio-artifact-ingest: marking the synced commit did not finish")
+                }
+            }
+        }
 
         // The conversation the repository carries about its own documents.
         //
@@ -1869,22 +1976,85 @@ impl IngestService {
         workspace_id: Option<&str>,
         repo_dir: Option<&str>,
     ) -> Option<PathBuf> {
-        let root = self.workspaces_root.as_ref()?;
-        let ws = workspace_id.map(str::trim).filter(|s| !s.is_empty())?;
-        let dir = repo_dir.map(str::trim).filter(|s| !s.is_empty())?;
-        // Path-traversal guard: the workspace id is a uuid (no separators), and
-        // the repo dir may nest (`a/b`) but never escape.
-        if ws.contains('/') || ws.contains('\\') || ws.contains("..") {
-            return None;
-        }
-        if dir
-            .split(['/', '\\'])
-            .any(|seg| seg.is_empty() || seg == "..")
-        {
-            return None;
-        }
-        let path = root.join(ws).join(dir);
+        let path = self.project_checkout_path(workspace_id?, repo_dir?)?;
         path.is_dir().then_some(path)
+    }
+
+    /// Where the one checkout of a project's source lives, whether or not it
+    /// is on disk yet: `{workspaces_root}/{project}/{dir}` (`port::ProjectCheckout`).
+    /// `project` may be a workspace id for a workspace-level checkout. `None`
+    /// without a root, or for a name that would leave it.
+    pub(super) fn project_checkout_path(&self, project: &str, dir: &str) -> Option<PathBuf> {
+        let root = self.workspaces_root.as_ref()?;
+        checkout_path(root, project, dir)
+    }
+
+    /// The sync's legacy own clone of a repository, when there is one on disk.
+    fn legacy_clone_dir(&self, secret_ref: &str, repo_full_path: &str) -> Option<PathBuf> {
+        let dir = self
+            .work_root
+            .as_ref()?
+            .join(git_checkout::checkout_key(secret_ref, repo_full_path));
+        dir.join(".git").is_dir().then_some(dir)
+    }
+
+    /// The project's source `repo_full_path`, as its config names it, read
+    /// as `ctx`. `None` when there is no account management here, the config
+    /// cannot be read, or the repository is none of the project's.
+    async fn project_source(
+        &self,
+        ctx: &SecurityContext,
+        project: &str,
+        repo_full_path: &str,
+    ) -> Option<crate::project_sources::ProjectSource> {
+        let project = Uuid::parse_str(project.trim()).ok()?;
+        let am = self.account_management()?;
+        let wanted = repo_full_path.trim().trim_matches('/');
+        crate::project_sources::read(am.as_ref(), ctx, project)
+            .await?
+            .into_iter()
+            .find(|s| s.full_path.trim().eq_ignore_ascii_case(wanted))
+    }
+
+    /// account-management, through the hub this gear was given.
+    fn account_management(
+        &self,
+    ) -> Option<Arc<dyn account_management_sdk::AccountManagementClient>> {
+        self.kits
+            .as_ref()?
+            .get::<dyn account_management_sdk::AccountManagementClient>()
+            .ok()
+    }
+
+    /// Clone a project's source into its one checkout (`dir`), then walk it.
+    async fn clone_project_files(
+        &self,
+        driver: &Arc<dyn ConnectorDriver>,
+        dir: PathBuf,
+        repo_full_path: &str,
+        base_url: &str,
+        token: &str,
+        branch: Option<String>,
+    ) -> anyhow::Result<(PathBuf, git_checkout::Walk, Option<String>)> {
+        let clone_url = driver.clone_url(base_url, repo_full_path)?;
+        let (username, password) = driver.clone_credentials(token);
+        let username = username.to_string();
+        let password = password.to_string();
+        let depth = checkout_depth();
+        tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
+            let res = git_checkout::clone_project_checkout(
+                &dir,
+                &clone_url,
+                &username,
+                &password,
+                branch.as_deref(),
+                depth,
+            )?;
+            let walked = git_checkout::walk(&res.dir, &synced_text)?;
+            Ok((res.dir, walked, res.commit))
+        })
+        .await
+        .map_err(|e| anyhow!("clone task did not finish: {e}"))?
     }
 
     /// Re-sync: pull the shared checkout up to the remote
@@ -4012,6 +4182,105 @@ fn text_only(listing: Vec<(String, Option<String>)>) -> Vec<(String, String)> {
         .collect()
 }
 
+/// `{root}/{project}/{dir}`: the one checkout of a project's source. The
+/// project (or workspace) id never holds a separator or `..`, and the
+/// directory may nest (`a/b`) but never climb out. `None` for a name that
+/// would leave the root.
+pub(super) fn checkout_path(root: &std::path::Path, project: &str, dir: &str) -> Option<PathBuf> {
+    let project = Some(project.trim()).filter(|s| !s.is_empty())?;
+    let dir = Some(dir.trim()).filter(|s| !s.is_empty())?;
+    if project.contains('/') || project.contains('\\') || project.contains("..") {
+        return None;
+    }
+    if dir.starts_with('/')
+        || dir
+            .split(['/', '\\'])
+            .any(|seg| seg.is_empty() || seg == "..")
+    {
+        return None;
+    }
+    Some(root.join(project).join(dir))
+}
+
+/// What a failed clone of a project source says on the project's Sources
+/// (clone status), when git's answer names a cause a person can fix: the
+/// branch the source names is gone, or the host says the repository is not
+/// there. Anything else (a timeout, a full disk) is the server's, not the
+/// source's, and is only logged.
+pub(super) fn clone_failure_cause(error: &str, branch: &str) -> Option<super::port::CloneFailure> {
+    use super::port::{CloneCause, CloneFailure};
+    if git_checkout::is_missing_ref(error) {
+        return Some(CloneFailure::new(CloneCause::BranchNotFound).with_detail(branch));
+    }
+    if error.to_ascii_lowercase().contains("repository not found") {
+        return Some(CloneFailure::new(CloneCause::RepositoryNotFound));
+    }
+    None
+}
+
+/// How deep the sync clones a project's checkout: `STUDIO_CHECKOUT_DEPTH`
+/// commits, or the whole history when it is unset or `0` (what owners, last
+/// changes and expert lists read).
+fn checkout_depth() -> Option<u32> {
+    std::env::var("STUDIO_CHECKOUT_DEPTH")
+        .ok()
+        .and_then(|v| v.trim().parse::<u32>().ok())
+        .filter(|d| *d > 0)
+}
+
+/// The project's one checkout of each source (see the port's doc).
+#[async_trait::async_trait]
+impl super::port::ProjectCheckout for IngestService {
+    async fn source_checkout(
+        &self,
+        project: Uuid,
+        source: &crate::project_sources::ProjectSource,
+        secret_ref: Option<&str>,
+    ) -> Option<super::port::SourceCheckout> {
+        use super::port::{CheckoutLayout, SourceCheckout};
+        let canonical = self.project_checkout_path(&project.to_string(), &source.dir);
+        let legacy = secret_ref.and_then(|s| self.legacy_clone_dir(s, &source.full_path));
+        let full_path = source.full_path.clone();
+        tokio::task::spawn_blocking(move || {
+            canonical
+                .and_then(|d| SourceCheckout::at(d, &full_path, CheckoutLayout::Project))
+                .or_else(|| {
+                    legacy.and_then(|d| {
+                        SourceCheckout::at(d, &full_path, CheckoutLayout::LegacySyncClone)
+                    })
+                })
+        })
+        .await
+        .ok()
+        .flatten()
+    }
+
+    async fn project_checkouts(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+    ) -> Vec<(
+        crate::project_sources::ProjectSource,
+        Option<super::port::SourceCheckout>,
+    )> {
+        let Some(am) = self.account_management() else {
+            return Vec::new();
+        };
+        let Some(resolved) = crate::project_sources::resolve(am.as_ref(), ctx, project).await
+        else {
+            return Vec::new();
+        };
+        let mut out = Vec::with_capacity(resolved.len());
+        for r in resolved {
+            let checkout = self
+                .source_checkout(project, &r.source, r.secret_ref.as_deref())
+                .await;
+            out.push((r.source, checkout));
+        }
+        out
+    }
+}
+
 /// The commit and branch a checkout is at, off the async runtime.
 async fn revision_of(dir: PathBuf) -> Option<super::port::GitRevision> {
     tokio::task::spawn_blocking(move || {
@@ -4462,7 +4731,7 @@ mod prune_tests {
     const PROJECT: &str = "00000000-0000-0000-0000-00000000000b";
     const OTHER_PROJECT: &str = "00000000-0000-0000-0000-00000000000c";
 
-    struct NoSecrets;
+    pub(super) struct NoSecrets;
 
     #[async_trait]
     impl CredStoreClientV1 for NoSecrets {
@@ -5404,5 +5673,141 @@ impl super::port::MappingDecisionStore for IngestService {
             .into_iter()
             .map(|n| (n.instance_id, n.value))
             .collect())
+    }
+}
+
+#[cfg(test)]
+mod project_checkout_tests {
+    use std::path::Path;
+    use std::process::Command;
+
+    use super::*;
+    use crate::artifact_ingest::graph::InMemoryGraphStore;
+    use crate::artifact_ingest::port::{CheckoutLayout, ProjectCheckout};
+    use crate::project_sources::ProjectSource;
+
+    fn run_git(dir: &Path, args: &[&str]) {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["-c", "user.email=t@t", "-c", "user.name=t"])
+            .args(args)
+            .output()
+            .expect("git runs");
+        assert!(out.status.success(), "git {args:?}");
+    }
+
+    fn service(root: &Path, legacy: &Path) -> IngestService {
+        IngestService::new(
+            Arc::new(super::prune_tests::NoSecrets),
+            HashMap::new(),
+            Arc::new(InMemoryGraphStore::default()),
+            None,
+            Some(root.to_path_buf()),
+            Some(legacy.to_path_buf()),
+        )
+    }
+
+    fn source(full_path: &str, dir: &str) -> ProjectSource {
+        ProjectSource {
+            full_path: full_path.into(),
+            dir: dir.into(),
+            ..Default::default()
+        }
+    }
+
+    fn repo_at(dir: &Path) {
+        std::fs::create_dir_all(dir).expect("dir");
+        run_git(dir, &["init", "-q"]);
+        std::fs::write(dir.join("README.md"), "one\n").expect("write");
+        run_git(dir, &["add", "."]);
+        run_git(dir, &["commit", "-q", "-m", "one"]);
+    }
+
+    /// The stand's two sources: one pinned to a deleted branch, one whose
+    /// repository the host does not show. Both say why on Sources and IDE,
+    /// now from the sync, the server's only fetch of a project source.
+    #[test]
+    fn a_clone_that_failed_on_the_source_says_why() {
+        use crate::artifact_ingest::port::CloneCause;
+        let gone = clone_failure_cause(
+            "git clone failed (exit status: 128): warning: Could not find remote branch AndrejK666/product-infra-gdl to clone.\nfatal: Remote branch AndrejK666/product-infra-gdl not found in upstream origin",
+            "AndrejK666/product-infra-gdl",
+        )
+        .expect("a deleted branch");
+        assert_eq!(gone.cause, CloneCause::BranchNotFound);
+        assert_eq!(gone.detail, "AndrejK666/product-infra-gdl");
+        let missing = clone_failure_cause(
+            "git clone failed (exit status: 128): remote: Repository not found.",
+            "main",
+        )
+        .expect("a repository the host does not show");
+        assert_eq!(missing.cause, CloneCause::RepositoryNotFound);
+        assert!(clone_failure_cause("the clone task timed out", "main").is_none());
+    }
+
+    #[test]
+    fn the_checkout_path_never_leaves_the_root() {
+        let root = Path::new("/w");
+        assert_eq!(
+            checkout_path(root, "p1", "app"),
+            Some(root.join("p1").join("app"))
+        );
+        assert_eq!(
+            checkout_path(root, " p1 ", "a/b"),
+            Some(root.join("p1").join("a/b"))
+        );
+        for (project, dir) in [
+            ("", "app"),
+            ("p1", ""),
+            ("../p1", "app"),
+            ("p/1", "app"),
+            ("p1", "../app"),
+            ("p1", "a//b"),
+            ("p1", "/etc"),
+        ] {
+            assert_eq!(checkout_path(root, project, dir), None, "{project} {dir}");
+        }
+    }
+
+    /// The IDE's checkout and the sync's are one directory, under the
+    /// project; a legacy clone is read only while there is no such checkout.
+    #[tokio::test]
+    async fn a_source_is_read_from_the_project_checkout_before_a_legacy_clone() {
+        let base = std::env::temp_dir().join(format!("checkout-{}", Uuid::new_v4()));
+        let (root, legacy) = (base.join("workspaces"), base.join("artifacts"));
+        let project = Uuid::new_v4();
+        let svc = service(&root, &legacy);
+        let app = source("acme/app", "app");
+
+        assert_eq!(svc.source_checkout(project, &app, Some("ref")).await, None);
+
+        let old = legacy.join(git_checkout::checkout_key("ref", "acme/app"));
+        repo_at(&old);
+        let found = svc
+            .source_checkout(project, &app, Some("ref"))
+            .await
+            .expect("the legacy clone");
+        assert_eq!(found.layout, CheckoutLayout::LegacySyncClone);
+        assert_eq!(svc.source_checkout(project, &app, None).await, None);
+
+        let here = root.join(project.to_string()).join("app");
+        repo_at(&here);
+        let found = svc
+            .source_checkout(project, &app, Some("ref"))
+            .await
+            .expect("the project checkout");
+        assert_eq!(found.layout, CheckoutLayout::Project);
+        assert_eq!(found.dir, here);
+        assert_eq!(found.commit.len(), 40);
+        assert_eq!(
+            found.read_file("README.md").await.expect("read").as_deref(),
+            Some("one\n")
+        );
+        assert_eq!(
+            found.authors(10).await.expect("authors"),
+            vec![("t".to_owned(), 1)]
+        );
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
