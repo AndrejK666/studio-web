@@ -8,6 +8,7 @@
 // size, which the empty state does not show. Nothing new is computed here.
 
 import type { CatalogueState, ProductRef } from "../../common/protocol";
+import { plural } from "../../common/plural";
 import type { EmptyStateLists } from "../product/product-empty-state";
 
 export interface ProductRowData {
@@ -36,10 +37,6 @@ export interface CatalogueRowData {
 }
 
 const ENGINE_DOWN = "the Gearbox engine is not running";
-
-function plural(n: number, one: string, many: string): string {
-  return `${n} ${n === 1 ? one : many}`;
-}
 
 function productRows(
   refs: readonly ProductRef[],

@@ -5,6 +5,7 @@ import type {
     WorkspaceConflictCode,
     WorkspaceSourceRenameImpactPreview
 } from '../common/workspace-protocol';
+import { plural } from '../common/plural';
 
 type SourceField = 'path' | 'adapter' | 'role' | 'url' | 'branch';
 type SourceRole = 'artifacts' | 'codebase' | 'kits' | 'full';
@@ -148,7 +149,7 @@ export class WorkspaceTomlEditor {
         if (impacts.some(impact => !impact.confirmed)) {
             return conflict(
                 'confirmation-required',
-                `Renaming "${request.sourceId}" requires explicit confirmation for ${impacts.filter(impact => !impact.confirmed).length} exact reference(s).`,
+                `Renaming "${request.sourceId}" requires explicit confirmation for ${plural(impacts.filter(impact => !impact.confirmed).length, 'exact reference', 'exact references')}.`,
                 impacts
             );
         }

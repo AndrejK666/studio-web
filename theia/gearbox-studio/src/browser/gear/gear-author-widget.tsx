@@ -7,6 +7,7 @@ import { inject, injectable, postConstruct } from "@theia/core/shared/inversify"
 import React from "@theia/core/shared/react";
 
 import { GearboxService } from "../../common/protocol";
+import { plural } from "../../common/plural";
 import { GearSessionService } from "../shell/gear-session-service";
 
 @injectable()
@@ -102,7 +103,7 @@ export class GearAuthorWidget extends ReactWidget {
     this.update();
     try {
       const result = await this.service.validate();
-      this.lastValidate = `${result.errors} error(s), ${result.warnings} warning(s)`;
+      this.lastValidate = `${plural(result.errors, "error", "errors")}, ${plural(result.warnings, "warning", "warnings")}`;
       if ((result.diagnostics ?? []).length > 0) {
         this.lastValidate +=
           "\n" +

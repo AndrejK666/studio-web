@@ -21,6 +21,7 @@ import {
     DomainModelFact, DomainModelFinding, DomainModelSide, buildLine, entitiesOf, factsByKind, orderFindings,
     readingOf, ruleLabel, sideLabel, unreadNote,
 } from '../common/desktop-domain-model';
+import { plural } from '../common/plural';
 
 export type DomainModelTab = 'document' | 'resolve' | 'entities' | 'glossary';
 
@@ -183,7 +184,7 @@ export class DesktopDomainModelWidget extends ReactWidget {
             <div data-testid='domain-model-document'>
                 <p className='studio-domain-model__meta'>
                     {current.modelPath}
-                    {doc ? ` · ${doc.state === 'extracted' ? 'read' : doc.state}${doc.revision ? ` at ${doc.revision.slice(0, 8)}` : ''} · ${doc.facts} fact(s)` : ''}
+                    {doc ? ` · ${doc.state === 'extracted' ? 'read' : doc.state}${doc.revision ? ` at ${doc.revision.slice(0, 8)}` : ''} · ${plural(doc.facts, 'fact', 'facts')}` : ''}
                     {doc?.error ? ` · ${doc.error}` : ''}
                 </p>
                 <h3 className='studio-domain-model__heading'>Findings</h3>
@@ -280,7 +281,7 @@ export class DesktopDomainModelWidget extends ReactWidget {
                                 onClick={() => { this.openEntity = open ? undefined : entity.key; this.update(); }}>
                                 <span className={`codicon codicon-chevron-${open ? 'down' : 'right'}`} />
                                 <strong>{entity.name}</strong>
-                                <span className='studio-domain-model__meta'> {entity.facts.length} fact(s) in {entity.documents} document(s)</span>
+                                <span className='studio-domain-model__meta'> {plural(entity.facts.length, 'fact', 'facts')} in {plural(entity.documents, 'document', 'documents')}</span>
                             </button>
                             {open
                                 ? factsByKind(entity.facts).map(group => (
@@ -309,7 +310,7 @@ export class DesktopDomainModelWidget extends ReactWidget {
                         <tr key={entry.key}>
                             <td>{entry.name}{entry.chosen ? <span className='studio-domain-model__meta' title='A member chose this name'> · chosen</span> : undefined}</td>
                             <td>{[...entry.aliases.map(a => a.name), ...entry.spellings.filter(s => s !== entry.name)].join(', ')}</td>
-                            <td>{entry.facts} in {entry.documents} doc(s)</td>
+                            <td>{entry.facts} in {plural(entry.documents, 'document', 'documents')}</td>
                         </tr>
                     ))}
                 </tbody>
