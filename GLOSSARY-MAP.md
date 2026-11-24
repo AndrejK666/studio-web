@@ -3,9 +3,9 @@
 ## Contexts
 
 - [Shared](./docs/glossary.md): terms the whole product uses (organizations, projects, members, gears, sessions); kept by Constructor Studio from the Glossary tab
-- [Backend](./studio-backend/GLOSSARY.md): the Rust backend, its gears and their contracts
+- Backend (`studio-backend/GLOSSARY.md`, not written yet): the Rust backend, its gears and their contracts
 - [Frontend](./studio-frontend/GLOSSARY.md): the portal on FrontX, its shell and MFEs
-- [Theia](./theia/GLOSSARY.md): the Theia IDE and its bridge to the backend
+- Theia (`theia/GLOSSARY.md`, not written yet): the Theia IDE and its bridge to the backend
 
 ## Relationships
 
