@@ -17,6 +17,11 @@
     #   openai_base_url = "..."        # optional, default https://api.openai.com/v1
     #   models = "gpt-5.4,gpt-5.5,gpt-5.4"   # candidates, candidates, checks; or one id for all
 
+    # Or the LiteLLM gateway (works without the VPN); a run may also choose it by itself:
+    #   provider = "litellm"
+    #   litellm_api_key = "..."
+    #   litellm_base_url = "..."       # optional, default https://litellm.ext.constr.dev/v1
+
     [gears_rust]                     # where the Gear catalogue is cloned from
     url = "https://github.com/constructorfabric/gears-rust.git"
     token = "..."                    # optional: a private gears-rust
@@ -47,6 +52,8 @@ NAMES: dict[tuple[str, str], str] = {
     ("llm", "models"): "GEARS_MATCHER_VERIFIED_MODELS",
     ("llm", "openai_api_key"): "OPENAI_API_KEY",
     ("llm", "openai_base_url"): "OPENAI_BASE_URL",
+    ("llm", "litellm_api_key"): "LITELLM_API_KEY",
+    ("llm", "litellm_base_url"): "LITELLM_BASE_URL",
     ("gears_rust", "url"): "GEARS_RUST_URL",
     ("gears_rust", "token"): "GEARS_RUST_TOKEN",
     ("database", "url"): "GEARS_MATCHER_DATABASE_URL",

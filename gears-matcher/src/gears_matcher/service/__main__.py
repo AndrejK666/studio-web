@@ -192,7 +192,13 @@ def build(settings: Settings) -> tuple[RunManager, RealRunner, RunSettings]:
         max_calls=settings.limits.max_calls,
         max_extract_calls=settings.limits.max_extract_calls,
     )
-    run_settings = RunSettings(config, tuple(PROVIDERS), pool.unavailable, store)
+    run_settings = RunSettings(
+        config,
+        tuple(PROVIDERS),
+        pool.unavailable,
+        store,
+        default_model=lambda p: default_model(p, provider_module(p)),
+    )
     problem = run_settings.view().get("problem")
     if problem:
         log.warning("%s", problem)

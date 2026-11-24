@@ -405,6 +405,22 @@ components:
             Constructor Fabric format. It cannot exceed `limits.max_extract_calls` (else
             `422 over_cap`). These calls are counted in `usage.calls` and can be billed. Omitted:
             no free-form reading.
+        provider:
+          type: string
+          enum: [litellm, openai]
+          description: |
+            The connection this run uses, in place of the one the settings (`GET /v1/settings`)
+            choose; the call bounds stay the settings'. Constructor's connector is not offered
+            here: it is reachable only inside the VPN (the settings may still choose it). The
+            service must hold a key for it (`GET /v1/info`, `providers[].configured`), else
+            `422 provider_unavailable`. Any other value is `422 unknown_provider`. Omitted: the
+            settings' provider and models.
+        model:
+          type: string
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._:/-]{0,99}$'
+          description: |
+            One model id, used for all three roles of the verified matcher. Needs `provider`.
+            Omitted: the provider's default model.
     Run:
       type: object
       required: [id, state, created_at, usage]
@@ -525,6 +541,18 @@ components:
           description: The models a run submitted now uses.
           items:
             type: string
+        providers:
+          type: array
+          description: The connections a run may ask for, and whether this service holds a key.
+          items:
+            type: object
+            properties:
+              code:
+                type: string
+              configured:
+                type: boolean
+              default_model:
+                type: string
         limits:
           type: object
           properties:

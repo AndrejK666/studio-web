@@ -56,6 +56,10 @@ BASE_URL_VARIABLE = "OPENAI_BASE_URL"
 MODEL_VARIABLE = "OPENAI_MODEL"
 SETTING_VARIABLES = (KEY_VARIABLE, BASE_URL_VARIABLE, MODEL_VARIABLE)
 
+# A gateway such as LiteLLM answers 499 ("closed request") when its own call upstream was cut off.
+# The same call usually works when sent again (a run where about one check in three got it).
+_RETRY_STATUSES = retry.RETRY_STATUSES | {499}
+
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_MODEL = "gpt-5.4"
 
@@ -80,20 +84,28 @@ def label(
     return f"openai/{model}/t{shown}/max{max_tokens}/json-prompt-v1"
 
 
-def _base_url(raw: str) -> str:
+def _base_url(raw: str, variable: str = BASE_URL_VARIABLE, default: str = DEFAULT_BASE_URL) -> str:
     """The endpoint's base: https only (a key must not travel in clear), no query or fragment."""
     url = raw.strip().rstrip("/")
     parts = urlsplit(url)
     if parts.scheme != "https" or not parts.hostname or parts.query or parts.fragment:
         raise MissingConfigError(
-            f"{BASE_URL_VARIABLE} must be an https URL with no query or fragment "
-            f"(default {DEFAULT_BASE_URL})"
+            f"{variable} must be an https URL with no query or fragment (default {default})"
         )
     return url
 
 
 class OpenAIClient:
-    """`ModelClient` for an OpenAI-compatible endpoint."""
+    """`ModelClient` for an OpenAI-compatible endpoint.
+
+    A gateway with its own settings (the LiteLLM one) subclasses this and changes only the names
+    below: the three variables, the default endpoint and the default model."""
+
+    _key_variable = KEY_VARIABLE
+    _base_url_variable = BASE_URL_VARIABLE
+    _model_variable = MODEL_VARIABLE
+    _default_base_url = DEFAULT_BASE_URL
+    _default_model = DEFAULT_MODEL
 
     def __init__(
         self,
@@ -104,16 +116,24 @@ class OpenAIClient:
         http: httpx2.Client | None = None,
     ) -> None:
         env = os.environ
-        values = {name: env.get(name, "").strip() for name in SETTING_VARIABLES}
-        if not values[KEY_VARIABLE]:
+        key, base, chosen = (
+            env.get(name, "").strip()
+            for name in (self._key_variable, self._base_url_variable, self._model_variable)
+        )
+        if not key:
             raise MissingConfigError(
-                f"{KEY_VARIABLE} not set: export it in your shell or put it in .env"
+                f"{self._key_variable} not set: export it in your shell or put it in .env"
             )
-        self._secret = values[KEY_VARIABLE]
-        self._model = model or values[MODEL_VARIABLE] or DEFAULT_MODEL
+        self._secret = key
+        self._model = model or chosen or self._default_model
         self._max_tokens = default_max_tokens(self._model) if max_tokens is None else max_tokens
         self._temperature = effective_temperature(self._model, temperature)
-        self._url = _base_url(values[BASE_URL_VARIABLE] or DEFAULT_BASE_URL) + "/chat/completions"
+        self._url = (
+            _base_url(
+                base or self._default_base_url, self._base_url_variable, self._default_base_url
+            )
+            + "/chat/completions"
+        )
         self._http = http or httpx2.Client()
 
     @property
@@ -121,7 +141,7 @@ class OpenAIClient:
         return self._model
 
     def __repr__(self) -> str:
-        return f"OpenAIClient(model={self._model!r}, api_key=<set>)"
+        return f"{type(self).__name__}(model={self._model!r}, api_key=<set>)"
 
     def complete(
         self, *, system: str, user: str, schema: dict[str, object], timeout_s: float
@@ -176,7 +196,7 @@ class OpenAIClient:
             except httpx2.TransportError as exc:
                 last = f"{type(exc).__name__} (no response)"
                 continue
-            if response.status_code in retry.RETRY_STATUSES:
+            if response.status_code in _RETRY_STATUSES:
                 last = f"HTTP {response.status_code}: {response.text}"
                 continue
             if response.status_code >= ERROR_FROM:

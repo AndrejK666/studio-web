@@ -139,7 +139,7 @@ class RunManager:
                 return self.view(existing)
             request = parse_request(body, self.limits)
             if self.settings is not None:
-                now = self.settings.effective()
+                now = self.settings.for_run(request.provider, request.models)
                 request = replace(request, provider=now.provider, models=now.models)
             self.runner.preflight(request)
             cap = self.limits.max_concurrent_runs

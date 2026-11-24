@@ -12,3 +12,9 @@ hand in a pull request that names the commit it comes from; update the commit ab
 Carried over by hand from gears-matcher branch feat/openai-client (an OpenAI-compatible client and
 the choice of provider and of the three `verified` models: judge/llm/openai_client.py, judge/llm/run.py,
 and `verified_models()` in run.py). Not on gears-matcher's main yet; the commit above is unchanged.
+
+Also carried over by hand from gears-matcher branch feat/openai-client: the LiteLLM provider
+(judge/llm/litellm_client.py, a subclass of the OpenAI-compatible client with its own LITELLM_*
+settings and `glm-5.3-flash` as its default model) and a retry of the gateway's HTTP 499. The service
+now also takes `options.provider` and `options.model` per run (service/request.py, service/runner.py),
+which gears-matcher does not have.

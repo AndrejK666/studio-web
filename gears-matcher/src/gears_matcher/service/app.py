@@ -109,6 +109,7 @@ def _v1_router(
             **info,
             "provider": now.provider,
             "models": list(now.models),
+            "providers": settings.providers_view(),
             "limits": settings.limits(limits).as_json(),
         }
 

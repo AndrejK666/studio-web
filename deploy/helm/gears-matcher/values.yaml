@@ -13,6 +13,8 @@
 #     cmodel_id = "..."
 #     public_connector_id = "..."
 #     # or OpenAI: provider = "openai", openai_api_key = "...", models = "gpt-5.4,gpt-5.5,gpt-5.4"
+#     # or LiteLLM (no VPN): provider = "litellm", litellm_api_key = "...", models = "glm-5.3-flash"
+#     #   (a run may also choose litellm or openai itself; the Secret must hold that provider's key)
 #     [gears_rust]
 #     token = "..."                    # optional: only for a private catalogue repository
 #

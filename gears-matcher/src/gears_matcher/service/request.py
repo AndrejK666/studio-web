@@ -20,7 +20,11 @@ PATH = re.compile(r"^(?!/)(?!.*(^|/)\.\.(/|$))[^\x00-\x1f\x7f\\]+\.md$")
 PATH_MAX = 300
 _FIELDS = {"product", "own_gears", "documents", "options"}
 _DOC_FIELDS = {"path", "sha256", "content"}
-_OPTION_FIELDS = {"use_gears_bundle", "max_calls", "extract_max_calls"}
+_OPTION_FIELDS = {"use_gears_bundle", "max_calls", "extract_max_calls", "provider", "model"}
+# What a run may ask for itself. Constructor's connector is not one: it is reachable only inside the
+# VPN. The service's settings (`GET /v1/settings`) may still choose it for every run.
+RUN_PROVIDERS = ("litellm", "openai")
+MODEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,99}$")
 
 
 @dataclass(frozen=True)
@@ -63,10 +67,13 @@ class RunRequest:
     use_gears_bundle: bool = False
     max_calls: int = 400
     extract_max_calls: int | None = None
-    # What the service's settings said when the run was submitted (never from the caller):
-    # None runs with the provider and models the service started with.
+    # The provider and models the run uses: what the caller chose (`options.provider`,
+    # `options.model`) or else what the service's settings said when it was submitted. None runs
+    # with the provider and models the service started with.
     provider: str | None = None
     models: tuple[str, str, str] | None = None
+    # True when the caller chose them: the settings then do not replace them.
+    chosen: bool = False
 
     def settings_json(self) -> dict[str, Any] | None:
         if self.provider is None or self.models is None:
@@ -128,6 +135,7 @@ def parse_request(body: Any, limits: Limits) -> RunRequest:
     options = body.get("options") or {}
     if not isinstance(options, dict) or set(options) - _OPTION_FIELDS:
         raise bad_request("options: known fields only")
+    provider, model = _provider_and_model(options.get("provider"), options.get("model"))
     return RunRequest(
         product=product,
         documents=documents,
@@ -137,7 +145,24 @@ def parse_request(body: Any, limits: Limits) -> RunRequest:
         extract_max_calls=_optional_bound(
             options.get("extract_max_calls"), "extract_max_calls", limits.max_extract_calls
         ),
+        provider=provider,
+        models=(model, model, model) if model else None,
+        chosen=provider is not None,
     )
+
+
+def _provider_and_model(provider: Any, model: Any) -> tuple[str | None, str | None]:
+    """`options.provider` and `options.model`; a model needs a provider. Whether the service holds
+    the provider's key is checked by the manager, before anything is stored."""
+    if provider is None and model is None:
+        return None, None
+    if provider not in RUN_PROVIDERS:
+        raise unprocessable(
+            "unknown_provider", f"options.provider must be one of: {', '.join(RUN_PROVIDERS)}"
+        )
+    if model is not None and (not isinstance(model, str) or not MODEL.match(model)):
+        raise bad_request("options.model is not a model id")
+    return provider, model
 
 
 def _document(doc: Any, limits: Limits) -> Document:
