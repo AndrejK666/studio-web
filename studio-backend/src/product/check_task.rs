@@ -204,8 +204,11 @@ impl TaskHandler for ProductCheckTask {
                 );
                 TaskOutcome::done_with(
                     format!(
-                        "revision {} for {}: {errors} error(s), {warnings} warning(s)",
-                        checked.revision.revision, checked.profile
+                        "revision {} for {}: {}, {}",
+                        checked.revision.revision,
+                        checked.profile,
+                        crate::plural::plural(errors, "error", "errors"),
+                        crate::plural::plural(warnings, "warning", "warnings")
                     ),
                     serde_json::json!({
                         "revision": checked.revision.revision,
