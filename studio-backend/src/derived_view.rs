@@ -501,7 +501,11 @@ impl TaskHandler for DeriveTask {
                         elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
                         "derived view computed"
                     );
-                    TaskOutcome::done(format!("{}: {} row(s)", spec.view, state.items))
+                    TaskOutcome::done(format!(
+                        "{}: {}",
+                        spec.view,
+                        crate::plural::plural(state.items, "row", "rows")
+                    ))
                 }
                 Err(e) => TaskOutcome::Retry(format!("{}: {e:#}", spec.view)),
             },
