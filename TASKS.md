@@ -9,7 +9,13 @@ done, **P2** can wait.
 
 ## P0
 
-- [ ] Run the combined gate on the fork's main @andrejk666
+- [x] Run the combined gate on the fork's main @andrejk666
+
+  Done 2026-11-24 by claude-0e on 13cbcce78 (main after it is docs only):
+  backend 3411/3411, contract, docs, API usage, portal lint/types,
+  product-mfe 549/549. Red and not new: 10 projects-mfe timeouts (as on the
+  old main) and the shell's `editorSessionEffects` (broken by 8fe24027b,
+  see P1 below).
 
   Everything since 2026-11-23 is ungated: the GitLab connector and sign-in,
   artifact-ingest in the project's organization, organization-filed runs
@@ -25,7 +31,11 @@ done, **P2** can wait.
   secret_preflight, build_records, service_research_builds, deployment
   logs/status), `domain_model` rehome, releases-mfe, `LoginScreen`.
 
-- [ ] Regenerate the API contract @andrejk666
+- [x] Regenerate the API contract @andrejk666
+
+  Done in 4fdc9d2e8: `api-contract.json` and `api-contract-accepted.txt`
+  regenerated in the gate container, the content route added to the
+  typed-response baseline.
 
   `docs/api-contract.json` was edited by hand for the GitLab routes
   (`GET /studio-artifact-ingest/v1/outputs/{output_id}/content` and others).
@@ -64,6 +74,27 @@ done, **P2** can wait.
     platform admin (they 404'd without `organization_id`);
   - a platform admin's sync of an organization's repository shows progress
     to the end, survives a page reload, and can be cancelled and retried.
+
+- [ ] Check the gears-matcher with LiteLLM on the stand @andrejk666
+
+  Fork main has TK's LiteLLM provider (fork PR #2) on our run settings: a run
+  may choose `options.provider` (`litellm`: glm-5.3-flash x3, `openai`:
+  gpt-5.4/gpt-5.5/gpt-5.4), the choice replaces the settings' provider and
+  models, the call bounds stay the settings'. The stand's `gears-matcher`
+  container (`gears-matcher:local`, :8096) already runs it; LiteLLM shows as
+  unavailable until `litellm_api_key` (from the gateway's owner) is in the
+  container's `config-openai.toml`. Check Organization › Gears matcher in the
+  portal (LiteLLM in the list, switch, save) and one run on each provider.
+
+- [ ] Roll the gears-matcher out to Dev @andrejk666
+
+  After the stand check. By hand, as in deploy-without-GitHub: build the image
+  from fork main, push to `ghcr.io/andrejk666/studio-web/gears-matcher`,
+  `helm upgrade gears-matcher deploy/helm/gears-matcher` with the `ghcr-pull`
+  secret, and the LiteLLM key in the config Secret. Deploy backend and
+  prototype from the same main together (the backend's settings proxy and the
+  portal screen). `gears-matcher.yml` cannot publish to the fork's registry
+  yet.
 
 ## P1
 
@@ -109,6 +140,17 @@ done, **P2** can wait.
   Messages to claude-0e expire unread (the two sessions run in different
   permission modes). Pass it by hand: the list under "Run the combined gate".
 
+- [ ] Fix the shell's `editorSessionEffects` test @andrejk666
+
+  Red since 8fe24027b (follow a run the event stream never mentions). The
+  test expects the old behaviour; update it or the effect.
+
+- [ ] Point `gears-matcher.yml` at the fork's registry @andrejk666
+
+  The workflow publishes only to upstream's registry, so the matcher goes to
+  Dev by hand. Add the fork's `ghcr.io/andrejk666` as a target, or a manual
+  dispatch input for it.
+
 ## P2
 
 - [ ] Purge the root's deleted copies @andrejk666
@@ -146,6 +188,13 @@ done, **P2** can wait.
   ADR-0051, last 2026-10-28), `stand-tracks` (+198), `two-tracks-ingest-local`,
   `two-tracks-session-clone` (2026-11-13), `domain-diagram-all`
   (`docs/domain-model.md`, 2026-10-16, likely stale). Merge, rebase or delete.
+
+- [ ] Tell TK what changed in their LiteLLM PR @andrejk666
+
+  Fork PR #2 merged with our run settings: `options.model` is refused (models
+  are fixed per provider), a run's provider wins over the settings but not
+  their call bounds, `GET /v1/info` lists `providers`; their portal changes
+  (projects-mfe Gears section, vite proxy, litellm icon) were not taken.
 
 # 2026-10-15 — the project, its product, and where gears come from
 
