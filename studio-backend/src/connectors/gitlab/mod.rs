@@ -13,6 +13,7 @@
 
 mod client;
 mod model;
+mod reviews;
 
 #[cfg(test)]
 mod mock;
@@ -22,16 +23,17 @@ mod tests;
 use async_trait::async_trait;
 
 use super::driver::{
-    ConnectionAuth, ConnectorCategory, ConnectorDriver, Contributor, DriverIdentity, RemoteComment,
-    RemoteCommit, RemoteFile, RemoteFileList, RemoteFileText, RemoteIssue, RemotePullRequest,
-    RemoteRepo, RepoTree, RepoTreeEntry,
+    ConnectionAuth, ConnectorCategory, ConnectorDriver, Contributor, DriverIdentity,
+    PullRequestThreads, RemoteComment, RemoteCommit, RemoteFile, RemoteFileList, RemoteFileText,
+    RemoteIssue, RemotePullRequest, RemoteRepo, RepoTree, RepoTreeEntry,
 };
 use super::references::ReferenceSyntax;
 use client::{Api, Family, Retry, encode, is_item_refusal};
 use model::{
-    Branch, Changes, Commit, Diff, Issue, MergeRequest, Note, Project, Tag, TreeItem, User,
-    noreply_username,
+    Approvals, Branch, Changes, Commit, Diff, Discussion, Issue, MergeRequest, Note, Project, Tag,
+    TreeItem, User, noreply_username,
 };
+use reviews::ReviewState;
 
 /// Pages of a repository tree read before the listing is called truncated:
 /// 100 entries each, so 20,000 entries -- the artifact ingest's own file cap
@@ -432,17 +434,72 @@ impl ConnectorDriver for GitLabDriver {
         page: u32,
         per_page: u32,
     ) -> anyhow::Result<Vec<RemotePullRequest>> {
+        // GitLab lists everyone asked to review; Studio's
+        // `requested_reviewers` is who still owes it. For an open merge
+        // request with reviewers that takes its discussions (one walk each);
+        // a closed one is nobody's queue, so it keeps the list as GitLab has it.
         let api = self.api(auth);
         let mrs = self
             .merge_requests(&api, repo_full_path, "all", since, page, per_page)
             .await?;
-        Ok(mrs
-            .into_iter()
-            .map(|mr| {
-                let reviewers = mr.reviewer_logins();
-                mr.into_remote(reviewers)
-            })
-            .collect())
+        let mut out = Vec::with_capacity(mrs.len());
+        for mr in mrs {
+            let reviewers = mr.reviewer_logins();
+            let requested = if mr.is_open() && !reviewers.is_empty() {
+                match self.review_state(&api, repo_full_path, &mr, false).await {
+                    Ok(state) => state.owed,
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            repo = repo_full_path,
+                            mr = mr.iid,
+                            "gitlab: review state unreadable; every reviewer reads as owed"
+                        );
+                        reviewers
+                    }
+                }
+            } else {
+                reviewers
+            };
+            out.push(mr.into_remote(requested));
+        }
+        Ok(out)
+    }
+
+    async fn open_review_threads(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        max_pulls: u32,
+    ) -> anyhow::Result<Option<Vec<PullRequestThreads>>> {
+        // GitLab's REST carries resolution on each note of a discussion, so
+        // GitLab can say what GitHub's REST cannot. The open merge requests,
+        // most recently updated first, up to `max_pulls`.
+        let api = self.api(auth);
+        let want = max_pulls.max(1) as usize;
+        let mut out = Vec::new();
+        for page in 1..=want.div_ceil(100) as u32 {
+            let mrs = self
+                .merge_requests(&api, repo_full_path, "opened", None, page, 100)
+                .await?;
+            let full = mrs.len() == 100;
+            for mr in mrs {
+                if out.len() >= want {
+                    break;
+                }
+                let state = self.review_state(&api, repo_full_path, &mr, true).await?;
+                out.push(PullRequestThreads {
+                    number: mr.iid,
+                    open: state.open_threads,
+                    total: state.total_threads,
+                    reviews: state.reviews,
+                });
+            }
+            if !full || out.len() >= want {
+                break;
+            }
+        }
+        Ok(Some(out))
     }
 
     async fn pull_request_files(
@@ -615,6 +672,45 @@ const COMMENT_ITEMS: u32 = 20;
 const MAX_SILENT_PAGES: u32 = 5;
 
 impl GitLabDriver {
+    /// Where one merge request stands in review ([`reviews::fold`]): its
+    /// discussions, and with `approvals` the `/approvals` extra, which an
+    /// unlicensed edition answers with 402 and which is then left out.
+    async fn review_state(
+        &self,
+        api: &Api<'_>,
+        repo_full_path: &str,
+        mr: &MergeRequest,
+        approvals: bool,
+    ) -> anyhow::Result<ReviewState> {
+        let url = api.project(
+            repo_full_path,
+            &format!("/merge_requests/{}/discussions?per_page=100", mr.iid),
+        );
+        let (discussions, _) = api.walk::<Discussion>(&url, Family::Item, 20).await?;
+        let approved_by = if approvals {
+            let url = api.project(
+                repo_full_path,
+                &format!("/merge_requests/{}/approvals", mr.iid),
+            );
+            match api.get::<Approvals>(&url).await {
+                Ok(a) => a.logins(),
+                Err(e) => {
+                    tracing::debug!(error = %e, mr = mr.iid, "gitlab: approvals not read");
+                    Vec::new()
+                }
+            }
+        } else {
+            Vec::new()
+        };
+        let author = mr.author.as_ref().map(|a| a.username.as_str());
+        Ok(reviews::fold(
+            author,
+            &mr.reviewer_logins(),
+            &discussions,
+            &approved_by,
+        ))
+    }
+
     /// One page of a project's merge requests, most recently updated first.
     /// `state` is GitLab's: `all`, `opened`, `merged`, `closed`.
     async fn merge_requests(

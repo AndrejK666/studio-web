@@ -211,6 +211,37 @@ impl Note {
     }
 }
 
+/// `GET …/merge_requests/:iid/discussions`: a thread, or one note standing
+/// alone (system notes included).
+#[derive(Deserialize)]
+pub(super) struct Discussion {
+    #[serde(default)]
+    pub notes: Vec<Note>,
+}
+
+/// `GET …/merge_requests/:iid/approvals`: who approves it now. No times, and
+/// 402 where the edition is not licensed for it.
+#[derive(Deserialize)]
+pub(super) struct Approvals {
+    #[serde(default)]
+    pub approved_by: Vec<ApprovedBy>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct ApprovedBy {
+    #[serde(default)]
+    pub user: Option<UserRef>,
+}
+
+impl Approvals {
+    pub fn logins(self) -> Vec<String> {
+        self.approved_by
+            .into_iter()
+            .filter_map(|a| login(a.user))
+            .collect()
+    }
+}
+
 /// `GET …/merge_requests/:iid/diffs` (15.7+) and each entry of the older
 /// `…/changes`.
 #[derive(Deserialize)]

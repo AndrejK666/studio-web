@@ -724,3 +724,115 @@ async fn contributors_are_named_by_account_where_the_address_says_it() {
         [("ada", 9), ("bob@corp.example", 3)]
     );
 }
+
+/* ── Reviews (from system notes) ── */
+
+fn discussions_of_mr_7() -> serde_json::Value {
+    json!([
+        { "id": "d1", "individual_note": true, "notes": [
+            { "id": 1, "system": true, "body": "requested review from @bob and @carol",
+              "author": { "username": "ada" } } ] },
+        { "id": "d2", "individual_note": false, "notes": [
+            { "id": 2, "system": false, "body": "Please split this", "resolvable": true,
+              "resolved": false, "author": { "username": "carol" } },
+            { "id": 3, "system": false, "body": "Will do", "resolvable": true,
+              "resolved": false, "author": { "username": "ada" } } ] },
+        { "id": "d3", "individual_note": false, "notes": [
+            { "id": 4, "system": false, "body": "typo", "resolvable": true,
+              "resolved": true, "author": { "username": "bob" } } ] },
+        { "id": "d4", "individual_note": true, "notes": [
+            { "id": 5, "system": true, "body": "requested changes",
+              "author": { "username": "carol" } } ] }
+    ])
+}
+
+#[tokio::test]
+async fn open_merge_requests_say_who_still_owes_a_review_and_what_each_said() {
+    let open_mr = mr(
+        700,
+        7,
+        json!({ "reviewers": [{ "username": "bob" }, { "username": "carol" }, { "username": "erin" }] }),
+    );
+    let mock = Mock::builder()
+        .get_q(
+            &format!("{PROJECT}/merge_requests"),
+            "state=opened",
+            Reply::json(json!([open_mr.clone()])),
+        )
+        .get_q(
+            &format!("{PROJECT}/merge_requests"),
+            "state=all",
+            Reply::json(json!([open_mr])),
+        )
+        .get(
+            &format!("{PROJECT}/merge_requests/7/discussions"),
+            Reply::json(discussions_of_mr_7()),
+        )
+        // Not licensed on this edition: the extra is skipped, the notes stand.
+        .get(
+            &format!("{PROJECT}/merge_requests/7/approvals"),
+            Reply::status(402),
+        )
+        .start()
+        .await;
+    let driver = mock.driver();
+    let auth = mock.auth();
+
+    let threads = driver
+        .open_review_threads(&auth, "acme/platform/app", 50)
+        .await
+        .unwrap()
+        .expect("GitLab can say");
+    assert_eq!(threads.len(), 1);
+    let t = &threads[0];
+    assert_eq!((t.number, t.open, t.total), (7, 1, 2));
+    assert_eq!(
+        t.reviews
+            .iter()
+            .map(|r| (r.login.as_str(), r.state.as_str()))
+            .collect::<Vec<_>>(),
+        [("bob", "commented"), ("carol", "changes_requested")]
+    );
+
+    // Bob answered (a comment), Carol asked for changes; Erin never did.
+    let prs = driver
+        .list_pull_requests(&auth, "acme/platform/app", None, 1, 100)
+        .await
+        .unwrap();
+    assert_eq!(prs[0].requested_reviewers, vec!["erin".to_string()]);
+}
+
+#[tokio::test]
+async fn an_approval_only_the_approvals_endpoint_lists_is_read_where_licensed() {
+    let mock = Mock::builder()
+        .get_q(
+            &format!("{PROJECT}/merge_requests"),
+            "state=opened",
+            Reply::json(json!([mr(
+                800,
+                8,
+                json!({ "reviewers": [{ "username": "bob" }] })
+            )])),
+        )
+        .get(
+            &format!("{PROJECT}/merge_requests/8/discussions"),
+            Reply::json(json!([])),
+        )
+        .get(
+            &format!("{PROJECT}/merge_requests/8/approvals"),
+            Reply::json(
+                json!({ "approved_by": [{ "user": { "username": "bob" } }, { "user": null }] }),
+            ),
+        )
+        .start()
+        .await;
+    let threads = mock
+        .driver()
+        .open_review_threads(&mock.auth(), "acme/platform/app", 50)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(threads[0].reviews.len(), 1);
+    assert_eq!(threads[0].reviews[0].state, "approved");
+    assert_eq!((threads[0].open, threads[0].total), (0, 0));
+}
