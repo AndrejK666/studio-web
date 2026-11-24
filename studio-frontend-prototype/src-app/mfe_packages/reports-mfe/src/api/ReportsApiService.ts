@@ -14,6 +14,7 @@
  */
 
 import { BaseApiService, RestEndpointProtocol, RestPlugin, RestProtocol, type RestRequestContext } from '@gears-frontx/react';
+import { readOrgMembers } from '@constructor-studio/mfe-shared';
 import type { MirrorSummary, Plan, PlanPeople, PlanSection } from '../model/plan-model';
 import { sectionBody } from '../model/plan-model';
 import type { Report, ReportSchedule, ReportSource, ReportSourceInput } from '../model/reports-model';
@@ -130,26 +131,9 @@ export class ReportsApiService extends BaseApiService {
     ({ runId, tenant }) => `/studio-tasks/v1/runs/${encodeURIComponent(runId)}?tenant=${encodeURIComponent(tenant)}`
   );
 
-  /** One page of the organization's members (`people.view`). */
-  readonly membersPage = this.protocol(RestEndpointProtocol).queryWith<
-    MembersPage,
-    { organizationId: string; offset: number }
-  >(
-    ({ organizationId, offset }) =>
-      `/studio-user/v1/organizations/${encodeURIComponent(organizationId)}/members?offset=${offset}&limit=${MEMBERS_PAGE}`
-  );
-
   /** Every member of the organization, page by page. */
-  async members(organizationId: string): Promise<OrgMember[]> {
-    const items: OrgMember[] = [];
-    for (let offset = 0; ; offset += MEMBERS_PAGE) {
-      const page = await this.membersPage({ organizationId, offset }).fetch({ staleTime: 0 });
-      const got = page.items ?? [];
-      items.push(...got);
-      const total = typeof page.total === 'number' ? page.total : items.length;
-      // An empty page also ends it: a server that ignores the parameters must not spin forever.
-      if (got.length === 0 || items.length >= total) return items;
-    }
+  members(organizationId: string): Promise<OrgMember[]> {
+    return readOrgMembers(organizationId);
   }
 
   /** Set where the report's board and plan come from: a field left out keeps its value. */

@@ -11,7 +11,7 @@
  * Pure, so it is tested without a backend. */
 
 import type { ProjectImage } from "../api/types";
-import type { IdeBuild } from "./builds";
+import type { IdeBuild } from "@constructor-studio/mfe-shared";
 import { recordFor, shortDigest } from "./images";
 
 /** Whether an image can run: built and still there; being built; or not. A

@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Deployment } from "../api/types";
-import { anyRunning, buildStages, failureCause, isLost, openingScenario, stageOf, type IdeBuild } from "./builds";
+import { anyRunning, buildStages, failureCause, isLost, openingScenario, stageOf, type IdeBuild } from "@constructor-studio/mfe-shared";
 import { buildsHint, deploysHint } from "./pipeline";
 
 const build = (over: Partial<IdeBuild>): IdeBuild => ({

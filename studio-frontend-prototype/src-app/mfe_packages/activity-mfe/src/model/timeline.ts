@@ -6,7 +6,8 @@
  * (ADR-0070 §7); where it is not installed there is no Timeline.
  */
 
-import type { DomainObject, DomainQuery } from '../api/types';
+import type { DomainOperation, DomainQueryRequest } from '@constructor-studio/mfe-shared';
+import type { DomainObject } from '../api/types';
 import { SYSTEM_BUCKET, asInput, fieldsOfModel, parsed, type DomainModel, type ModelField } from './fields';
 
 export const MILESTONE = 'milestone';
@@ -98,7 +99,7 @@ export function orderedFields(fields: readonly ModelField[]): ModelField[] {
 }
 
 /** One read: the project's milestones by date then name, counted by status. */
-export function milestoneQuery(projectId: string): DomainQuery {
+export function milestoneQuery(projectId: string): DomainQueryRequest {
   return {
     type: MILESTONE,
     project_id: projectId,
@@ -138,7 +139,7 @@ export function saveOperation(
   milestone: Milestone | null,
   projectId: string,
   key: string
-): Record<string, unknown> {
+): DomainOperation {
   const name = String(draft.name ?? '').trim();
   const date = String(draft.target_at ?? '');
   const values: Record<string, unknown> = {};

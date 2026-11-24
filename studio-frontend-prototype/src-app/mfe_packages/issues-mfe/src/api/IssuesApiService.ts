@@ -10,6 +10,7 @@
  */
 
 import { BaseApiService, RestEndpointProtocol, RestProtocol } from '@gears-frontx/react';
+import { fetchAllPages, readOrgMembers } from '@constructor-studio/mfe-shared';
 import type { SpecModelBuildEstimate } from '../model/build-eta';
 import type { SpecModelBuild } from '../model/spec-model';
 import type {
@@ -32,6 +33,22 @@ const DOCS = '/studio-documents/v1/project-domain-model';
 
 /** The largest page the issues route and the members route answer. */
 export const MAX_PAGE = 200;
+
+const FRESH = { staleTime: 0 };
+
+/** Every page of a list, with the first page's other fields (its counts) kept. */
+async function allRows<P extends { items: unknown[]; total: number }>(read: (offset: number) => Promise<P>): Promise<P> {
+  let first: P | null = null;
+  const all = await fetchAllPages(
+    async (offset) => {
+      const page = await read(offset);
+      first ??= page;
+      return page;
+    },
+    { pageSize: MAX_PAGE, advance: 'rows' }
+  );
+  return { ...(first as unknown as P), items: all.items } as P;
+}
 
 export class IssuesApiService extends BaseApiService {
   constructor() {
@@ -58,14 +75,8 @@ export class IssuesApiService extends BaseApiService {
 
   /** The whole queue: the screen searches and filters it as one table. */
   async issues(projectId: string): Promise<SpecModelIssueRowList> {
-    const first = await this.issuesPage({ projectId, offset: 0 }).fetch({ staleTime: 0 });
-    const items = [...first.items];
-    while (items.length < first.total) {
-      const page = await this.issuesPage({ projectId, offset: items.length }).fetch({ staleTime: 0 });
-      if (page.items.length === 0) break;
-      items.push(...page.items);
-    }
-    return { ...first, items };
+    // The screen resolves and reassigns issues and reads the queue again: past the cache.
+    return allRows((offset) => this.issuesPage({ projectId, offset }).fetch(FRESH));
   }
 
   readonly readiness = this.protocol(RestEndpointProtocol).queryWith<SpecModelReadiness, { projectId: string }>(
@@ -82,38 +93,16 @@ export class IssuesApiService extends BaseApiService {
 
   /** Every way to make the documentation better: the screen searches them with the queue as one table. */
   async docQuality(projectId: string): Promise<DocQualityRowList> {
-    const first = await this.docQualityPage({ projectId, offset: 0 }).fetch({ staleTime: 0 });
-    const items = [...first.items];
-    while (items.length < first.total) {
-      const page = await this.docQualityPage({ projectId, offset: items.length }).fetch({ staleTime: 0 });
-      if (page.items.length === 0) break;
-      items.push(...page.items);
-    }
-    return { ...first, items };
+    return allRows((offset) => this.docQualityPage({ projectId, offset }).fetch(FRESH));
   }
 
   readonly buildEstimate = this.protocol(RestEndpointProtocol).queryWith<SpecModelBuildEstimate, { projectId: string }>(
     ({ projectId }) => `${DOCS}/build-estimate?${q({ project_id: projectId })}`
   );
 
-  readonly membersPage = this.protocol(RestEndpointProtocol).queryWith<
-    { items?: OrgMember[]; total?: number },
-    { orgId: string; offset: number }
-  >(
-    ({ orgId, offset }) =>
-      `/studio-user/v1/organizations/${e(orgId)}/members?${q({ offset: String(offset), limit: String(MAX_PAGE), include: 'aliases' })}`
-  );
-
   /** An organization's members with their attributed identities, every page (`people.view`). */
-  async orgMembers(orgId: string): Promise<OrgMember[]> {
-    const items: OrgMember[] = [];
-    for (let offset = 0; ; offset += MAX_PAGE) {
-      const body = await this.membersPage({ orgId, offset }).fetch({ staleTime: 0 });
-      const page = body.items ?? [];
-      items.push(...page);
-      const total = typeof body.total === 'number' ? body.total : items.length;
-      if (page.length === 0 || items.length >= total) return items;
-    }
+  orgMembers(orgId: string): Promise<OrgMember[]> {
+    return readOrgMembers<OrgMember>(orgId, { include: 'aliases' });
   }
 
   /* ── writes ── */

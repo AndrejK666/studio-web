@@ -4,19 +4,15 @@
  * - Activity: the project's feed of checks and comments, ordered and named by
  *   the gear that owns the nodes (`studio-artifact-ingest`,
  *   `artifact_ingest/activity.rs`).
- * - Timeline: `milestone` objects of the Studio domain model (ADR-0066),
- *   read with one `POST /query` and written with `POST /mutate`; the model
- *   itself (`GET /types`) says whether the type is installed and which fields
- *   it has. `milestone` is project-lifecycle's type (ADR-0070 §7); this kit
- *   only shows it.
+ * - Open pull requests, for the project's overview card.
  *
- * The domain model is the organization's (`?organization_id=`), as the
- * prototype's `orgScoped` named it.
+ * Timeline reads the Studio domain model through mfe-shared's data layer
+ * (`useDomainTypes`, `useDomainQuery`, `domainMutate`), not through here.
  */
 
 import { BaseApiService, RestEndpointProtocol, RestProtocol } from '@gears-frontx/react';
 import type { OpenPullRequest } from '@constructor-studio/mfe-shared';
-import type { ActivityFeed, DomainMutation, DomainQuery, DomainQueryResult, DomainTypesResponse } from './types';
+import type { ActivityFeed } from './types';
 
 const q = (params: Record<string, string>) => new URLSearchParams(params).toString();
 
@@ -38,25 +34,4 @@ export class ActivityApiService extends BaseApiService {
   >(({ projectId, offset }) => `/studio-artifact-ingest/v1/open-pull-requests?${q({
     project_id: projectId, limit: '200', offset: String(offset),
   })}`);
-
-  /** The installed model: without `include=dormant`, so a dormant `milestone` is absent (ADR-0070 §4). */
-  readonly domainTypes = this.protocol(RestEndpointProtocol).queryWith<DomainTypesResponse, { orgId: string }>(
-    ({ orgId }) => `/studio-domain-model/v1/types?${q({ organization_id: orgId })}`
-  );
-
-  /** A read: a POST, so a mutation descriptor, but it answers 200 and writes nothing. */
-  queryDomain(orgId: string) {
-    return this.protocol(RestEndpointProtocol).mutation<DomainQueryResult, DomainQuery>(
-      'POST',
-      `/studio-domain-model/v1/query?${q({ organization_id: orgId })}`
-    );
-  }
-
-  /** Change domain objects in one batch, each checked against the model and the caller's rights. */
-  mutateDomain(orgId: string) {
-    return this.protocol(RestEndpointProtocol).mutation<{ results: unknown[] }, DomainMutation>(
-      'POST',
-      `/studio-domain-model/v1/mutate?${q({ organization_id: orgId })}`
-    );
-  }
 }

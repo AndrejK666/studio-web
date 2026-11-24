@@ -7,7 +7,7 @@
  * the tab already read. */
 
 import type { Deployment } from "../api/types";
-import { BUILD_STAGES, WHERE_WORD, buildStages, failureCause, failureLine, isLost, type IdeBuild } from "./builds";
+import { BUILD_STAGES, WHERE_WORD, buildStages, failureCause, failureLine, isLost, type IdeBuild } from "@constructor-studio/mfe-shared";
 import { STATE_LABELS } from "./environments";
 
 /** The project tabs a line can send a person to. */

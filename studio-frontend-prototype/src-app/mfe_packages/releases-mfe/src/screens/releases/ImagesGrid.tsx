@@ -10,7 +10,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Badge, Button, type DataGridTableColumn } from '@gears-frontx/ui-kit';
 import { GridClearFilters, GridEmpty, ListGrid, NoData, createGridCells, useLocalGridLoad } from '@constructor-studio/mfe-shared/grid';
 import type { ProjectImage } from '../../api/types';
-import type { IdeBuild } from '../../model/builds';
+import type { IdeBuild } from '@constructor-studio/mfe-shared';
 import { imageRows, type ImageRow, type ImageStatus } from '../../model/image-rows';
 import { TargetIcon } from './Targets';
 import { When, useApi, useReleases, type Text } from './parts';

@@ -3,12 +3,16 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChildMfeBridge } from '@gears-frontx/react';
 
-vi.mock('../../../i18n', () => ({
-  useMapTranslations: () => ({
-    t: (key: string, params?: Record<string, string>) => (params ? `${key} ${JSON.stringify(params)}` : key),
-    loading: false,
-  }),
-}));
+vi.mock('../../../i18n', () => {
+  const t = Object.assign(
+    (key: string, params?: Record<string, string>) => (params ? `${key} ${JSON.stringify(params)}` : key),
+    {
+      count: (key: string, count: number, params?: Record<string, string>) =>
+        `${key} ${JSON.stringify({ ...params, count: String(count) })}`,
+    }
+  );
+  return { useMapTranslations: () => ({ t, loading: false }) };
+});
 
 import { api } from '../../../api/client';
 import { forgetQueuedChecks } from '../keptCheck';

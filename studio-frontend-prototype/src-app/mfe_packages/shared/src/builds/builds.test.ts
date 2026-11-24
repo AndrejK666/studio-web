@@ -1,7 +1,7 @@
 // Ported unchanged from the prototype (src/builds.test.ts at 00828880); only the import paths changed.
 import { describe, expect, it } from "vitest";
 
-import type { ArtifactNode } from "../api/types";
+import type { ArtifactNode } from "./artifactNode";
 import {
   BUILD_REFUSALS,
   buildRefusalCode,

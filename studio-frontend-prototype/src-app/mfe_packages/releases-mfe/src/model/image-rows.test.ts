@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ProjectImage } from "../api/types";
-import type { IdeBuild } from "./builds";
+import type { IdeBuild } from "@constructor-studio/mfe-shared";
 import { imageRows, parseImageRef, shortVersion } from "./image-rows";
 
 const build = (patch: Partial<IdeBuild>): IdeBuild => ({

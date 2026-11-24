@@ -10,17 +10,16 @@
  * level this is (`model_<level>` in its id), the section which tab.
  */
 
-import { useCallback, useEffect, useState } from 'react';
-import { apiRegistry, useSharedProperty } from '@gears-frontx/react';
+import { useCallback, useMemo } from 'react';
+import { useQueryCache, useSharedProperty } from '@gears-frontx/react';
 import {
-  DomainModelApiService,
   STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT,
   STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE,
-  domainChanged,
   genericTabName,
+  invalidateDomainTypes,
   modelOf,
+  useDomainTypes,
   useOrganization,
-  useStudioEventRefresh,
   type DomainModel,
   type TabLevel,
 } from '@constructor-studio/mfe-shared';
@@ -44,31 +43,15 @@ export interface ModelRead {
 
 /** The organization's model, read again when it changes. */
 export function useModel(orgId: string): ModelRead {
-  const [read, setRead] = useState<{ orgId: string; model: DomainModel | null; error: string | null }>({
-    orgId: '',
-    model: null,
-    error: null,
-  });
-  const [tick, setTick] = useState(0);
-  const again = useCallback(() => setTick((n) => n + 1), []);
-  useStudioEventRefresh(domainChanged([], { model: true }), again);
-  useEffect(() => {
-    let live = true;
-    apiRegistry
-      .getService(DomainModelApiService)
-      .types({ orgId })
-      .fetch({ staleTime: 0 })
-      .then(
-        (res) => live && setRead({ orgId, model: modelOf(res), error: null }),
-        (e: unknown) => live && setRead({ orgId, model: null, error: errText(e) })
-      );
-    return () => {
-      live = false;
-    };
-  }, [orgId, tick]);
-  return read.orgId === orgId
-    ? { model: read.model, error: read.error, reload: again }
-    : { model: null, error: null, reload: again };
+  // The one cached read of the model; the shell marks it stale when the live
+  // channel says the model changed, and an edit here marks it stale itself.
+  const read = useDomainTypes(orgId);
+  const cache = useQueryCache();
+  const reload = useCallback(() => invalidateDomainTypes(cache, orgId), [cache, orgId]);
+  const model = useMemo(() => (read.data ? modelOf(read.data) : null), [read.data]);
+  return read.isError
+    ? { model: null, error: errText(read.error), reload }
+    : { model, error: null, reload };
 }
 
 const isRef = (v: unknown): v is { id: string; name: string } =>

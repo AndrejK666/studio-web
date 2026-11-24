@@ -28,7 +28,7 @@ import {
   type BuildStatus,
   type IdeBuild,
   type StageState,
-} from '../../model/builds';
+} from '@constructor-studio/mfe-shared';
 import { TONE_BADGE, When, useReleases, type Text, type Tone } from './parts';
 import styles from './ReleasesScreen.module.css';
 

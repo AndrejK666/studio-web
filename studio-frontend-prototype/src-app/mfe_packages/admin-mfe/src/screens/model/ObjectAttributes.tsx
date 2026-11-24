@@ -12,22 +12,23 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { apiRegistry } from '@gears-frontx/react';
+import { apiRegistry, useQueryCache } from '@gears-frontx/react';
 import { Badge, Button, Card, CardContent, Input, NativeSelect, NativeSelectOption } from '@gears-frontx/ui-kit';
 import {
   AccountsApiService,
-  DomainModelApiService,
-  PeopleApiService,
   attributesWrite,
-  domainChanged,
+  domainMutate,
   inputValue,
+  invalidateDomainObjects,
   openScreen,
   orgPeople,
+  readColleagues,
+  readOrgMembers,
   readableFields,
   responseStatus,
   selfQuery,
   shownValue,
-  useStudioEventRefresh,
+  useDomainQuery,
   type DomainModel,
   type ModelField,
   type TabLevel,
@@ -55,10 +56,8 @@ export function ObjectAttributes({
   const type = level;
   const known = model.byId.has(type);
   const fields = useMemo(() => readableFields(model, type), [model, type]);
-  const [value, setValue] = useState<Record<string, unknown> | null>(null);
-  const [objectId, setObjectId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [forbidden, setForbidden] = useState(false);
+  /** A write of this card that failed (the read's own failure comes from the read). */
+  const [writeError, setWriteError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Record<string, string | boolean>>({});
   const [busy, setBusy] = useState(false);
@@ -69,11 +68,10 @@ export function ObjectAttributes({
   const [people, setPeople] = useState<ReadonlyMap<string, string>>(new Map());
   useEffect(() => {
     let live = true;
-    const api = apiRegistry.getService(PeopleApiService);
     orgPeople(
       orgId,
-      (id) => api.orgMembers(id),
-      () => api.myColleagues()
+      (id) => readOrgMembers(id),
+      () => readColleagues()
     ).then(
       (members) => live && setPeople(new Map(members.map((m) => [m.id.toLowerCase(), m.name]))),
       () => undefined
@@ -100,37 +98,19 @@ export function ObjectAttributes({
     };
   }, [tenant.id, tenant.name]);
 
-  // Read again after a save here, or when someone else writes the type.
-  const [tick, setTick] = useState(0);
-  const reload = useCallback(() => setTick((n) => n + 1), []);
-  useStudioEventRefresh(domainChanged([type]), reload);
-  useEffect(() => {
-    if (!known) return undefined;
-    let live = true;
-    apiRegistry
-      .getService(DomainModelApiService)
-      .query(orgId)
-      .fetch(selfQuery(type, tenant.id))
-      .then(
-        (res) => {
-          if (!live) return;
-          const row = res.items[0];
-          setObjectId(row?.id ?? null);
-          setValue(row?.value ?? {});
-          setForbidden(false);
-          setError(null);
-        },
-        (e: unknown) => {
-          if (!live) return;
-          setForbidden(responseStatus(e) === 403);
-          setError(errText(e));
-          setValue({});
-        }
-      );
-    return () => {
-      live = false;
-    };
-  }, [known, orgId, type, tenant.id, tick]);
+  // The object that describes the tenant, through the shared cache: read again
+  // after a save here, or when someone else writes the type (the live channel).
+  const cache = useQueryCache();
+  const selfBody = useMemo(() => (known ? selfQuery(type, tenant.id) : null), [known, type, tenant.id]);
+  const self = useDomainQuery(orgId, selfBody);
+  const reload = useCallback(() => invalidateDomainObjects(cache, orgId, type), [cache, orgId, type]);
+  const readError = self.isError ? self.error : null;
+  const row = self.data?.items[0];
+  const objectId = row?.id ?? null;
+  const value: Record<string, unknown> | null = readError ? {} : self.data ? (row?.value ?? {}) : null;
+  const forbidden = readError !== null && responseStatus(readError) === 403;
+  const error = writeError ?? (readError !== null ? errText(readError) : null);
+  const setError = setWriteError;
 
   /** What the tenant already says about itself: shown, and written with the first save. */
   const facts = useMemo<Record<string, unknown>>(() => (name ? { name, title: name } : {}), [name]);
@@ -212,7 +192,7 @@ export function ObjectAttributes({
         draft,
         facts: Object.fromEntries(factFields.map((f) => [f.name, facts[f.name]])),
       });
-      if (op) await apiRegistry.getService(DomainModelApiService).mutate(orgId).fetch({ operations: [op] });
+      if (op) await domainMutate(orgId).fetch({ operations: [op] });
       setEditing(false);
       reload();
     } catch (e) {

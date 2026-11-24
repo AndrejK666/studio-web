@@ -4,7 +4,7 @@
  * once there are many. */
 
 import type { Deployment, DeployEnvironment } from "../api/types";
-import type { IdeBuild } from "./builds";
+import type { IdeBuild } from "@constructor-studio/mfe-shared";
 import { deployableBuilds, latestByEnvironment } from "./project-deploys";
 
 /** From how many environments the dialog offers a search. */

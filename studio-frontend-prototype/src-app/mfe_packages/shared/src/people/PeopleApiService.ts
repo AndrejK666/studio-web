@@ -6,7 +6,9 @@
  */
 
 import { BaseApiService, RestEndpointProtocol, RestProtocol } from '@gears-frontx/react';
+import { fetchAllPages } from '../data/pages';
 import type { RoleDef } from './access';
+import { readColleagues, readOrgMembers } from './members';
 import type {
   ActivityEvent,
   Colleague,
@@ -18,6 +20,9 @@ import type {
   OrgMember,
   PresenceEntry,
 } from './types';
+
+/** A read that must not come from the cache. */
+const FRESH = { staleTime: 0 };
 
 const q = (params: Record<string, string>) => new URLSearchParams(params).toString();
 const e = encodeURIComponent;
@@ -45,16 +50,9 @@ export class PeopleApiService extends BaseApiService {
       `/studio-user/v1/organizations/${e(orgId)}/members?${q({ offset: String(offset), limit: String(PEOPLE_PAGE) })}`
   );
 
-  /** An organization's members, every page (`people.view`). */
-  async orgMembers(orgId: string): Promise<OrgMember[]> {
-    const items: OrgMember[] = [];
-    for (let offset = 0; ; offset += PEOPLE_PAGE) {
-      const body = await this.membersPage({ orgId, offset }).fetch({ staleTime: 0 });
-      const page = body.items ?? [];
-      items.push(...page);
-      const total = typeof body.total === 'number' ? body.total : items.length;
-      if (page.length === 0 || items.length >= total) return items;
-    }
+  /** An organization's members, every page (`people.view`); `fresh` skips the 30 s cache (a screen that just wrote them). */
+  orgMembers(orgId: string, options: { fresh?: boolean } = {}): Promise<OrgMember[]> {
+    return readOrgMembers(orgId, options);
   }
 
   readonly colleaguesPage = this.protocol(RestEndpointProtocol).queryWith<
@@ -63,15 +61,8 @@ export class PeopleApiService extends BaseApiService {
   >(({ offset }) => `/studio-user/v1/me/colleagues?${q({ offset: String(offset), limit: String(PEOPLE_PAGE) })}`);
 
   /** Everybody the caller shares an organization with, every page. */
-  async myColleagues(): Promise<Colleague[]> {
-    const items: Colleague[] = [];
-    for (let offset = 0; ; offset += PEOPLE_PAGE) {
-      const body = await this.colleaguesPage({ offset }).fetch({ staleTime: 0 });
-      const page = body.items ?? [];
-      items.push(...page);
-      const total = typeof body.total === 'number' ? body.total : items.length;
-      if (page.length === 0 || items.length >= total) return items;
-    }
+  myColleagues(options: { fresh?: boolean } = {}): Promise<Colleague[]> {
+    return readColleagues(options);
   }
 
   readonly memberIdentities = this.protocol(RestEndpointProtocol).queryWith<
@@ -117,14 +108,11 @@ export class PeopleApiService extends BaseApiService {
 
   /** The desktops open on a project, every page. */
   async desktopSessions(projectId: string): Promise<DesktopSession[]> {
-    const items: DesktopSession[] = [];
-    for (let offset = 0; ; offset += PEOPLE_PAGE) {
-      const body = await this.desktopSessionsPage({ projectId, offset }).fetch({ staleTime: 0 });
-      const page = body.items ?? [];
-      items.push(...page);
-      const total = typeof body.total === 'number' ? body.total : items.length;
-      if (page.length === 0 || items.length >= total) return items;
-    }
+    // Live state (who has a desktop open now): never from the cache.
+    const read = await fetchAllPages((offset) => this.desktopSessionsPage({ projectId, offset }).fetch(FRESH), {
+      pageSize: PEOPLE_PAGE,
+    });
+    return read.items;
   }
 
   readonly presenceOnline = this.protocol(RestEndpointProtocol).query<{ items: PresenceEntry[] }>(

@@ -4,11 +4,16 @@
  * over a type's objects, and one batch of writes. Per organization
  * (`?organization_id=`): a platform administrator's home tenant is the
  * platform root, whose model is not the organization's on screen.
+ *
+ * Every member delegates to the shared data layer (`data/domain.ts`), so a
+ * read here and a read through `useDomainTypes` / `useDomainQuery` are one
+ * cache entry. New code uses the data layer directly.
  */
 
 import { BaseApiService, RestEndpointProtocol, RestProtocol } from '@gears-frontx/react';
 import type { GtsCatalog } from './runtime';
-import type { DomainMutation, DomainMutationResult, DomainQueryRequest, DomainQueryResult } from './domainQuery';
+import { GATEWAY_BASE_URL } from '../data/gateway';
+import { domainMutate, domainQuerySend, domainTypes } from '../data/domain';
 
 export const DOMAIN_MODEL_API_BASE_URL = '/cf/studio-domain-model/v1';
 
@@ -21,33 +26,22 @@ export interface DomainTypesResponse {
   gts?: GtsCatalog;
 }
 
-const scoped = (path: string, orgId: string): string =>
-  `${path}?${new URLSearchParams({ organization_id: orgId }).toString()}`;
-
-export const domainTypesPath = ({ orgId }: { orgId: string }): string => scoped('/types', orgId);
-
 export class DomainModelApiService extends BaseApiService {
   constructor() {
     const restProtocol = new RestProtocol({ timeout: 30000 });
-    super({ baseURL: DOMAIN_MODEL_API_BASE_URL }, restProtocol, new RestEndpointProtocol(restProtocol));
-  }
-
-  private get rest() {
-    return this.protocol(RestEndpointProtocol);
+    super({ baseURL: GATEWAY_BASE_URL }, restProtocol, new RestEndpointProtocol(restProtocol));
   }
 
   /** The organization's model, and whether the caller may change it. */
-  readonly types = this.protocol(RestEndpointProtocol).queryWith<DomainTypesResponse, { orgId: string }>(
-    domainTypesPath
-  );
+  readonly types = ({ orgId }: { orgId: string }) => domainTypes(orgId);
 
   /** One type's objects filtered, ordered and paged, with relations followed. */
   query(orgId: string) {
-    return this.rest.mutation<DomainQueryResult, DomainQueryRequest>('POST', scoped('/query', orgId));
+    return domainQuerySend(orgId);
   }
 
   /** A batch of upserts and patches, checked against the model and the caller's rights. */
   mutate(orgId: string) {
-    return this.rest.mutation<DomainMutationResult, DomainMutation>('POST', scoped('/mutate', orgId));
+    return domainMutate(orgId);
   }
 }

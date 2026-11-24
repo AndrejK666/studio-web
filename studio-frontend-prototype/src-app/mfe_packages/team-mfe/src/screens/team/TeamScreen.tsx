@@ -86,13 +86,13 @@ async function readTeam(
         () => null
       ),
     // The ladder a fresh organization is seeded with, from the side that seeds it.
-    api.accessCatalogue.fetch({ staleTime: 0 }).then(
+    api.accessCatalogue.fetch().then(
       (c) => c.default_roles,
       () => [] as RoleDef[]
     ),
     accounts
       .getTenant({ tenantId: projectId })
-      .fetch({ staleTime: 0 })
+      .fetch()
       .then(
         (p) => p.name,
         () => null

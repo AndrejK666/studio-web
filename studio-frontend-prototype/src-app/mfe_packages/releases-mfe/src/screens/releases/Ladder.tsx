@@ -10,7 +10,7 @@ import { useEffect, useState } from 'react';
 import { pollWhileVisible } from '@constructor-studio/mfe-shared';
 import { Button } from '@gears-frontx/ui-kit';
 import type { Connection, Deployment, DeploymentStatus, ProjectTargets, TaskRun } from '../../api/types';
-import type { IdeBuild } from '../../model/builds';
+import type { IdeBuild } from '@constructor-studio/mfe-shared';
 import { profilesBoundTo } from '../../model/project-deploys';
 import { versionOf, type LadderStep } from '../../model/releases';
 import { RungPlace, useDeployRequest } from './DeployActions';

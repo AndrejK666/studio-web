@@ -14,7 +14,6 @@ import {
   STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE,
   useHostChrome,
 } from '@constructor-studio/mfe-shared';
-import { setOrganization } from './api/DomainModelApiService';
 import { useDomainTranslations } from './i18n';
 import { ScopeContext, type Scope } from './screens/common/ui';
 import { DomainModelScreen } from './screens/domain/DomainModelScreen';
@@ -34,10 +33,8 @@ export const DomainModelRoot: React.FC<{ bridge: ChildMfeBridge }> = ({ bridge }
   const { containerRef, dataTheme, language } = useHostChrome();
   const { t, loading } = useDomainTranslations();
 
-  // The spec-mapping and product routes name the organization on screen.
-  // Set while rendering, not in an effect: the screen's own effects run first.
-  setOrganization(orgId);
-
+  // The spec-mapping and product routes name the organization on screen: the
+  // screens pass `scope.orgId` to each read that needs it.
   const scope: Scope | null = useMemo(
     () => (projectId ? { projectId, workspaceId, orgId, language, bridge, container: containerRef } : null),
     [projectId, workspaceId, orgId, language, bridge, containerRef]

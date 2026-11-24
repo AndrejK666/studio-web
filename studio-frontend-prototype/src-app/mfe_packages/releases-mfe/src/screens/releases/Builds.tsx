@@ -31,7 +31,7 @@ import {
   type BuildWorkflow,
   type IdeBuild,
   type StageState,
-} from '../../model/builds';
+} from '@constructor-studio/mfe-shared';
 import { recordedProgress } from '../../model/environment-targets';
 import { ResearchProgress } from './ResearchProgress';
 import { buildsHint } from '../../model/pipeline';

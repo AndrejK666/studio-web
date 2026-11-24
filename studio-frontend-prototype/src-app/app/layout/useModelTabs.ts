@@ -11,11 +11,12 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { apiRegistry, useAppSelector } from '@gears-frontx/react';
+import { apiRegistry, useAppSelector, useQueryCache } from '@gears-frontx/react';
 import {
   AccountsApiService,
-  DomainModelApiService,
+  invalidateDomainTypes,
   isTabLevel,
+  useDomainTypes,
   levelSettingsType,
   modelOf,
   modelTabs,
@@ -35,28 +36,22 @@ const selectContext = (state: Record<string, unknown>) => state[APP_CONTEXT_SLIC
 
 /** The organization's model, re-read on `domain.model_changed`; null until (and unless) it answers. */
 export function useOrganizationModel(orgId: string | null): DomainModel | null {
-  const [read, setRead] = useState<{ orgId: string; model: DomainModel | null } | null>(null);
-  const [tick, setTick] = useState(0);
+  // The one cached read of the model every reader shares (mfe-shared `useDomainTypes`).
+  const read = useDomainTypes(orgId);
+  return useMemo(() => (read.data && !read.isError ? modelOf(read.data) : null), [read.data, read.isError]);
+}
+
+/**
+ * The shell's one listener for `domain.model_changed`: it marks the
+ * organization's model stale in the shared cache, so every reader on screen —
+ * the shell's tabs and kits, and every MFE — reads it again once.
+ */
+export function useDomainModelInvalidation(): void {
+  const orgId = useAppSelector((state) => selectContext(state)?.org?.id ?? null);
+  const cache = useQueryCache();
   useStudioEvents((event) => {
-    if (event.kind === 'domain.model_changed') setTick((n) => n + 1);
+    if (event.kind === 'domain.model_changed' && orgId) invalidateDomainTypes(cache, orgId);
   });
-  useEffect(() => {
-    if (!orgId) return undefined;
-    let live = true;
-    apiRegistry
-      .getService(DomainModelApiService)
-      .types({ orgId })
-      .fetch({ staleTime: 0 })
-      .then(
-        (res) => live && setRead({ orgId, model: modelOf(res) }),
-        () => live && setRead({ orgId, model: null })
-      );
-    return () => {
-      live = false;
-    };
-  }, [orgId, tick]);
-  // An answer about another organization is not this one's.
-  return read && read.orgId === orgId ? read.model : null;
 }
 
 /** The `shows` relations of `level`'s type, in the model's order; none above or beside the three levels. */

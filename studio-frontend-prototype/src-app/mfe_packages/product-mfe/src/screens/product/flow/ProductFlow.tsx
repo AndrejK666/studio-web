@@ -23,7 +23,7 @@ import {
   type ProjectProduct,
   type ProjectTargets,
 } from '../../../api/client';
-import { buildsOf, ideBuildsOf, productBuildsOf, repoPathsOf, type BuildRun, type IdeBuild } from '../../../model/builds';
+import { buildsOf, ideBuildsOf, productBuildsOf, repoPathsOf, type BuildRun, type IdeBuild } from '@constructor-studio/mfe-shared';
 import { buildsHint, deploysHint } from '../../../model/pipeline';
 import { profilesToCheck } from '../../../model/product';
 import { lineDiff, productFlow, type DiffLine, type FlowState, type FlowStep } from '../../../model/product-flow';

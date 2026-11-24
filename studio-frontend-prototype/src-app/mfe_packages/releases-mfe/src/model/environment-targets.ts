@@ -8,7 +8,7 @@
  * connections and the caller's Research projects and hands their names in. */
 
 import type { Connection, DeployEnvironment, ResearchHardware, ResearchProject } from "../api/types";
-import type { IdeBuild } from "./builds";
+import type { IdeBuild } from "@constructor-studio/mfe-shared";
 import { RESEARCH_STEPS, type ResearchProgress } from "./research-progress";
 
 export type TargetKind = "kubernetes" | "research";

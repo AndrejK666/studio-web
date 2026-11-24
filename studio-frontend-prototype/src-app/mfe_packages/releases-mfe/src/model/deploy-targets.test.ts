@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Deployment, DeployEnvironment } from "../api/types";
-import type { IdeBuild } from "./builds";
+import type { IdeBuild } from "@constructor-studio/mfe-shared";
 import { deployTargets } from "./deploy-targets";
 
 const env = (id: string, kind: "kubernetes" | "research" = "research", description = ""): DeployEnvironment =>

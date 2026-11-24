@@ -39,6 +39,14 @@ vi.mock('@gears-frontx/react', async (importOriginal) => ({
     return { data: descriptor.key[0] === 'installed' ? state.answer : state.types };
   },
 }));
+// The model's one cached read (mfe-shared's data layer), recorded as the query it asks for.
+vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@constructor-studio/mfe-shared')>()),
+  useDomainTypes: (orgId: string | null, options: { enabled?: boolean } = {}) => {
+    queries.push({ key: ['types', { organizationId: orgId ?? '' }], enabled: (options.enabled ?? true) && !!orgId });
+    return { data: state.types };
+  },
+}));
 
 import { screenShows, typeGtsId, useInstalledKits, useInstalledTypes } from './useInstalledKits';
 

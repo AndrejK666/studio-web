@@ -26,6 +26,7 @@ import {
 import { publishAvailableScreens } from '@/app/mfe/sharedContext';
 import { modelNameOf } from './modelTabs';
 import { screenShows, sectionTypesNeeded, typesNeeded, useInstalledKits, useInstalledTypes } from './useInstalledKits';
+import { useDomainModelInvalidation } from './useModelTabs';
 
 /** Every registered screen that is a tab on a level's bar, each level's main tabs then its settings, by order. */
 export function shellTabs(screens: readonly StudioScreenExtension[]): ShellTab[] {
@@ -94,6 +95,8 @@ export const AvailableScreens: React.FC = () => {
   const app = useFrontX();
   const screens = useDomainExtensions(FRONTX_SCREEN_DOMAIN) as StudioScreenExtension[];
   const installed = useInstalledKits();
+  // The one place the shell hears that the domain model changed.
+  useDomainModelInvalidation();
   // Read only where some screen declares a type it needs (ADR-0071 §5).
   const types = useInstalledTypes(typesDeclared(screens).length > 0);
   const value = availableScreens(screens, installed, types);
