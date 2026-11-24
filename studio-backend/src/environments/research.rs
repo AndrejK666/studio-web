@@ -132,7 +132,13 @@ pub async fn api(
         let (hub, ctx) = (Arc::clone(&hub), ctx.clone());
         Box::pin(async move { Ok(token(hub, &ctx, org, connection_id).await?.1) })
     });
-    Ok(ResearchApi::new(reqwest::Client::new(), &root, first).renewing(renew))
+    // A call that hangs ends (each call's own timeout, a connect's here)
+    // rather than holding a run past the queue's lease.
+    let http = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(15))
+        .build()
+        .unwrap_or_default();
+    Ok(ResearchApi::new(http, &root, first).renewing(renew))
 }
 
 /// A product prepared on this server, in a folder removed with it.
@@ -614,6 +620,7 @@ pub struct ResearchBuildPayload {
     pub repo: RepoRef,
     #[serde(default)]
     pub git_ref: Option<String>,
+    /// See [`build::BuildPayload::records_in`]: no longer read.
     #[serde(default)]
     pub records_in: Option<Uuid>,
     /// See [`build::BuildPayload::description_revision`] (ADR-0053 §2).
@@ -636,6 +643,31 @@ pub struct ResearchBuildPayload {
     /// What a database server's Postgres image is built from.
     #[serde(default)]
     pub database_image: Option<String>,
+    /// For "Build and run in Research": the deploy the run starts itself
+    /// once Research has built every image, so it happens whether or not
+    /// anyone keeps the dialog open. Absent for a build alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub then_deploy: Option<DeployBasis>,
+}
+
+/// What a Research deploy takes from the member who asks for it, read when
+/// they ask ([`super::service::EnvironmentService::research_basis`]): a run
+/// that deploys after its build acts on it without them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeployBasis {
+    /// The Research environment the build deploys to.
+    pub environment_id: Uuid,
+    pub repo: RepoRef,
+    pub product_file: String,
+    /// The project's name, which the application's name is made of.
+    pub project_name: String,
+    /// Who asked: their id and name, as a deploy records them.
+    pub requested_by: String,
+    #[serde(default)]
+    pub requested_by_name: Option<String>,
+    /// Whose sign-in the deploy uses, and the sign-in.
+    pub requester: Requester,
+    pub sign_in: SignIn,
 }
 
 /// How long one attempt of a build may take before it stops starting an
@@ -761,6 +793,22 @@ impl ResearchBuildTask {
         Self { hub }
     }
 
+    /// Start the deploy a build-and-run asked for: the deployment's id, or
+    /// why it was not started.
+    async fn deploy(&self, p: &ResearchBuildPayload, basis: &DeployBasis) -> Result<Uuid, String> {
+        let Some(service) = super::images_sink::service() else {
+            return Err("the environments' service is not running on this server".into());
+        };
+        match service.deploy_after_build(p, basis).await {
+            Ok(d) => Ok(d.id),
+            Err(r) => {
+                let why = r.line();
+                tracing::warn!(build = %p.build_id, environment = %basis.environment_id, why, "studio-environments: a build-and-run could not start its deploy");
+                Err(why)
+            }
+        }
+    }
+
     async fn record(
         &self,
         ctx: &SecurityContext,
@@ -798,23 +846,11 @@ impl ResearchBuildTask {
         keys: &BTreeMap<String, String>,
         report: &Reporter<'_>,
     ) -> Vec<Built> {
-        let Ok(records) = self
-            .hub
-            .get::<dyn crate::artifact_ingest::port::BuildRecords>()
-        else {
+        let Ok(records) = super::build_records::OrgBuilds::of(&self.hub, p.organization_id) else {
             return Vec::new();
         };
-        let there = match p.records_in {
-            Some(t) if t != ctx.security.subject_tenant_id() => {
-                match super::store::service_context(t) {
-                    Ok(c) => c,
-                    Err(_) => return Vec::new(),
-                }
-            }
-            _ => ctx.security.clone(),
-        };
         let earlier = records
-            .builds(&there, &p.project_id.to_string(), REUSE_LOOKS_AT)
+            .builds(&ctx.security, &p.project_id.to_string(), REUSE_LOOKS_AT)
             .await
             .unwrap_or_default();
         let mut found: BTreeMap<String, Built> = BTreeMap::new();
@@ -1079,7 +1115,8 @@ pub(super) async fn record_research(
         description_revision: outcome.description_revision.or(p.description_revision),
         ..outcome
     };
-    if let Err(e) = build::record_outcome(hub, ctx, p.records_in, p.project_id, outcome).await {
+    if let Err(e) = build::record_outcome(hub, ctx, p.organization_id, p.project_id, outcome).await
+    {
         tracing::warn!(build = %p.build_id, error = %e, "studio-environments: a Research build could not be recorded");
     }
 }
@@ -1136,14 +1173,41 @@ impl TaskHandler for ResearchBuildTask {
         match self.build(ctx, &p, resume, hand_over).await {
             Ok(Went::Built(outcome)) => {
                 let images = outcome.images.len();
-                self.record(&ctx.security, &p, *outcome).await;
-                TaskOutcome::done_with(
-                    format!(
-                        "Constructor Research built {images} image(s) of {}",
-                        p.repo.repo
+                let built = format!(
+                    "Constructor Research built {images} image(s) of {}",
+                    p.repo.repo
+                );
+                self.record(&ctx.security, &p, (*outcome).clone()).await;
+                let Some(basis) = &p.then_deploy else {
+                    return TaskOutcome::done_with(built, serde_json::json!({}));
+                };
+                // Build and run: the deploy starts here, not in a dialog.
+                ctx.progress(format!("{built}: starting the deploy")).await;
+                let (summary, result, place) = match self.deploy(&p, basis).await {
+                    Ok(id) => (
+                        format!("{built}; deploying them as deployment {id}"),
+                        serde_json::json!({ "deployment_id": id }),
+                        crate::artifact_ingest::port::BuildPlace {
+                            deployment_id: Some(id.to_string()),
+                            ..Default::default()
+                        },
                     ),
-                    serde_json::json!({}),
+                    Err(why) => (
+                        format!("{built}; the deploy was not started: {why}"),
+                        serde_json::json!({ "deploy_refused": why }),
+                        crate::artifact_ingest::port::BuildPlace {
+                            deploy_failure: Some(why.clone()),
+                            ..Default::default()
+                        },
+                    ),
+                };
+                self.record(
+                    &ctx.security,
+                    &p,
+                    crate::artifact_ingest::port::BuildOutcome { place, ..*outcome },
                 )
+                .await;
+                TaskOutcome::done_with(summary, result)
             }
             Ok(Went::Later(resume)) if ctx.attempt >= self.max_attempts() => {
                 let why = format!(
@@ -1368,6 +1432,12 @@ pub enum Deployed {
 /// readiness watch takes after).
 const DEPLOY_FOLLOW_FOR: Duration = Duration::from_secs(11 * 60);
 
+/// Past this in an attempt no further service is put: the rest is handed to
+/// the next attempt, so preparing and putting never outlast the lease. A
+/// call to Research ends within a minute (`research_api::CALL_TIMEOUT`),
+/// and a service that will not settle is not waited for past it.
+const DEPLOY_PUT_BY: Duration = Duration::from_secs(9 * 60);
+
 /// Install `p` into its Research environment; where the product opens.
 pub async fn deploy(
     hub: &Arc<ClientHub>,
@@ -1375,8 +1445,8 @@ pub async fn deploy(
     p: &super::deploy::DeployPayload,
     r: &ResearchDeploy,
 ) -> anyhow::Result<Deployed> {
-    let follow_until = tokio::time::Instant::now() + DEPLOY_FOLLOW_FOR;
-    deploy_until(hub, ctx, p, r, follow_until).await
+    let now = tokio::time::Instant::now();
+    deploy_until(hub, ctx, p, r, now + DEPLOY_PUT_BY, now + DEPLOY_FOLLOW_FOR).await
 }
 
 async fn deploy_until(
@@ -1384,6 +1454,7 @@ async fn deploy_until(
     ctx: &TaskContext,
     p: &super::deploy::DeployPayload,
     r: &ResearchDeploy,
+    put_by: tokio::time::Instant,
     follow_until: tokio::time::Instant,
 ) -> anyhow::Result<Deployed> {
     let sign_in = r.sign_in.unwrap_or(SignIn {
@@ -1424,11 +1495,14 @@ async fn deploy_until(
     let mut resume: DeployResume = super::research_progress::resumed(ctx)
         .and_then(|v| serde_json::from_value(v).ok())
         .unwrap_or_default();
-    if resume.app.application.is_none() {
-        resume = put(hub, ctx, p, r, &api, &report).await?;
+    if resume.app.application.is_none() || resume.app.pending {
+        resume = put(hub, ctx, p, r, &api, &report, put_by, &resume).await?;
         report
             .checkpoint(serde_json::to_value(&resume).unwrap_or_default())
             .await;
+        if resume.app.pending {
+            return Ok(Deployed::Later);
+        }
     } else {
         report
             .say("following the services an earlier attempt started".to_owned())
@@ -1507,7 +1581,9 @@ async fn deploy_until(
 }
 
 /// The first half of a deploy: the product prepared at the build's commit,
-/// its chart rendered, and the application's services put and started.
+/// its chart rendered, and the application's services put and started --
+/// those `earlier` has not put, and none begun after `put_by`.
+#[allow(clippy::too_many_arguments)]
 async fn put(
     hub: &Arc<ClientHub>,
     ctx: &TaskContext,
@@ -1515,6 +1591,8 @@ async fn put(
     r: &ResearchDeploy,
     api: &ResearchApi,
     report: &Reporter<'_>,
+    put_by: tokio::time::Instant,
+    earlier: &DeployResume,
 ) -> anyhow::Result<DeployResume> {
     let progress = |m: String| -> BoxFuture<'_, ()> { Box::pin(ctx.progress(m)) };
     report
@@ -1606,11 +1684,13 @@ async fn put(
         ctx.progress(note.clone()).await;
     }
     let app = api
-        .put_services(
+        .put_services_until(
             &r.research_project,
             &p.namespace,
             &bodies,
             Pace::RESEARCH,
+            put_by,
+            &earlier.app,
             &progress,
         )
         .await?;
@@ -1743,6 +1823,50 @@ fn log_text(service: &str, tail: anyhow::Result<Option<String>>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_build_and_run_carries_the_deploy_it_starts_and_an_older_run_reads_without() {
+        let mut v = serde_json::json!({
+            "build_id": "research-7a977fac4b5a",
+            "organization_id": Uuid::from_u128(0x0ee5),
+            "project_id": Uuid::from_u128(0xd5e7),
+            "connection_id": Uuid::nil(),
+            "research_project": "hyp3099-git-pull-test",
+            "profile": "prod",
+            "product_file": "product.gdl",
+            "repo": { "tenant": Uuid::nil(), "connection_id": Uuid::nil(), "repo": "acme/shop", "branch": "main" },
+            "records_in": Uuid::from_u128(1),
+        });
+        // A run queued before build-and-run went to the server: a build alone.
+        let old: ResearchBuildPayload = serde_json::from_value(v.clone()).unwrap();
+        assert_eq!(old.then_deploy, None);
+        assert!(
+            serde_json::to_value(&old)
+                .unwrap()
+                .get("then_deploy")
+                .is_none(),
+            "a build alone says nothing about a deploy"
+        );
+        let basis = DeployBasis {
+            environment_id: Uuid::from_u128(0x6d87),
+            repo: old.repo.clone(),
+            product_file: "product.gdl".into(),
+            project_name: "Studioweb".into(),
+            requested_by: "ann".into(),
+            requested_by_name: Some("Ann".into()),
+            requester: Requester {
+                subject_id: Uuid::from_u128(0xa11),
+                tenant_id: Uuid::from_u128(1),
+            },
+            sign_in: SignIn {
+                tenant: Uuid::from_u128(0x0ee5),
+                connection_id: Uuid::from_u128(0xb06f),
+            },
+        };
+        v["then_deploy"] = serde_json::to_value(&basis).unwrap();
+        let run: ResearchBuildPayload = serde_json::from_value(v).unwrap();
+        assert_eq!(run.then_deploy, Some(basis));
+    }
 
     #[test]
     fn a_generated_ui_gets_its_image_as_one_string_and_no_configuration_secret() {

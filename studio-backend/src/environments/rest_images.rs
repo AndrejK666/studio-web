@@ -855,6 +855,7 @@ async fn plan_build(
             body.product_file.as_deref(),
             body.git_ref,
             true,
+            false,
         )
         .await
         .map_err(problem)?;

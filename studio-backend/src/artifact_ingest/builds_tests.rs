@@ -282,6 +282,9 @@ fn a_studio_build_records_where_it_ran_and_the_end_keeps_it() {
             gearbox_version: None,
             source_commits: None,
             image_keys: None,
+            deploys_to: None,
+            deployment_id: None,
+            deploy_failure: None,
         },
         ..start()
     };

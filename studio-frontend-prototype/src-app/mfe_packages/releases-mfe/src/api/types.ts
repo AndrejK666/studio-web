@@ -562,6 +562,10 @@ export interface EnvironmentBuild {
   cause?: FailureCause | null;
   /** What it built or asked Research to build, `(app, image)`. */
   images?: { app: string; image: string }[];
+  /** Build and run: the environment it deploys itself to once built, then the deployment it started or why not. */
+  deploys_to?: string | null;
+  deployment_id?: string | null;
+  deploy_failure?: string | null;
 }
 
 /** The end of each container's log of a deployed release. */

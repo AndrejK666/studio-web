@@ -57,6 +57,12 @@ pub struct EnvironmentBuildDto {
     pub gearbox_version: Option<String>,
     /// `id=commit` of each source it fetched, comma separated.
     pub source_commits: Option<String>,
+    /// For "Build and run in Research": the environment the build deploys
+    /// to itself once its images are built, whoever still watches; then
+    /// the deployment it started, or why it did not start one.
+    pub deploys_to: Option<String>,
+    pub deployment_id: Option<String>,
+    pub deploy_failure: Option<String>,
     /// The infra services its lock resolved (ADR-0065 §3), which a deploy
     /// of it runs; absent when the project keeps none for it.
     #[schema(value_type = Option<Vec<Object>>)]
@@ -101,6 +107,9 @@ fn build_dto(v: BuildView) -> EnvironmentBuildDto {
         builder_image: p.builder_image,
         gearbox_version: p.gearbox_version,
         source_commits: p.source_commits,
+        deploys_to: p.deploys_to,
+        deployment_id: p.deployment_id,
+        deploy_failure: p.deploy_failure,
         built_infra: v.built_infra.map(|services| {
             services
                 .iter()

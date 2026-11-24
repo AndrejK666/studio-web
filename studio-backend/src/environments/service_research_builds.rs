@@ -124,10 +124,8 @@ impl EnvironmentService {
                 ),
             ));
         }
-        let records = self
-            .hub
-            .get::<dyn crate::artifact_ingest::port::BuildRecords>()
-            .map_err(|_| {
+        let records =
+            crate::environments::build_records::OrgBuilds::of(&self.hub, org).map_err(|_| {
                 Refusal::Unavailable("builds are not available in this deployment".into())
             })?;
         let record = records
@@ -210,6 +208,59 @@ impl EnvironmentService {
         };
         self.research_deploy_of(ctx, org, project, &env, req, true)
             .await
+    }
+
+    /// The deploy "Build and run in Research" asked for, started by the
+    /// build's run once Research has built every image: as this gear's
+    /// service in the organization, with what the member's request kept
+    /// (`basis`), so it happens whether or not anyone still watches.
+    pub(crate) async fn deploy_after_build(
+        &self,
+        p: &research::ResearchBuildPayload,
+        basis: &research::DeployBasis,
+    ) -> Result<Deployment> {
+        let org = p.organization_id;
+        let svc = self.service(org)?;
+        let env = self
+            .project_environment(&svc, org, p.project_id, basis.environment_id)
+            .await?;
+        if env.kind != EnvironmentKind::Research {
+            return Err(Refusal::Precondition(
+                "ENVIRONMENT_NOT_RESEARCH",
+                format!(
+                    "'{}' is not a Constructor Research environment any more",
+                    env.name
+                ),
+            ));
+        }
+        let req = DeployRequest {
+            environment_id: env.id,
+            profile: p.profile.clone(),
+            product: String::new(),
+            commit: None,
+            lock_hash: None,
+            build: Some(p.build_id.clone()),
+            images: Vec::new(),
+            chart: None,
+            chart_ref: None,
+            chart_version: None,
+            action: DeploymentAction::Install,
+            redeploy_of: None,
+            preview: None,
+        };
+        // The description the build took (ADR-0053 §2), not a later one.
+        let description = p.description_revision.zip(p.description_text.clone());
+        self.research_deploy_with(
+            &svc,
+            org,
+            p.project_id,
+            &env,
+            req,
+            false,
+            basis.clone(),
+            description,
+        )
+        .await
     }
 }
 

@@ -590,6 +590,15 @@ pub struct StudioBuildRequest {
     /// A branch, tag or commit; the repository's branch when absent.
     #[serde(default, rename = "ref")]
     pub git_ref: Option<String>,
+    /// "Build and run in Research": the build deploys itself to the
+    /// environment once Research has built every image -- its run starts
+    /// the deploy, whoever still watches, and the build's record names the
+    /// deployment (`deployment_id`) or why there is none
+    /// (`deploy_failure`). What the deploy would refuse, such as a
+    /// configuration secret nobody set, refuses the build now. Only for a
+    /// Constructor Research environment.
+    #[serde(default)]
+    pub then_deploy: bool,
 }
 
 #[derive(Debug)]
@@ -1576,6 +1585,7 @@ async fn start_build(
             body.product_file.as_deref(),
             body.git_ref,
             false,
+            body.then_deploy,
         )
         .await
         .map_err(problem)?;

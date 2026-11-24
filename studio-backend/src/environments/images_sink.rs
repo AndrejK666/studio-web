@@ -16,6 +16,12 @@ pub(super) fn set(service: Arc<EnvironmentService>) {
     let _ = SINK.set(service);
 }
 
+/// The environments' service, for a run that goes on into it: a
+/// build-and-run's deploy. `None` until the gear registered its routes.
+pub(super) fn service() -> Option<&'static Arc<EnvironmentService>> {
+    SINK.get()
+}
+
 /// What a pipeline's manifest published.
 #[derive(Debug, Clone, Default)]
 pub struct Published<'a> {

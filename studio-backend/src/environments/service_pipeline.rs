@@ -45,10 +45,8 @@ impl EnvironmentService {
         build_id: &str,
     ) -> Result<BuildView> {
         let org = self.organization_of_project(ctx, project).await?;
-        let records = self
-            .hub
-            .get::<dyn crate::artifact_ingest::port::BuildRecords>()
-            .map_err(|_| {
+        let records =
+            crate::environments::build_records::OrgBuilds::of(&self.hub, org).map_err(|_| {
                 Refusal::Unavailable("builds are not available in this deployment".into())
             })?;
         let record = records
