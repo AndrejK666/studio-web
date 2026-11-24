@@ -347,6 +347,17 @@ components:
             Constructor Fabric format. It cannot exceed `limits.max_extract_calls` (else
             `422 over_cap`). These calls are counted in `usage.calls` and can be billed. Omitted:
             no free-form reading.
+        provider:
+          type: string
+          enum: [litellm, openai]
+          description: |
+            The connection this run uses, and with it the three models it runs on (candidates,
+            candidates, checks), which are fixed and cannot be named in a request: `litellm` uses
+            `glm-5.3-flash` for all three, `openai` uses `gpt-5.4`, `gpt-5.5` and `gpt-5.4`.
+            Constructor's connector is not offered: it is reachable only inside the VPN. The
+            service must hold a key for the provider (`GET /v1/info`, `providers[].configured`),
+            else `422 provider_unavailable`. Any other value is `422 unknown_provider`. Omitted:
+            the service's own default.
     Run:
       type: object
       required: [id, state, created_at, usage]
@@ -454,6 +465,21 @@ components:
           description: The models a run uses.
           items:
             type: string
+        providers:
+          type: array
+          description: The connections a run may ask for, and whether this service holds a key.
+          items:
+            type: object
+            properties:
+              code:
+                type: string
+              configured:
+                type: boolean
+              models:
+                type: array
+                description: The three models a run on this provider uses.
+                items:
+                  type: string
         limits:
           type: object
           properties:

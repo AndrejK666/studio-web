@@ -1,4 +1,11 @@
-import { defineConfig, loadEnv, type Plugin, type PreviewServer, type ViteDevServer } from 'vite';
+import {
+  defineConfig,
+  loadEnv,
+  type Plugin,
+  type PreviewServer,
+  type ProxyOptions,
+  type ViteDevServer,
+} from 'vite';
 import react from '@vitejs/plugin-react';
 import { federation } from '@module-federation/vite';
 import path from 'path';
@@ -38,6 +45,29 @@ function standRuntimeEnv(stand: Stand, shadowed: string[]): Plugin {
   return { name: 'studio-stand-runtime-env', apply: 'serve', configureServer: serve, configurePreviewServer: serve };
 }
 
+/**
+ * A local gears-matcher service for the project's Gears section, in development only.
+ *
+ * The matcher is reached with a shared secret and has no ingress, so a browser cannot call it. Until
+ * the backend has a route that does (ADR-0071), this carries `/gears-matcher/*` to the service the
+ * developer runs, and adds the secret here, so it never reaches the bundle. Both variables must be
+ * set (shell, `.env` or `.env.local`): `GEARS_MATCHER_URL=http://127.0.0.1:8099` and
+ * `GEARS_MATCHER_SECRET=...`. Without them the section says the matcher cannot be reached.
+ */
+function gearsMatcherProxy(env: Record<string, string>): Record<string, ProxyOptions> {
+  const target = env.GEARS_MATCHER_URL?.trim();
+  const secret = env.GEARS_MATCHER_SECRET?.trim();
+  if (!target || !secret) return {};
+  return {
+    '/gears-matcher': {
+      target,
+      changeOrigin: true,
+      rewrite: (path) => path.replace(/^\/gears-matcher/, ''),
+      headers: { Authorization: `Bearer ${secret}` },
+    },
+  };
+}
+
 // https://vitejs.dev/config/
 export default defineConfig(({ command, mode }) => {
   // STUDIO_* from the shell and from .env / .env.local; `envPrefix` stays
@@ -51,7 +81,12 @@ export default defineConfig(({ command, mode }) => {
   return {
     server: {
       port: 5173,
-      proxy: stand ? standProxy(stand) : undefined,
+      proxy: {
+        ...(stand ? standProxy(stand) : {}),
+        ...(command === 'serve'
+          ? gearsMatcherProxy(loadEnv(mode, __dirname, 'GEARS_MATCHER_'))
+          : {}),
+      },
     },
     plugins: [
       react(),

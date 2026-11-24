@@ -19,6 +19,8 @@ import { PlaceholderSection } from './sections/PlaceholderSection';
 import { ArtifactsSection } from './sections/ArtifactsSection';
 import { SpecsSection } from './sections/specs/SpecsSection';
 import { SourcesSection } from './sections/sources/SourcesSection';
+import { GearsSection } from './sections/gears/GearsSection';
+import { GearsActions } from './sections/gears/GearsActions';
 import { SourcesActions } from './sections/sources/SourcesActions';
 import { SpecsActions } from './sections/specs/SpecsActions';
 import { UploadDocumentsButton } from './upload/UploadDocumentsButton';
@@ -30,6 +32,7 @@ const SECTION_ACTIONS: Partial<
 > = {
   artifacts: UploadDocumentsButton,
   specs: SpecsActions,
+  gears: GearsActions,
   sources: SourcesActions,
 };
 
@@ -131,6 +134,8 @@ export const ProjectScreen: React.FC<ProjectScreenProps> = ({ projectId }) => {
         return <ArtifactsSection projectId={projectId} projectName={project.name} />;
       case 'specs':
         return <SpecsSection projectId={projectId} projectName={project.name} />;
+      case 'gears':
+        return <GearsSection projectId={projectId} />;
       case 'sources':
         return <SourcesSection projectId={projectId} projectName={project.name} />;
       default:

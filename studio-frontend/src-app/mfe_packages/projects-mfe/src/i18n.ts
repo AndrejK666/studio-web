@@ -20,6 +20,7 @@ const CREATE_SCREEN = 'create';
 const WORKSPACE_SCREEN = 'workspace';
 const SPECS_SCREEN = 'specs';
 const SOURCES_SCREEN = 'sources';
+const GEARS_SCREEN = 'gears';
 const CONNECT_SCREEN = 'connect';
 const UPLOAD_SCREEN = 'upload';
 
@@ -28,6 +29,7 @@ export const PROJECT_NAMESPACE = `screen.${SCREENSET}.${PROJECT_SCREEN}`;
 export const PROJECT_CREATE_NAMESPACE = `screen.${SCREENSET}.${CREATE_SCREEN}`;
 export const WORKSPACE_CREATE_NAMESPACE = `screen.${SCREENSET}.${WORKSPACE_SCREEN}`;
 export const SPECS_NAMESPACE = `screen.${SCREENSET}.${SPECS_SCREEN}`;
+export const GEARS_NAMESPACE = `screen.${SCREENSET}.${GEARS_SCREEN}`;
 export const SOURCES_NAMESPACE = `screen.${SCREENSET}.${SOURCES_SCREEN}`;
 export const SOURCES_CONNECT_NAMESPACE = `screen.${SCREENSET}.${CONNECT_SCREEN}`;
 export const UPLOAD_NAMESPACE = `screen.${SCREENSET}.${UPLOAD_SCREEN}`;
@@ -40,6 +42,7 @@ const projectModules = import.meta.glob('./screens/project/i18n/*.json') as Modu
 const createModules = import.meta.glob('./screens/project-create/i18n/*.json') as ModuleMap;
 const workspaceModules = import.meta.glob('./screens/workspace-create/i18n/*.json') as ModuleMap;
 const specsModules = import.meta.glob('./screens/project/sections/specs/i18n/*.json') as ModuleMap;
+const gearsModules = import.meta.glob('./screens/project/sections/gears/i18n/*.json') as ModuleMap;
 const sourcesModules = import.meta.glob('./screens/project/sections/sources/i18n/*.json') as ModuleMap;
 const connectModules = import.meta.glob('./screens/sources-connect/i18n/*.json') as ModuleMap;
 const uploadModules = import.meta.glob('./screens/project/upload/i18n/*.json') as ModuleMap;
@@ -50,6 +53,7 @@ const loadProjectTranslations = loadScreenTranslations(projectModules, './screen
 const loadCreateTranslations = loadScreenTranslations(createModules, './screens/project-create/i18n');
 const loadWorkspaceTranslations = loadScreenTranslations(workspaceModules, './screens/workspace-create/i18n');
 const loadSpecsTranslations = loadScreenTranslations(specsModules, './screens/project/sections/specs/i18n');
+const loadGearsTranslations = loadScreenTranslations(gearsModules, './screens/project/sections/gears/i18n');
 const loadSourcesTranslations = loadScreenTranslations(sourcesModules, './screens/project/sections/sources/i18n');
 const loadConnectTranslations = loadScreenTranslations(connectModules, './screens/sources-connect/i18n');
 const loadUploadTranslations = loadScreenTranslations(uploadModules, './screens/project/upload/i18n');
@@ -85,6 +89,11 @@ export function useSpecsSectionTranslations(): UseScreenTranslationsReturn {
   return useScreenTranslations(SCREENSET, SPECS_SCREEN, loadSpecsTranslations);
 }
 
+/** Loads the Gears section's dictionary, in `GearsSection` and its header action. */
+export function useGearsSectionTranslations(): UseScreenTranslationsReturn {
+  return useScreenTranslations(SCREENSET, GEARS_SCREEN, loadGearsTranslations);
+}
+
 /** Loads the Sources section's dictionary, in `SourcesSection` and its header actions. */
 export function useSourcesSectionTranslations(): UseScreenTranslationsReturn {
   return useScreenTranslations(SCREENSET, SOURCES_SCREEN, loadSourcesTranslations);
@@ -105,6 +114,7 @@ export const useProjectText = createText(PROJECT_NAMESPACE);
 export const useProjectCreateText = createText(PROJECT_CREATE_NAMESPACE);
 export const useWorkspaceCreateText = createText(WORKSPACE_CREATE_NAMESPACE);
 export const useSpecsText = createText(SPECS_NAMESPACE);
+export const useGearsText = createText(GEARS_NAMESPACE);
 export const useSourcesText = createText(SOURCES_NAMESPACE);
 export const useSourcesConnectText = createText(SOURCES_CONNECT_NAMESPACE);
 export const useUploadText = createText(UPLOAD_NAMESPACE);

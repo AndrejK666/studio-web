@@ -24,6 +24,7 @@ export type ProviderCode =
   | 'bitbucket'
   | 'anthropic'
   | 'openai'
+  | 'litellm'
   | 'slack'
   | 'slack_webhook'
   | 'zulip'
@@ -39,6 +40,8 @@ const ICONS = {
   bitbucket: GitBranch,
   anthropic: Sparkles,
   openai: Bot,
+  // An OpenAI-compatible gateway: the same bot mark as OpenAI, which it speaks.
+  litellm: Bot,
   slack: Slack,
   // No Zulip or Discord mark either, so a chat glyph each, distinct enough to
   // tell apart in a list.

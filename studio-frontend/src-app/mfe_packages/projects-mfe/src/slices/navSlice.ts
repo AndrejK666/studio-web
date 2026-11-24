@@ -4,6 +4,7 @@ export type ProjectSection =
   | 'overview'
   | 'artifacts'
   | 'specs'
+  | 'gears'
   | 'sources'
   | 'activity'
   | 'timeline'
@@ -17,6 +18,7 @@ export const PROJECT_SECTIONS: readonly ProjectSection[] = [
   'overview',
   'artifacts',
   'specs',
+  'gears',
   'sources',
   'activity',
   'timeline',

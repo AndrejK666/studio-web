@@ -1,0 +1,142 @@
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  min-width: 0;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  max-inline-size: 40rem;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.heading {
+  margin: 0;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+}
+
+.trigger {
+  inline-size: 100%;
+}
+
+.muted {
+  margin: 0;
+  color: var(--muted-foreground);
+}
+
+.error {
+  margin: 0;
+  color: var(--danger);
+}
+
+.empty {
+  margin-inline: auto;
+  border: 0;
+  white-space: normal;
+}
+
+.fileRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.fileName {
+  font-family: var(--font-mono, monospace);
+  overflow-wrap: anywhere;
+}
+
+.hiddenInput {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+.totals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-6);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.total {
+  display: flex;
+  flex-direction: column;
+}
+
+.totalCount {
+  font-size: var(--font-size-lg, 1.25rem);
+  font-weight: var(--font-weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.tableWrap {
+  overflow-x: auto;
+}
+
+.table {
+  inline-size: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-sm, 0.875rem);
+}
+
+.table th,
+.table td {
+  padding: var(--space-2) var(--space-3);
+  text-align: start;
+  vertical-align: top;
+  border-block-end: 1px solid var(--border);
+}
+
+.table th {
+  color: var(--muted-foreground);
+  font-weight: var(--font-weight-medium, 500);
+}
+
+.mono {
+  font-family: var(--font-mono, monospace);
+  overflow-wrap: anywhere;
+}
+
+.coverage {
+  white-space: nowrap;
+  font-weight: var(--font-weight-medium, 500);
+}
+
+.covered {
+  color: var(--success);
+}
+
+.partial,
+.clarification_needed {
+  color: var(--warning);
+}
+
+.gap,
+.not_assessed {
+  color: var(--muted-foreground);
+}
+
+.gearList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}

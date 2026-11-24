@@ -7,14 +7,24 @@ what comes back to what the service reports. Tests use a fake runner with the sa
 
 import json
 import logging
+import os
 import tempfile
+import threading
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
 from gears_matcher.catalogue.models import Catalogue
-from gears_matcher.judge.llm import CacheError, ResponseCache
+from gears_matcher.judge.llm import CacheError, ModelClient, ResponseCache
+from gears_matcher.judge.llm.run import (
+    PROVIDERS as KNOWN_PROVIDERS,
+)
+from gears_matcher.judge.llm.run import (
+    RunError,
+    load_client,
+    provider_module,
+)
 from gears_matcher.report import SCHEMA_VERSION
 from gears_matcher.run import (
     Hooks,
@@ -28,7 +38,7 @@ from gears_matcher.run import (
     verified_models,
 )
 from gears_matcher.service.errors import ProblemError, unprocessable
-from gears_matcher.service.request import RunRequest
+from gears_matcher.service.request import PROVIDER_MODELS, RunRequest
 
 log = logging.getLogger("gears_matcher.service")
 
@@ -110,6 +120,8 @@ class RealRunner:
     ) -> None:
         self.catalogues = {False: catalogue, True: bundle_catalogue}
         self.model_factory = model_factory
+        self._chosen: dict[tuple[str, str], tuple[str, ModelClient]] = {}
+        self._chosen_lock = threading.Lock()
         self.cache_dir = cache_dir
         self.work_dir = work_dir
         work_dir.mkdir(parents=True, exist_ok=True)
@@ -120,7 +132,39 @@ class RealRunner:
             raise unprocessable("bundle_unavailable", "this service has no gears bundle")
         return chosen
 
+    def _models(self, request: RunRequest) -> tuple[tuple[str, str, str], ModelFactory] | None:
+        """The three models of the provider the run chose and the factory for them; `None` for a run
+        that takes the service's default. A client is built once per provider and model and shared,
+        like the default ones."""
+        if request.provider is None:
+            return None
+        provider = request.provider
+        module = provider_module(provider)
+        models = PROVIDER_MODELS[provider]
+
+        def factory(name: str) -> tuple[str, ModelClient]:
+            with self._chosen_lock:
+                if (provider, name) not in self._chosen:
+                    self._chosen[(provider, name)] = (
+                        module.label(name),
+                        load_client(module, provider, name),
+                    )
+                return self._chosen[(provider, name)]
+
+        return models, factory
+
+    def _check_provider(self, request: RunRequest) -> None:
+        """A provider the service has no key for is refused before anything is stored or paid."""
+        if request.provider is None:
+            return
+        key = provider_module(request.provider).KEY_VARIABLE
+        if not os.environ.get(key, "").strip():
+            raise unprocessable(
+                "provider_unavailable", f"this service has no key for {request.provider}"
+            )
+
     def preflight(self, request: RunRequest) -> None:
+        self._check_provider(request)
         catalogue = self._catalogue(request)
         unknown = sorted(set(request.own_gears) - {g.id for g in catalogue.gears})
         if unknown:
@@ -141,17 +185,23 @@ class RealRunner:
             meter.usage(u.calls, u.cache_hits, u.input_tokens, u.output_tokens)
 
         hooks = Hooks(cancelled=meter.cancelled, on_progress=meter.progress, on_usage=on_usage)
+        try:
+            chosen = self._models(request)
+        except RunError as exc:  # names the variable that is missing, never a value
+            raise RunFailed("internal", str(exc)) from exc
+        models, factory = chosen if chosen else (None, self.model_factory)
         with tempfile.TemporaryDirectory(dir=self.work_dir) as tmp:
             write_spec(request, Path(tmp))
             inputs = RunInputs(
                 spec_path=Path(tmp),
                 catalogue=catalogue,
-                model_factory=self.model_factory,
+                model_factory=factory,
                 cache_dir=self.cache_dir,
                 product=request.product,
                 own_gears=frozenset(request.own_gears),
                 max_calls=request.max_calls,
                 extract_max_calls=request.extract_max_calls,
+                models=models,
             )
             try:
                 result = run_matching(inputs, hooks)
@@ -187,7 +237,18 @@ class RealRunner:
                 "gear_gdl_commit": catalogue.gear_gdl_commit,
             },
             "models": list(verified_models()),
+            "providers": self._providers(),
         }
+
+    def _providers(self) -> list[dict[str, Any]]:
+        """The providers a run may ask for, and whether this service holds a key for each."""
+        out: list[dict[str, Any]] = []
+        for code, models in PROVIDER_MODELS.items():
+            if code not in KNOWN_PROVIDERS:
+                continue
+            configured = bool(os.environ.get(provider_module(code).KEY_VARIABLE, "").strip())
+            out.append({"code": code, "configured": configured, "models": list(models)})
+        return out
 
 
 def refused(problem: InputProblem) -> ProblemError:

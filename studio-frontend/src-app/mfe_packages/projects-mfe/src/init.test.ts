@@ -80,6 +80,10 @@ vi.mock('./slices/specsCheckSlice', () => ({
   specsCheckSlice: { name: 'projects/specsCheck' },
 }));
 
+vi.mock('./slices/gearsMatchSlice', () => ({
+  gearsMatchSlice: { name: 'projects/gearsMatch' },
+}));
+
 vi.mock('./slices/documentUploadSlice', () => ({
   documentUploadSlice: { name: 'projects/documentUpload' },
 }));
@@ -189,6 +193,8 @@ describe('projects-mfe init', () => {
       { name: 'projects/specsCheck' },
       initSpecsCheckEffects
     );
+    // Gears: the choice of connection and model; no effect yet.
+    expect(registerSlice).toHaveBeenCalledWith({ name: 'projects/gearsMatch' });
     // Upload documents; the effect invalidates the documents read on the app.
     expect(registerSlice).toHaveBeenCalledWith(
       { name: 'projects/documentUpload' },

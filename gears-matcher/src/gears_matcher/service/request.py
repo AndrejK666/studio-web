@@ -20,7 +20,20 @@ PATH = re.compile(r"^(?!/)(?!.*(^|/)\.\.(/|$))[^\x00-\x1f\x7f\\]+\.md$")
 PATH_MAX = 300
 _FIELDS = {"product", "own_gears", "documents", "options"}
 _DOC_FIELDS = {"path", "sha256", "content"}
-_OPTION_FIELDS = {"use_gears_bundle", "max_calls", "extract_max_calls"}
+_OPTION_FIELDS = {"use_gears_bundle", "max_calls", "extract_max_calls", "provider"}
+# What a run may ask for, and the three models each uses (candidates, candidates, checks). A person
+# chooses the connection, never the models: these are the combinations that were measured.
+# Constructor's connector is not one of them: it is reachable only inside the VPN, so a deployed
+# Studio cannot use it. A run with no `provider` takes the service's own default (its config).
+PROVIDER_MODELS: dict[str, tuple[str, str, str]] = {
+    "litellm": (
+        "glm-5.3-flash",
+        "glm-5.3-flash",
+        "glm-5.3-flash",
+    ),  # a run on the service, 2026-11-24
+    "openai": ("gpt-5.4", "gpt-5.5", "gpt-5.4"),  # the command line's verified run, 2026-11-13
+}
+PROVIDERS = tuple(PROVIDER_MODELS)
 
 
 @dataclass(frozen=True)
@@ -63,6 +76,7 @@ class RunRequest:
     use_gears_bundle: bool = False
     max_calls: int = 400
     extract_max_calls: int | None = None
+    provider: str | None = None  # one of `PROVIDERS`; None: the service's own default
 
     def to_json(self) -> dict[str, Any]:
         """What is stored while the run is not finished (so a restart can run it again)."""
@@ -76,6 +90,7 @@ class RunRequest:
                 "use_gears_bundle": self.use_gears_bundle,
                 "max_calls": self.max_calls,
                 "extract_max_calls": self.extract_max_calls,
+                "provider": self.provider,
             },
         }
 
@@ -89,6 +104,7 @@ class RunRequest:
             use_gears_bundle=options["use_gears_bundle"],
             max_calls=options["max_calls"],
             extract_max_calls=options["extract_max_calls"],
+            provider=options.get("provider"),  # a run stored before this option existed has none
         )
 
 
@@ -114,6 +130,7 @@ def parse_request(body: Any, limits: Limits) -> RunRequest:
     options = body.get("options") or {}
     if not isinstance(options, dict) or set(options) - _OPTION_FIELDS:
         raise bad_request("options: known fields only")
+    provider = _provider(options.get("provider"))
     return RunRequest(
         product=product,
         documents=documents,
@@ -123,7 +140,18 @@ def parse_request(body: Any, limits: Limits) -> RunRequest:
         extract_max_calls=_optional_bound(
             options.get("extract_max_calls"), "extract_max_calls", limits.max_extract_calls
         ),
+        provider=provider,
     )
+
+
+def _provider(provider: Any) -> str | None:
+    if provider is None:
+        return None
+    if provider not in PROVIDERS:
+        raise unprocessable(
+            "unknown_provider", f"options.provider must be one of: {', '.join(PROVIDERS)}"
+        )
+    return str(provider)
 
 
 def _document(doc: Any, limits: Limits) -> Document:
