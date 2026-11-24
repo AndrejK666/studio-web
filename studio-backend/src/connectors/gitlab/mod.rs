@@ -935,8 +935,7 @@ impl ConnectorDriver for GitLabDriver {
         let api = self.api(auth);
         let since = since.map(str::trim).filter(|s| !s.is_empty());
         let per_items = per_page.clamp(1, COMMENT_ITEMS);
-        let mut item_page = page.max(1);
-        for _ in 0..MAX_SILENT_PAGES {
+        for item_page in (page.max(1)..).take(MAX_SILENT_PAGES as usize) {
             let mrs = self
                 .merge_requests(&api, repo_full_path, "all", since, item_page, per_items)
                 .await?;
@@ -984,7 +983,6 @@ impl ConnectorDriver for GitLabDriver {
             if !out.is_empty() {
                 return Ok(out);
             }
-            item_page += 1;
         }
         Ok(Vec::new())
     }
@@ -1032,7 +1030,7 @@ impl ConnectorDriver for GitLabDriver {
         let (mut list, _) = api
             .walk::<model::Contributor>(&url, Family::Scope, pages)
             .await?;
-        list.sort_by(|a, b| b.commits.cmp(&a.commits));
+        list.sort_by_key(|b| std::cmp::Reverse(b.commits));
         list.truncate(max.max(1) as usize);
         Ok(list
             .into_iter()

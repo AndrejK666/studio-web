@@ -280,7 +280,7 @@ scope-in-path	PUT /studio-documents/v1/workspaces/{workspace_id}/documents/{id}
 scope-in-path	PUT /studio-documents/v1/workspaces/{workspace_id}/documents/{id}/analyses/{detector}
 scope-in-path	PUT /studio-user/v1/users/{user_id}/memberships/{org_id}
 
-# --- typed-response (39) ---------------------------------------------------
+# --- typed-response (40) ---------------------------------------------------
 # Rule B3. The response is registered without a schema, so the shape is
 # invisible to /cf/docs and to client generation. studio-theia, spec-quality and
 # studio-llm proxy an upstream body through verbatim; each needs a DTO of ours.
@@ -295,9 +295,11 @@ scope-in-path	PUT /studio-user/v1/users/{user_id}/memberships/{org_id}
 # OOXML parts; a schema describes JSON, and the report it is drawn from has one.
 # Its plan exported as gears.yaml is a file too; GET .../plan is its typed shape.
 # A person's photo (studio-user) is the image bytes an <img> loads; a schema
-# describes JSON.
+# describes JSON. An output's file streamed through Studio (artifact-ingest) is
+# the file's own bytes.
 typed-response	GET /studio-spec-quality/v1/health
 typed-response	GET /studio-user/v1/avatars/{user_id}/{digest}
+typed-response	GET /studio-artifact-ingest/v1/outputs/{output_id}/content
 typed-response	GET /studio-components-catalog/v1/gearbox/corpus/info/refs
 typed-response	GET /studio-product/v1/gearbox/corpus/info/refs
 typed-response	GET /studio-product/v1/gearbox/corpus/{source_id}/info/refs

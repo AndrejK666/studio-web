@@ -6288,6 +6288,7 @@ response	GET /studio-user/v1/users/{}/memberships	items.status	String	always
 response	GET /studio-user/v1/users/{}/memberships	items.updated_at_epoch_ms	i64	always
 response	GET /studio-user/v1/users/{}/memberships	items.user_id	String	always
 response	PATCH /studio-connector/v1/connections/{}	account	String	always
+response	PATCH /studio-connector/v1/connections/{}	avatar_url	String	optional
 response	PATCH /studio-connector/v1/connections/{}	checks	Vec<{}>	always
 response	PATCH /studio-connector/v1/connections/{}	checks.detail	String	always
 response	PATCH /studio-connector/v1/connections/{}	checks.name	String	always
@@ -6708,6 +6709,7 @@ response	POST /studio-components-catalog/v1/screen-previews	width	u32	optional
 response	POST /studio-components-catalog/v1/sync	run_id	String	always
 response	POST /studio-components-catalog/v1/sync	status	String	always
 response	POST /studio-connector/v1/connections	account	String	always
+response	POST /studio-connector/v1/connections	avatar_url	String	optional
 response	POST /studio-connector/v1/connections	checks	Vec<{}>	always
 response	POST /studio-connector/v1/connections	checks.detail	String	always
 response	POST /studio-connector/v1/connections	checks.name	String	always
@@ -6755,6 +6757,7 @@ response	POST /studio-connector/v1/connections/{}/messages	message_id	String	opt
 response	POST /studio-connector/v1/connections/{}/messages	provider	String	always
 response	POST /studio-connector/v1/connections/{}/messages	target	String	always
 response	POST /studio-connector/v1/connections/{}/test	account	String	always
+response	POST /studio-connector/v1/connections/{}/test	avatar_url	String	optional
 response	POST /studio-connector/v1/connections/{}/test	checks	Vec<{}>	always
 response	POST /studio-connector/v1/connections/{}/test	checks.detail	String	always
 response	POST /studio-connector/v1/connections/{}/test	checks.name	String	always
@@ -6774,6 +6777,7 @@ response	POST /studio-connector/v1/connections/{}/test	connection.scope	String	a
 response	POST /studio-connector/v1/connections/{}/test	connection.secret_ref	String	always
 response	POST /studio-connector/v1/connections/{}/test	display_name	String	optional
 response	POST /studio-connector/v1/oauth/complete	account	String	always
+response	POST /studio-connector/v1/oauth/complete	avatar_url	String	optional
 response	POST /studio-connector/v1/oauth/complete	checks	Vec<{}>	always
 response	POST /studio-connector/v1/oauth/complete	checks.detail	String	always
 response	POST /studio-connector/v1/oauth/complete	checks.name	String	always
@@ -6794,6 +6798,7 @@ response	POST /studio-connector/v1/oauth/complete	connection.secret_ref	String	a
 response	POST /studio-connector/v1/oauth/complete	display_name	String	optional
 response	POST /studio-connector/v1/oauth/start	authorize_url	String	always
 response	POST /studio-connector/v1/probe	account	String	always
+response	POST /studio-connector/v1/probe	avatar_url	String	optional
 response	POST /studio-connector/v1/probe	checks	Vec<{}>	always
 response	POST /studio-connector/v1/probe	checks.detail	String	always
 response	POST /studio-connector/v1/probe	checks.name	String	always
@@ -9473,6 +9478,7 @@ route	GET /studio-artifact-ingest/v1/edges
 route	GET /studio-artifact-ingest/v1/nodes
 route	GET /studio-artifact-ingest/v1/open-pull-requests
 route	GET /studio-artifact-ingest/v1/outputs
+route	GET /studio-artifact-ingest/v1/outputs/{}/content
 route	GET /studio-artifact-ingest/v1/outputs/{}/download
 route	GET /studio-artifact-ingest/v1/repo-files
 route	GET /studio-artifact-ingest/v1/runs
