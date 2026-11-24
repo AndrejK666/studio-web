@@ -20,6 +20,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use ::gts::GtsTypeId;
 use account_management_sdk::{
     AccountManagementClient, CreateTenantRequest, IdpNewUser, IdpServiceAccountCredentials,
     IdpServiceAccountSummary, IdpUser, IdpUserPatch, ListUsersQuery, MetadataEntry, Tenant,
@@ -30,7 +31,6 @@ use credstore_sdk::{
     CredStoreClientV1, CredStoreError, GetSecretResponse, SecretRef, SecretValue, SharingMode,
     WriteOptions, WritePrecondition,
 };
-use ::gts::GtsTypeId;
 use sea_orm::EntityTrait;
 use time::OffsetDateTime;
 use toolkit_canonical_errors::CanonicalError;
@@ -51,8 +51,8 @@ use crate::artifact_ingest::gts;
 use crate::artifact_ingest::index::{ArtifactIndex, IndexedGraphStore};
 use crate::artifact_ingest::migrations::Migrator;
 use crate::connectors::sdk::{
-    ConnectionAuth, ConnectorCategory, ConnectorDriver, DriverIdentity, RemoteFile,
-    RemoteFileList, RemoteIssue, RemotePullRequest,
+    ConnectionAuth, ConnectorCategory, ConnectorDriver, DriverIdentity, RemoteFile, RemoteFileList,
+    RemoteIssue, RemotePullRequest,
 };
 use crate::org_scope::ScopeOrgs;
 use crate::organizations::sdk::ORGANIZATION_TENANT_TYPE;
@@ -359,7 +359,10 @@ impl ByTenant {
     }
 
     fn wrote(&self, ctx: &SecurityContext) -> Arc<InMemoryGraphStore> {
-        self.written_in.lock().unwrap().push(ctx.subject_tenant_id());
+        self.written_in
+            .lock()
+            .unwrap()
+            .push(ctx.subject_tenant_id());
         self.of(ctx)
     }
 
@@ -623,12 +626,31 @@ async fn a_run_for_an_organizations_project_is_filed_under_the_organization() {
     let project = PROJECT.to_string();
     let workspace = WS.to_string();
 
-    assert_eq!(svc.run_tenant(&admin(), Some(project.as_str())).await.unwrap(), ORG);
-    assert_eq!(svc.run_tenant(&admin(), Some(workspace.as_str())).await.unwrap(), ORG);
-    assert_eq!(svc.run_tenant(&member(), Some(project.as_str())).await.unwrap(), ORG);
+    assert_eq!(
+        svc.run_tenant(&admin(), Some(project.as_str()))
+            .await
+            .unwrap(),
+        ORG
+    );
+    assert_eq!(
+        svc.run_tenant(&admin(), Some(workspace.as_str()))
+            .await
+            .unwrap(),
+        ORG
+    );
+    assert_eq!(
+        svc.run_tenant(&member(), Some(project.as_str()))
+            .await
+            .unwrap(),
+        ORG
+    );
     // Unscoped: the caller's own tenant, as before.
     assert_eq!(svc.run_tenant(&admin(), None).await.unwrap(), ROOT);
-    assert!(svc.run_tenant(&stranger(), Some(project.as_str())).await.is_err());
+    assert!(
+        svc.run_tenant(&stranger(), Some(project.as_str()))
+            .await
+            .is_err()
+    );
 
     // The caller stays who they are: only the tenant changes.
     let there = svc.org_ctx(&admin(), Some(project.as_str())).await.unwrap();
@@ -666,11 +688,17 @@ async fn detaching_as_the_administrator_forgets_in_the_organization() {
         .prune_repository(&admin(), &PROJECT.to_string(), "acme/app")
         .await
         .expect("prune");
-    assert_eq!(pruned.repos, 1, "the repository is found where it was synced");
+    assert_eq!(
+        pruned.repos, 1,
+        "the repository is found where it was synced"
+    );
     assert_eq!(graph.tenants_written(), vec![ORG]);
     let left = svc
         .list_in_scope(&member(), Some("issue"), &PROJECT.to_string())
         .await
         .expect("list");
-    assert!(left.is_empty(), "its issue is forgotten in the organization");
+    assert!(
+        left.is_empty(),
+        "its issue is forgotten in the organization"
+    );
 }

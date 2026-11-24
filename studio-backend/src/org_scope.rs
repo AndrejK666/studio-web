@@ -97,7 +97,10 @@ impl std::fmt::Display for ScopeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NotReached(scope) => {
-                write!(f, "{scope} is not a project or workspace this caller reaches")
+                write!(
+                    f,
+                    "{scope} is not a project or workspace this caller reaches"
+                )
             }
             Self::Unresolved(scope, why) => {
                 write!(f, "the organization of {scope} could not be read: {why}")

@@ -321,7 +321,11 @@ async fn a_run_filed_under_an_organization_is_found_for_whoever_asked_for_it() {
 
     let row = svc.enqueue(&admin, run(org, None)).await.unwrap();
     assert_eq!(row.tenant_id, org, "filed under the organization");
-    assert_eq!(row.requested_by, admin.subject_id(), "asked by the administrator");
+    assert_eq!(
+        row.requested_by,
+        admin.subject_id(),
+        "asked by the administrator"
+    );
 
     assert!(
         svc.get(&admin, root, row.id).await.unwrap().is_none(),
