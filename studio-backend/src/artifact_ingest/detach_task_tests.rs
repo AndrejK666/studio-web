@@ -15,6 +15,7 @@ fn payload() -> DetachPayload {
         clone_url: "https://github.com/acme/api.git".into(),
         full_path: "acme/api".into(),
         asked_by: "u-1".into(),
+        organization_id: None,
     }
 }
 

@@ -24,8 +24,8 @@
 //! (`cpt-studio-principle-tasks-authorize-at-enqueue`): the route checks, as the
 //! caller, that the project is theirs to reach and that its config lists the
 //! source; the run then writes the config as the worker scoped to the project
-//! alone, and prunes in the run's tenant -- the tenant a sync of the repository
-//! writes its nodes in.
+//! alone, and prunes in the project's organization -- where a sync of the
+//! repository writes its nodes, and the tenant the run is filed under.
 //!
 //! **Resumable.** Each finished step is recorded in the run's result and read
 //! back by the next attempt or a `POST /studio-tasks/v1/runs/{id}/retry`; both
@@ -62,6 +62,11 @@ pub struct DetachPayload {
     pub full_path: String,
     /// Who asked, for the history. Authority was decided when they asked.
     pub asked_by: String,
+    /// The organization the run is filed under, where the project's
+    /// artifacts live. For the record: the prune resolves it again from the
+    /// project, which also covers a run queued before this field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub organization_id: Option<Uuid>,
 }
 
 /// The run's record: its result while it runs and when it ends.

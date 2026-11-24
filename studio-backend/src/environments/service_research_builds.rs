@@ -12,7 +12,24 @@ use uuid::Uuid;
 use super::{DeployRequest, EnvironmentService, Refusal, Result};
 use crate::artifact_ingest::port::BuildRecord;
 use crate::environments::model::{Deployment, DeploymentAction, EnvironmentKind};
-use crate::environments::{research, research_app};
+use crate::environments::research;
+use crate::environments::research_images::{self, ImageState, ImageStatus};
+
+/// How long what Research said of a build's images is shown again before
+/// it is asked again.
+const IMAGES_FOR: std::time::Duration = std::time::Duration::from_secs(30);
+
+type ImagesKey = (Uuid, Uuid, String);
+
+/// What Research said of a build's images, by (person, project, build): each
+/// person asks with their own sign-in.
+fn images_cache() -> &'static crate::ttl_cache::TtlCache<ImagesKey, std::sync::Arc<Vec<ImageState>>>
+{
+    static CACHE: std::sync::OnceLock<
+        crate::ttl_cache::TtlCache<ImagesKey, std::sync::Arc<Vec<ImageState>>>,
+    > = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| crate::ttl_cache::TtlCache::new(IMAGES_FOR, 1024))
+}
 use crate::tasks::RunState;
 
 /// What a record that says `running` becomes, given its run: `None` while
@@ -169,18 +186,12 @@ impl EnvironmentService {
             ));
         }
         let api = self.own_research_api(ctx, org, Some(project)).await?;
-        let mut missing = Vec::new();
-        for (app, reference) in &record.images {
-            let Some(image) = research_app::image_ref(reference) else {
-                missing.push(format!("{app} (not an image Research built)"));
-                continue;
-            };
-            match api.image(&image.id).await {
-                Ok(i) if i.build_status == "done" => {}
-                Ok(i) => missing.push(format!("{} ({})", image.name, i.build_status)),
-                Err(e) => missing.push(format!("{} ({e:#})", image.name)),
-            }
-        }
+        let missing: Vec<String> = research_images::image_states(&api, &record.images)
+            .await
+            .iter()
+            .filter(|s| s.status != research_images::ImageStatus::Built)
+            .map(research_images::ImageState::line)
+            .collect();
         if !missing.is_empty() {
             return Err(Refusal::Precondition(
                 "RESEARCH_IMAGES_NOT_READY",
@@ -208,6 +219,62 @@ impl EnvironmentService {
         };
         self.research_deploy_of(ctx, org, project, &env, req, true)
             .await
+    }
+
+    /// What Constructor Research says now of each image Research build
+    /// `build_id` asked for, read with the caller's own sign-in and kept
+    /// [`IMAGES_FOR`]; every image `unknown`, with why, when Research cannot
+    /// be asked. An answer with an unknown image is not kept.
+    pub async fn research_images(
+        &self,
+        ctx: &SecurityContext,
+        project: Uuid,
+        build_id: &str,
+    ) -> Result<std::sync::Arc<Vec<ImageState>>> {
+        let org = self.organization_of_project(ctx, project).await?;
+        let records =
+            crate::environments::build_records::OrgBuilds::of(&self.hub, org).map_err(|_| {
+                Refusal::Unavailable("builds are not available in this deployment".into())
+            })?;
+        let record = records
+            .build(ctx, &project.to_string(), build_id)
+            .await
+            .map_err(|e| Refusal::Internal(format!("{e:#}")))?
+            .ok_or_else(|| {
+                Refusal::NotFound(
+                    build_id.to_owned(),
+                    format!("project {project} has no build {build_id}"),
+                )
+            })?;
+        if record.r#where.as_deref() != Some("research") {
+            return Err(Refusal::Precondition(
+                "BUILD_NOT_MADE_IN_RESEARCH",
+                format!(
+                    "build {build_id} was not made in Constructor Research: its images are in \
+                     the registry it pushed them to"
+                ),
+            ));
+        }
+        let key = (ctx.subject_id(), project, build_id.to_owned());
+        let images = record.images;
+        let read = || async {
+            let states = match self.own_research_api(ctx, org, Some(project)).await {
+                Ok(api) => research_images::image_states(&api, &images).await,
+                Err(r) => {
+                    let why = r.line();
+                    images
+                        .iter()
+                        .map(|(app, reference)| ImageState::unknown(app, reference, &why))
+                        .collect()
+                }
+            };
+            std::sync::Arc::new(states)
+        };
+        Ok(images_cache()
+            .get_or_compute(key, 0, read, |v| {
+                v.iter().all(|s| s.status != ImageStatus::Unknown)
+            })
+            .await)
     }
 
     /// The deploy "Build and run in Research" asked for, started by the
@@ -268,6 +335,7 @@ impl EnvironmentService {
 mod tests {
     use super::*;
     use crate::connectors::sdk::research::{Building, DeskBuild};
+    use crate::environments::research_app;
     use crate::tasks::{KeyedRun, RunView};
 
     fn payload() -> serde_json::Value {

@@ -388,6 +388,29 @@ impl TaskService {
             .await?)
     }
 
+    /// Run `id` if `subject` asked for it, in whichever tenant it is filed:
+    /// for a caller polling its own run without naming the tenant. A gear
+    /// files a project's run under the project's organization, which for a
+    /// platform administrator is not their home tenant. The caller still has
+    /// to reach that tenant ([`super::rest`] checks).
+    pub async fn get_requested(
+        &self,
+        subject: Uuid,
+        id: Uuid,
+    ) -> anyhow::Result<Option<entity::Model>> {
+        let conn = self.db.conn()?;
+        Ok(entity::Entity::find()
+            .secure()
+            .scope_with(&AccessScope::allow_all())
+            .filter(
+                Condition::all()
+                    .add(entity::Column::Id.eq(id))
+                    .add(entity::Column::RequestedBy.eq(subject)),
+            )
+            .one(&conn)
+            .await?)
+    }
+
     /// A run of `task_type` on `partition_key` with this very payload that has
     /// not started yet, if there is one — see [`NewRun::coalesce_queued`].
     async fn find_waiting(

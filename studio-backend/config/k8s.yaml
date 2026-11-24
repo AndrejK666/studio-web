@@ -40,7 +40,7 @@ database:
         # and eight gear databases below inherit it: 8 x 3 = 24, plus six
         # quiet gears at 2 (12) and the gears with their own larger `pool`
         # (28, github-mirror's 2 among them), 64 per replica. Two replicas need
-        # 128, and 148 with Keycloak, the bootstrap Job, the operator and the
+        # 128, and 151 with Keycloak, the gears-matcher, the bootstrap Job, the operator and the
         # reserved slots, against `max_connections: 160`;
         # deploy/k8s/cloudnative-pg/README.md carries the table. It was 4, and
         # two replicas then needed 172. Raising it by one raises the ceiling by

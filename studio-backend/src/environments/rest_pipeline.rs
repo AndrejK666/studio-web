@@ -179,6 +179,32 @@ fn keys_dto(k: SecretKeys) -> ConfigSecretKeysDto {
     }
 }
 
+/// One image of a Research build, as Constructor Research says it is now.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ResearchImageDto {
+    /// The application it is for.
+    pub app: String,
+    /// The reference the build recorded.
+    pub image: String,
+    /// The image's name and Research's id, for one of Research's images.
+    pub name: Option<String>,
+    pub research_id: Option<String>,
+    /// `built` | `building` | `failed` | `missing` | `unknown` (Research
+    /// could not be asked, or did not answer in time).
+    pub status: String,
+    /// Research's words: why it failed or is missing, or why Studio could
+    /// not ask.
+    pub message: Option<String>,
+}
+
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ResearchImagesDto {
+    pub items: Vec<ResearchImageDto>,
+    pub total: usize,
+}
+
 /// Deploy the images a build made, building nothing.
 #[derive(Debug)]
 #[toolkit_macros::api_dto(request)]
@@ -216,6 +242,34 @@ async fn get_build(
         .await
         .map_err(problem)?;
     Ok(Json(build_dto(v)))
+}
+
+async fn get_research_images(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(envs): Extension<Environments>,
+    Path(build_id): Path<String>,
+    Query(q): Query<ProjectQuery>,
+) -> ApiResult<JsonBody<ResearchImagesDto>> {
+    let states = envs
+        .0
+        .research_images(&ctx, q.project_id, &build_id)
+        .await
+        .map_err(problem)?;
+    let items: Vec<ResearchImageDto> = states
+        .iter()
+        .map(|s| ResearchImageDto {
+            app: s.app.clone(),
+            image: s.reference.clone(),
+            name: s.name.clone(),
+            research_id: s.research_id.clone(),
+            status: s.status.as_str().to_owned(),
+            message: s.message.clone(),
+        })
+        .collect();
+    Ok(Json(ResearchImagesDto {
+        total: items.len(),
+        items,
+    }))
 }
 
 async fn get_deployment(
@@ -274,6 +328,31 @@ pub fn register(mut router: Router, openapi: &dyn OpenApiRegistry) -> Router {
         .query_param_typed("project_id", true, "The project", "string")
         .handler(get_build)
         .json_response_with_schema::<EnvironmentBuildDto>(openapi, StatusCode::OK, "The build")
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-environments/v1/builds/{build_id}/images")
+        .operation_id("studio_environments.get_research_build_images")
+        .summary("What Constructor Research says of each image of a Research build, now")
+        .description(
+            "For `?project_id=`: each image Research build `build_id` asked for, as Research \
+             says it is now, read with the caller's own sign-in: `built` (a deploy can run it), \
+             `building`, `failed` (with Research's words), `missing` (Research no longer has \
+             it), or `unknown` (Research could not be asked or did not answer within 10 s, with \
+             why). An answer is kept 30 s per person. 400 `BUILD_NOT_MADE_IN_RESEARCH` for a \
+             build whose images are in a registry (`GET /images?build_id=`).",
+        )
+        .tag(TAG)
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("build_id", "Build id")
+        .query_param_typed("project_id", true, "The project", "string")
+        .handler(get_research_images)
+        .json_response_with_schema::<ResearchImagesDto>(openapi, StatusCode::OK, "The images")
+        .error_400(openapi)
         .error_401(openapi)
         .error_404(openapi)
         .error_500(openapi)

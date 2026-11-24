@@ -122,6 +122,11 @@ This README is what you need to work in the directory.
 - `gear_match/usage.rs` and `gear_match_usage_rest.rs` — how the
   organization's projects use the matcher (`GET gear-match-usage`), counted in
   SQL, with a live check of the service's `/v1/info` kept 30 s.
+- `gear_match/settings.rs` and `gear_match_settings_rest.rs` — the
+  service's run settings (`GET`/`PUT gears-matcher-settings`): provider,
+  models and call bounds passed through to its `/v1/settings`; the
+  organization's own service is its administrator's to change, the
+  deployment's shared one a platform administrator's. Never a key.
 - `rest.rs` — the routes, including where a new `product.gdl` is written
   (`product_path_for`: `products/<id>/product.gdl`, or where it already is).
 

@@ -1925,7 +1925,16 @@ impl DomainModelService {
     /// Before records lived in their organization's model, a platform
     /// administrator's writes — attributes, milestones, views, a gear's
     /// records — went to the root's, where nobody in the organization sees
-    /// them. Idempotent: what moved is gone from the root.
+    /// them. Idempotent: what moved is marked deleted in the root, and no
+    /// read (this one included) sees a deleted object, so a second sweep
+    /// finds nothing; one that stopped half way copies the same values again.
+    ///
+    /// A one-time migration since every writer of a project's records acts
+    /// in its organization (build records through `OrgBuilds`, artifact
+    /// ingest through `IngestService::org_ctx`, 2026-11-24). Anything it
+    /// moves now was written to the root after that: it is still moved, and
+    /// said as a warning, because it names a writer that still takes its
+    /// tenant from the caller.
     pub async fn rehome_scope(
         &self,
         root_ctx: &SecurityContext,
@@ -2036,7 +2045,18 @@ impl DomainModelService {
                 .upsert_nodes_keeping_vectors(root_ctx, chunk)
                 .await?;
         }
-        info!(scope, objects = nodes.len(), relations = edges.len(), org = %org_ctx.subject_tenant_id(), "studio-domain-model: objects moved from the root's model into their organization's");
+        let kinds = entities.join(",");
+        warn!(
+            scope,
+            objects = nodes.len(),
+            relations = edges.len(),
+            types = %kinds,
+            org = %org_ctx.subject_tenant_id(),
+            "studio-domain-model: objects moved from the root's model into their organization's -- \
+             a project's records belong in its organization, so something wrote these to the root: \
+             a writer still taking its tenant from the caller (a platform administrator's home is \
+             the root), or writes from before the fix of 2026-11-24 on the first start after it"
+        );
         self.notify.objects_changed(org_ctx, "*", &ids, "rehome");
         Ok(nodes.len())
     }

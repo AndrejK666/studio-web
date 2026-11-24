@@ -36,6 +36,7 @@ import type {
 } from './types';
 
 import type { StrategyId } from '../model/assembly';
+import type { MatcherSettingsUpdate } from '../model/matcher-settings';
 
 export * from './types';
 
@@ -308,6 +309,10 @@ export const api = {
     organizationId: string,
     strategy: StrategyId | null
   ) => svc().setOrganizationAssemblyStrategy(organizationId).fetch({ strategy }),
+  matcherSettings: (_token: string, organizationId: string, strategy = 'gears_matcher') =>
+    svc().matcherSettings({ organizationId, strategy }).fetch(FRESH),
+  putMatcherSettings: (_token: string, organizationId: string, strategy: string, body: MatcherSettingsUpdate) =>
+    svc().putMatcherSettings(organizationId, strategy).fetch(body),
   conformance: (
     _token: string,
     projectId: string,

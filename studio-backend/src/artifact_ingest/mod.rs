@@ -404,6 +404,16 @@ impl RestApiCapability for StudioArtifactIngestGear {
                         .cloned()
                         .flatten()
                         .map(|s| s as Arc<dyn port::CloneOutcomes>),
+                )
+                // A project's artifacts live in its organization's model,
+                // whoever syncs or reads them (a platform administrator's
+                // home is the root). Without account-management they stay in
+                // the caller's tenant, as before.
+                .with_orgs(
+                    ctx.client_hub()
+                        .get::<dyn account_management_sdk::AccountManagementClient>()
+                        .ok()
+                        .map(|am| Arc::new(crate::org_scope::ScopeOrgs::new(am))),
                 ),
             ))
         };

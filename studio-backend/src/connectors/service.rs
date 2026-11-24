@@ -855,6 +855,12 @@ impl ConnectorService {
         Ok(Some(holder))
     }
 
+    /// The organization `scope` hangs under, read as the caller; `None`
+    /// when it hangs under none or cannot be read.
+    pub async fn organization_of(&self, ctx: &SecurityContext, scope: Uuid) -> Option<Uuid> {
+        crate::organizations::sdk::organization_of(self.am.as_ref(), ctx, scope).await
+    }
+
     pub async fn platform_auth(
         &self,
         ctx: &SecurityContext,

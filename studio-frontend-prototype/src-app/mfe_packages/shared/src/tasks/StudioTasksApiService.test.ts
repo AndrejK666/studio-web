@@ -26,6 +26,9 @@ describe('StudioTasksApiService', () => {
     expect(service.runs({ taskType: 'artifact.ingest', state: 'queued', limit: 200 }).key[2]).toBe(
       '/runs?task_type=artifact.ingest&state=queued&limit=200'
     );
+    expect(service.runs({ taskType: 'artifact.ingest', state: 'queued', organizationId: 'o-1' }).key[2]).toBe(
+      '/runs?task_type=artifact.ingest&state=queued&organization_id=o-1'
+    );
   });
 
   it('asks a run to stop with a POST to its cancel action', () => {

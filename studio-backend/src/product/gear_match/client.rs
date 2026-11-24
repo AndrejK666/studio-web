@@ -1,12 +1,13 @@
 //! The gears-matcher service's API, as this gear calls it
 //! (`gears-matcher/schemas/service/matcher-service.openapi.yaml`).
 //!
-//! Five calls: `GET /v1/info`, `POST /v1/runs` (with an `Idempotency-Key`),
-//! `GET /v1/runs/{id}`, `GET /v1/runs/{id}/report` and
-//! `POST /v1/runs/{id}/cancel`, each with the shared secret as a bearer. The
-//! answers are kept as JSON: the report is the matcher's own document, which
-//! this gear reads field by field (`report.rs`) rather than re-declares, so a
-//! field it does not know is passed on, never refused.
+//! Seven calls: `GET /v1/info`, `POST /v1/runs` (with an `Idempotency-Key`),
+//! `GET /v1/runs/{id}`, `GET /v1/runs/{id}/report`,
+//! `POST /v1/runs/{id}/cancel`, and `GET`/`PUT /v1/settings` (its run
+//! settings, [`super::settings`]), each with the shared secret as a bearer.
+//! The answers are kept as JSON: the report is the matcher's own document,
+//! which this gear reads field by field (`report.rs`) rather than re-declares,
+//! so a field it does not know is passed on, never refused.
 
 use std::time::Duration;
 
@@ -88,6 +89,11 @@ pub trait Matcher: Send + Sync + 'static {
     async fn run(&self, id: &str) -> Result<Value>;
     async fn report(&self, id: &str) -> Result<Value>;
     async fn cancel(&self, id: &str) -> Result<Value>;
+    /// Its run settings: provider, models, call bounds (`GET /v1/settings`).
+    async fn settings(&self) -> Result<Value>;
+    /// Replace their override (`PUT /v1/settings`); answers the settings
+    /// after the change.
+    async fn put_settings(&self, body: &Value) -> Result<Value>;
 }
 
 pub struct HttpMatcher {
@@ -218,6 +224,15 @@ impl Matcher for HttpMatcher {
     async fn cancel(&self, id: &str) -> Result<Value> {
         let path = run_path(id)?;
         self.send(self.client.post(self.url(&format!("{path}/cancel"))))
+            .await
+    }
+
+    async fn settings(&self) -> Result<Value> {
+        self.send(self.client.get(self.url("/v1/settings"))).await
+    }
+
+    async fn put_settings(&self, body: &Value) -> Result<Value> {
+        self.send(self.client.put(self.url("/v1/settings")).json(body))
             .await
     }
 }

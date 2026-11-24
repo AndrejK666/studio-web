@@ -47,6 +47,9 @@ mod assembly_rest;
 #[path = "gear_match_usage_rest.rs"]
 mod gear_match_usage_rest;
 
+#[path = "gear_match_settings_rest.rs"]
+mod gear_match_settings_rest;
+
 /// Errors attributable to a product resource.
 #[resource_error(gts_id!("cf.studio._.product.v1~"))]
 pub struct StudioProductError;
@@ -3093,6 +3096,7 @@ pub fn register_routes(
     let router = assembly_rest::register(router, openapi);
     let router = gear_match_usage_rest::register(router, openapi);
     let router = check_task::register(router, openapi);
+    let router = gear_match_settings_rest::register(router, openapi);
     let router = register_legacy_routes(router, openapi);
     let product = Product::new(service, hub, gearbox);
     // The queued checks run through the same handle the routes do.

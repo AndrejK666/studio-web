@@ -43,10 +43,7 @@ impl OrgBuilds {
 
     /// `ctx`, acting in the organization.
     fn there(&self, ctx: &SecurityContext) -> anyhow::Result<SecurityContext> {
-        if ctx.subject_tenant_id() == self.org {
-            return Ok(ctx.clone());
-        }
-        crate::org_scope::acting_in(ctx, self.org).map_err(|e| {
+        crate::org_scope::acting_in_org(ctx, self.org).map_err(|e| {
             anyhow::anyhow!(
                 "the build records of organization {} cannot be reached: {e}",
                 self.org

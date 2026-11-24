@@ -26,6 +26,8 @@ export function isProjectSection(value: unknown): value is ProjectSection {
 export interface NavState {
   projectId: string | null;
   section: ProjectSection;
+  /** The organization the shell has on screen, the open project's; `null` until it says. */
+  organizationId: string | null;
 }
 
 const SLICE_KEY = 'projects/nav' as const;
@@ -33,9 +35,10 @@ const SLICE_KEY = 'projects/nav' as const;
 const initialState: NavState = {
   projectId: null,
   section: 'overview',
+  organizationId: null,
 };
 
-const { slice, openProject, closeProject, selectSection, landOnFirstImport } = createSlice({
+const { slice, openProject, closeProject, selectSection, landOnFirstImport, organizationSeen } = createSlice({
   name: SLICE_KEY,
   initialState,
   reducers: {
@@ -53,11 +56,14 @@ const { slice, openProject, closeProject, selectSection, landOnFirstImport } = c
     landOnFirstImport: (state: NavState) => {
       if (state.section === 'overview') state.section = 'artifacts';
     },
+    organizationSeen: (state: NavState, action: ReducerPayload<string | null>) => {
+      state.organizationId = action.payload;
+    },
   },
 });
 
 export const navSlice = slice;
-export { openProject, closeProject, selectSection, landOnFirstImport };
+export { openProject, closeProject, selectSection, landOnFirstImport, organizationSeen };
 export const NAV_SLICE_KEY = SLICE_KEY;
 
 declare module '@gears-frontx/react' {

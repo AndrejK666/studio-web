@@ -54,6 +54,12 @@ pub struct SyncPayload {
     pub project_id: Option<Uuid>,
     #[serde(default)]
     pub project_name: Option<String>,
+    /// Where the connection is looked up from (the request's `tenant`, else
+    /// the caller's). The run itself is filed, and writes, in the
+    /// organization the import is for, which may be above it. Absent: the
+    /// run's own tenant, as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_tenant: Option<Uuid>,
 }
 
 pub struct GraphSyncTask {
@@ -119,7 +125,7 @@ impl TaskHandler for GraphSyncTask {
                 &ctx.security,
                 &SyncRequest {
                     connection_id: payload.connection_id,
-                    tenant: ctx.tenant,
+                    tenant: payload.connection_tenant.unwrap_or(ctx.tenant),
                     repo_full_path: &payload.repo_full_path,
                     git_ref: payload.git_ref.as_deref(),
                     max_entries: payload.max_entries,
@@ -193,6 +199,7 @@ mod tests {
             max_contributors: 50,
             project_id: None,
             project_name: None,
+            connection_tenant: None,
         };
         let json = serde_json::to_value(&payload).unwrap();
         let back: SyncPayload = serde_json::from_value(json).unwrap();

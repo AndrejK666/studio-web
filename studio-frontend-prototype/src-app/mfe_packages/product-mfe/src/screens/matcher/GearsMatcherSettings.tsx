@@ -3,7 +3,10 @@
  *
  * - the service: whether the gears-matcher service is set up for this
  *   deployment and whether it answers now (its `/v1/info`, asked by the server
- *   at most every 30 s: versions, catalogue commit, limits);
+ *   at most every 30 s: versions, catalogue commit, limits), and its run
+ *   settings (`MatcherRunSettings`: provider, models, call bounds), which the
+ *   organization's administrator changes for its own service and a platform
+ *   administrator for the deployment's shared one;
  * - the organization's default way of assembling its projects' products, out
  *   of the strategies its installed kits provide (Spec mapping, Gears
  *   matcher): a choice only where there is more than one, which a project may
@@ -22,6 +25,7 @@ import { useAssemblyTranslations } from '../../i18n';
 import { ProjectPage } from '@constructor-studio/mfe-shared/page';
 import { errText, Segmented, StatusChip } from '../common';
 import { PeriodSwitch, UsageGrid, UsageTiles, useAddressPeriod } from './GearsMatcherUsage';
+import { MatcherRunSettings } from './MatcherRunSettings';
 import page from '../product.module.css';
 import styles from './matcher.module.css';
 
@@ -83,6 +87,7 @@ function ServiceCard({
   orgId,
   mayConnect,
   onConnected,
+  onSettingsSaved,
 }: {
   service: MatcherService | null;
   fallback: AssemblyStrategy['gears_matcher'] | null;
@@ -91,6 +96,7 @@ function ServiceCard({
   orgId: string;
   mayConnect: boolean;
   onConnected: () => void;
+  onSettingsSaved: () => void;
 }) {
   // Before the usage is read (or where it cannot be), the configuration alone.
   const s: MatcherService | null =
@@ -150,6 +156,9 @@ function ServiceCard({
         ) : (
           <span className={`${page.small} ${page.muted}`}>{t('service_connect_admin')}</span>
         ))}
+      {(state === 'answers' || state === 'unknown') && (
+        <MatcherRunSettings orgId={orgId} strategy={strategy} t={t} language={language} onSaved={onSettingsSaved} />
+      )}
     </div>
   );
 }
@@ -237,6 +246,7 @@ export function GearsMatcherSettings({
                 orgId={orgId}
                 mayConnect={a.may_set_default}
                 onConnected={() => setRound((r) => r + 1)}
+                onSettingsSaved={() => setRound((r) => r + 1)}
               />
             ))}
             <div className={page.card} data-gears-matcher-default={a.organization_default ?? 'kits'}>
