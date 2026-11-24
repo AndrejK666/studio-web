@@ -937,6 +937,8 @@ request	POST /studio-product/v1/gearbox/brings	gears	Vec<String>	required
 request	POST /studio-product/v1/gearbox/complete	config	Value	optional
 request	POST /studio-product/v1/gearbox/complete	gears	Vec<String>	required
 request	POST /studio-product/v1/gearbox/config-schema	gears	Vec<String>	required
+request	POST /studio-product/v1/product-check-runs	profile	String	optional
+request	POST /studio-product/v1/product-check-runs	strictness	String	optional
 request	POST /studio-product/v1/product-description-checks	profile	String	optional
 request	POST /studio-product/v1/product-description-checks	revision	i64	optional
 request	POST /studio-product/v1/product-description-checks	strictness	String	optional
@@ -1051,6 +1053,7 @@ request	POST /studio-spec-mapping/v1/conformance	decisions.gear	String	optional
 request	POST /studio-spec-mapping/v1/conformance	decisions.gear_version	String	optional
 request	POST /studio-spec-mapping/v1/conformance	nonfunctional	Vec<String>	optional
 request	POST /studio-spec-mapping/v1/conformance	project_id	String	required
+request	POST /studio-spec-mapping/v1/conformance	refresh	bool	optional
 request	POST /studio-spec-mapping/v1/conformance	terms	BTreeMap<String,Vec<String>>	optional
 request	POST /studio-spec-mapping/v1/decisions	capability	String	required
 request	POST /studio-spec-mapping/v1/decisions	decision	String	required
@@ -1896,6 +1899,15 @@ response	GET /studio-components-catalog/v1/project-components	unreadable	{}	alwa
 response	GET /studio-components-catalog/v1/project-components	unreadable.sources	Vec<{}>	always
 response	GET /studio-components-catalog/v1/project-components	unreadable.sources.reason	String	always
 response	GET /studio-components-catalog/v1/project-components	unreadable.sources.source	String	always
+response	GET /studio-components-catalog/v1/project-components	view	{}	optional
+response	GET /studio-components-catalog/v1/project-components	view.computed_at	String	optional
+response	GET /studio-components-catalog/v1/project-components	view.error	String	optional
+response	GET /studio-components-catalog/v1/project-components	view.inputs	Vec<{}>	optional
+response	GET /studio-components-catalog/v1/project-components	view.inputs.commit	String	optional
+response	GET /studio-components-catalog/v1/project-components	view.inputs.note	String	optional
+response	GET /studio-components-catalog/v1/project-components	view.inputs.source	String	optional
+response	GET /studio-components-catalog/v1/project-components	view.requested_at	String	optional
+response	GET /studio-components-catalog/v1/project-components	view.status	String	optional
 response	GET /studio-components-catalog/v1/publications	items	Vec<{}>	always
 response	GET /studio-components-catalog/v1/publications	items.artifact	{}	optional
 response	GET /studio-components-catalog/v1/publications	items.artifact.kind	String	optional
@@ -3988,6 +4000,35 @@ response	GET /studio-environments/v1/inbox/deploys-awaiting-approval	items.proje
 response	GET /studio-environments/v1/inbox/deploys-awaiting-approval	items.title	String	always
 response	GET /studio-environments/v1/inbox/deploys-awaiting-approval	items.url	String	optional
 response	GET /studio-environments/v1/inbox/deploys-awaiting-approval	total	u32	always
+response	GET /studio-environments/v1/infra-plans	items	Vec<{}>	always
+response	GET /studio-environments/v1/infra-plans	items.configuration	Vec<{}>	always
+response	GET /studio-environments/v1/infra-plans	items.configuration.code	String	always
+response	GET /studio-environments/v1/infra-plans	items.configuration.field	String	always
+response	GET /studio-environments/v1/infra-plans	items.configuration.gear	String	always
+response	GET /studio-environments/v1/infra-plans	items.configuration.key	String	always
+response	GET /studio-environments/v1/infra-plans	items.configuration.message	String	always
+response	GET /studio-environments/v1/infra-plans	items.configuration.refuses	bool	always
+response	GET /studio-environments/v1/infra-plans	items.environment_id	Uuid	always
+response	GET /studio-environments/v1/infra-plans	items.environment_name	String	always
+response	GET /studio-environments/v1/infra-plans	items.items	Vec<{}>	always
+response	GET /studio-environments/v1/infra-plans	items.items.chart	String	optional
+response	GET /studio-environments/v1/infra-plans	items.items.image	String	optional
+response	GET /studio-environments/v1/infra-plans	items.items.install	String	always
+response	GET /studio-environments/v1/infra-plans	items.items.notes	Vec<String>	always
+response	GET /studio-environments/v1/infra-plans	items.items.placement	String	always
+response	GET /studio-environments/v1/infra-plans	items.items.provides	Vec<{}>	always
+response	GET /studio-environments/v1/infra-plans	items.items.provides.capability	String	always
+response	GET /studio-environments/v1/infra-plans	items.items.provides.variable	String	always
+response	GET /studio-environments/v1/infra-plans	items.items.refusal	String	optional
+response	GET /studio-environments/v1/infra-plans	items.items.refusal_code	String	optional
+response	GET /studio-environments/v1/infra-plans	items.items.route	String	optional
+response	GET /studio-environments/v1/infra-plans	items.items.service	String	always
+response	GET /studio-environments/v1/infra-plans	items.items.warnings	Vec<{}>	always
+response	GET /studio-environments/v1/infra-plans	items.items.warnings.code	String	always
+response	GET /studio-environments/v1/infra-plans	items.items.warnings.message	String	always
+response	GET /studio-environments/v1/infra-plans	items.namespace	String	always
+response	GET /studio-environments/v1/infra-plans	items.placement	String	always
+response	GET /studio-environments/v1/infra-plans	total	u32	always
 response	GET /studio-environments/v1/infra-services	items	Vec<{}>	always
 response	GET /studio-environments/v1/infra-services	items.args	Vec<String>	always
 response	GET /studio-environments/v1/infra-services	items.chart_ref	String	optional
@@ -4154,6 +4195,19 @@ response	GET /studio-environments/v1/project-path	running_in	Vec<{}>	always
 response	GET /studio-environments/v1/project-path	running_in.environment_id	Uuid	always
 response	GET /studio-environments/v1/project-path	running_in.environment_name	String	always
 response	GET /studio-environments/v1/project-path	running_in.url	String	optional
+response	GET /studio-environments/v1/project-path	stages	Vec<{}>	always
+response	GET /studio-environments/v1/project-path	stages.action	{}	optional
+response	GET /studio-environments/v1/project-path	stages.action.kind	String	optional
+response	GET /studio-environments/v1/project-path	stages.action.label	String	optional
+response	GET /studio-environments/v1/project-path	stages.cause	String	always
+response	GET /studio-environments/v1/project-path	stages.focus	bool	always
+response	GET /studio-environments/v1/project-path	stages.id	String	always
+response	GET /studio-environments/v1/project-path	stages.kit	String	optional
+response	GET /studio-environments/v1/project-path	stages.number	u32	always
+response	GET /studio-environments/v1/project-path	stages.object	String	optional
+response	GET /studio-environments/v1/project-path	stages.state	String	always
+response	GET /studio-environments/v1/project-path	stages.tab	String	always
+response	GET /studio-environments/v1/project-path	stages.title	String	always
 response	GET /studio-environments/v1/project-path	steps	Vec<{}>	always
 response	GET /studio-environments/v1/project-path	steps.action	{}	optional
 response	GET /studio-environments/v1/project-path	steps.action.build_id	String	optional
@@ -5168,6 +5222,7 @@ response	GET /studio-organizations/v1/project-creations/{}	steps.detail	String	o
 response	GET /studio-organizations/v1/project-creations/{}	steps.key	String	always
 response	GET /studio-organizations/v1/project-creations/{}	steps.state	String	always
 response	GET /studio-organizations/v1/project-creations/{}	workspace_id	String	always
+response	GET /studio-organizations/v1/project-status	computed_at	String	optional
 response	GET /studio-organizations/v1/project-status	kits	Vec<String>	optional
 response	GET /studio-organizations/v1/project-status	label	String	always
 response	GET /studio-organizations/v1/project-status	more	u32	always
@@ -5192,6 +5247,19 @@ response	GET /studio-organizations/v1/project-status	signals.key	String	always
 response	GET /studio-organizations/v1/project-status	signals.kit	String	optional
 response	GET /studio-organizations/v1/project-status	signals.level	String	always
 response	GET /studio-organizations/v1/project-status	signals.phrase	String	always
+response	GET /studio-organizations/v1/project-status	stages	Vec<{}>	always
+response	GET /studio-organizations/v1/project-status	stages.action	{}	optional
+response	GET /studio-organizations/v1/project-status	stages.action.kind	String	optional
+response	GET /studio-organizations/v1/project-status	stages.action.label	String	optional
+response	GET /studio-organizations/v1/project-status	stages.cause	String	always
+response	GET /studio-organizations/v1/project-status	stages.focus	bool	always
+response	GET /studio-organizations/v1/project-status	stages.id	String	always
+response	GET /studio-organizations/v1/project-status	stages.kit	String	optional
+response	GET /studio-organizations/v1/project-status	stages.number	u32	always
+response	GET /studio-organizations/v1/project-status	stages.object	String	optional
+response	GET /studio-organizations/v1/project-status	stages.state	String	always
+response	GET /studio-organizations/v1/project-status	stages.tab	String	always
+response	GET /studio-organizations/v1/project-status	stages.title	String	always
 response	GET /studio-organizations/v1/project-status	unread	Vec<String>	always
 response	GET /studio-organizations/v1/project-status	verdict	String	always
 response	GET /studio-organizations/v1/project-types	own	{}	optional
@@ -6627,6 +6695,8 @@ response	POST /studio-components-catalog/v1/platform/sync	run_id	String	always
 response	POST /studio-components-catalog/v1/platform/sync	status	String	always
 response	POST /studio-components-catalog/v1/project-catalogue/sync	run_id	String	always
 response	POST /studio-components-catalog/v1/project-catalogue/sync	status	String	always
+response	POST /studio-components-catalog/v1/project-components/refresh	run_id	String	always
+response	POST /studio-components-catalog/v1/project-components/refresh	status	String	always
 response	POST /studio-components-catalog/v1/publications	artifact	{}	optional
 response	POST /studio-components-catalog/v1/publications	artifact.kind	String	optional
 response	POST /studio-components-catalog/v1/publications	artifact.reference	String	optional
@@ -8379,6 +8449,9 @@ response	POST /studio-product/v1/gearbox/config-schema	items.fields.required	boo
 response	POST /studio-product/v1/gearbox/config-schema	items.gear	String	always
 response	POST /studio-product/v1/gearbox/config-schema	items.id	String	optional
 response	POST /studio-product/v1/gearbox/config-schema	total	u32	always
+response	POST /studio-product/v1/product-check-runs	profile	String	always
+response	POST /studio-product/v1/product-check-runs	run_id	String	always
+response	POST /studio-product/v1/product-check-runs	state	String	always
 response	POST /studio-product/v1/product-description-checks	applications	Vec<{}>	always
 response	POST /studio-product/v1/product-description-checks	applications.anchor	String	optional
 response	POST /studio-product/v1/product-description-checks	applications.gears	Vec<String>	always
@@ -8571,7 +8644,11 @@ response	POST /studio-spec-graph/v1/reviews	review	Value	always
 response	POST /studio-spec-graph/v1/reviews	run	Value	always
 response	POST /studio-spec-graph/v1/runs	run	Value	always
 response	POST /studio-spec-graph/v1/runs/{}/cancel	run	Value	always
+response	POST /studio-spec-mapping/v1/conformance	code_commits	Vec<{}>	always
+response	POST /studio-spec-mapping/v1/conformance	code_commits.commit	String	always
+response	POST /studio-spec-mapping/v1/conformance	code_commits.repo	String	always
 response	POST /studio-spec-mapping/v1/conformance	components_in_code	Vec<String>	always
+response	POST /studio-spec-mapping/v1/conformance	computed_at	String	optional
 response	POST /studio-spec-mapping/v1/conformance	gearbox	Vec<{}>	always
 response	POST /studio-spec-mapping/v1/conformance	gearbox.added	bool	always
 response	POST /studio-spec-mapping/v1/conformance	gearbox.gear	String	always
@@ -9722,6 +9799,7 @@ route	GET /studio-environments/v1/image-retention
 route	GET /studio-environments/v1/images
 route	GET /studio-environments/v1/images/{}
 route	GET /studio-environments/v1/inbox/deploys-awaiting-approval
+route	GET /studio-environments/v1/infra-plans
 route	GET /studio-environments/v1/infra-services
 route	GET /studio-environments/v1/infra-services/{}/keycloak-realm
 route	GET /studio-environments/v1/namespace-assignments
@@ -9887,6 +9965,7 @@ route	POST /studio-components-catalog/v1/gearbox/corpus/git-upload-pack
 route	POST /studio-components-catalog/v1/platform/publication-requests/{}/decisions
 route	POST /studio-components-catalog/v1/platform/sync
 route	POST /studio-components-catalog/v1/project-catalogue/sync
+route	POST /studio-components-catalog/v1/project-components/refresh
 route	POST /studio-components-catalog/v1/publications
 route	POST /studio-components-catalog/v1/publications/{}/decisions
 route	POST /studio-components-catalog/v1/registry/gear-repository/create
@@ -10016,6 +10095,7 @@ route	POST /studio-product/v1/gearbox/config-schema
 route	POST /studio-product/v1/gearbox/corpus/git-upload-pack
 route	POST /studio-product/v1/gearbox/corpus/{}/git-upload-pack
 route	POST /studio-product/v1/organizations/{}/gearbox/corpus/{}/git-upload-pack
+route	POST /studio-product/v1/product-check-runs
 route	POST /studio-product/v1/product-description-checks
 route	POST /studio-product/v1/product-description-edits
 route	POST /studio-product/v1/product-description-outlines

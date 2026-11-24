@@ -1,6 +1,6 @@
 {
   "note": "The API surface studio-backend declares. Generated from source by `cargo run --quiet -- api-contract`; the rules it must follow are docs/api-conventions.md.",
-  "open_violations": 256,
+  "open_violations": 257,
   "operations": [
     {
       "method": "DELETE",
@@ -1005,6 +1005,7 @@
       "errors": [
         "400",
         "401",
+        "404",
         "500"
       ]
     },
@@ -2771,6 +2772,23 @@
       "errors": [
         "401",
         "403",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-environments/v1/infra-plans",
+      "operation_id": "studio_environments.list_infra_plans",
+      "tag": "",
+      "summary": "What a deploy does with a project's infra services, in every environment",
+      "authenticated": true,
+      "responses": [
+        "InfraPlanListDto"
+      ],
+      "errors": [
+        "401",
+        "403",
+        "404",
         "500"
       ]
     },
@@ -5402,6 +5420,23 @@
     },
     {
       "method": "POST",
+      "path": "/studio-components-catalog/v1/project-components/refresh",
+      "operation_id": "studio_components_catalog.refresh_project_components",
+      "tag": "StudioComponentsCatalog",
+      "summary": "Compute a project's components again from what its syncs stored",
+      "authenticated": true,
+      "responses": [
+        "CatalogSyncEnqueued"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-components-catalog/v1/publications",
       "operation_id": "studio_components_catalog.create_publication",
       "tag": "StudioComponentsCatalog",
@@ -7657,6 +7692,24 @@
       "summary": "Git smart-HTTP upload-pack for one of an organization's gear repositories",
       "authenticated": false,
       "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-product/v1/product-check-runs",
+      "operation_id": "studio_product.create_product_check_run",
+      "tag": "StudioProduct",
+      "summary": "Queue a check of the product's saved description",
+      "authenticated": true,
+      "request": "ProductCheckRunRequest",
+      "responses": [
+        "ProductCheckRunDto"
+      ],
+      "errors": [
+        "400",
         "401",
         "404",
         "500"
