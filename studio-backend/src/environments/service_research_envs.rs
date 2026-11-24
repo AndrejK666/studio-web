@@ -98,10 +98,7 @@ impl EnvironmentService {
                 .filter(|d| d.project_id == project)
                 .map(|d| d.environment_id),
         );
-        if let Ok(builds) = self
-            .hub
-            .get::<dyn crate::artifact_ingest::port::BuildRecords>()
-        {
+        if let Ok(builds) = crate::environments::build_records::OrgBuilds::of(&self.hub, org) {
             let Ok(builds) = builds.builds(ctx, &project.to_string(), BUILDS_READ).await else {
                 return Ok(None);
             };

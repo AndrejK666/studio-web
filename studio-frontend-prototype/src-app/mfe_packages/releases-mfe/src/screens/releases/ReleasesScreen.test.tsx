@@ -669,9 +669,32 @@ describe('ReleasesScreen', () => {
         connection_id: 'c-research',
         research_project: 'rp',
       });
-      expect(calls.find((c) => c.name === 'startBuild')?.body).toEqual({ environment_id: 'e-research' });
+      expect(calls.find((c) => c.name === 'startBuild')?.body).toEqual({ environment_id: 'e-research', then_deploy: true });
       expect(await waitFor(() => research.querySelector('[data-research-build="research-7"]'))).toBeTruthy();
     });
+
+    it('follows the deploy the build starts itself, and asks for none', async () => {
+      setUp({ path: readyPath({ research_kit: true, research: { state: 'signed_in', connection_id: 'c-research' } }) });
+      service.build = read('build', {
+        build_id: 'research-7',
+        where: 'research',
+        status: 'passed',
+        deploys_to: 'e-research',
+        deployment_id: 'd-run',
+      });
+      service.taskRun = read('taskRun', { progress: 'built', result: {} });
+      const dialog = await openDialog();
+      const research = await waitFor(() => {
+        const r = dialog.querySelector('[data-deploy-target-research]');
+        if (!r?.querySelector('[data-research-run]')) throw new Error('not yet');
+        return r;
+      });
+      await waitFor(() => expect(research.textContent).toContain('GPU'));
+      fireEvent.click(research.querySelector('[data-research-run]') as HTMLElement);
+      const followed = () => calls.some((c) => c.name === 'deployment' && (c.args[0] as { id?: string } | undefined)?.id === 'd-run');
+      await waitFor(() => expect(followed()).toBe(true), { timeout: 8000 });
+      expect(calls.some((c) => c.name === 'createDeployment')).toBe(false);
+    }, 15000);
 
     it('folds the environments nothing can go to into one line that opens', async () => {
       setUp({ path: readyPath({ research_kit: true, research: { state: 'signed_in', connection_id: 'c-research' } }) });
@@ -745,7 +768,7 @@ describe('ReleasesScreen', () => {
       fireEvent.click(research.querySelector('[data-research-run]') as HTMLElement);
       await waitFor(() => expect(calls.some((c) => c.name === 'startBuild')).toBe(true));
       expect(calls.some((c) => c.name === 'createProjectEnvironment')).toBe(false);
-      expect(calls.find((c) => c.name === 'startBuild')?.body).toEqual({ environment_id: 'e-rs' });
+      expect(calls.find((c) => c.name === 'startBuild')?.body).toEqual({ environment_id: 'e-rs', then_deploy: true });
       // The bar starts at the first step, the log under it.
       expect(research.querySelector('[data-research-progress]')?.getAttribute('data-research-progress')).toBe('prepare');
       expect(research.querySelector('[data-research-build-log]')).toBeTruthy();

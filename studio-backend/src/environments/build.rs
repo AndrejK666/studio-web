@@ -130,11 +130,12 @@ pub struct BuildPayload {
     /// queued before it was recorded, which gets the default.
     #[serde(default = "default_buildkit_image")]
     pub buildkit_image: String,
-    /// The tenant the build's record was started in: the caller's. Every
-    /// later record of it is written there too, or the page that reads the
-    /// caller's records keeps the first one, `running`, for ever. Absent from
-    /// a build queued before it was recorded, whose records go to the run's
-    /// own tenant.
+    /// The tenant the build's first record was written in, when that was
+    /// the caller's. No longer read: every record of a build goes to the
+    /// organization's model (`organization_id`, [`super::build_records`]),
+    /// which is where the start-up sweep moved the ones a platform
+    /// administrator's builds left in the root. Kept so a run queued
+    /// before still reads.
     #[serde(default)]
     pub records_in: Option<Uuid>,
     /// The description revision Studio keeps that the build lays at
@@ -814,33 +815,28 @@ async fn keep_infra(
     }
 }
 
-/// Record a build's outcome in the project's graph: in `records_in`, the
-/// tenant its first record went to, when it names one; else in the run's.
+/// Record a build's outcome in the project's graph, in its organization's
+/// model ([`super::build_records`]) -- never the tenant that started it,
+/// which for a platform administrator is the root.
 pub(super) async fn record_outcome(
     hub: &Arc<ClientHub>,
     ctx: &toolkit_security::SecurityContext,
-    records_in: Option<Uuid>,
+    org: Uuid,
     project: Uuid,
     outcome: crate::artifact_ingest::port::BuildOutcome,
 ) -> anyhow::Result<()> {
-    record(hub, ctx, records_in, project, outcome).await
+    record(hub, ctx, org, project, outcome).await
 }
 
 async fn record(
     hub: &Arc<ClientHub>,
     ctx: &toolkit_security::SecurityContext,
-    records_in: Option<Uuid>,
+    org: Uuid,
     project: Uuid,
     outcome: crate::artifact_ingest::port::BuildOutcome,
 ) -> anyhow::Result<()> {
-    let builds = hub
-        .get::<dyn crate::artifact_ingest::port::BuildRecords>()
-        .map_err(|_| anyhow!("builds are not available in this deployment"))?;
-    let there = match records_in {
-        Some(tenant) if tenant != ctx.subject_tenant_id() => super::store::service_context(tenant)?,
-        _ => ctx.clone(),
-    };
-    builds.record(&there, &project.to_string(), &outcome).await
+    let builds = super::build_records::OrgBuilds::of(hub, org)?;
+    builds.record(ctx, &project.to_string(), &outcome).await
 }
 
 #[async_trait]
@@ -870,7 +866,7 @@ impl TaskHandler for BuildTask {
                 let _ = record(
                     &self.hub,
                     &ctx.security,
-                    p.records_in,
+                    p.organization_id,
                     p.project_id,
                     crate::artifact_ingest::port::BuildOutcome::failed(
                         &p.build_id,
@@ -1297,7 +1293,7 @@ impl TaskHandler for WatchTask {
                 if let Err(e) = record(
                     &self.hub,
                     &ctx.security,
-                    p.records_in,
+                    p.organization_id,
                     p.project_id,
                     outcome,
                 )
@@ -1383,7 +1379,7 @@ impl WatchTask {
                         if let Err(e) = record(
                             &self.hub,
                             &ctx.security,
-                            p.records_in,
+                            p.organization_id,
                             p.project_id,
                             running,
                         )
@@ -1623,7 +1619,7 @@ impl WatchTask {
         record(
             &self.hub,
             &ctx.security,
-            p.records_in,
+            p.organization_id,
             p.project_id,
             record_of,
         )

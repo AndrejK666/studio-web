@@ -95,10 +95,7 @@ impl EnvironmentService {
             Ok::<_, Refusal>((research_kit, research))
         };
         let builds = async {
-            match self
-                .hub
-                .get::<dyn crate::artifact_ingest::port::BuildRecords>()
-            {
+            match crate::environments::build_records::OrgBuilds::of(&self.hub, org) {
                 Ok(records) => records
                     .builds(ctx, &project.to_string(), PATH_BUILDS)
                     .await

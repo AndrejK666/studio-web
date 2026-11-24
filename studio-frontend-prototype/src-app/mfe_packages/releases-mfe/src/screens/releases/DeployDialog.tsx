@@ -354,15 +354,24 @@ function ResearchTarget({
           const lines = said && !seen.current.has(said) ? [...run.lines, said] : run.lines;
           if (said) seen.current.add(said);
           const progress = researchProgressOf(task?.result) ?? run.progress;
-          if (b.status === 'passed') {
-            const d = await api.createDeployment(projectId).fetch({ environment_id: run.environmentId, build: run.buildId });
+          // The build's run starts the deploy itself (then_deploy): follow it.
+          if (b.status === 'passed' && b.deployment_id) {
+            const d = await api.deployment({ projectId, id: b.deployment_id }).fetch({ staleTime: 0 });
+            if (!live) return;
             setRun({
               at: 'deploying',
               buildId: run.buildId,
               deployment: d,
               lines,
             });
-          } else if (ended(b.status)) {
+          } else if (b.status === 'passed' && b.deploy_failure) {
+            setRun({
+              at: 'failed',
+              deployment: null,
+              message: b.deploy_failure,
+              built: { buildId: run.buildId, environmentId: run.environmentId },
+            });
+          } else if (ended(b.status) && b.status !== 'passed') {
             setRun({
               at: 'failed',
               deployment: null,
@@ -417,7 +426,7 @@ function ResearchTarget({
           )
         );
       }
-      const started = await api.startBuild(projectId).fetch({ environment_id: env.id });
+      const started = await api.startBuild(projectId).fetch({ environment_id: env.id, then_deploy: true });
       setRun({
         at: 'building',
         buildId: started.build_id,

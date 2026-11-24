@@ -34,6 +34,7 @@
 //! are built and pushed before a deploy, by CI or by the desktop.
 
 pub(crate) mod build; // a product built by Studio in the organization's cluster (ADR-0048 §9)
+mod build_records; // a project's build records, kept in its organization's model
 mod database;
 mod deploy;
 mod failure; // why a build or a deploy failed, and the action that fixes it (#1054)
@@ -61,6 +62,7 @@ mod research_keys; // what a Research image is made of, so an unchanged one is r
 mod research_progress; // how far a Research build and deploy are, counted (#1053)
 mod rest;
 mod secret_needs; // the configuration secrets a product needs in an environment
+mod secret_preflight; // a secret the description reads: made, or the deploy refused
 mod service;
 mod store;
 mod workflow; // the build workflow proposed to a product's repository (ADR-0048)

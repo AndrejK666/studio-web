@@ -108,7 +108,10 @@ export class ReleasesApiService extends BaseApiService {
 
   /** Build the product in an environment: its cluster, or Constructor Research. */
   startBuild(projectId: string) {
-    return this.rest.mutation<StudioBuildStarted, { environment_id: string }>('POST', `${ENV}/builds?${project(projectId)}`);
+    return this.rest.mutation<StudioBuildStarted, { environment_id: string; then_deploy?: boolean }>(
+      'POST',
+      `${ENV}/builds?${project(projectId)}`
+    );
   }
 
   /** The caller's own Research projects (#1053); refused without the kit or a sign-in. */
