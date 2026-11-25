@@ -407,6 +407,8 @@ request	POST /studio-documents/v1/delivery-scopes/{}/limits	depends_on	String	op
 request	POST /studio-documents/v1/delivery-scopes/{}/limits	kind	String	required
 request	POST /studio-documents/v1/delivery-scopes/{}/limits	project_id	String	required
 request	POST /studio-documents/v1/delivery-scopes/{}/limits	text	String	required
+request	POST /studio-documents/v1/document-bindings/confirm	binding_ids	Vec<Uuid>	required
+request	POST /studio-documents/v1/document-bindings/confirm	project_id	Uuid	required
 request	POST /studio-documents/v1/organizations/{}/capabilities	contracts	Vec<String>	optional
 request	POST /studio-documents/v1/organizations/{}/capabilities	hidden	bool	optional
 request	POST /studio-documents/v1/organizations/{}/capabilities	key	String	required
@@ -583,6 +585,7 @@ request	POST /studio-documents/v1/spec-model/sentences/proposals	path	String	req
 request	POST /studio-documents/v1/spec-model/sentences/proposals	revision	String	required
 request	POST /studio-documents/v1/spec-model/sentences/proposals	sentence	String	required
 request	POST /studio-documents/v1/spec-model/sentences/proposals	why	String	optional
+request	POST /studio-documents/v1/spec-pipeline/runs	project_id	String	required
 request	POST /studio-documents/v1/workspaces/{}/capabilities	contracts	Vec<String>	optional
 request	POST /studio-documents/v1/workspaces/{}/capabilities	hidden	bool	optional
 request	POST /studio-documents/v1/workspaces/{}/capabilities	key	String	required
@@ -1144,6 +1147,9 @@ request	PUT /studio-documents/v1/application-parts	project_id	String	required
 request	PUT /studio-documents/v1/application-parts	reference	String	required
 request	PUT /studio-documents/v1/application-parts	related	Vec<String>	optional
 request	PUT /studio-documents/v1/application-parts	repo	String	required
+request	PUT /studio-documents/v1/spec-pipeline/settings	auto_confirm_threshold	f64	optional
+request	PUT /studio-documents/v1/spec-pipeline/settings	enabled	bool	optional
+request	PUT /studio-documents/v1/spec-pipeline/settings	project_id	String	required
 request	PUT /studio-documents/v1/workspaces/{}/document-bindings/{}	action	String	required
 request	PUT /studio-documents/v1/workspaces/{}/document-bindings/{}	confidence	f64	optional
 request	PUT /studio-documents/v1/workspaces/{}/document-bindings/{}	content	String	optional
@@ -3292,6 +3298,10 @@ response	GET /studio-documents/v1/spec-model/work	synced	bool	always
 response	GET /studio-documents/v1/spec-model/work	total	u32	always
 response	GET /studio-documents/v1/spec-model/work	unlinked	u32	always
 response	GET /studio-documents/v1/spec-model/work	work	u32	always
+response	GET /studio-documents/v1/spec-pipeline	auto_confirm_threshold	f64	always
+response	GET /studio-documents/v1/spec-pipeline	computed_at	String	optional
+response	GET /studio-documents/v1/spec-pipeline	enabled	bool	always
+response	GET /studio-documents/v1/spec-pipeline	error	String	optional
 response	GET /studio-documents/v1/spec-pipeline	items	Vec<{}>	always
 response	GET /studio-documents/v1/spec-pipeline	items.authored	Vec<{}>	always
 response	GET /studio-documents/v1/spec-pipeline	items.authored.conforms	bool	optional
@@ -3314,8 +3324,19 @@ response	GET /studio-documents/v1/spec-pipeline	items.type_key	String	always
 response	GET /studio-documents/v1/spec-pipeline	items.type_name	String	always
 response	GET /studio-documents/v1/spec-pipeline	items.untouched	bool	always
 response	GET /studio-documents/v1/spec-pipeline	items.valid	u32	always
+response	GET /studio-documents/v1/spec-pipeline	project_id	String	always
+response	GET /studio-documents/v1/spec-pipeline	requested_at	String	optional
+response	GET /studio-documents/v1/spec-pipeline	status	String	optional
+response	GET /studio-documents/v1/spec-pipeline	steps	Vec<{}>	always
+response	GET /studio-documents/v1/spec-pipeline	steps.at	String	optional
+response	GET /studio-documents/v1/spec-pipeline	steps.link	String	optional
+response	GET /studio-documents/v1/spec-pipeline	steps.reason	String	optional
+response	GET /studio-documents/v1/spec-pipeline	steps.state	String	always
+response	GET /studio-documents/v1/spec-pipeline	steps.step	String	always
+response	GET /studio-documents/v1/spec-pipeline	steps.summary	String	optional
 response	GET /studio-documents/v1/spec-pipeline	total	u32	always
 response	GET /studio-documents/v1/spec-rows	items	Vec<{}>	always
+response	GET /studio-documents/v1/spec-rows	items.auto_confirmed	bool	always
 response	GET /studio-documents/v1/spec-rows	items.checked_at	String	optional
 response	GET /studio-documents/v1/spec-rows	items.confidence	f64	optional
 response	GET /studio-documents/v1/spec-rows	items.conforms	bool	optional
@@ -3355,6 +3376,7 @@ response	GET /studio-documents/v1/workspaces/{}/capabilities	items.owner	String	
 response	GET /studio-documents/v1/workspaces/{}/capabilities	items.owner_tenant_id	Uuid	optional
 response	GET /studio-documents/v1/workspaces/{}/capabilities	items.terms	Vec<String>	always
 response	GET /studio-documents/v1/workspaces/{}/document-bindings	items	Vec<{}>	always
+response	GET /studio-documents/v1/workspaces/{}/document-bindings	items.auto_confirmed	bool	always
 response	GET /studio-documents/v1/workspaces/{}/document-bindings	items.candidates	Vec<{}>	always
 response	GET /studio-documents/v1/workspaces/{}/document-bindings	items.candidates.confidence	f64	always
 response	GET /studio-documents/v1/workspaces/{}/document-bindings	items.candidates.type_key	String	always
@@ -3425,6 +3447,7 @@ response	GET /studio-documents/v1/workspaces/{}/projects/{}/analyses	items.task_
 response	GET /studio-documents/v1/workspaces/{}/projects/{}/analyses	items.updated_at	String	always
 response	GET /studio-documents/v1/workspaces/{}/projects/{}/analyses	total	u32	always
 response	GET /studio-documents/v1/workspaces/{}/projects/{}/document-bindings	items	Vec<{}>	always
+response	GET /studio-documents/v1/workspaces/{}/projects/{}/document-bindings	items.auto_confirmed	bool	always
 response	GET /studio-documents/v1/workspaces/{}/projects/{}/document-bindings	items.candidates	Vec<{}>	always
 response	GET /studio-documents/v1/workspaces/{}/projects/{}/document-bindings	items.candidates.confidence	f64	always
 response	GET /studio-documents/v1/workspaces/{}/projects/{}/document-bindings	items.candidates.type_key	String	always
@@ -7075,6 +7098,40 @@ response	POST /studio-documents/v1/delivery-scopes/{}/limits	resolved_at	String	
 response	POST /studio-documents/v1/delivery-scopes/{}/limits	resolved_by	String	optional
 response	POST /studio-documents/v1/delivery-scopes/{}/limits	scope_id	String	always
 response	POST /studio-documents/v1/delivery-scopes/{}/limits	text	String	always
+response	POST /studio-documents/v1/document-bindings/confirm	confirmed	Vec<{}>	always
+response	POST /studio-documents/v1/document-bindings/confirm	confirmed.auto_confirmed	bool	always
+response	POST /studio-documents/v1/document-bindings/confirm	confirmed.candidates	Vec<{}>	always
+response	POST /studio-documents/v1/document-bindings/confirm	confirmed.candidates.confidence	f64	always
+response	POST /studio-documents/v1/document-bindings/confirm	confirmed.candidates.type_key	String	always
+response	POST /studio-documents/v1/document-bindings/confirm	confirmed.candidates.why	String	always
+response	POST /studio-documents/v1/document-bindings/confirm	confirmed.capabilities	Vec<String>	always
+response	POST /studio-documents/v1/document-bindings/confirm	confirmed.confidence	f64	optional
+response	POST /studio-documents/v1/document-bindings/confirm	confirmed.conforms	bool	optional
+response	POST /studio-documents/v1/document-bindings/confirm	confirmed.content_sha	String	always
+response	POST /studio-documents/v1/document-bindings/confirm	confirmed.created_at	String	always
+response	POST /studio-documents/v1/document-bindings/confirm	confirmed.id	Uuid	always
+response	POST /studio-documents/v1/document-bindings/confirm	confirmed.inherited	bool	always
+response	POST /studio-documents/v1/document-bindings/confirm	confirmed.node_id	String	always
+response	POST /studio-documents/v1/document-bindings/confirm	confirmed.path	String	always
+response	POST /studio-documents/v1/document-bindings/confirm	confirmed.project_id	Uuid	optional
+response	POST /studio-documents/v1/document-bindings/confirm	confirmed.source	DetectionSource	optional
+response	POST /studio-documents/v1/document-bindings/confirm	confirmed.state	BindingState	always
+response	POST /studio-documents/v1/document-bindings/confirm	confirmed.tenant_id	Uuid	always
+response	POST /studio-documents/v1/document-bindings/confirm	confirmed.type_key	String	optional
+response	POST /studio-documents/v1/document-bindings/confirm	confirmed.updated_at	String	always
+response	POST /studio-documents/v1/document-bindings/confirm	confirmed.validation	{}	optional
+response	POST /studio-documents/v1/document-bindings/confirm	confirmed.validation.conforms	bool	optional
+response	POST /studio-documents/v1/document-bindings/confirm	confirmed.validation.issues	Vec<String>	optional
+response	POST /studio-documents/v1/document-bindings/confirm	confirmed.validation.sections	Vec<{}>	optional
+response	POST /studio-documents/v1/document-bindings/confirm	confirmed.validation.sections.key	String	optional
+response	POST /studio-documents/v1/document-bindings/confirm	confirmed.validation.sections.ok	bool	optional
+response	POST /studio-documents/v1/document-bindings/confirm	confirmed.validation.sections.present	bool	optional
+response	POST /studio-documents/v1/document-bindings/confirm	confirmed.validation.sections.required	bool	optional
+response	POST /studio-documents/v1/document-bindings/confirm	confirmed.validation.sections.title	String	optional
+response	POST /studio-documents/v1/document-bindings/confirm	confirmed.validation.sections.word_count	i64	optional
+response	POST /studio-documents/v1/document-bindings/confirm	skipped	Vec<{}>	always
+response	POST /studio-documents/v1/document-bindings/confirm	skipped.id	Uuid	always
+response	POST /studio-documents/v1/document-bindings/confirm	skipped.reason	String	always
 response	POST /studio-documents/v1/organizations/{}/capabilities	contracts	Vec<String>	always
 response	POST /studio-documents/v1/organizations/{}/capabilities	hidden	bool	always
 response	POST /studio-documents/v1/organizations/{}/capabilities	key	String	always
@@ -7408,6 +7465,7 @@ response	POST /studio-documents/v1/spec-model/sentences/proposals	branch	String	
 response	POST /studio-documents/v1/spec-model/sentences/proposals	commit_sha	String	always
 response	POST /studio-documents/v1/spec-model/sentences/proposals	path	String	always
 response	POST /studio-documents/v1/spec-model/sentences/proposals	pr_url	String	optional
+response	POST /studio-documents/v1/spec-pipeline/runs	run_id	String	always
 response	POST /studio-documents/v1/workspaces/{}/capabilities	contracts	Vec<String>	always
 response	POST /studio-documents/v1/workspaces/{}/capabilities	hidden	bool	always
 response	POST /studio-documents/v1/workspaces/{}/capabilities	key	String	always
@@ -7417,6 +7475,7 @@ response	POST /studio-documents/v1/workspaces/{}/capabilities	owner	String	alway
 response	POST /studio-documents/v1/workspaces/{}/capabilities	owner_tenant_id	Uuid	optional
 response	POST /studio-documents/v1/workspaces/{}/capabilities	terms	Vec<String>	always
 response	POST /studio-documents/v1/workspaces/{}/document-bindings/classify	items	Vec<{}>	always
+response	POST /studio-documents/v1/workspaces/{}/document-bindings/classify	items.auto_confirmed	bool	always
 response	POST /studio-documents/v1/workspaces/{}/document-bindings/classify	items.candidates	Vec<{}>	always
 response	POST /studio-documents/v1/workspaces/{}/document-bindings/classify	items.candidates.confidence	f64	always
 response	POST /studio-documents/v1/workspaces/{}/document-bindings/classify	items.candidates.type_key	String	always
@@ -7472,6 +7531,7 @@ response	POST /studio-documents/v1/workspaces/{}/documents/{}/validate	sections.
 response	POST /studio-documents/v1/workspaces/{}/documents/{}/validate	sections.title	String	always
 response	POST /studio-documents/v1/workspaces/{}/documents/{}/validate	sections.word_count	i64	always
 response	POST /studio-documents/v1/workspaces/{}/projects/{}/document-bindings/classify	items	Vec<{}>	always
+response	POST /studio-documents/v1/workspaces/{}/projects/{}/document-bindings/classify	items.auto_confirmed	bool	always
 response	POST /studio-documents/v1/workspaces/{}/projects/{}/document-bindings/classify	items.candidates	Vec<{}>	always
 response	POST /studio-documents/v1/workspaces/{}/projects/{}/document-bindings/classify	items.candidates.confidence	f64	always
 response	POST /studio-documents/v1/workspaces/{}/projects/{}/document-bindings/classify	items.candidates.type_key	String	always
@@ -8941,6 +9001,21 @@ response	PUT /studio-documents/v1/application-parts	related	Vec<String>	always
 response	PUT /studio-documents/v1/application-parts	repo	String	always
 response	PUT /studio-documents/v1/application-parts	updated_at	String	optional
 response	PUT /studio-documents/v1/application-parts	updated_by	String	optional
+response	PUT /studio-documents/v1/spec-pipeline/settings	auto_confirm_threshold	f64	always
+response	PUT /studio-documents/v1/spec-pipeline/settings	computed_at	String	optional
+response	PUT /studio-documents/v1/spec-pipeline/settings	enabled	bool	always
+response	PUT /studio-documents/v1/spec-pipeline/settings	error	String	optional
+response	PUT /studio-documents/v1/spec-pipeline/settings	project_id	String	always
+response	PUT /studio-documents/v1/spec-pipeline/settings	requested_at	String	optional
+response	PUT /studio-documents/v1/spec-pipeline/settings	status	String	optional
+response	PUT /studio-documents/v1/spec-pipeline/settings	steps	Vec<{}>	always
+response	PUT /studio-documents/v1/spec-pipeline/settings	steps.at	String	optional
+response	PUT /studio-documents/v1/spec-pipeline/settings	steps.link	String	optional
+response	PUT /studio-documents/v1/spec-pipeline/settings	steps.reason	String	optional
+response	PUT /studio-documents/v1/spec-pipeline/settings	steps.state	String	always
+response	PUT /studio-documents/v1/spec-pipeline/settings	steps.step	String	always
+response	PUT /studio-documents/v1/spec-pipeline/settings	steps.summary	String	optional
+response	PUT /studio-documents/v1/workspaces/{}/document-bindings/{}	auto_confirmed	bool	always
 response	PUT /studio-documents/v1/workspaces/{}/document-bindings/{}	candidates	Vec<{}>	always
 response	PUT /studio-documents/v1/workspaces/{}/document-bindings/{}	candidates.confidence	f64	always
 response	PUT /studio-documents/v1/workspaces/{}/document-bindings/{}	candidates.type_key	String	always
@@ -10026,6 +10101,7 @@ route	POST /studio-connector/v1/sources/{}/pull-requests
 route	POST /studio-documents/v1/decisions
 route	POST /studio-documents/v1/delivery-scopes
 route	POST /studio-documents/v1/delivery-scopes/{}/limits
+route	POST /studio-documents/v1/document-bindings/confirm
 route	POST /studio-documents/v1/organizations/{}/capabilities
 route	POST /studio-documents/v1/organizations/{}/stages
 route	POST /studio-documents/v1/organizations/{}/types
@@ -10060,6 +10136,7 @@ route	POST /studio-documents/v1/spec-model/glossary/proposals
 route	POST /studio-documents/v1/spec-model/issues
 route	POST /studio-documents/v1/spec-model/reviews
 route	POST /studio-documents/v1/spec-model/sentences/proposals
+route	POST /studio-documents/v1/spec-pipeline/runs
 route	POST /studio-documents/v1/workspaces/{}/capabilities
 route	POST /studio-documents/v1/workspaces/{}/document-bindings/classify
 route	POST /studio-documents/v1/workspaces/{}/documents
@@ -10192,6 +10269,7 @@ route	PUT /studio-components-catalog/v1/registry/gear-repository
 route	PUT /studio-components-catalog/v1/sources
 route	PUT /studio-components-catalog/v1/types/{}/component
 route	PUT /studio-documents/v1/application-parts
+route	PUT /studio-documents/v1/spec-pipeline/settings
 route	PUT /studio-documents/v1/workspaces/{}/document-bindings/{}
 route	PUT /studio-documents/v1/workspaces/{}/document-bindings/{}/analyses/{}
 route	PUT /studio-documents/v1/workspaces/{}/documents/{}
