@@ -100,12 +100,15 @@ it has been calibrated on at least two unrelated projects.
 
 ## Constraints
 
-**A person's key, never Studio's.** Extraction and judging call a model through
-`llm_proxy::port::ModelProviders::complete` on the key of the member who
-started the build (ADR-0039): Studio holds no key of its own. A source sync
-therefore refreshes only the deterministic index and marks the model stale; the
-model calls run when a member builds it. A member with no key is told so, and
-the index's findings (references) are still shown.
+**A person's key or the organization's, never Studio's.** Extraction and
+judging call a model through `llm_proxy::port::ModelProviders::complete`
+(ADR-0039): on the key of the member who started the build, or -- when the
+project's automatic spec pipeline starts it after a sync -- on the
+organization's (or workspace's) AI connection, which is all the pipeline's
+worker reaches. Studio holds no key of its own. Without a usable key the build
+stops and says so: to the member, or on the pipeline's Domain model step; the
+index's findings (references) are still shown. The pipeline is described in
+[`design/studio-documents.md`](design/studio-documents.md) §4.
 
 **Results are tied to revisions.** Model answers are not deterministic. An
 extraction is stored per (project, path, content revision, extractor version)
@@ -164,10 +167,10 @@ reading kept before they were recorded answer null.
 
 ## A build
 
-One build, in this process, under the security context of the member who
-started it. Not a studio-tasks run: the queue worker acts as `studio-tasks`
-and never as the person who asked (`tasks/dispatch.rs`), and a model is
-reached only on a person's key. Losing a build to a restart costs little,
+One build, in this process, under the security context that started it: the
+member's, or the spec pipeline's worker acting in the organization. Not a
+studio-tasks run: a build is longer than the queue's fifteen-minute lease, so
+the pipeline's run spawns it and is asked for again when it ends. Losing a build to a restart costs little,
 because every document finished is kept by revision and the next build starts
 where this one stopped. Its stages:
 
