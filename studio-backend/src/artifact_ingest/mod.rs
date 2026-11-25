@@ -238,9 +238,11 @@ fn platform_client(ctx: &GearCtx) -> anyhow::Result<Option<service::PlatformClie
         creds.client_secret,
     ));
     // Published for the Studio PDP, which lets this identity, and no person,
-    // reach the GitHub mirror's resources (#1094).
+    // reach the GitHub mirror's resources (#1094), through the PDP's port
+    // (ADR-0079 §4 access rules).
+    let sync: Arc<dyn crate::studio_authz_plugin::MirrorSyncSubject> = Arc::clone(&identity);
     ctx.client_hub()
-        .register::<mirror_identity::MirrorSyncIdentity>(Arc::clone(&identity));
+        .register::<dyn crate::studio_authz_plugin::MirrorSyncSubject>(sync);
     Ok(Some(service::PlatformClient {
         identity,
         mirror_base_url,

@@ -81,3 +81,12 @@ impl MirrorSyncIdentity {
         }
     }
 }
+
+/// The Studio PDP asks this port who the sync is (ADR-0079 §4 access rules):
+/// it lets that identity, and no person, reach the GitHub mirror (#1094).
+#[async_trait::async_trait]
+impl crate::studio_authz_plugin::MirrorSyncSubject for MirrorSyncIdentity {
+    async fn subject_id(&self) -> Option<Uuid> {
+        MirrorSyncIdentity::subject_id(self).await
+    }
+}

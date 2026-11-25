@@ -14,7 +14,3 @@ organizations -> environments
 organizations -> insight
 organizations -> product
 organizations -> usage
-studio_authz_plugin -> artifact_ingest
-studio_authz_plugin -> environments
-studio_authz_plugin -> product
-studio_authz_plugin -> usage
