@@ -6504,6 +6504,25 @@
     },
     {
       "method": "POST",
+      "path": "/studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/document-bindings/confirm",
+      "operation_id": "studio_documents.confirm_binding_types",
+      "tag": "StudioDocuments",
+      "summary": "Confirm the proposed types of many document bindings",
+      "authenticated": true,
+      "request": "ConfirmTypesDto",
+      "responses": [
+        "ConfirmTypesResultDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "403",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/documents",
       "operation_id": "studio_documents.create_project_document",
       "tag": "StudioDocuments",

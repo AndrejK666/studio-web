@@ -500,6 +500,38 @@ pub struct DecideBindingDto {
     pub content: Option<String>,
 }
 
+/// The most bindings one bulk confirmation takes.
+const CONFIRM_TYPES_MAX: usize = 1000;
+
+/// Bindings whose proposed type a person accepts in one go.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct ConfirmTypesDto {
+    /// The bindings to confirm, at most 1000. One whose type is settled, or
+    /// that has no proposal, is skipped and named in the answer.
+    pub binding_ids: Vec<Uuid>,
+}
+
+/// A binding a bulk confirmation left as it was.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ConfirmTypesSkippedDto {
+    pub id: Uuid,
+    /// `not_found` — no such binding in the workspace; `other_project` — it
+    /// is another project's; `not_proposed` — its type is settled already, or
+    /// it has none to confirm.
+    pub reason: String,
+}
+
+/// What a bulk confirmation did.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct ConfirmTypesResultDto {
+    /// The bindings now `confirmed`.
+    pub confirmed: Vec<DocumentBindingDto>,
+    pub skipped: Vec<ConfirmTypesSkippedDto>,
+}
+
 // ── conversions ──────────────────────────────────────────────────────────────
 
 impl From<Section> for SectionDto {
@@ -2260,6 +2292,55 @@ async fn decide_binding(
         .await
         .map_err(invalid)?;
     Ok(Json(binding_dto(binding, false)))
+}
+
+/// The Specs list's bulk *Confirm*: every named binding with a proposed type
+/// gets it confirmed; the rest are skipped and said why, not refused.
+pub(super) async fn confirm_types(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Path((workspace_id, project_id)): Path<(Uuid, Uuid)>,
+    Json(body): Json<ConfirmTypesDto>,
+) -> ApiResult<JsonBody<ConfirmTypesResultDto>> {
+    service
+        .authorize(&ctx, workspace_id)
+        .await
+        .map_err(no_tenant)?;
+    service
+        .authorize(&ctx, project_id)
+        .await
+        .map_err(no_tenant)?;
+    if body.binding_ids.len() > CONFIRM_TYPES_MAX {
+        return Err(DocumentsError::invalid_argument()
+            .with_field_violation(
+                "binding_ids",
+                format!("at most {CONFIRM_TYPES_MAX} per call"),
+                "TOO_MANY",
+            )
+            .create());
+    }
+    let outcome = service
+        .confirm_proposed_types(&ctx, workspace_id, project_id, &body.binding_ids)
+        .await
+        .map_err(internal)?;
+    Ok(Json(ConfirmTypesResultDto {
+        confirmed: outcome
+            .confirmed
+            .into_iter()
+            .map(|b| {
+                let inherited = b.project_id.is_none();
+                binding_dto(b, inherited)
+            })
+            .collect(),
+        skipped: outcome
+            .skipped
+            .into_iter()
+            .map(|(id, reason)| ConfirmTypesSkippedDto {
+                id,
+                reason: reason.as_str().to_owned(),
+            })
+            .collect(),
+    }))
 }
 
 /// The text of a bound repository file, read from the same checkout the
@@ -12380,6 +12461,41 @@ pub fn register_routes(
     .error_400(openapi)
     .error_401(openapi)
     .error_403(openapi)
+    .error_500(openapi)
+    .register(router, openapi);
+
+    router = OperationBuilder::post(
+        "/studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/document-bindings/confirm",
+    )
+    .operation_id("studio_documents.confirm_binding_types")
+    .summary("Confirm the proposed types of many document bindings")
+    .description(
+        "The bulk form of `confirm` on `PUT …/document-bindings/{id}`: each named \
+         binding whose type a classifier proposed (`detected`) is confirmed, and \
+         joins the project's settled documentation -- the Bound list its domain \
+         model is read from. A binding whose type is already settled, that has no \
+         proposal, that is another project's, or that does not exist is skipped \
+         and named in `skipped` with its reason; it never fails the call. The \
+         project's own bindings and the workspace's it inherits qualify. At most \
+         1000 ids per call. Conformance is not re-checked: confirming keeps the \
+         type the last verdict was computed against.",
+    )
+    .tag("StudioDocuments")
+    .authenticated()
+    .require_license_features::<License>([])
+    .path_param("workspace_id", "Workspace tenant id")
+    .path_param("project_id", "Project tenant id")
+    .json_request::<ConfirmTypesDto>(openapi, "The bindings to confirm")
+    .handler(confirm_types)
+    .json_response_with_schema::<ConfirmTypesResultDto>(
+        openapi,
+        StatusCode::OK,
+        "What was confirmed, and what was skipped and why",
+    )
+    .error_400(openapi)
+    .error_401(openapi)
+    .error_403(openapi)
+    .error_404(openapi)
     .error_500(openapi)
     .register(router, openapi);
 

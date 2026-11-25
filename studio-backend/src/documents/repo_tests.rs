@@ -434,7 +434,7 @@ async fn deleting_a_document_takes_its_verdicts_with_it() {
 
 // ── ingested-document bindings ───────────────────────────────────────────────
 
-fn binding(
+pub(super) fn binding(
     ws: Uuid,
     project: Option<Uuid>,
     node_id: &str,
