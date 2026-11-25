@@ -52,6 +52,7 @@ inventory::submit! {
         tools: mcp::tools,
     }
 }
+
 mod migrations;
 mod model;
 pub(crate) mod path; // a project's path from its product to running (#1050)
@@ -93,6 +94,16 @@ pub const BINDINGS_METADATA_TYPE: &str =
 /// The organization's deployment records.
 pub const DEPLOYMENTS_METADATA_TYPE: &str =
     "gts.cf.core.am.tenant_metadata.v1~cf.studio.environment.deployments.v1~";
+
+// Only this gear writes the environments and the deployment records: it
+// checks who may, then writes as the service. The PDP refuses a caller's own
+// write (ADR-0043; ADR-0079 §4 access rules). Bindings stay a project's own.
+inventory::submit! {
+    crate::studio_authz_plugin::GearHeldMetadata {
+        gear: "studio-environments",
+        type_ids: &[ENVIRONMENTS_METADATA_TYPE, DEPLOYMENTS_METADATA_TYPE],
+    }
+}
 
 /// The documents this gear keeps as domain objects, each record of their
 /// lists an object (ADR-0066 §8a, `storage.metadata`).

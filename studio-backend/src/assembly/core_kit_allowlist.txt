@@ -24,10 +24,6 @@ organizations -> product
 organizations -> usage
 project_path -> environments
 project_sources -> git_proxy
-studio_authz_plugin -> artifact_ingest
-studio_authz_plugin -> environments
-studio_authz_plugin -> product
-studio_authz_plugin -> usage
 studio_session -> artifact_ingest
 studio_session -> git_proxy
 studio_session -> usage

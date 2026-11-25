@@ -33,6 +33,15 @@ use crate::llm_proxy::port::CompletionRequest;
 pub const EXPLANATIONS_METADATA_TYPE: &str =
     "gts.cf.core.am.tenant_metadata.v1~cf.studio.product.gear_explanations.v1~";
 
+// Only this gear writes the explanations; the PDP refuses a caller's own
+// write (ADR-0079 §4 access rules).
+inventory::submit! {
+    crate::studio_authz_plugin::GearHeldMetadata {
+        gear: "studio-product",
+        type_ids: &[EXPLANATIONS_METADATA_TYPE],
+    }
+}
+
 /// The documents this gear keeps as domain objects, each record of their
 /// lists an object (ADR-0066 §8a, `storage.metadata`).
 /// The gear's `storage.metadata` setting, read at init.

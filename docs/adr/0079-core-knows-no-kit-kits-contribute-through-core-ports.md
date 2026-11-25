@@ -92,7 +92,7 @@ kit's gear registers in its own module, so adding a kit changes no core file.
 |---|---|---|
 | **MCP tools** | its tools, in a stable order | studio-mcp lists every gear's tools |
 | **Overview blocks** | the blocks on a project's and an organization's Overview | organizations composes them from kits' gears |
-| **Access rules** | the PDP's rules for its own resource types | studio-authz-plugin names kits' resources |
+| **Access rules** | the PDP's rules for its own resource types | ported: kits register `ServiceRule`, `GearHeldMetadata` (inventory) and `MirrorSyncSubject` (ClientHub); studio-authz-plugin names no kit |
 | **Connector drivers** | a driver behind a connection kind | studio-connector names llm-proxy |
 | **Background work** | task kinds and schedules | studio-session, studio-kits start kits' work |
 | **Cost metering** | what it meters and how it is priced | usage is read by name from organizations and sessions |

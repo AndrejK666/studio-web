@@ -49,6 +49,15 @@ pub const PRICES_METADATA_TYPE: &str =
 pub const BUDGETS_METADATA_TYPE: &str =
     "gts.cf.core.am.tenant_metadata.v1~cf.studio.usage.budgets.v1~";
 
+// Only this gear writes the price list and the budgets; the PDP refuses a
+// caller's own write of either (ADR-0079 §4 access rules).
+inventory::submit! {
+    crate::studio_authz_plugin::GearHeldMetadata {
+        gear: "studio-usage",
+        type_ids: &[PRICES_METADATA_TYPE, BUDGETS_METADATA_TYPE],
+    }
+}
+
 /// The documents this gear keeps as domain objects, each record of their
 /// lists an object (ADR-0066 §8a, `storage.metadata`).
 pub(crate) static MODEL_KINDS: &[crate::model_metadata::Kind] = {

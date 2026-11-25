@@ -62,7 +62,7 @@ use types_registry_sdk::GtsId;
 use uuid::Uuid;
 
 mod rules;
-pub use rules::ServiceRule;
+pub use rules::{GearHeldMetadata, MirrorSyncSubject, ServiceRule};
 
 pub(crate) const INSTANCE_ID: &str = "cf.studio.authz_resolver.plugin.v1";
 /// AM tenant-metadata type holding the org access config (portal writes it).
@@ -681,14 +681,10 @@ impl Service {
     /// The subject the artifact sync's OAuth client resolves to, or `None`
     /// when this deployment configures no client (then nobody is the sync).
     ///
-    /// Looked up per request rather than held: studio-artifact-ingest
+    /// Looked up per request rather than held: the gear running the sync
     /// publishes it in its REST phase, after this gear has initialized.
     async fn mirror_sync_subject(&self) -> Option<Uuid> {
-        let identity = self
-            .hub
-            .get::<crate::artifact_ingest::sdk::MirrorSyncIdentity>()
-            .ok()?;
-        identity.subject_id().await
+        registered_sync_subject(&self.hub).await
     }
 
     /// [`Self::read_access_config`] through the cache. An unreadable answer is
@@ -907,21 +903,25 @@ fn is_access_config_write(request: &EvaluationRequest) -> bool {
             .is_some_and(|type_id| type_id == ACCESS_METADATA_TYPE)
 }
 
-/// Metadata documents only their gear writes: it checks who may change them,
-/// then writes as the service. The generic metadata route answers a write
-/// with the tenant clamp -- "you are a member" -- so without this a member
-/// could unprotect a production environment, or forge a deployment record,
-/// by writing the document directly (ADR-0043).
-const GEAR_HELD_METADATA: [&str; 7] = [
-    crate::environments::ENVIRONMENTS_METADATA_TYPE,
-    crate::usage::PRICES_METADATA_TYPE,
-    crate::usage::BUDGETS_METADATA_TYPE,
-    crate::environments::DEPLOYMENTS_METADATA_TYPE,
-    crate::organizations::LOGO_METADATA_TYPE,
-    crate::product::EXPLANATIONS_METADATA_TYPE,
-    // Base kits (on the root) and an organization's kits (ADR-0069 §4).
-    crate::kit_registry::KITS_INSTALLED_METADATA_TYPE,
-];
+// Metadata documents only their gear writes: it checks who may change them,
+// then writes as the service. The generic metadata route answers a write
+// with the tenant clamp -- "you are a member" -- so without this a member
+// could unprotect a production environment, or forge a deployment record,
+// by writing the document directly (ADR-0043).
+//
+// The core's own documents are listed here; a kit's gear registers its own
+// in its module (`GearHeldMetadata`, ADR-0079 §4), and
+// `rules::is_gear_held` reads every registration.
+inventory::submit! {
+    GearHeldMetadata {
+        gear: "studio-core",
+        type_ids: &[
+            crate::organizations::LOGO_METADATA_TYPE,
+            // Base kits (on the root) and an organization's kits (ADR-0069 §4).
+            crate::kit_registry::KITS_INSTALLED_METADATA_TYPE,
+        ],
+    }
+}
 
 /// Is this a caller's own write to a document only its gear writes?
 fn is_gear_held_write(request: &EvaluationRequest) -> bool {
@@ -932,7 +932,7 @@ fn is_gear_held_write(request: &EvaluationRequest) -> bool {
             .properties
             .get(AM_TYPE_ID_PROPERTY)
             .and_then(serde_json::Value::as_str)
-            .is_some_and(|type_id| GEAR_HELD_METADATA.contains(&type_id))
+            .is_some_and(rules::is_gear_held)
 }
 
 /// The tenant that OWNS the resource under decision, as the PEP declared it.
@@ -1009,6 +1009,13 @@ fn decide_mirror(request: &EvaluationRequest, sync: Option<Uuid>) -> MirrorDecis
     } else {
         MirrorDecision::Deny
     }
+}
+
+/// The subject of whichever gear registered itself as the artifact sync
+/// ([`MirrorSyncSubject`], ADR-0079 §4); `None` when none did.
+async fn registered_sync_subject(hub: &ClientHub) -> Option<Uuid> {
+    let identity = hub.get::<dyn MirrorSyncSubject>().ok()?;
+    identity.subject_id().await
 }
 
 /// The family a GTS type id belongs to: everything before the first `~`.
@@ -1749,7 +1756,18 @@ mod tests {
     /// through, and reading them stays a member's right.
     #[test]
     fn environments_and_deployments_are_written_by_their_gear_alone() {
-        for type_id in GEAR_HELD_METADATA {
+        // Every document that was gear-held before the access-rules port
+        // (ADR-0079 §4), whether the core or a kit's gear registers it now.
+        let held = [
+            crate::environments::ENVIRONMENTS_METADATA_TYPE,
+            crate::usage::PRICES_METADATA_TYPE,
+            crate::usage::BUDGETS_METADATA_TYPE,
+            crate::environments::DEPLOYMENTS_METADATA_TYPE,
+            crate::organizations::LOGO_METADATA_TYPE,
+            crate::product::EXPLANATIONS_METADATA_TYPE,
+            crate::kit_registry::KITS_INSTALLED_METADATA_TYPE,
+        ];
+        for type_id in held {
             for action in ["write", "delete"] {
                 assert_eq!(
                     Plan::for_request(&metadata_request(action, type_id, Some(ORG))),
@@ -1773,6 +1791,62 @@ mod tests {
             Plan::for_request(&metadata_request("write", bindings, Some(ORG))),
             Plan::Clamp(TENANT)
         );
+    }
+
+    struct FixedSync(Uuid);
+
+    #[async_trait]
+    impl MirrorSyncSubject for FixedSync {
+        async fn subject_id(&self) -> Option<Uuid> {
+            Some(self.0)
+        }
+    }
+
+    /// The sync is whoever registered as it: nobody before a registration,
+    /// the registered subject after.
+    #[tokio::test]
+    async fn the_registered_sync_subject_is_consulted() {
+        let hub = ClientHub::new();
+        assert_eq!(registered_sync_subject(&hub).await, None);
+        let sync = Uuid::from_u128(0x5e_c0de);
+        hub.register::<dyn MirrorSyncSubject>(Arc::new(FixedSync(sync)));
+        assert_eq!(registered_sync_subject(&hub).await, Some(sync));
+    }
+
+    /// A test gear's registration, to prove the PDP reads registrations
+    /// rather than a list of its own.
+    const TEST_HELD_TYPE: &str =
+        "gts.cf.core.am.tenant_metadata.v1~cf.studio.test.authz_port_held.v1~";
+    inventory::submit! {
+        GearHeldMetadata {
+            gear: "studio-authz-port-test",
+            type_ids: &[TEST_HELD_TYPE],
+        }
+    }
+
+    /// A gear-held type registered by a gear the core does not name is
+    /// consulted: a member's write is refused, a read is clamped, and the
+    /// gear's service write goes through.
+    #[test]
+    fn a_gear_registered_held_type_is_consulted() {
+        assert!(rules::is_gear_held(TEST_HELD_TYPE));
+        for action in ["write", "delete"] {
+            assert_eq!(
+                Plan::for_request(&metadata_request(action, TEST_HELD_TYPE, Some(ORG))),
+                Plan::Deny
+            );
+        }
+        assert_eq!(
+            Plan::for_request(&metadata_request("read", TEST_HELD_TYPE, Some(ORG))),
+            Plan::Clamp(TENANT)
+        );
+        let mut service = metadata_request("write", TEST_HELD_TYPE, Some(ORG));
+        service.context.token_scopes = vec!["*".to_owned()];
+        service.subject.subject_type = Some(SERVICE_SUBJECT_TYPE.to_owned());
+        assert_eq!(Plan::for_request(&service), Plan::Clamp(TENANT));
+        assert!(!rules::is_gear_held(
+            "gts.cf.core.am.tenant_metadata.v1~cf.studio.test.unregistered.v1~"
+        ));
     }
 
     /// The barrier is for one document, not for tenant metadata at large.

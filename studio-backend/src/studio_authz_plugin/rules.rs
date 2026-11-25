@@ -80,3 +80,46 @@ pub(super) fn decide(
         None => RuleDecision::Deny,
     }
 }
+
+/// Metadata documents a gear writes alone (ADR-0079 §4, access rules).
+///
+/// The gear checks who may change them and then writes as the service; the
+/// generic metadata route would answer a member's write with the tenant
+/// clamp, so the PDP refuses every caller's own write of a type listed here,
+/// and lets reads through as before. The gear registers its types in its own
+/// module:
+///
+/// ```ignore
+/// inventory::submit! {
+///     crate::studio_authz_plugin::GearHeldMetadata {
+///         gear: "studio-environments",
+///         type_ids: &[ENVIRONMENTS_METADATA_TYPE, DEPLOYMENTS_METADATA_TYPE],
+///     }
+/// }
+/// ```
+pub struct GearHeldMetadata {
+    /// The gear that registered it, for the logs.
+    pub gear: &'static str,
+    /// Full GTS ids of the tenant-metadata types only that gear writes.
+    pub type_ids: &'static [&'static str],
+}
+
+inventory::collect!(GearHeldMetadata);
+
+/// Is `type_id` held by some gear's registration?
+pub(super) fn is_gear_held(type_id: &str) -> bool {
+    inventory::iter::<GearHeldMetadata>
+        .into_iter()
+        .any(|held| held.type_ids.contains(&type_id))
+}
+
+/// Who the artifact sync is when it reads through the GitHub mirror (#1094).
+///
+/// The gear that runs the sync registers this in the ClientHub as
+/// `dyn MirrorSyncSubject`; the PDP asks it per request. No registration, or
+/// `None`, means nobody is the sync and every mirror request is refused.
+#[async_trait::async_trait]
+pub trait MirrorSyncSubject: Send + Sync {
+    /// The subject the sync's client-credentials token carries.
+    async fn subject_id(&self) -> Option<Uuid>;
+}
