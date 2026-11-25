@@ -383,6 +383,19 @@ rule. Credstore lends a token to every tenant below its holder, so without
 this check an organization's sync could read a repository with the platform's
 token.
 
+A sync larger than one attempt goes on in the next. An attempt works to a
+12-minute budget inside the queue's 15-minute lease. Linking pull requests to
+the files they changed (`modifies`, one provider call each, several in flight
+where the driver allows it -- six on GitLab, one on GitHub) stops 4 minutes
+short of that, the comments at it, and the rest of the sync stores what it
+has. Each pull request node carries `files_linked`, the head it was linked
+at; a sync asks only about the pull requests whose head moved or that were
+never linked, and writes each portion's edges, then its marks, as it goes.
+An attempt that stopped with pull requests left answers `Retry` with "linked
+X of Y" and the next attempt continues -- as does a retry by hand or the next
+scheduled sync, since the cursor is in the graph, not on the run. The last
+attempt ends `Done` with the count instead of failing.
+
 ##### Responsibility boundaries
 
 Does not decide what a file is; `cpt-studio-component-documents` does.

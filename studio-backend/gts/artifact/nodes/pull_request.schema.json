@@ -61,6 +61,10 @@
     },
     "head_sha": { "type": ["string", "null"], "description": "The commit at the head of the source branch." },
     "merge_sha": { "type": ["string", "null"], "description": "The commit the merge made; null until merged." },
+    "files_linked": {
+      "type": ["string", "null"],
+      "description": "The head (head_sha, else merge_sha, else updated_at) at which its changed files were linked to it (modifies); null while they are still to be linked. A sync asks again only when the head moved. Added to v1 as an optional field."
+    },
     "links": {
       "type": "array",
       "description": "Items the title and body name (ADR-0047); repo is null for this repository.",

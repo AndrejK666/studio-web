@@ -23,9 +23,23 @@
 //!
 //! The route still resolves the token once, before enqueuing, so a wrong
 //! `secret_ref` is answered with a 400 there rather than found by a poll.
+//!
+//! ## A sync too big for one attempt goes on in the next
+//!
+//! An attempt holds the queue's lease for fifteen minutes. A repository with
+//! thousands of pull requests needs longer than that to link each one to the
+//! files it changed (one provider call apiece), so an attempt works to
+//! [`ATTEMPT_BUDGET`], stores what it has, and -- when pull requests are
+//! left -- answers `Retry` with "linked X of Y". The next attempt syncs again
+//! and asks only about the pull requests not linked yet: which are linked is
+//! kept on their nodes in the graph (`pr_links`), not on the run, so a retry
+//! by hand and the next scheduled sync go on from there too. An attempt that
+//! is the last one ends `Done` with the count: what it stored is good, and
+//! the next sync links the rest.
 
 use crate::plural::plural;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -46,6 +60,21 @@ pub const TASK_TYPE: &str = "artifact.ingest";
 /// studio-dev (studio-web#561). A second ingest waits here instead. Other task
 /// types are not held up: the wait occupies one worker, and there are eight.
 static INGEST_SLOT: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+
+/// How long one attempt works before it stops to store what it has.
+///
+/// The queue's lease is fifteen minutes, less ten seconds for the ack
+/// (`tasks::LEASE`); an attempt still running then is cut off and everything
+/// it had not stored is lost. Twelve minutes leaves the rest for the writes
+/// that close a sync -- the relations, the repository's record -- which a
+/// large repository needs a minute or two for. Counted from when the attempt
+/// was handed over, because waiting for [`INGEST_SLOT`] spends the lease too.
+const ATTEMPT_BUDGET: Duration = Duration::from_secs(12 * 60);
+
+/// Attempts a run gets. More than the queue's default five: an attempt that
+/// stops with pull requests still to link hands on to the next, and a large
+/// repository's first sync can take a few of those besides a real failure.
+const ATTEMPTS: i16 = 8;
 
 /// What the REST route puts on the queue.
 ///
@@ -131,7 +160,12 @@ impl TaskHandler for IngestTask {
         TASK_TYPE
     }
 
+    fn max_attempts(&self) -> i16 {
+        ATTEMPTS
+    }
+
     async fn run(&self, ctx: &TaskContext) -> TaskOutcome {
+        let deadline = Instant::now() + ATTEMPT_BUDGET;
         let payload: IngestPayload = match serde_json::from_value(ctx.payload.clone()) {
             Ok(payload) => payload,
             // Written by a different version of this route; a retry cannot make
@@ -237,7 +271,8 @@ impl TaskHandler for IngestTask {
         };
         let outcome = self
             .service
-            .run_sync(
+            .run_sync_until(
+                Some(deadline),
                 &ctx.security,
                 &payload.provider,
                 base_url,
@@ -252,6 +287,28 @@ impl TaskHandler for IngestTask {
                 &progress,
             )
             .await;
+        // A partial sync's counts stay on the run while it waits for its
+        // next attempt: the last tick before this was "storing…", without them.
+        let noun = |n: usize| {
+            if payload.provider == "gitlab" {
+                plural(n, "merge request", "merge requests")
+            } else {
+                plural(n, "pull request", "pull requests")
+            }
+        };
+        if let Ok(counts) = &outcome
+            && counts.is_partial()
+        {
+            progress.set_with(
+                format!(
+                    "linked {} of {} to their files; {} left for the next attempt",
+                    counts.links_done,
+                    noun(counts.links_total),
+                    counts.links_left
+                ),
+                serde_json::to_value(counts).unwrap_or_default(),
+            );
+        }
         // Drop the sender so the drain ends, then let it finish the queue.
         drop(progress);
         let _ = drain.await;
@@ -271,6 +328,18 @@ impl TaskHandler for IngestTask {
             .await;
         }
         match outcome {
+            // Out of time with pull requests still to link: what it stored
+            // stands, and the next attempt goes on from there -- unless this
+            // was the last one, which ends below with the count.
+            Ok(counts) if counts.is_partial() && ctx.attempt < self.max_attempts() => {
+                TaskOutcome::Retry(format!(
+                    "{}: partial -- linked {} of {} to their files before the attempt's time ran out; the next attempt continues with the {} left",
+                    payload.repo_full_path,
+                    counts.links_done,
+                    noun(counts.links_total),
+                    counts.links_left
+                ))
+            }
             Ok(counts) => {
                 let mut summary = format!(
                     "{}: {}, {}, {}, {}, {}, {} stored",
@@ -288,6 +357,19 @@ impl TaskHandler for IngestTask {
                     summary.push_str(&format!(
                         ", {} forgotten",
                         plural(counts.pruned, "deleted file", "deleted files")
+                    ));
+                }
+                if counts.links_total > 0 {
+                    summary.push_str(&format!(
+                        ", {} of {} linked to their files",
+                        counts.links_done,
+                        noun(counts.links_total)
+                    ));
+                }
+                if counts.is_partial() {
+                    summary.push_str(&format!(
+                        " (partial: the next sync links the {} left)",
+                        counts.links_left
                     ));
                 }
                 match serde_json::to_value(counts) {
