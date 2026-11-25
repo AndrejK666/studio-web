@@ -4,31 +4,23 @@ use serde_json::json;
 use uuid::Uuid;
 
 use super::*;
-use crate::environments::path::{PathAction, PathStep, ProjectPath, StepState as D};
 use crate::organizations::status::{FindingFacts, ModelFacts, PathFacts, SpecQueues};
+use super::DeliveryState as D;
 
-fn step(id: &'static str, state: D, reason: &str) -> PathStep {
-    PathStep {
+fn step(id: &'static str, state: D, reason: &str) -> DeliveryStep {
+    DeliveryStep {
         id,
         state,
         reason: reason.to_owned(),
-        checklist: Vec::new(),
         action: None,
-        cause: None,
         build_id: None,
         environment_id: None,
         deployment_id: None,
-        url: None,
     }
 }
 
-fn delivery_path(steps: Vec<PathStep>) -> ProjectPath {
-    ProjectPath {
-        current: "running",
-        steps,
-        environment_id: None,
-        running_in: Vec::new(),
-    }
+fn action(kind: &str, label: &str) -> Option<StageAction> {
+    Some(StageAction::new(kind, label))
 }
 
 fn gears(n: u32) -> ProductFacts {
@@ -144,11 +136,7 @@ fn a_studio_build_record_comes_first_then_the_ci_run() {
         "Build b-7 failed: the gear api did not build.",
     );
     record.build_id = Some("b-7".into());
-    record.action = Some(PathAction {
-        kind: "open_gear",
-        label: "Open the gear".into(),
-        ..PathAction::default()
-    });
+    record.action = action("open_gear", "Open the gear");
     let passed = BuildFacts::Last {
         status: "passed".into(),
         sha: "abc1234".into(),
@@ -199,21 +187,17 @@ fn the_delivery_stages_say_what_releases_says() {
         "1 thing is missing before a deploy to dev.",
     );
     environment.environment_id = Some(env);
-    environment.action = Some(PathAction {
-        kind: "provide_secret",
-        label: "Provide it".into(),
-        ..PathAction::default()
-    });
+    environment.action = action("provide_secret", "Provide it");
     let mut running = step("running", D::Later, "Waits for the steps before it.");
     running.deployment_id = None;
     running.environment_id = Some(deployed);
-    let path = delivery_path(vec![
+    let path = vec![
         step("product", D::Done, "The product is described (revision 2)."),
         build,
         image,
         environment,
         running,
-    ]);
+    ];
     let stages = delivery_stages(&DeliveryFacts {
         product: Some(&gears(2)),
         revision: Some(2),

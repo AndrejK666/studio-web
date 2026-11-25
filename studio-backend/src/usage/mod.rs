@@ -2,10 +2,12 @@
 //! costs an organization (issue #781).
 //!
 //! **Recording** is not this gear's code path: studio-llm-proxy records every
-//! model call and studio-session every running session, through [`sdk::Usage`],
-//! into the platform's `usage-collector` gear, whose storage is
-//! `plugins/postgres-usage-collector-plugin`. This module holds the shape of a
-//! use ([`port`]) and the usage types it becomes ([`types`]).
+//! model call and studio-session every running session through the core's
+//! metering port (`crate::metering`), and this gear's recorder ([`sdk`],
+//! registered at init) puts them into the platform's `usage-collector` gear,
+//! whose storage is `plugins/postgres-usage-collector-plugin`. This module
+//! holds the shape of a use ([`port`]) and the usage types it becomes
+//! ([`types`]).
 //!
 //! **Costs** are this gear's: an organization's price list (one
 //! account-management metadata row on the organization, [`PRICES_METADATA_TYPE`])
@@ -90,6 +92,9 @@ pub struct StudioUsageGear;
 #[async_trait]
 impl Gear for StudioUsageGear {
     async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
+        // Where every metering gear's records go (the core's metering port).
+        ctx.client_hub()
+            .register::<dyn crate::metering::UsageRecorder>(sdk::recorder(ctx.client_hub()));
         // An organization's priced usage, for the organization's overview.
         if let Ok(am) = ctx
             .client_hub()

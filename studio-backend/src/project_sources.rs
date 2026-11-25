@@ -47,7 +47,6 @@ use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
 use crate::connectors::sdk::{check_owned, connection_by_id, holder_of_row};
-use crate::git_proxy::sources::Source;
 
 /// Project attributes, including the repositories it is made of.
 pub const PROJECT_CONFIG_TYPE: &str =
@@ -60,6 +59,41 @@ pub const PERSONAL_SCOPE: &str = "personal";
 
 /// The directory name for a source whose `full_path` has no last segment.
 const FALLBACK_DIR: &str = "source";
+
+/// One Git source of a project, as a session or a desktop clones it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Source {
+    pub name: String,
+    /// The source host's clone URL. Never returned to a client.
+    pub url: String,
+    pub branch: Option<String>,
+    /// Where the IDE checks it out, relative to the workspace root.
+    pub target: Option<String>,
+    /// credstore reference of the source host token. Never returned either.
+    pub token_ref: Option<String>,
+    /// The tenant holding the source's connection, when that is outside the
+    /// project's organization (the platform's root, another organization):
+    /// its token is not the organization's to use, so `token_ref` is `None`
+    /// and the proxy refuses the source rather than reach the host as the
+    /// platform (`cpt-studio-constraint-connector-own-connections`).
+    pub held_outside: Option<uuid::Uuid>,
+    /// Why `token_ref` is `None`, when it is: what a failed clone names as its
+    /// cause when the source host then asks for credentials (#1071).
+    pub no_token: Option<NoToken>,
+}
+
+/// Why a source goes upstream without a token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoToken {
+    /// The source names no connection.
+    NoConnection,
+    /// It names one that is not found from the project.
+    ConnectionNotFound,
+    /// The connection is one person's, and a shared session does not carry it.
+    Personal,
+    /// The connection is held outside the project's organization.
+    HeldOutside,
+}
 
 /// How "Share with the team" lands edits in a source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -588,7 +622,6 @@ pub async fn resolve(
 /// outside the project's organization, whose token is not the
 /// organization's to use.
 pub fn to_git_source(resolved: Resolved) -> Source {
-    use crate::git_proxy::sources::NoToken;
     let lends = !resolved.personal && resolved.held_outside.is_none();
     let no_token = if resolved.held_outside.is_some() {
         Some(NoToken::HeldOutside)

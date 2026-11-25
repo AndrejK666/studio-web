@@ -54,7 +54,7 @@
 
 use std::collections::BTreeMap;
 
-use super::gdl_literal::{self, Args, DictValue, Lit};
+use crate::gdl_literal::{self, Args, DictValue, Lit};
 
 /// The GDL version `service.gdl` was introduced in.
 pub(crate) const GDL_VERSION: &str = "1.6";

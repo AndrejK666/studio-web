@@ -10,6 +10,7 @@ use uuid::Uuid;
 use super::super::migrations::Migrator;
 use super::super::port::CloneOutcomes;
 use super::*;
+use crate::clone_outcomes::{CloneAction, CloneFailure, clone_order};
 
 const API: &str = "https://github.com/acme/api.git";
 const WEB: &str = "https://github.com/acme/web.git";

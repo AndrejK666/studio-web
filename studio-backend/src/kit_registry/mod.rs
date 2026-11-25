@@ -16,6 +16,7 @@ mod gdl;
 mod inbox;
 pub(crate) mod installed;
 mod kind;
+pub(crate) mod kit_gdl; // a kit's passport, `kit.gdl`: the registry's, the catalogue reads it too
 mod manifest;
 mod mcp;
 mod mna;

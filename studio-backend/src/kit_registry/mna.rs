@@ -318,7 +318,7 @@ impl DealProjects for HubProjects {
     ) -> Result<Vec<(String, u64)>, String> {
         let checkouts = self
             .hub
-            .get::<dyn crate::artifact_ingest::port::ProjectCheckout>()
+            .get::<dyn crate::project_checkout::ProjectCheckout>()
             .map_err(|_| "the project checkouts are not kept on this server".to_owned())?;
         let checkout = checkouts
             .checkout_of(ctx, project, &source.full_path)

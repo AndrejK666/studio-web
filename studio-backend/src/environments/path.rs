@@ -673,6 +673,33 @@ pub fn project_path(f: &PathFacts) -> ProjectPath {
     }
 }
 
+/// A step as the project's one path (`crate::project_path`) reads it for
+/// stages 6-9.
+impl From<&PathStep> for crate::project_path::DeliveryStep {
+    fn from(s: &PathStep) -> Self {
+        use crate::project_path::{DeliveryState, StageAction};
+        Self {
+            id: s.id,
+            state: match s.state {
+                StepState::Done => DeliveryState::Done,
+                StepState::Active => DeliveryState::Active,
+                StepState::Failed => DeliveryState::Failed,
+                StepState::Blocked => DeliveryState::Blocked,
+                StepState::Next => DeliveryState::Next,
+                StepState::Later => DeliveryState::Later,
+            },
+            reason: s.reason.clone(),
+            action: s.action.as_ref().map(|a| StageAction {
+                kind: a.kind.to_owned(),
+                label: a.label.clone(),
+            }),
+            build_id: s.build_id.clone(),
+            environment_id: s.environment_id,
+            deployment_id: s.deployment_id,
+        }
+    }
+}
+
 #[cfg(test)]
 #[path = "path_tests.rs"]
 mod tests;

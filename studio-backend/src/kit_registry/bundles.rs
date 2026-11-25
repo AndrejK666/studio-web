@@ -55,8 +55,8 @@ use async_trait::async_trait;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
+use super::kit_gdl::{FILE as KIT_GDL_FILE, read as read_kit_gdl};
 use super::service::{KitDescriptor, SHELF_ORGANIZATION, normalize_slug};
-use crate::components_catalog::{KIT_GDL_FILE, read_kit_gdl};
 
 /// A directory of kits, each a subdirectory with a `kit.gdl` (development).
 pub const BUNDLES_DIR_ENV: &str = "STUDIO_KIT_BUNDLES_DIR";

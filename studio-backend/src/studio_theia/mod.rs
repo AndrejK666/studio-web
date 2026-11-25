@@ -14,6 +14,7 @@ pub mod config;
 pub mod control_client;
 pub mod discovery;
 pub mod gear;
+pub mod ide_bridge;
 pub mod rest;
 pub mod sdk;
 pub mod service;

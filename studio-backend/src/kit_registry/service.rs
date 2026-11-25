@@ -249,7 +249,6 @@ pub struct KitRegistryService {
     /// Kits whose micro-frontends are served at run time (ADR-0068 phase 5).
     bundles: Arc<super::bundles::KitBundles>,
     ide_shelf: Option<Arc<super::installed::KitInstaller>>,
-    #[cfg(feature = "theia-bridge")]
     client_hub: Arc<ClientHub>,
 }
 
@@ -258,7 +257,7 @@ impl KitRegistryService {
     /// deployment that names its kits must not quietly offer others.
     pub fn new(
         account_management: Arc<dyn AccountManagementClient>,
-        _client_hub: Arc<ClientHub>,
+        client_hub: Arc<ClientHub>,
     ) -> Result<Self> {
         let catalogue = match std::env::var("STUDIO_KIT_CATALOGUE")
             .ok()
@@ -286,8 +285,7 @@ impl KitRegistryService {
             bundle_kits,
             bundles: Arc::new(bundles),
             ide_shelf: None,
-            #[cfg(feature = "theia-bridge")]
-            client_hub: _client_hub,
+            client_hub,
         })
     }
 
@@ -478,42 +476,34 @@ impl KitRegistryService {
         ctx: &SecurityContext,
         project_id: Uuid,
     ) -> Result<Vec<ProjectRepository>> {
-        #[cfg(feature = "theia-bridge")]
-        {
-            use crate::studio_theia::sdk::{SessionTarget, TheiaControlClientV1};
-            let client = self
-                .client_hub
-                .try_get::<dyn TheiaControlClientV1>()
-                .context("Theia control bridge is not enabled")?;
-            let repositories = client
-                .get_repositories(
-                    ctx,
-                    &SessionTarget {
-                        workspace_id: project_id,
-                    },
-                )
-                .await
-                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-            let mut repositories: Vec<ProjectRepository> = repositories
-                .into_iter()
-                .map(|repository| ProjectRepository {
-                    repository_id: repository.repository_id,
-                    label: repository.label,
-                    kind: repository.kind,
-                    git_mode: repository.git_mode,
-                })
-                .collect();
-            // The node orders repositories deepest-first, which puts the project
-            // repository last. Callers render this list in order and preselect
-            // the first entry, so the default has to lead.
-            repositories.sort_by_key(|repository| u8::from(repository.kind != "project"));
-            Ok(repositories)
+        let mut repositories: Vec<ProjectRepository> = self
+            .ide_bridge()?
+            .repositories(ctx, project_id)
+            .await?
+            .into_iter()
+            .map(|repository| ProjectRepository {
+                repository_id: repository.repository_id,
+                label: repository.label,
+                kind: repository.kind,
+                git_mode: repository.git_mode,
+            })
+            .collect();
+        // The node orders repositories deepest-first, which puts the project
+        // repository last. Callers render this list in order and preselect
+        // the first entry, so the default has to lead.
+        repositories.sort_by_key(|repository| u8::from(repository.kind != "project"));
+        Ok(repositories)
+    }
+
+    /// The workspace IDE, through the core's IDE port (`crate::ide_bridge`),
+    /// which the IDE kit's gear fills when it is wired.
+    fn ide_bridge(&self) -> Result<Arc<dyn crate::ide_bridge::IdeBridge>> {
+        if !crate::ide_bridge::compiled_in() {
+            bail!("Theia control bridge is not compiled into this backend");
         }
-        #[cfg(not(feature = "theia-bridge"))]
-        {
-            let _ = (ctx, project_id);
-            bail!("Theia control bridge is not compiled into this backend")
-        }
+        self.client_hub
+            .try_get::<dyn crate::ide_bridge::IdeBridge>()
+            .context("Theia control bridge is not enabled")
     }
 
     /// Fails with [`SessionUnavailable`] when the IDE could not do it (no
@@ -536,18 +526,12 @@ impl KitRegistryService {
         installations[index].failure_reason = None;
         // Cloned rather than moved: the failure arm needs to know which
         // repository was asked for, and the bridge arm consumes the original.
-        // Cloning also keeps the parameter used in the no-bridge build.
         let target_repository_id = repository_id.clone();
         self.write_installations(ctx, project_id, installations.clone())
             .await?;
 
-        #[cfg(feature = "theia-bridge")]
         let outcome = async {
-            use crate::studio_theia::sdk::{InstallKit, SessionTarget, TheiaControlClientV1};
-            let client = self
-                .client_hub
-                .try_get::<dyn TheiaControlClientV1>()
-                .context("Theia control bridge is not enabled")?;
+            let bridge = self.ide_bridge()?;
             let entry = &installations[index];
             let shelf_files = if let Some(origin) = &entry.shelf_origin {
                 let shelf = self
@@ -566,13 +550,11 @@ impl KitRegistryService {
             } else {
                 None
             };
-            client
+            bridge
                 .install_kit(
                     ctx,
-                    &SessionTarget {
-                        workspace_id: project_id,
-                    },
-                    &InstallKit {
+                    project_id,
+                    crate::ide_bridge::IdeKitInstall {
                         kit_slug: installations[index].kit_slug.clone(),
                         version: installations[index].version.clone(),
                         repository_id,
@@ -580,13 +562,8 @@ impl KitRegistryService {
                     },
                 )
                 .await
-                .map_err(|error| anyhow::anyhow!(error.to_string()))
         }
         .await;
-        #[cfg(not(feature = "theia-bridge"))]
-        let outcome: Result<MaterializedKit> = Err(anyhow::anyhow!(
-            "Theia control bridge is not compiled into this backend"
-        ));
 
         match outcome {
             Ok(result) => {
@@ -1143,12 +1120,6 @@ fn normalize_install_mode(value: &str) -> Result<String> {
 
 pub(crate) fn now_rfc3339() -> Result<String> {
     Ok(OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339)?)
-}
-
-#[cfg(not(feature = "theia-bridge"))]
-struct MaterializedKit {
-    repository_id: String,
-    repository_label: String,
 }
 
 /// Replace this repository's row, or append it.

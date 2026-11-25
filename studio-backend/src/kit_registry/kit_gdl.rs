@@ -43,7 +43,7 @@
 //! )
 //! ```
 
-use super::gdl_literal::{self, Args, Lit};
+use crate::gdl_literal::{self, Args, Lit};
 
 /// The GDL version `kit.gdl` was introduced in.
 pub(crate) const GDL_VERSION: &str = "1.6";

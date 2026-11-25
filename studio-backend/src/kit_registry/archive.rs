@@ -654,14 +654,13 @@ pub async fn fetch_into(
 
 /// Prepare the exact inputs CFS expects, at the recorded commit. A missing
 /// resource aborts the install instead of producing a partial checkout.
-#[cfg(feature = "theia-bridge")]
 pub(super) async fn ide_source(
     reader: &dyn KitSourceReader,
     org: Uuid,
     slug: &str,
     origin: &super::shelf::KitOrigin,
-) -> anyhow::Result<Vec<crate::studio_theia::sdk::models::KitSourceFile>> {
-    use crate::studio_theia::sdk::models::KitSourceFile;
+) -> anyhow::Result<Vec<crate::ide_bridge::IdeKitFile>> {
+    use crate::ide_bridge::IdeKitFile;
     use anyhow::Context;
     use base64::Engine;
 
@@ -725,7 +724,7 @@ pub(super) async fn ide_source(
     let files: Vec<_> = archive
         .entries
         .into_iter()
-        .map(|(path, bytes)| KitSourceFile {
+        .map(|(path, bytes)| IdeKitFile {
             path,
             content: base64::engine::general_purpose::STANDARD.encode(bytes),
         })
