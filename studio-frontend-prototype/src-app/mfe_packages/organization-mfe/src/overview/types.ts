@@ -1,5 +1,9 @@
-/** The organization overview's shape (GET /studio-organizations/v1/overview), as the
- *  prototype's client had it (src/api.ts at 00828880). */
+/** The organization overview's shape (GET /studio-organizations/v1/overview).
+ *
+ * What a kit knows -- spend, pull requests, specs, the component registry -- is
+ * that kit's block (`blocks`, ADR-0079): its tile and its needs come in the kit's
+ * own words, so this screen draws any kit's block without knowing the kit. What
+ * stays named here is the organization's own: its needs, people and workspaces. */
 
 export interface OrgOverview {
   organization_id: string;
@@ -11,57 +15,90 @@ export interface OrgOverview {
   stuck_days: number;
   growth_alert: number;
   quiet_days: number;
-  costs: 'shown' | 'hidden' | 'unreadable';
+  /** The organization's own needs: refused connections, failed runs. */
   needs: OrgNeed[];
-  spend: OrgSpend | null;
-  delivery: { merged: number | null; window_days: number; open: number | null; median_wait_days: number | null };
-  specs: { specs: number | null; failing: number | null; open_findings: number | null };
+  /** The blocks of the kits installed for the organization, in their order. */
+  blocks: OverviewBlock[];
   people: {
     active: number | null;
-    with_spend: number | null;
-    per_person: number | null;
     idle: { person_id: string; name: string | null }[] | null;
   };
   workspaces: OrgWorkspace[];
-  money: OrgMoney[] | null;
-  waiting_on: OrgQueue[] | null;
-  pulls_without_reviewers?: OrgPull[] | null;
+  /** The currency the workspaces' and projects' spend is in; null without spend. */
+  currency?: string | null;
   recent_failures?: OrgRunFailure[] | null;
-  decisions: { undecided: number; candidates: number; registered: number; published: number } | null;
   /**
-   * The organization's kits the answer was computed for (ADR-0070 §7): without
-   * `project-git` the pull-request parts are null and its need is not listed.
-   * Null when they could not be read.
+   * The organization's kits the answer was computed for (ADR-0070 §7): a block
+   * of a kit not among them is not there. Null when they could not be read.
    */
   kits?: string[] | null;
 }
 
 export interface OrgNeed {
-  kind: 'connection' | 'spend' | 'pulls' | 'components' | 'runs';
+  kind: 'connection' | 'runs';
   tone: 'danger' | 'warn';
   provider?: string | null;
   status?: string | null;
   projects: string[];
   repos?: number | null;
-  current?: number | null;
-  previous?: number | null;
-  forecast?: number | null;
-  grower?: string | null;
-  pulls?: number | null;
-  people?: number | null;
-  components?: number | null;
   runs?: number | null;
-  /** The kit whose screen answers it (`project-git`, `org-costs`, `components`); null for the shell's own. */
-  kit?: string | null;
 }
 
-export interface OrgPull {
+/** Words by language tag; `en` is always there. A `{name}` is an argument. */
+export type Words = Record<string, string>;
+
+/** One argument of a line: money, a count (null: unknown), or text. */
+export interface LineArg {
+  kind: string;
+  value?: number | null;
+  currency?: string | null;
+  text?: string | null;
+}
+
+export interface Line {
+  text: Words;
+  args: Record<string, LineArg>;
+}
+
+/** Where something leads: a screen, or that screen inside a project. */
+export interface BlockLink {
+  route: string;
+  view?: string | null;
+  label: Words;
+  workspace_id?: string | null;
+  project_id?: string | null;
+}
+
+export interface BlockTile {
+  title: Words;
+  value?: Line | null;
+  lines: Line[];
+  link?: BlockLink | null;
+  items?: { label: Words; rows: { text: Line; link: BlockLink }[] } | null;
+}
+
+export interface BlockDetails {
+  label: Words;
+  rows: { text: string; href?: string | null; note: Line[] }[];
+}
+
+export interface BlockNeed {
+  key: string;
+  tone: string;
+  sentence: Line;
+  detail?: Line | null;
+  action?: BlockLink | null;
+  details?: BlockDetails | null;
+}
+
+export interface OverviewBlock {
+  kit: string;
   id: string;
-  number: number;
-  title: string;
-  url: string | null;
-  project: string | null;
-  quiet_days: number;
+  order: number;
+  tile: BlockTile | null;
+  needs: BlockNeed[];
+  /** The kit's own figures. */
+  data: unknown;
 }
 
 export interface OrgRunFailure {
@@ -69,19 +106,6 @@ export interface OrgRunFailure {
   tenant_id: string;
   task_type: string;
   created_at: string;
-}
-
-export interface OrgSpend {
-  currency: string;
-  has_prices?: boolean;
-  current: number;
-  previous: number;
-  forecast: number;
-  own_keys: number;
-  attributed: number;
-  unattributed: number;
-  sessions: number;
-  unpriced: string[];
 }
 
 export interface OrgReason {
@@ -116,21 +140,3 @@ export interface OrgWorkspace {
   score: number;
   projects: OrgProjectHealth[];
 }
-
-export interface OrgQueue {
-  person_id: string | null;
-  /** Null: pull requests nobody was asked to review. */
-  who: string | null;
-  count: number;
-  oldest_days: number;
-}
-
-export interface OrgMoney {
-  group_by: CostGroup;
-  include_personal: boolean;
-  /** By person: `key` is the member, `unattributed`, or empty for IDE sessions. */
-  rows: { key: string; label: string | null; cost: number; previous: number; unpriced: boolean }[];
-}
-
-export type CostGroup = 'person' | 'project' | 'model' | 'source' | 'payer';
-

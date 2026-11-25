@@ -40,6 +40,8 @@ mod repo_tests;
 mod rest;
 mod review_guide;
 mod review_store;
+/// The Specs block of an organization's Overview (ADR-0079 §4).
+pub mod overview_block;
 pub mod sdk;
 mod service;
 mod sources_flight;

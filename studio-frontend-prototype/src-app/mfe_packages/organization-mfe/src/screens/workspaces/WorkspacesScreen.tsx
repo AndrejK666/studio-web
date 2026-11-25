@@ -99,7 +99,7 @@ const WorkspaceList: React.FC<{
 
   const health = useCallback((row: Tenant) => healthOf(overview, row.id), [overview]);
   const cash = useCallback(
-    (value: number) => money(value, overview?.spend?.currency || "USD", language),
+    (value: number) => money(value, overview?.currency || "USD", language),
     [overview, language],
   );
 
