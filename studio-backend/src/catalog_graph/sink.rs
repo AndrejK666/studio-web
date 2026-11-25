@@ -640,7 +640,7 @@ impl CatalogSink for GraphSink {
         nodes: &[GtsNode],
         edges: &[GtsEdge],
     ) -> anyhow::Result<()> {
-        use crate::artifact_ingest::sdk::{str_without_nul, without_nul};
+        use crate::pg_text::{str_without_nul, without_nul};
         use graph_storage_sdk::models::{EdgeSpec, IngestOptions, IngestRequest, NodeSpec};
         if nodes.is_empty() && edges.is_empty() {
             return Ok(());
@@ -931,7 +931,7 @@ impl CatalogSink for GraphSink {
         ctx: &SecurityContext,
         nodes: &[GtsNode],
     ) -> anyhow::Result<()> {
-        use crate::artifact_ingest::sdk::{str_without_nul, without_nul};
+        use crate::pg_text::{str_without_nul, without_nul};
         use graph_storage_sdk::models::NodeSpec;
         for chunk in nodes.chunks(NODE_INGEST_CHUNK) {
             let specs: Vec<NodeSpec> = chunk
@@ -1007,7 +1007,7 @@ impl CatalogSink for GraphSink {
     }
 
     async fn write_previews(&self, ctx: &SecurityContext, nodes: &[GtsNode]) -> anyhow::Result<()> {
-        use crate::artifact_ingest::sdk::{str_without_nul, without_nul};
+        use crate::pg_text::{str_without_nul, without_nul};
         use graph_storage_sdk::models::NodeSpec;
         // One picture per batch: each carries its image, and a batch of them
         // would be a large request for no gain.

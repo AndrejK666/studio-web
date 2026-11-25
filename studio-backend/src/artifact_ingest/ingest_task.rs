@@ -259,9 +259,9 @@ impl TaskHandler for IngestTask {
         if outcome.is_ok() {
             // What others derive from the repository follows it now; they
             // only queue their work, so the run is not held up.
-            super::synced::notify(
+            crate::repository_synced::notify(
                 &ctx.security,
-                &super::synced::SyncedRepository {
+                &crate::repository_synced::SyncedRepository {
                     run_tenant: ctx.tenant,
                     project_id: payload.project_id.clone(),
                     workspace_id: payload.workspace_id.clone(),

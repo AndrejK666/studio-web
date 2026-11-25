@@ -22,7 +22,7 @@
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
-use crate::usage::sdk::{Payer, Runtime, SESSION_ITEM, Source, TokenCounts, UsageRecord};
+use crate::metering::{Payer, Runtime, SESSION_ITEM, Source, TokenCounts, UsageRecord};
 
 /// One metering window.
 pub const WINDOW: Duration = Duration::minutes(5);

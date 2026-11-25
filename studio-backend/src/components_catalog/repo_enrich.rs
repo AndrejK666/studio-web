@@ -3061,7 +3061,8 @@ fn passport_paths<'a>(paths: &[&'a str]) -> Vec<&'a str> {
         .copied()
         .filter(|p| {
             let name = p.rsplit('/').next().unwrap_or(p);
-            (name == super::service_gdl::FILE || name == super::kit_gdl::FILE) && !skip_path(p)
+            (name == super::service_gdl::FILE || name == crate::kit_registry::kit_gdl::FILE)
+                && !skip_path(p)
         })
         .collect();
     out.sort_by_key(|p| (p.matches('/').count(), *p));
@@ -3078,7 +3079,7 @@ fn passport_component(
     body: &str,
     paths: &[&str],
 ) -> std::result::Result<RepoGear, String> {
-    let resolve = |p: &str| super::gdl_literal::resolve(dir, p);
+    let resolve = |p: &str| crate::gdl_literal::resolve(dir, p);
     let tree = format!("https://github.com/{repo}/tree/{git_ref}/{dir}");
     let (name, description, kind, payload) = if path.ends_with(super::service_gdl::FILE) {
         let s = super::service_gdl::read(body)?;
@@ -3129,7 +3130,7 @@ fn passport_component(
         }
         (s.name, s.description, "service", payload)
     } else {
-        let k = super::kit_gdl::read(body)?;
+        let k = crate::kit_registry::kit_gdl::read(body)?;
         let docs = docs_of(dir, &k.docs, paths);
         let manifest = k.manifest.as_deref().and_then(resolve).or_else(|| {
             let beside = if dir.is_empty() {
@@ -3179,7 +3180,7 @@ fn passport_component(
 pub(crate) fn docs_of(dir: &str, declared: &[String], paths: &[&str]) -> Vec<String> {
     let mut out: Vec<String> = declared
         .iter()
-        .filter_map(|d| super::gdl_literal::resolve(dir, d))
+        .filter_map(|d| crate::gdl_literal::resolve(dir, d))
         .filter(|d| !d.is_empty())
         .collect();
     if out.is_empty() {

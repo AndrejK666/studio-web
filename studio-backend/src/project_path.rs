@@ -33,7 +33,8 @@
 //! that is neither done nor unknown -- the one to look at; when it is merely
 //! to do, it is `current`.
 
-use crate::environments::path::{PathStep, ProjectPath, StepState as DeliveryState};
+use uuid::Uuid;
+
 use crate::organizations::status::{self, BuildFacts, Kits, ProductFacts, Step};
 use crate::plural::plural;
 
@@ -98,6 +99,38 @@ impl StageAction {
             label: label.to_owned(),
         }
     }
+}
+
+/// Where a delivery step stands, as the kit that delivers says it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeliveryState {
+    /// Nothing waits here.
+    Done,
+    /// Something runs: a build, a deploy.
+    Active,
+    /// The last attempt failed.
+    Failed,
+    /// Something is missing before it can go on.
+    Blocked,
+    /// The step to do now.
+    Next,
+    /// Waits for an earlier step.
+    Later,
+}
+
+/// One step of the delivery path, what stages 6-9 are decided from: the
+/// delivering kit (studio-environments' `path.rs`) hands its steps here in
+/// these words, so the core never names it (ADR-0079).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeliveryStep {
+    /// `product`, `build`, `image`, `environment`, `running`.
+    pub id: &'static str,
+    pub state: DeliveryState,
+    pub reason: String,
+    pub action: Option<StageAction>,
+    pub build_id: Option<String>,
+    pub environment_id: Option<Uuid>,
+    pub deployment_id: Option<Uuid>,
 }
 
 /// One stage of the path.
@@ -253,9 +286,9 @@ pub struct DeliveryFacts<'a> {
     pub check: Option<&'a CheckFacts>,
     /// The newest finished CI run on the main branch.
     pub ci: Option<&'a BuildFacts>,
-    /// The delivery path (path.rs): Studio's builds, images, environments,
+    /// The delivery path's steps (path.rs): Studio's builds, images, environments,
     /// deploys.
-    pub path: Option<&'a ProjectPath>,
+    pub path: Option<&'a [DeliveryStep]>,
 }
 
 /// Stage 5: the product configured (gears picked, resolving) and saved.
@@ -329,7 +362,7 @@ pub fn product_stage(
 }
 
 /// A delivery step (path.rs) as the stage `id`.
-fn from_delivery(id: &'static str, s: &PathStep) -> Stage {
+fn from_delivery(id: &'static str, s: &DeliveryStep) -> Stage {
     let state = match s.state {
         DeliveryState::Done => StageState::Done,
         DeliveryState::Active => StageState::Running,
@@ -343,17 +376,14 @@ fn from_delivery(id: &'static str, s: &PathStep) -> Stage {
         .map(|d| d.to_string())
         .or_else(|| s.build_id.clone())
         .or_else(|| s.environment_id.map(|e| e.to_string()));
-    stage.action = s.action.as_ref().map(|a| StageAction {
-        kind: a.kind.to_owned(),
-        label: a.label.clone(),
-    });
+    stage.action = s.action.clone();
     stage
 }
 
 /// Stage 6: Studio's newest build record when there is one (or what runs
 /// was built elsewhere), else the newest finished CI run on the main branch,
 /// else what the delivery path says.
-pub fn build_stage(step: Option<&PathStep>, ci: Option<&BuildFacts>) -> Stage {
+pub fn build_stage(step: Option<&DeliveryStep>, ci: Option<&BuildFacts>) -> Stage {
     if let Some(s) = step
         && (s.build_id.is_some() || s.state == DeliveryState::Done)
     {
@@ -386,7 +416,7 @@ pub fn build_stage(step: Option<&PathStep>, ci: Option<&BuildFacts>) -> Stage {
 
 /// Stages 5-9, the focus among them marked.
 pub fn delivery_stages(f: &DeliveryFacts) -> Vec<Stage> {
-    let step = |id: &str| f.path.and_then(|p| p.steps.iter().find(|s| s.id == id));
+    let step = |id: &str| f.path.and_then(|p| p.iter().find(|s| s.id == id));
     let mut out = vec![
         product_stage(f.product, f.revision, f.check),
         build_stage(step("build"), f.ci),

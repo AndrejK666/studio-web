@@ -1,10 +1,12 @@
-//! What a gear holds to record usage: a [`Usage`] handle.
+//! Where Studio's usage records go: this gear's [`UsageRecorder`] for the
+//! core's metering port (`crate::metering`), registered in the ClientHub at
+//! init, so a gear's [`Usage`] handle reaches it without naming this gear.
 //!
 //! Records go to the platform's `usage-collector` gear
 //! ([`UsageCollectorClientV1`] on the ClientHub), resolved when a record is
-//! made, not when the handle is: Studio gears share one crate, so the toolkit's
-//! `deps` cannot order a recording gear after the collector. An assembly
-//! without the collector records nothing, and says so once.
+//! made: Studio gears share one crate, so the toolkit's `deps` cannot order a
+//! recording gear after the collector. An assembly without the collector
+//! records nothing, and says so once.
 //!
 //! The usage types ([`super::types`]) are put in the collector's catalogue
 //! the first time anything is recorded, and again after a failure — the
@@ -19,60 +21,14 @@ use usage_collector_sdk::{UsageCollectorClientV1, UsageCollectorError};
 
 pub use super::port::{Payer, Runtime, SESSION_ITEM, Source, TokenCounts, UsageRecord};
 use super::types;
+pub use crate::metering::{Usage, UsageRecorder};
 
-/// Where records go. A seam, so a test can see what was recorded.
-#[async_trait]
-pub trait UsageRecorder: Send + Sync {
-    /// Keep `records`, as `ctx`: the collector asks the PDP whether `ctx` may
-    /// record in each record's tenant.
-    async fn record(&self, ctx: &SecurityContext, records: Vec<UsageRecord>) -> anyhow::Result<()>;
-}
-
-#[derive(Clone)]
-pub struct Usage(Arc<dyn UsageRecorder>);
-
-impl Usage {
-    /// The platform's usage collector, looked up per record.
-    pub fn new(hub: Arc<ClientHub>) -> Self {
-        Self(Arc::new(Collector {
-            hub,
-            catalogued: tokio::sync::OnceCell::new(),
-        }))
-    }
-
-    /// A given recorder — what a test reads back.
-    #[cfg(test)]
-    pub fn fixed(recorder: Arc<dyn UsageRecorder>) -> Self {
-        Self(recorder)
-    }
-
-    /// Records nothing.
-    #[cfg(test)]
-    pub fn none() -> Self {
-        Self(Arc::new(Nowhere))
-    }
-
-    pub async fn record(
-        &self,
-        ctx: &SecurityContext,
-        records: Vec<UsageRecord>,
-    ) -> anyhow::Result<()> {
-        if records.is_empty() {
-            return Ok(());
-        }
-        self.0.record(ctx, records).await
-    }
-}
-
-#[cfg(test)]
-struct Nowhere;
-
-#[cfg(test)]
-#[async_trait]
-impl UsageRecorder for Nowhere {
-    async fn record(&self, _: &SecurityContext, _: Vec<UsageRecord>) -> anyhow::Result<()> {
-        Ok(())
-    }
+/// The recorder this gear registers for the metering port.
+pub fn recorder(hub: Arc<ClientHub>) -> Arc<dyn UsageRecorder> {
+    Arc::new(Collector {
+        hub,
+        catalogued: tokio::sync::OnceCell::new(),
+    })
 }
 
 struct Collector {

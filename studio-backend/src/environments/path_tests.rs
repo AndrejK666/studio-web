@@ -329,3 +329,43 @@ fn a_gear_reading_the_path_as_itself_is_not_held_up_by_its_own_sign_in() {
     assert!(e.checklist.iter().all(|c| c.done));
     assert_eq!(step(&p, "running").state, StepState::Next);
 }
+
+/// The core's one path reads a step in its own words: state, reason, the
+/// ids it points at and the button, nothing lost on the way.
+#[test]
+fn a_step_reaches_the_projects_one_path_as_it_is() {
+    use crate::project_path::{DeliveryState, DeliveryStep};
+    let env = Uuid::from_u128(5);
+    let mut s = PathStep::new("environment", StepState::Blocked, "1 thing is missing.");
+    s.environment_id = Some(env);
+    s.build_id = Some("b-1".into());
+    s.action = Some(PathAction {
+        kind: "provide_secret",
+        label: "Provide it".into(),
+        ..PathAction::default()
+    });
+    let d = DeliveryStep::from(&s);
+    assert_eq!(d.id, "environment");
+    assert_eq!(d.state, DeliveryState::Blocked);
+    assert_eq!(d.reason, "1 thing is missing.");
+    assert_eq!(d.environment_id, Some(env));
+    assert_eq!(d.build_id.as_deref(), Some("b-1"));
+    assert_eq!(d.deployment_id, None);
+    let a = d.action.unwrap();
+    assert_eq!(
+        (a.kind.as_str(), a.label.as_str()),
+        ("provide_secret", "Provide it")
+    );
+    for (from, to) in [
+        (StepState::Done, DeliveryState::Done),
+        (StepState::Active, DeliveryState::Active),
+        (StepState::Failed, DeliveryState::Failed),
+        (StepState::Next, DeliveryState::Next),
+        (StepState::Later, DeliveryState::Later),
+    ] {
+        assert_eq!(
+            DeliveryStep::from(&PathStep::new("build", from, "")).state,
+            to
+        );
+    }
+}

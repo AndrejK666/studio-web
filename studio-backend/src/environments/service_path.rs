@@ -222,12 +222,14 @@ impl EnvironmentService {
             Some((product, check)) => (Some(product), check.as_ref()),
             None => (None, None),
         };
+        let steps: Vec<crate::project_path::DeliveryStep> =
+            delivery.steps.iter().map(Into::into).collect();
         let stages = crate::project_path::delivery_stages(&crate::project_path::DeliveryFacts {
             product,
             revision: facts.product_revision,
             check,
             ci: ci.as_ref(),
-            path: Some(&delivery),
+            path: Some(&steps),
         });
         Ok(PathView {
             organization_id: org,

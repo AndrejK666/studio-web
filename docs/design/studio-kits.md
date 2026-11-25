@@ -685,7 +685,7 @@ stay in the portal's build (`generated-mfe-manifests.json`).
 `mfe-manifest.json` (the FrontX manifest, entries, extensions, schemas — the
 same file the portal's build-time generator reads), `remoteEntry.js`,
 `assets/…` and `shared/…`. The passport is read by the same literal-only
-reader as every `kit.gdl` (`components_catalog/kit_gdl.rs`); `path("…")` reads
+reader as every `kit.gdl` (`kit_registry/kit_gdl.rs`); `path("…")` reads
 as the string it names.
 
 **Where the bytes come from.** A `BundleSource` (`bundles.rs`). Today:

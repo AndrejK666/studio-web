@@ -16,7 +16,6 @@ use crate::kit_registry::shelf::{Fetched, KitOrigin, SourceInput};
 
 const ORG: Uuid = Uuid::from_u128(0xc31d);
 
-#[cfg(feature = "theia-bridge")]
 #[tokio::test]
 async fn ide_source_stages_only_the_selected_kits_resources_and_refuses_missing_files() {
     let manifest = br#"

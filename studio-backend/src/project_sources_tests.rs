@@ -148,7 +148,7 @@ fn a_shared_connection_lends_its_token_to_the_clone() {
 /// upstream without a token, and nothing when it carries one.
 #[test]
 fn a_source_without_a_token_says_why() {
-    use crate::git_proxy::sources::NoToken;
+    use crate::project_sources::NoToken;
     assert_eq!(
         to_git_source(resolved(Some("studio-connection-1"), false)).no_token,
         None

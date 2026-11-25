@@ -172,7 +172,7 @@ impl Gear for StudioSessionGear {
         // here because the service it needs is built here.
         crate::tasks::sdk::register(Arc::new(reap_task::SessionReapTask::new(
             service.clone(),
-            crate::usage::sdk::Usage::new(ctx.client_hub()),
+            crate::metering::Usage::new(ctx.client_hub()),
         )))?;
 
         // Waiting for a session to answer is also a run — see

@@ -33,7 +33,7 @@ use async_trait::async_trait;
 use crate::tasks::sdk::{TaskContext, TaskHandler, TaskOutcome};
 
 use super::service::SessionService;
-use crate::usage::sdk::Usage;
+use crate::metering::Usage;
 
 /// Task type. A wire contract: stored on every queued run.
 pub const TASK_TYPE: &str = "session.reap";

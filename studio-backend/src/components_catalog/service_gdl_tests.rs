@@ -82,11 +82,11 @@ fn this_repositorys_service_passports_read() {
         };
         let s = read(&body).unwrap_or_else(|e| panic!("{dir}/{FILE}: {e}"));
         if let Some(dockerfile) = &s.dockerfile {
-            let path = super::gdl_literal::resolve(dir, dockerfile).unwrap();
+            let path = crate::gdl_literal::resolve(dir, dockerfile).unwrap();
             assert!(root.join(&path).exists(), "{dir}: {path} does not exist");
         }
         for doc in &s.docs {
-            let path = super::gdl_literal::resolve(dir, doc).unwrap();
+            let path = crate::gdl_literal::resolve(dir, doc).unwrap();
             assert!(root.join(&path).exists(), "{dir}: {path} does not exist");
         }
         read_any += 1;

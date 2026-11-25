@@ -14,8 +14,7 @@ use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
 use crate::connectors::{NOTIFY_SENDER_INSTANCE_ID, NotificationSender};
-#[cfg(feature = "theia-bridge")]
-use crate::studio_theia::sdk::{SessionTarget, TheiaControlClientV1};
+use crate::ide_bridge::IdeBridge;
 use crate::tasks::sdk::NewRun;
 use crate::tasks::{TASK_QUEUE_INSTANCE_ID, TaskQueue};
 
@@ -82,11 +81,11 @@ impl NotifyService {
             })
     }
 
-    /// The IDE bridge. Absent where `studio-theia` stood down — the gear is
-    /// dormant unless `studio-session.theia_control_enabled` is on.
-    #[cfg(feature = "theia-bridge")]
-    fn editor(&self) -> anyhow::Result<Arc<dyn TheiaControlClientV1>> {
-        self.hub.get::<dyn TheiaControlClientV1>().map_err(|_| {
+    /// The IDE bridge (the core's IDE port). Absent where `studio-theia`
+    /// stood down — the gear is dormant unless
+    /// `studio-session.theia_control_enabled` is on.
+    fn editor(&self) -> anyhow::Result<Arc<dyn IdeBridge>> {
+        self.hub.get::<dyn IdeBridge>().map_err(|_| {
             anyhow!(
                 "notifying an IDE is not available in this deployment \
                  (studio-theia is not wired — see `theia_control_enabled`)"
@@ -112,15 +111,25 @@ impl NotifyService {
     /// deployment with the bridge switched off are all answered here rather
     /// than becoming a dead letter nobody is watching. A toast is only worth
     /// queuing if somebody could see it.
-    #[cfg(feature = "theia-bridge")]
+    ///
+    /// A build without the bridge (ADR-0022's gear is behind the opt-in
+    /// `theia-bridge` feature) cannot reach any IDE. Said plainly, rather than
+    /// queuing a run that could only dead-letter.
     async fn editor_preflight(
         &self,
         ctx: &SecurityContext,
         workspace_id: Uuid,
     ) -> anyhow::Result<()> {
+        if !crate::ide_bridge::compiled_in() {
+            return Err(anyhow!(
+                "this build cannot notify the IDE for workspace {workspace_id}: studio-backend \
+                 was compiled without the `theia-bridge` feature. Send this to a chat \
+                 connection instead"
+            ));
+        }
         let status = self
             .editor()?
-            .get_runtime_status(ctx, &SessionTarget { workspace_id })
+            .status(ctx, workspace_id)
             .await
             .map_err(|e| {
                 anyhow!(
@@ -136,23 +145,6 @@ impl NotifyService {
             ));
         }
         Ok(())
-    }
-
-    /// The same preflight where the bridge is not linked: ADR-0022's gear is
-    /// behind the opt-in `theia-bridge` feature, and a build without it cannot
-    /// reach any IDE. Said plainly, rather than queuing a run that could only
-    /// dead-letter.
-    #[cfg(not(feature = "theia-bridge"))]
-    async fn editor_preflight(
-        &self,
-        _ctx: &SecurityContext,
-        workspace_id: Uuid,
-    ) -> anyhow::Result<()> {
-        Err(anyhow!(
-            "this build cannot notify the IDE for workspace {workspace_id}: studio-backend \
-             was compiled without the `theia-bridge` feature. Send this to a chat \
-             connection instead"
-        ))
     }
 
     /// Verify and queue one notification. Returns the run id.

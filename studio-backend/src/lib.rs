@@ -13,6 +13,7 @@ mod api_contract; // the mechanical half of docs/api-conventions.md, as a ratche
 mod artifact_ingest; // pull issues/PRs from a connector source into the graph as GTS nodes
 mod assembly; // studio-assembly: the gears this process linked, its build, its session image
 mod catalog_graph; // the catalogue graph: node vocabulary + store, shared by the catalogue and the product
+mod clone_outcomes; // how a clone of a project's source went: a core port its writers record through (#1071)
 mod components_catalog; // connector to crates.io: catalogue our published gears + versions in the graph
 mod connectors; // source connectors: driver plugins + tenant connection catalogue
 mod credstore_pg; // persistent credstore value store (issue #66)
@@ -22,15 +23,18 @@ mod derived_view; // what a gear computes from a project's synced repositories, 
 mod documents; // document management: types + templates + section-checklist validation
 mod domain_model; // store the Studio domain model as GTS types in the graph; create/extend objects
 mod environments; // studio-environments: an organization's deployment environments and deploys (ADR-0043)
+mod gdl_literal; // the literal subset of GDL a passport is written in, read without evaluating it
 mod gears_matcher; // the gears-matcher on the Studio side: the id mapping so far (ADR-0071)
 mod git_proxy; // studio-git: the Git remote a desktop session clones from (ADR-0027)
 mod graph_error; // a gear refusal said in full: CanonicalError plus its field violations
 mod gts_audit; // `gts-audit`: diff the live registries against that inventory (ADR-0013)
 mod gts_inventory; // every GTS document the assembly registers, built offline for the drift test
+mod ide_bridge; // a workspace's IDE as the core reaches it: a port the IDE kit's gear fills (ADR-0079)
 mod idempotency; // the Idempotency-Key request header every 202 operation takes, parsed once
 mod identity_directory; // platform-admin view of assigned and unassigned Keycloak identities
 mod insight; // integration seam to Constructor Insight (external decision-intelligence service)
 mod kit_registry; // Git-backed kit catalogue + project-scoped desired installations
+mod metering; // cost metering: what Studio meters and the port a use is recorded through (ADR-0079)
 mod model_metadata; // tenant documents a gear keeps (account-management metadata), held as domain objects
 mod model_sweep; // moves every tenant's records into (or back out of) the domain model at start
 // keycloak-idp-plugin is the official cf-gears-keycloak-idp-plugin (linked in
@@ -44,13 +48,16 @@ mod org_scope; // `?organization_id=`: a request acts in the organization it nam
 mod organizations; // studio-organizations: a person creates an organization and owns it (ADR-0018)
 mod outbox_repair; // bring pre-0.16 toolkit-db outboxes up to the schema 0.16 expects (gears-rust#5044)
 mod pagination; // one ?offset=&limit= contract + total for every list endpoint
+mod pg_text; // text PostgreSQL can store: no U+0000 in a jsonb or text column
 mod plural; // "1 document", "2 documents": a count with its noun, never "document(s)"
 mod presence; // studio-presence: who is in Studio now, and a note to reach them
 mod product; // studio-product: a project's product, its gear repository, and the Gearbox engine
+mod project_checkout; // a project's one checkout of each source, as the last sync left it: a core port the syncing kit fills
 mod project_path; // a project's one path, sources to running product: the stages every tab draws
 mod project_sources; // a project's repositories: one record, project.config sources[]
 mod registered_gears;
 mod reports; // studio-reports: report definitions, sources and drawing (ADR-0033)
+mod repository_synced; // who is told that a repository's sync finished: a core port the syncing kit calls
 mod research_emulator; // `research-emulator`: a stand-in for Constructor Research until Studio can reach one (ADR-0049)
 mod scheduler; // studio-scheduler: cron/interval schedules that enqueue into studio-tasks
 mod secrets_bootstrap; // self-heal for config-seeded credstore secrets at boot

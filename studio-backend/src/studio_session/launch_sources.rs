@@ -10,9 +10,9 @@
 //! A plain function, so the rule has its tests; `rest::create_session`
 //! resolves the tokens and hands the result to the service.
 
-use crate::artifact_ingest::port::CloneCause;
-use crate::git_proxy::sdk::{NoToken, Source};
+use crate::clone_outcomes::CloneCause;
 use crate::project_sources::same_repository;
+use crate::project_sources::{NoToken, Source};
 
 /// One source to launch with, before its token is resolved.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -218,7 +218,7 @@ fn note_launch_clones(
     clones: Vec<(String, super::launch_sources::LaunchClone)>,
 ) {
     use super::launch_sources::LaunchClone;
-    use crate::artifact_ingest::port::{
+    use crate::clone_outcomes::{
         CloneChannel, CloneFailure, CloneOutcome, CloneOutcomes, clone_order,
     };
 

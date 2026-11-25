@@ -95,10 +95,15 @@ impl Gear for StudioTheiaGear {
 
         // Publish the in-process client so other gears can drive the IDE
         // without going through HTTP themselves.
+        let client: Arc<dyn TheiaControlClientV1> =
+            Arc::new(TheiaControlLocalClient::new(service.clone()));
         ctx.client_hub()
-            .register::<dyn TheiaControlClientV1>(Arc::new(TheiaControlLocalClient::new(
-                service.clone(),
-            )));
+            .register::<dyn TheiaControlClientV1>(Arc::clone(&client));
+        // The core's IDE port: what studio-notify and studio-kits ask of it.
+        ctx.client_hub()
+            .register::<dyn crate::ide_bridge::IdeBridge>(Arc::new(
+                crate::studio_theia::ide_bridge::TheiaIdeBridge(client),
+            ));
 
         self.service
             .set(service)

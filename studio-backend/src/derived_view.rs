@@ -12,7 +12,7 @@
 //!   server's own clone of the repository (its `git log`). Never the
 //!   provider: fetching from the provider is the sync's job alone.
 //! - **When.** Every repository sync that finishes tells
-//!   `artifact_ingest::port::on_repository_synced`; [`RecomputeOnSync`] queues
+//!   `repository_synced::notify` (a core port the syncing kit calls); [`RecomputeOnSync`] queues
 //!   a `studio-tasks` run of each registered view for the project. A person
 //!   can ask for one too (the screen's ↻), and a project nobody computed yet
 //!   is queued by its first read. Runs of one view and project share a
@@ -531,16 +531,16 @@ pub struct RecomputeOnSync {
 impl RecomputeOnSync {
     /// Register `spec` to follow every repository sync.
     pub fn register(hub: Arc<ClientHub>, spec: &'static ViewSpec) {
-        crate::artifact_ingest::port::on_repository_synced(Arc::new(Self { hub, spec }));
+        crate::repository_synced::on_repository_synced(Arc::new(Self { hub, spec }));
     }
 }
 
 #[async_trait]
-impl crate::artifact_ingest::port::RepositorySynced for RecomputeOnSync {
+impl crate::repository_synced::RepositorySynced for RecomputeOnSync {
     async fn synced(
         &self,
         ctx: &SecurityContext,
-        repo: &crate::artifact_ingest::port::SyncedRepository,
+        repo: &crate::repository_synced::SyncedRepository,
     ) {
         let Some(project) = repo
             .project_id

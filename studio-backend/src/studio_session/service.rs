@@ -494,7 +494,7 @@ impl SessionService {
         &self,
         ctx: &SecurityContext,
         workspace_id: Uuid,
-    ) -> Vec<crate::git_proxy::sdk::Source> {
+    ) -> Vec<crate::project_sources::Source> {
         let client = {
             let guard = self.account_management.read().await;
             match guard.as_ref() {
@@ -1379,9 +1379,9 @@ impl SessionService {
     pub async fn usage_of_running(
         &self,
         now: time::OffsetDateTime,
-    ) -> anyhow::Result<Vec<crate::usage::sdk::UsageRecord>> {
+    ) -> anyhow::Result<Vec<crate::metering::UsageRecord>> {
         use super::metering::{Running, mebibytes, millicores, records_of};
-        let size = crate::usage::sdk::Runtime {
+        let size = crate::metering::Runtime {
             seconds: 0,
             cpu_millicores: millicores(&self.cfg.k8s_session_cpu_request).unwrap_or(0),
             memory_mib: mebibytes(&self.cfg.k8s_session_memory_request).unwrap_or(0),

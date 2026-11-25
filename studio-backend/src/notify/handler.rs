@@ -51,8 +51,7 @@ use uuid::Uuid;
 
 use crate::connectors::sdk::NotifyMessage;
 use crate::connectors::{NOTIFY_SENDER_INSTANCE_ID, NotificationSender};
-#[cfg(feature = "theia-bridge")]
-use crate::studio_theia::sdk::{NotifyEditor, SessionTarget, TheiaControlClientV1};
+use crate::ide_bridge::{EditorNote, IdeBridge};
 use crate::tasks::sdk::{TaskContext, TaskHandler, TaskOutcome};
 
 /// Task type. A wire contract: it is stored on every queued run, so renaming
@@ -96,13 +95,6 @@ pub struct DeliveryPayload {
     /// `info` | `warn` | `error`, for the editor destination. Normalized by the
     /// accept path, so anything unexpected here came from an older build.
     #[serde(default)]
-    #[cfg_attr(
-        not(feature = "theia-bridge"),
-        allow(
-            dead_code,
-            reason = "read by the editor destination, which needs the theia-bridge feature"
-        )
-    )]
     pub level: Option<String>,
     #[serde(default)]
     pub title: Option<String>,
@@ -324,32 +316,25 @@ impl DeliveryTask {
         }
     }
 
-    /// Show the message in a workspace's running IDE, through the studio-theia
-    /// control bridge.
-    #[cfg(not(feature = "theia-bridge"))]
-    async fn to_editor(
-        &self,
-        _ctx: &TaskContext,
-        workspace_id: Uuid,
-        _payload: DeliveryPayload,
-    ) -> TaskOutcome {
-        // The accept path refuses this build's IDE destinations, so a run that
-        // gets here was queued by a binary that had the bridge and delivered by
-        // one that does not. Permanent: this process will never grow it.
-        TaskOutcome::Failed(format!(
-            "studio-notify: this build cannot notify the IDE for workspace {workspace_id} \
-             — it was compiled without the `theia-bridge` feature"
-        ))
-    }
-
-    #[cfg(feature = "theia-bridge")]
+    /// Show the message in a workspace's running IDE, through the core's IDE
+    /// port (studio-theia's control bridge).
     async fn to_editor(
         &self,
         ctx: &TaskContext,
         workspace_id: Uuid,
         payload: DeliveryPayload,
     ) -> TaskOutcome {
-        let editor = match self.hub.get::<dyn TheiaControlClientV1>() {
+        if !crate::ide_bridge::compiled_in() {
+            // The accept path refuses this build's IDE destinations, so a run
+            // that gets here was queued by a binary that had the bridge and
+            // delivered by one that does not. Permanent: this process will
+            // never grow it.
+            return TaskOutcome::Failed(format!(
+                "studio-notify: this build cannot notify the IDE for workspace {workspace_id} \
+                 — it was compiled without the `theia-bridge` feature"
+            ));
+        }
+        let editor = match self.hub.get::<dyn IdeBridge>() {
             Ok(editor) => editor,
             // studio-theia stood down (the bridge is off in this deployment).
             // A deployment state, not a property of the message — and the
@@ -368,7 +353,7 @@ impl DeliveryTask {
             Some(title) => (title, Some(payload.text)),
             None => (payload.text, None),
         };
-        let request = NotifyEditor {
+        let note = EditorNote {
             level: payload.level.unwrap_or_else(|| "info".to_owned()),
             message,
             detail: detail.filter(|d| !d.trim().is_empty()),
@@ -376,11 +361,8 @@ impl DeliveryTask {
             source: Some("Studio".to_owned()),
         };
 
-        match editor
-            .notify_editor(&ctx.security, &SessionTarget { workspace_id }, &request)
-            .await
-        {
-            Ok(result) if result.shown => TaskOutcome::done_with(
+        match editor.notify(&ctx.security, workspace_id, &note).await {
+            Ok(true) => TaskOutcome::done_with(
                 format!("shown in the IDE for workspace {workspace_id}"),
                 serde_json::json!({ "shown": true, "workspace_id": workspace_id }),
             ),
@@ -509,5 +491,81 @@ mod tests {
         }))
         .unwrap();
         assert!(payload.bound().is_err());
+    }
+
+    /// The IDE port: an editor delivery reaches whatever bridge the IDE kit
+    /// registered, with the title as headline and the text beneath it.
+    #[tokio::test]
+    async fn an_editor_delivery_goes_through_the_registered_ide_bridge() {
+        use std::sync::Mutex;
+
+        use toolkit_security::SecurityContext;
+
+        use crate::ide_bridge::{IdeKitInstall, IdeKitInstalled, IdeRepository, IdeStatus};
+
+        #[derive(Default)]
+        struct Shown(Mutex<Vec<(Uuid, EditorNote)>>);
+
+        #[async_trait]
+        impl IdeBridge for Shown {
+            async fn status(&self, _: &SecurityContext, _: Uuid) -> anyhow::Result<IdeStatus> {
+                unreachable!("a delivery does not ask")
+            }
+            async fn notify(
+                &self,
+                _: &SecurityContext,
+                workspace_id: Uuid,
+                note: &EditorNote,
+            ) -> anyhow::Result<bool> {
+                self.0.lock().unwrap().push((workspace_id, note.clone()));
+                Ok(true)
+            }
+            async fn repositories(
+                &self,
+                _: &SecurityContext,
+                _: Uuid,
+            ) -> anyhow::Result<Vec<IdeRepository>> {
+                unreachable!("a delivery does not ask")
+            }
+            async fn install_kit(
+                &self,
+                _: &SecurityContext,
+                _: Uuid,
+                _: IdeKitInstall,
+            ) -> anyhow::Result<IdeKitInstalled> {
+                unreachable!("a delivery does not ask")
+            }
+        }
+
+        let workspace = Uuid::from_u128(0x77);
+        let hub = Arc::new(ClientHub::new());
+        let ctx = TaskContext::for_tests(
+            serde_json::json!({ "workspace_id": workspace, "title": "Build", "text": "green" }),
+            SecurityContext::builder()
+                .subject_id(Uuid::from_u128(0x5e))
+                .subject_tenant_id(Uuid::from_u128(0x0a))
+                .build()
+                .unwrap(),
+        );
+
+        // No bridge registered: a deployment state, retried.
+        let outcome = DeliveryTask::new(Arc::clone(&hub)).run(&ctx).await;
+        if !crate::ide_bridge::compiled_in() {
+            assert!(matches!(outcome, TaskOutcome::Failed(_)), "{outcome:?}");
+            return;
+        }
+        assert!(matches!(outcome, TaskOutcome::Retry(_)), "{outcome:?}");
+
+        let shown = Arc::new(Shown::default());
+        hub.register::<dyn IdeBridge>(shown.clone());
+        let outcome = DeliveryTask::new(hub).run(&ctx).await;
+        assert!(matches!(outcome, TaskOutcome::Done { .. }), "{outcome:?}");
+        let shown = shown.0.lock().unwrap();
+        assert_eq!(shown.len(), 1);
+        assert_eq!(shown[0].0, workspace);
+        assert_eq!(shown[0].1.message, "Build");
+        assert_eq!(shown[0].1.detail.as_deref(), Some("green"));
+        assert_eq!(shown[0].1.level, "info");
+        assert_eq!(shown[0].1.source.as_deref(), Some("Studio"));
     }
 }

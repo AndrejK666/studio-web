@@ -18,7 +18,7 @@ README is what you need to work in the directory.
   `docker` (default) or `kubernetes`.
 - Each `session.reap` pass first meters the running sessions
   (`metering.rs`): every completed five-minute window, at the requested pod
-  size, recorded with the platform's `usage-collector` through `crate::usage`
+  size, recorded with the platform's `usage-collector` through the core's metering port (`crate::metering`)
   (issue #781).
 - Registers the `session.await_ready` and `session.reap` handlers with
   [`../tasks`](../tasks), and asks [`../scheduler`](../scheduler) for the
