@@ -326,3 +326,21 @@ fn another_service_s_address_is_research_s() {
     assert_eq!(r("SITE", "https://postgres.com/"), None);
     assert_eq!(r("TIME", "12:30"), None);
 }
+
+#[test]
+fn a_url_in_a_server_s_configuration_names_research_s_host() {
+    let names: BTreeSet<String> = ["api-gateway".to_owned(), "postgres".to_owned()].into();
+    let r = |t: &str| readdress_text(t, &names, "shop-dev");
+    assert_eq!(
+        r("location /api/ { proxy_pass http://api-gateway:8087; }").as_deref(),
+        Some("location /api/ { proxy_pass http://svc-api-gateway:8087; }")
+    );
+    assert_eq!(
+        r("a http://api-gateway.shop-dev.svc.cluster.local/v1\nb postgres://u:p@postgres:5432/db\n")
+            .as_deref(),
+        Some("a http://svc-api-gateway/v1\nb postgres://u:p@svc-postgres:5432/db\n")
+    );
+    assert_eq!(r("proxy_pass http://example.com:8087;"), None);
+    assert_eq!(r("proxy_pass http://api-gateway.other:8087;"), None);
+    assert_eq!(r("no url here"), None);
+}
