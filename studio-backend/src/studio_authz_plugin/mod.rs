@@ -1410,7 +1410,7 @@ mod tests {
     const TENANT: Uuid = Uuid::from_u128(0x7e1a);
     const SUBJECT: Uuid = Uuid::from_u128(0x5ab1);
 
-    fn request(resource_type: &str) -> EvaluationRequest {
+    pub(super) fn request(resource_type: &str) -> EvaluationRequest {
         EvaluationRequest {
             subject: Subject {
                 id: SUBJECT,
@@ -2269,6 +2269,16 @@ mod selection_tests {
             );
         }
     }
+}
+
+/// A target tenant the request names (`?tenant=`), and service rules.
+#[cfg(test)]
+mod target_tests {
+    use authz_resolver_sdk::{EvaluationRequest, TenantContext};
+    use uuid::Uuid;
+
+    use super::tests::request;
+    use super::*;
 
     /* ── A target tenant the request names (`?tenant=`) ── */
 

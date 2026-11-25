@@ -153,7 +153,10 @@ mod tests {
     #[test]
     fn the_graph_resources_are_graph_storages() {
         use graph_storage_sdk::gts::{EDGE_RESOURCE, NODE_RESOURCE, TYPE_RESOURCE};
-        assert_eq!(GRAPH_RESOURCES, [NODE_RESOURCE, EDGE_RESOURCE, TYPE_RESOURCE]);
+        assert_eq!(
+            GRAPH_RESOURCES,
+            [NODE_RESOURCE, EDGE_RESOURCE, TYPE_RESOURCE]
+        );
     }
 
     #[test]
