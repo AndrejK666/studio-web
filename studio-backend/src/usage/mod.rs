@@ -26,6 +26,9 @@ mod service;
 
 mod reader;
 
+/// The Spend block of an organization's Overview (ADR-0079 §4).
+pub mod overview_block;
+
 pub mod port;
 pub mod sdk;
 pub mod types;

@@ -1098,9 +1098,10 @@ async fn list_rollups(
 // ── The organization's overview ──────────────────────────────────────────────
 
 /// What an organization's leaders ask of it, for one organization, over the
-/// last 30 days against the same days a month earlier. Every money field is
-/// null unless the caller holds `cost.view`; every other null means that
-/// source could not be asked, never zero.
+/// last 30 days against the same days a month earlier. What a kit knows
+/// (spend, pull requests, specs, the component registry) is that kit's block
+/// in `blocks` (ADR-0079); a null means that source could not be asked,
+/// never zero.
 #[derive(Debug, Clone)]
 #[toolkit_macros::api_dto(response)]
 pub struct OrganizationOverviewDto {
@@ -1118,47 +1119,25 @@ pub struct OrganizationOverviewDto {
     pub stuck_days: u32,
     pub growth_alert: f64,
     pub quiet_days: u32,
-    /// `shown`, `hidden` (the caller may not see costs) or `unreadable`.
-    pub costs: String,
-    /// What waits on the organization's leaders, the most urgent first.
+    /// What waits on the organization's leaders and is the organization's
+    /// own (refused connections, failed runs), the most urgent first. A
+    /// kit's needs are in its block.
     pub needs: Vec<OverviewNeedDto>,
-    /// Null unless `costs` is `shown`.
-    pub spend: Option<OverviewSpendDto>,
-    pub delivery: OverviewDeliveryDto,
-    pub specs: OverviewSpecsDto,
+    /// The blocks of the kits installed for the organization, in their
+    /// order: each a tile, needs and the kit's figures.
+    pub blocks: Vec<super::blocks::OverviewBlockDto>,
     pub people: OverviewPeopleDto,
     /// The workspaces, the one in most trouble first, each with its projects.
     pub workspaces: Vec<OverviewWorkspaceDto>,
-    /// Where the money goes: every grouping, with and without people's own
-    /// keys, so a screen switches between them without asking again. Null
-    /// unless `costs` is `shown`.
-    pub money: Option<Vec<OverviewMoneyDto>>,
-    /// Who the stuck pull requests wait on, longest queue first. Null when no
-    /// pull request could be read.
-    pub waiting_on: Option<Vec<OverviewQueueDto>>,
-    /// The stuck pull requests in the queue without a reviewer.
-    pub pulls_without_reviewers: Option<Vec<OverviewPullDto>>,
+    /// The currency the workspaces' and projects' spend is in; null without spend.
+    pub currency: Option<String>,
     /// Failures from the same recent runs used to compute the alert.
     pub recent_failures: Option<Vec<OverviewRunFailureDto>>,
-    /// The component registry's open decisions. Null when it could not be read.
-    pub decisions: Option<OverviewDecisionsDto>,
     /// The kits installed for the whole organization that the answer was
-    /// computed for (ADR-0070 §7): a need of a kit not among them is not
-    /// listed, and without `project-git` the pull-request parts (`delivery`'s
-    /// counts, `waiting_on`, each place's `stuck`) are null or zero. Null when
-    /// the installed kits could not be read, and nothing was left out.
+    /// computed for (ADR-0070 §7): a block of a kit not among them is not
+    /// there. Null when the installed kits could not be read, and nothing
+    /// was left out.
     pub kits: Option<Vec<String>>,
-}
-
-#[derive(Debug, Clone)]
-#[toolkit_macros::api_dto(response)]
-pub struct OverviewPullDto {
-    pub id: String,
-    pub number: i64,
-    pub title: String,
-    pub url: Option<String>,
-    pub project: Option<String>,
-    pub quiet_days: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -1170,10 +1149,9 @@ pub struct OverviewRunFailureDto {
     pub created_at: String,
 }
 
-/// One thing that waits on the organization's leaders. `kind` says which
-/// fields are set: `connection` (`provider`, `status`, `projects`, `repos`),
-/// `spend` (`current`, `previous`, `forecast`, `grower`), `pulls` (`pulls`,
-/// `people`), `components` (`components`), `runs` (`runs`).
+/// One thing that waits on the organization's leaders and is the
+/// organization's own. `kind` says which fields are set: `connection`
+/// (`provider`, `status`, `projects`, `repos`), `runs` (`runs`).
 #[derive(Debug, Clone, Default)]
 #[toolkit_macros::api_dto(response)]
 pub struct OverviewNeedDto {
@@ -1186,61 +1164,7 @@ pub struct OverviewNeedDto {
     /// The names of the projects a refused connection stops.
     pub projects: Vec<String>,
     pub repos: Option<u32>,
-    pub current: Option<f64>,
-    pub previous: Option<f64>,
-    pub forecast: Option<f64>,
-    /// The project whose spend grew the most.
-    pub grower: Option<String>,
-    pub pulls: Option<u32>,
-    pub people: Option<u32>,
-    pub components: Option<u32>,
     pub runs: Option<u32>,
-    /// The kit the need is read for and whose screen answers it
-    /// (`project-git` for stuck pull requests, `org-costs` for spend,
-    /// `components` for the registry's decisions); null for the shell's own
-    /// (a refused connection, failed runs). A need of a kit not installed for
-    /// the organization is not listed.
-    pub kit: Option<String>,
-}
-
-/// The organization's spend. People's own keys are never in it: `own_keys`
-/// says what they spent on top.
-#[derive(Debug, Clone)]
-#[toolkit_macros::api_dto(response)]
-pub struct OverviewSpendDto {
-    pub currency: String,
-    pub has_prices: bool,
-    pub current: f64,
-    pub previous: f64,
-    /// Where this month ends at its pace so far.
-    pub forecast: f64,
-    pub own_keys: f64,
-    /// Of `current`: what members' sign-ins spent, what subjects no active
-    /// member signs in with spent, and IDE sessions, which name nobody.
-    pub attributed: f64,
-    pub unattributed: f64,
-    pub sessions: f64,
-    /// `provider/model` (or `session`) used without a price: counted, not priced.
-    pub unpriced: Vec<String>,
-}
-
-#[derive(Debug, Clone)]
-#[toolkit_macros::api_dto(response)]
-pub struct OverviewDeliveryDto {
-    /// Pull requests merged over the last `window_days` days.
-    pub merged: Option<u32>,
-    pub window_days: u32,
-    pub open: Option<u32>,
-    /// The middle open pull request's age, in days, drafts left out.
-    pub median_wait_days: Option<f64>,
-}
-
-#[derive(Debug, Clone)]
-#[toolkit_macros::api_dto(response)]
-pub struct OverviewSpecsDto {
-    pub specs: Option<u32>,
-    pub failing: Option<u32>,
-    pub open_findings: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -1248,12 +1172,9 @@ pub struct OverviewSpecsDto {
 pub struct OverviewPeopleDto {
     /// Active members.
     pub active: Option<u32>,
-    /// Members who used a model in the period. Null without costs.
-    pub with_spend: Option<u32>,
-    /// `spend.attributed` over `with_spend`. Null without costs.
-    pub per_person: Option<f64>,
-    /// Members with no model use and no open pull request they wrote or
-    /// review. Null without costs or members.
+    /// Members no kit's block saw at work in the period (no model use, no
+    /// open pull request they wrote or review). Null when no block watches
+    /// people, one could not tell, or the members could not be read.
     pub idle: Option<Vec<OverviewPersonDto>>,
 }
 
@@ -1309,51 +1230,6 @@ pub struct OverviewProjectDto {
 pub struct OverviewReasonDto {
     pub kind: String,
     pub value: Option<f64>,
-}
-
-#[derive(Debug, Clone)]
-#[toolkit_macros::api_dto(response)]
-pub struct OverviewMoneyDto {
-    /// `project`, `person`, `model`, `source` or `payer`.
-    pub group_by: String,
-    pub include_personal: bool,
-    pub rows: Vec<OverviewMoneyRowDto>,
-}
-
-/// One row of a breakdown. By person, `key` is the member's person id,
-/// `unattributed` for subjects no active member signs in with, and empty for
-/// IDE sessions.
-#[derive(Debug, Clone)]
-#[toolkit_macros::api_dto(response)]
-pub struct OverviewMoneyRowDto {
-    pub key: String,
-    /// The project's or person's name where the key is one.
-    pub label: Option<String>,
-    pub cost: f64,
-    pub previous: f64,
-    pub unpriced: bool,
-}
-
-#[derive(Debug, Clone)]
-#[toolkit_macros::api_dto(response)]
-pub struct OverviewQueueDto {
-    /// The member, when the account is one of the organization's people.
-    pub person_id: Option<String>,
-    /// Their name, else the account; null for pull requests nobody was asked
-    /// to review.
-    pub who: Option<String>,
-    pub count: u32,
-    pub oldest_days: u32,
-}
-
-#[derive(Debug, Clone)]
-#[toolkit_macros::api_dto(response)]
-pub struct OverviewDecisionsDto {
-    /// Candidates and declared entries: waiting for the organization to decide.
-    pub undecided: u32,
-    pub candidates: u32,
-    pub registered: u32,
-    pub published: u32,
 }
 
 async fn get_organization_overview(

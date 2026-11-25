@@ -16,7 +16,6 @@ kit_registry -> components_catalog
 kit_registry -> studio_theia
 notify -> studio_theia
 organizations -> artifact_ingest
-organizations -> components_catalog
 organizations -> documents
 organizations -> environments
 organizations -> insight

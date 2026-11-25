@@ -12,6 +12,8 @@
 //! resumed (see `service`).
 
 mod access_grants;
+/// The core's Overview port: kits' blocks on an organization's Overview (ADR-0079).
+mod blocks;
 #[cfg(test)]
 pub(crate) use access_grants::{
     ChangeError as AccessChangeError, save_document as save_access_document,

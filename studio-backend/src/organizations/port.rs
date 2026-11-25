@@ -51,3 +51,9 @@ impl ProjectsOf for TenantTreeProjects {
         super::rollups::projects_of(self.am.as_ref(), ctx, org).await
     }
 }
+
+/// The Overview port (ADR-0079 §4): what a kit's gear registers to put a
+/// block on an organization's Overview, and what it is given to compute it.
+pub use super::blocks::*;
+/// How many days a project's activity counts look back.
+pub use super::rollups::ACTIVITY_DAYS;

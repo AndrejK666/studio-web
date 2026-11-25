@@ -3,67 +3,58 @@
 //! The organization's overview answers four questions before anything else:
 //! what is on fire and waits on them, where (by workspace, then project),
 //! whether money grows and who grows it, and whether work moves. The portal
-//! used to compose that itself — the rollups, the costs four times, the open
-//! pull requests of every workspace, the background runs, the members and the
-//! component registry, around ten requests across six gears — and stitched the
-//! answers together with rules of its own. Those rules are here now, stated as
-//! tests, and the portal draws one answer.
+//! used to compose that itself -- around ten requests across six gears -- and
+//! stitched the answers together with rules of its own. Those rules are here
+//! now, stated as tests, and the portal draws one answer.
+//!
+//! **The core knows no kit (ADR-0079).** What a kit knows -- spend, pull
+//! requests, specs, the component registry -- is the kit's **block**
+//! (`blocks.rs`): its gear registers it, and this module asks the blocks of
+//! the kits installed for the organization and returns them in `blocks`.
+//! What stays here is the organization's own: its tree, its members, its
+//! background runs, and the rules that read every block's signals.
 //!
 //! ── The rules ──────────────────────────────────────────────────────────────
-//!
-//! **Spend is the last 30 days against the same 30 days a month earlier**,
-//! UTC days as the Costs report counts them, today included; the month-end
-//! forecast is this month so far at its own pace. People's own keys are shown
-//! apart and never in the organization's spend.
 //!
 //! **A refused connection is the newest run of a repository failing with
 //! 401 or 403.** A repository that failed and synced since is fine; a rate
 //! limit is said with a 403 too and passes by itself, so it is not one.
 //!
-//! **A pull request is stuck after [`STUCK_DAYS`] days without a move.** A
-//! draft waits on nobody yet.
+//! **A project's health** reads its row (failing specs, findings, quiet
+//! days), its refused connections, and what the blocks signal for it: spend
+//! growing and stuck work.
 //!
-//! **Spend is a member's when the token subject that made the call is one of
-//! their sign-ins.** Anything else — a subject no active member signs in with,
-//! a session (the runtime does not say who) — is unattributed, counted and
-//! said, never dropped. Members with no attributed spend and no open pull
-//! request they wrote or review in the period are idle.
+//! **Members nobody saw at work are idle**: no block that watches people saw
+//! them in the period. When a block that would say could not tell (costs
+//! hidden from the caller), nobody is called idle.
 //!
-//! **What cannot be read is unknown, never zero** — the rollups' rule. Costs
-//! are read only for a caller holding `cost.view`; without it every money
-//! field is null and the rest of the answer is the same.
+//! **What cannot be read is unknown, never zero** -- the rollups' rule.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
 use time::{Date, Duration, Month, OffsetDateTime, UtcOffset};
-use toolkit::client_hub::{ClientHub, ClientScope};
+use toolkit::client_hub::ClientHub;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
+use super::blocks::{
+    self, Activity, BlockAnswer, BlockAt, BlockScope, Level, OverviewBlock, OverviewBlockDto,
+};
 use super::rollups::{ORGANIZATION_TENANT_TYPE, Rollup, RollupKind, Sources};
-use super::status::{GIT_KIT, Kits};
-use crate::artifact_ingest::port::{OpenPull, OpenPullRequests};
+use super::status::Kits;
 use crate::tasks::{RecentRuns, RunSummary};
-use crate::usage::port::Payer;
-use crate::usage::{Fact, FactKind, GroupBy, OrganizationUsage, PricedUsage};
-use crate::user_profile::{MemberAliases, RosterMember};
+use crate::user_profile::RosterMember;
 
-/// A pull request waiting this many days without a move is stuck.
+/// A pull request is stuck after this many days without a move.
 pub const STUCK_DAYS: u32 = 7;
-/// The kit whose Costs screen answers a growing spend.
-pub const COSTS_KIT: &str = "org-costs";
-/// The kit whose registry screen answers the components to decide.
-pub const COMPONENTS_KIT: &str = "components";
-/// Spend growing by this share against the same days last month is news.
+/// Spend growing by this share or more is news.
 pub const GROWTH_ALERT: f64 = 0.2;
-/// A project with no activity for this many days is quiet.
+/// A project is quiet after this many days without activity.
 pub const QUIET_DAYS: u32 = 14;
-/// The newest runs read per tenant to find a refused connection.
+/// Background runs read per tenant.
 const RUNS_PER_TENANT: u64 = 100;
-/// Where unattributed spend goes in a by-person breakdown.
-pub const UNATTRIBUTED: &str = "unattributed";
-/// The alias kinds a pull request's accounts are read as people through.
+/// The account kinds a login is looked up as.
 pub(super) const ACCOUNT_KINDS: [&str; 2] = ["github", "gitlab"];
 
 // ── Periods ──────────────────────────────────────────────────────────────────
@@ -127,14 +118,6 @@ pub fn windows(now: OffsetDateTime) -> Windows {
 /// was nothing before to grow from.
 pub fn growth(current: f64, previous: f64) -> Option<f64> {
     (previous > 0.0).then(|| (current - previous) / previous)
-}
-
-/// Where the month ends at this month's pace so far.
-pub fn forecast(month_to_date: f64, elapsed_days: u32, month_days: u32) -> f64 {
-    if elapsed_days == 0 {
-        return month_to_date;
-    }
-    month_to_date / f64::from(elapsed_days) * f64::from(month_days)
 }
 
 // ── Refused connections ──────────────────────────────────────────────────────
@@ -260,82 +243,6 @@ pub fn other_failures(runs: &[RunSummary]) -> u32 {
     u32::try_from(n).unwrap_or(u32::MAX)
 }
 
-// ── Work that does not move ─────────────────────────────────────────────────
-
-fn idle_days(p: &OpenPull) -> u32 {
-    p.days_since_update.or(p.days_open).unwrap_or(0)
-}
-
-/// Open pull requests waiting on someone for `days` or more without a move.
-pub fn stuck(pulls: &[OpenPull], days: u32) -> Vec<&OpenPull> {
-    pulls
-        .iter()
-        .filter(|p| p.waiting != "draft" && idle_days(p) >= days)
-        .collect()
-}
-
-/// A person a pull request waits on, as the overview names them.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Queue {
-    /// The member, when the account is one of the organization's people.
-    pub person_id: Option<String>,
-    /// Their name, else the account; `None` for "nobody asked to review".
-    pub who: Option<String>,
-    pub count: u32,
-    pub oldest_days: u32,
-}
-
-/// A member an account is: their person id and the name their profile carries.
-pub type Member = (String, Option<String>);
-
-/// Who the stuck pull requests wait on, longest queue first. `member` reads an
-/// account as `(person, name)`.
-pub fn waiting_on(stuck: &[&OpenPull], member: &dyn Fn(&str) -> Option<Member>) -> Vec<Queue> {
-    let mut out: Vec<Queue> = Vec::new();
-    let mut add = |person_id: Option<String>, who: Option<String>, days: u32| {
-        let same = |q: &&mut Queue| match (&person_id, &q.person_id) {
-            (Some(a), Some(b)) => a == b,
-            (None, None) => q.who == who,
-            _ => false,
-        };
-        match out.iter_mut().find(|q| same(q)) {
-            Some(q) => {
-                q.count += 1;
-                q.oldest_days = q.oldest_days.max(days);
-            }
-            None => out.push(Queue {
-                person_id,
-                who,
-                count: 1,
-                oldest_days: days,
-            }),
-        }
-    };
-    for p in stuck {
-        let days = idle_days(p);
-        if p.waiting == "nobody" {
-            add(None, None, days);
-        }
-        for login in &p.waiting_on {
-            match member(login) {
-                Some((person, name)) => add(
-                    Some(person),
-                    Some(name.unwrap_or_else(|| login.clone())),
-                    days,
-                ),
-                None => add(None, Some(login.clone()), days),
-            }
-        }
-    }
-    out.sort_by(|a, b| {
-        b.count
-            .cmp(&a.count)
-            .then(b.oldest_days.cmp(&a.oldest_days))
-            .then(a.who.cmp(&b.who))
-    });
-    out
-}
-
 /// The middle value; `None` for none.
 pub fn median(values: &[u32]) -> Option<f64> {
     if values.is_empty() {
@@ -358,149 +265,14 @@ pub fn days_since(at: Option<&str>, now: OffsetDateTime) -> Option<u32> {
     u32::try_from(d).ok()
 }
 
-// ── Spend, attributed to members ─────────────────────────────────────────────
+// ── People ───────────────────────────────────────────────────────────────────
 
-/// Every sign-in subject of the organization's active members, to the person.
-pub fn subjects_of(members: &[RosterMember]) -> HashMap<String, String> {
-    members
-        .iter()
-        .flat_map(|m| m.subjects.iter().map(|s| (s.clone(), m.person.clone())))
-        .collect()
-}
-
-/// Whose a fact is: a member's person id, [`UNATTRIBUTED`] for a subject no
-/// active member signs in with, `""` for a session (nobody in particular).
-pub fn owner_of(fact: &Fact, subjects: &HashMap<String, String>) -> String {
-    match (fact.kind, fact.person) {
-        (FactKind::Session, _) | (_, None) => String::new(),
-        (_, Some(subject)) => subjects
-            .get(&subject.to_string())
-            .cloned()
-            .unwrap_or_else(|| UNATTRIBUTED.to_owned()),
-    }
-}
-
-/// One row of a breakdown: now, before, and whether part had no price.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct MoneyRow {
-    pub key: String,
-    pub cost: f64,
-    pub previous: f64,
-    pub unpriced: bool,
-}
-
-/// One period folded by `group`; by person through the members.
-fn fold(
-    usage: &PricedUsage,
-    group: GroupBy,
-    include_personal: bool,
-    subjects: &HashMap<String, String>,
-) -> BTreeMap<String, (f64, bool)> {
-    if group != GroupBy::Person {
-        return usage
-            .report(group, include_personal)
-            .rows
-            .into_iter()
-            .map(|r| (r.key, (r.cost, r.unpriced)))
-            .collect();
-    }
-    let mut out: BTreeMap<String, (f64, bool)> = BTreeMap::new();
-    for f in &usage.facts {
-        if !include_personal && f.payer == Some(Payer::Personal) {
-            continue;
-        }
-        let row = out.entry(owner_of(f, subjects)).or_default();
-        match usage.cost_of(f) {
-            Some(c) => row.0 += c,
-            None => row.1 = true,
-        }
-    }
-    out
-}
-
-/// Two periods side by side, biggest spend first. A key spent on in only one
-/// of them is still a row: what stopped costing is news too.
-pub fn breakdown(
-    current: &PricedUsage,
-    previous: &PricedUsage,
-    group: GroupBy,
-    include_personal: bool,
-    subjects: &HashMap<String, String>,
-) -> Vec<MoneyRow> {
-    let mut rows: BTreeMap<String, MoneyRow> = BTreeMap::new();
-    for (key, (cost, unpriced)) in fold(current, group, include_personal, subjects) {
-        rows.insert(
-            key.clone(),
-            MoneyRow {
-                key,
-                cost,
-                previous: 0.0,
-                unpriced,
-            },
-        );
-    }
-    for (key, (cost, _)) in fold(previous, group, include_personal, subjects) {
-        rows.entry(key.clone())
-            .or_insert_with(|| MoneyRow {
-                key,
-                ..MoneyRow::default()
-            })
-            .previous += cost;
-    }
-    let mut rows: Vec<MoneyRow> = rows.into_values().collect();
-    rows.sort_by(|a, b| {
-        b.cost
-            .total_cmp(&a.cost)
-            .then(b.previous.total_cmp(&a.previous))
-            .then(a.key.cmp(&b.key))
-    });
-    rows
-}
-
-/// What a period's spend says about people.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct Attribution {
-    /// Members who used a model in the period, own keys included.
-    pub spenders: BTreeSet<String>,
-    /// The organization's spend (own keys left out) that is a member's.
-    pub attributed: f64,
-    /// The rest of it: subjects no active member signs in with.
-    pub unattributed: f64,
-    /// Sessions, which name nobody.
-    pub sessions: f64,
-}
-
-pub fn attribute(usage: &PricedUsage, subjects: &HashMap<String, String>) -> Attribution {
-    let mut out = Attribution::default();
-    for f in &usage.facts {
-        let owner = owner_of(f, subjects);
-        if !owner.is_empty() && owner != UNATTRIBUTED && f.kind == FactKind::Llm {
-            out.spenders.insert(owner.clone());
-        }
-        if f.payer == Some(Payer::Personal) {
-            continue;
-        }
-        let cost = usage.cost_of(f).unwrap_or(0.0);
-        match owner.as_str() {
-            "" => out.sessions += cost,
-            UNATTRIBUTED => out.unattributed += cost,
-            _ => out.attributed += cost,
-        }
-    }
-    out
-}
-
-/// Active members with no model use and no open pull request they wrote or
-/// review: `active` are the people whose accounts show up on pull requests.
-pub fn idle(
-    members: &[RosterMember],
-    spenders: &BTreeSet<String>,
-    active: &BTreeSet<String>,
-) -> Vec<String> {
+/// Active members no block saw at work in the period.
+pub fn idle(members: &[RosterMember], active: &BTreeSet<String>) -> Vec<String> {
     members
         .iter()
         .map(|m| m.person.clone())
-        .filter(|p| !spenders.contains(p) && !active.contains(p))
+        .filter(|p| !active.contains(p))
         .collect()
 }
 
@@ -693,7 +465,8 @@ pub fn workspace_health(rows: &[Row], h: &HealthInputs<'_>) -> Vec<WorkspaceHeal
 
 // ── What waits on the organization's leader ─────────────────────────────────
 
-/// One thing that needs the leader, for the portal to word.
+/// One thing that needs the leader and is the organization's own, for the
+/// portal to word. What a kit knows waits in its block's needs.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Need {
     Refused {
@@ -701,19 +474,6 @@ pub enum Need {
         status: &'static str,
         projects: Vec<String>,
         repos: u32,
-    },
-    SpendGrows {
-        current: f64,
-        previous: f64,
-        forecast: f64,
-        grower: Option<String>,
-    },
-    Stuck {
-        pulls: u32,
-        people: u32,
-    },
-    Decide {
-        components: u32,
     },
     RunsFailed {
         runs: u32,
@@ -723,16 +483,10 @@ pub enum Need {
 pub struct NeedInputs<'a> {
     pub broken: &'a [Broken],
     pub project_names: &'a BTreeMap<String, String>,
-    /// Spend now, before and the forecast, and who grows most; `None` when
-    /// costs are not the caller's to see.
-    pub spend: Option<(f64, f64, f64, Option<String>)>,
-    pub stuck: u32,
-    pub waiting_on: u32,
-    pub undecided: u32,
     pub other_failures: u32,
 }
 
-/// Refused connections first, then money, then stuck work and decisions.
+/// Refused connections first, then failed runs.
 pub fn needs(n: &NeedInputs<'_>) -> Vec<Need> {
     let mut out = Vec::new();
     for b in n.broken {
@@ -747,27 +501,6 @@ pub fn needs(n: &NeedInputs<'_>) -> Vec<Need> {
             repos: u32::try_from(b.repos.len()).unwrap_or(u32::MAX),
         });
     }
-    if let Some((current, previous, forecast, grower)) = &n.spend
-        && growth(*current, *previous).is_some_and(|g| g >= GROWTH_ALERT)
-    {
-        out.push(Need::SpendGrows {
-            current: *current,
-            previous: *previous,
-            forecast: *forecast,
-            grower: grower.clone(),
-        });
-    }
-    if n.stuck > 0 {
-        out.push(Need::Stuck {
-            pulls: n.stuck,
-            people: n.waiting_on,
-        });
-    }
-    if n.undecided > 0 {
-        out.push(Need::Decide {
-            components: n.undecided,
-        });
-    }
     if n.other_failures > 0 {
         out.push(Need::RunsFailed {
             runs: n.other_failures,
@@ -778,32 +511,19 @@ pub fn needs(n: &NeedInputs<'_>) -> Vec<Need> {
 
 // ── Reading it ───────────────────────────────────────────────────────────────
 
-/// The organization's spend over the three periods.
-pub struct Spend {
-    pub current: PricedUsage,
-    pub previous: PricedUsage,
-    pub month: PricedUsage,
-}
-
 /// Everything the overview is computed from, as read.
 pub struct Read {
     pub name: String,
     pub rows: Vec<Row>,
     pub members: Option<Vec<RosterMember>>,
     pub names: BTreeMap<String, String>,
-    pub registry: Option<Vec<String>>,
     pub runs: Option<Vec<RunSummary>>,
-    pub pulls: Option<Vec<OpenPull>>,
-    /// Account (lowercased) to `(person, name)`.
-    pub accounts: BTreeMap<String, Member>,
-    /// `None` when the caller may not see costs; `Some(Err)` when they may
-    /// and the read failed.
-    pub spend: Option<Result<Spend, String>>,
     pub windows: Windows,
-    /// The kits that apply to the whole organization. Without project-git
-    /// the pull requests are not read and their parts of the answer are
-    /// null (ADR-0070 §7); the other blocks stay.
+    /// The kits that apply to the whole organization: a block of a kit not
+    /// among them was not asked (ADR-0070 §7, ADR-0079).
     pub kits: Kits,
+    /// The kits' blocks, in their order.
+    pub blocks: Vec<(&'static OverviewBlock, BlockAnswer)>,
 }
 
 #[derive(Debug)]
@@ -922,9 +642,10 @@ impl Overview {
     /// From the overview the caller already has when there is one; otherwise
     /// from the project's rollup row, the runs of the organization, the
     /// project's workspace and the project (where its repositories' runs are
-    /// recorded), and the project's open pull requests. Kept a minute per
-    /// (project, caller), as the overview is. Spend plays no part in the line
-    /// `project-status` reads, so it is not read.
+    /// recorded), and the signals the kits' blocks give for it alone
+    /// ([`BlockAt::health_only`]). Kept a minute per (project, caller), as
+    /// the overview is. Spend plays no part in the line `project-status`
+    /// reads, so it is not read.
     pub async fn project_health(
         &self,
         ctx: &SecurityContext,
@@ -967,32 +688,45 @@ impl Overview {
             all.sort_by_key(|r| std::cmp::Reverse(r.created_at));
             all
         };
-        let pulls = async {
-            let Ok(source) = self.hub.get::<dyn OpenPullRequests>() else {
-                return Vec::new();
+        let row = row_of(project);
+        let rows = [row.clone()];
+        let at = BlockAt {
+            organization: org,
+            windows: windows(now),
+            now,
+            health_only: true,
+        };
+        let signals = async {
+            let kits = self.kits(ctx, org).await;
+            let applicable = blocks::applicable(Level::Organization, &kits);
+            let prepared = blocks::prepare_all(&applicable, &self.hub, ctx, &at).await;
+            let (places, names) = (BTreeMap::new(), BTreeMap::new());
+            let scope = BlockScope {
+                at: &at,
+                organization_name: "",
+                rows: &rows,
+                places: &places,
+                members: None,
+                names: &names,
             };
-            source.open_pulls_in(ctx, &[project.id.to_string()]).await
+            let answers = blocks::answer_all(&applicable, prepared, &self.hub, ctx, &scope).await;
+            blocks::merge(answers.into_iter().map(|(_, a)| a.signals))
         };
-        let (kits, runs, pulls) = tokio::join!(self.kits(ctx, org), runs, pulls);
-        // Pull requests are project-git's: without it nobody waits on one.
-        let pulls = if kits.has(Some(GIT_KIT)) {
-            pulls
-        } else {
-            Vec::new()
-        };
+        let (runs, signals) = tokio::join!(runs, signals);
         let key = project.id.to_string();
         let broken: BTreeSet<String> = broken_connections(&runs)
             .into_iter()
             .flat_map(|b| b.projects)
             .filter(|p| *p == key)
             .collect();
-        let stuck_here = stuck(&pulls, STUCK_DAYS)
+        let stuck_by: BTreeMap<String, u32> = signals
+            .stuck
+            .unwrap_or_default()
             .into_iter()
-            .filter(|p| p.project_id.as_deref() == Some(key.as_str()))
-            .count();
-        let stuck_by = BTreeMap::from([(key, count(stuck_here))]);
+            .filter(|(k, _)| *k == key)
+            .collect();
         let line = project_health(
-            &row_of(project),
+            &row,
             workspace,
             &HealthInputs {
                 spend: None,
@@ -1076,15 +810,20 @@ impl Overview {
     ) -> Read {
         let windows = windows(now);
         let kits = self.kits(ctx, org).await;
-        let git = kits.has(Some(GIT_KIT));
+        let applicable = blocks::applicable(Level::Organization, &kits);
+        let at = BlockAt {
+            organization: org,
+            windows,
+            now,
+            health_only: false,
+        };
+        let started = std::time::Instant::now();
 
-        // Three independent strands, read side by side: the organization's
-        // tree with everything that hangs off its projects, the registry, and
-        // the spend. Within the first, each read starts as soon as what it
-        // needs is in: the roster feeds both the teams and the names, the
-        // rows feed the runs and the pull requests, and the pull requests
-        // feed whose accounts they are.
-        let people_and_work = async {
+        // The blocks' own reads start beside the tree's. Within the tree, each
+        // read starts as soon as what it needs is in: the roster feeds both
+        // the rows and the names; the rows feed the runs and the blocks'
+        // answers, read side by side.
+        let tree = async {
             let members = match &self.sources.roster {
                 Some(roster) => roster.active_members(org).await.ok(),
                 None => None,
@@ -1099,93 +838,53 @@ impl Overview {
                     _ => BTreeMap::new(),
                 }
             };
-            let work = async {
-                let rows: Vec<Row> = self
-                    .sources
+            let rows = async {
+                self.sources
                     .organization_with(ctx, org, members.clone())
                     .await
                     .iter()
                     .map(row_of)
-                    .collect();
-                let projects: Vec<Uuid> = rows
-                    .iter()
-                    .filter(|r| r.workspace.is_some())
-                    .map(|r| r.id)
-                    .collect();
-                let mut tenants = vec![org];
-                tenants.extend(rows.iter().map(|r| r.id));
-                let runs = async {
-                    let source = self.hub.get::<dyn RecentRuns>().ok()?;
-                    let reads = futures_util::future::join_all(
-                        tenants
-                            .iter()
-                            .map(|t| source.recent_runs(*t, RUNS_PER_TENANT)),
-                    )
-                    .await;
-                    let mut all: Vec<RunSummary> =
-                        reads.into_iter().filter_map(Result::ok).flatten().collect();
-                    all.sort_by_key(|r| std::cmp::Reverse(r.created_at));
-                    Some(all)
-                };
-                let pulls_and_accounts = async {
-                    let pulls = async {
-                        // Pull requests are project-git's: not read without it.
-                        if !git {
-                            return None;
-                        }
-                        let source = self.hub.get::<dyn OpenPullRequests>().ok()?;
-                        // One read for every project, not one per project.
-                        let scopes: Vec<String> = projects.iter().map(Uuid::to_string).collect();
-                        Some(source.open_pulls_in(ctx, &scopes).await)
-                    }
-                    .await;
-                    let accounts = self
-                        .accounts(org, pulls.as_deref().unwrap_or_default())
-                        .await;
-                    (pulls, accounts)
-                };
-                let (runs, (pulls, accounts)) = tokio::join!(runs, pulls_and_accounts);
-                (rows, runs, pulls, accounts)
+                    .collect::<Vec<Row>>()
             };
-            let (names, (rows, runs, pulls, accounts)) = tokio::join!(names, work);
-            (members, names, rows, runs, pulls, accounts)
+            let (names, rows) = tokio::join!(names, rows);
+            (members, names, rows)
         };
-        let registry = async {
-            let registry = self
-                .hub
-                .get::<dyn crate::components_catalog::port::Registry>()
-                .ok()?;
-            registry
-                .entries(ctx, org)
-                .await
-                .ok()
-                .map(|es| es.into_iter().map(|e| e.entry.state).collect::<Vec<_>>())
+        let (prepared, (members, names, rows)) = tokio::join!(
+            blocks::prepare_all(&applicable, &self.hub, ctx, &at),
+            tree
+        );
+        let places = places_of(org, &name, &rows);
+        let runs = async {
+            let source = self.hub.get::<dyn RecentRuns>().ok()?;
+            let mut tenants = vec![org];
+            tenants.extend(rows.iter().map(|r| r.id));
+            let reads = futures_util::future::join_all(
+                tenants
+                    .iter()
+                    .map(|t| source.recent_runs(*t, RUNS_PER_TENANT)),
+            )
+            .await;
+            let mut all: Vec<RunSummary> =
+                reads.into_iter().filter_map(Result::ok).flatten().collect();
+            all.sort_by_key(|r| std::cmp::Reverse(r.created_at));
+            Some(all)
         };
-        let spend = async {
-            let usage = self.hub.get::<dyn OrganizationUsage>().ok()?;
-            if !usage.may_view(ctx, org).await {
-                return None;
-            }
-            let (current, previous, month) = tokio::join!(
-                usage.usage(ctx, org, windows.current.from, windows.current.to),
-                usage.usage(ctx, org, windows.previous.from, windows.previous.to),
-                usage.usage(ctx, org, windows.month.from, windows.month.to),
-            );
-            Some(match (current, previous, month) {
-                (Ok(current), Ok(previous), Ok(month)) => Ok(Spend {
-                    current,
-                    previous,
-                    month,
-                }),
-                (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => Err(format!("{e:#}")),
-            })
+        let answers = async {
+            let scope = BlockScope {
+                at: &at,
+                organization_name: &name,
+                rows: &rows,
+                places: &places,
+                members: members.as_deref(),
+                names: &names,
+            };
+            blocks::answer_all(&applicable, prepared, &self.hub, ctx, &scope).await
         };
-        let started = std::time::Instant::now();
-        let ((members, names, rows, runs, pulls, accounts), registry, spend) =
-            tokio::join!(people_and_work, registry, spend);
+        let (runs, blocks) = tokio::join!(runs, answers);
         tracing::info!(
             %org,
             rows = rows.len(),
+            blocks = blocks.len(),
             elapsed_ms = started.elapsed().as_millis(),
             "organizations: overview read"
         );
@@ -1194,94 +893,38 @@ impl Overview {
             rows,
             members,
             names,
-            registry,
             runs,
-            pulls,
-            accounts,
-            spend,
             windows,
             kits,
+            blocks,
         }
     }
+}
 
-    /// The pull requests' accounts that are the organization's people.
-    async fn accounts(&self, org: Uuid, pulls: &[OpenPull]) -> BTreeMap<String, Member> {
-        let mut out = BTreeMap::new();
-        let Ok(directory) = self
-            .hub
-            .get_scoped::<dyn MemberAliases>(&ClientScope::gts_id(
-                crate::user_profile::IDENTITY_INSTANCE_ID,
-            ))
-        else {
-            return out;
-        };
-        let logins: Vec<String> = pulls
-            .iter()
-            .flat_map(|p| p.author.iter().chain(&p.waiting_on).chain(&p.reviewers))
-            .cloned()
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect();
-        if logins.is_empty() {
-            return out;
-        }
-        // One lookup per kind, asked together; merged in the kinds' order, so
-        // a login known under both is still the first kind's.
-        let found = futures_util::future::join_all(
-            ACCOUNT_KINDS
-                .iter()
-                .map(|kind| directory.members_by_alias(org, kind, &logins)),
-        )
-        .await;
-        for found in found.into_iter().filter_map(Result::ok) {
-            for (login, m) in found {
-                out.entry(login).or_insert((m.person, m.display_name));
-            }
-        }
-        out
-    }
+/// Names of every tenant a figure can be keyed by.
+fn places_of(org: Uuid, name: &str, rows: &[Row]) -> BTreeMap<String, String> {
+    let mut places: BTreeMap<String, String> = rows
+        .iter()
+        .map(|r| (r.id.to_string(), r.name.clone()))
+        .collect();
+    places.insert(org.to_string(), name.to_owned());
+    places
 }
 
 // ── The answer ───────────────────────────────────────────────────────────────
 
 use super::rest::{
-    OrganizationOverviewDto, OverviewDecisionsDto, OverviewDeliveryDto, OverviewMoneyDto,
-    OverviewMoneyRowDto, OverviewNeedDto, OverviewPeopleDto, OverviewPersonDto, OverviewProjectDto,
-    OverviewPullDto, OverviewQueueDto, OverviewReasonDto, OverviewRunFailureDto, OverviewSpecsDto,
-    OverviewSpendDto, OverviewWorkspaceDto,
+    OrganizationOverviewDto, OverviewNeedDto, OverviewPeopleDto, OverviewPersonDto,
+    OverviewProjectDto, OverviewReasonDto, OverviewRunFailureDto, OverviewWorkspaceDto,
 };
-
-const GROUPS: [(GroupBy, &str); 5] = [
-    (GroupBy::Project, "project"),
-    (GroupBy::Person, "person"),
-    (GroupBy::Model, "model"),
-    (GroupBy::Source, "source"),
-    (GroupBy::Payer, "payer"),
-];
 
 fn rfc3339(t: OffsetDateTime) -> String {
     t.format(&time::format_description::well_known::Rfc3339)
         .unwrap_or_default()
 }
 
-fn sum_u32(vs: impl Iterator<Item = Option<u32>>) -> Option<u32> {
-    vs.fold(None, |acc, v| match (acc, v) {
-        (None, None) => None,
-        (a, v) => Some(a.unwrap_or(0) + v.unwrap_or(0)),
-    })
-}
-
 fn count(n: usize) -> u32 {
     u32::try_from(n).unwrap_or(u32::MAX)
-}
-
-fn by_tenant(usage: &PricedUsage) -> BTreeMap<String, f64> {
-    usage
-        .report(GroupBy::Project, false)
-        .rows
-        .into_iter()
-        .map(|r| (r.key, r.cost))
-        .collect()
 }
 
 fn need_dto(need: Need) -> OverviewNeedDto {
@@ -1298,36 +941,6 @@ fn need_dto(need: Need) -> OverviewNeedDto {
             status: Some(status.into()),
             projects,
             repos: Some(repos),
-            ..OverviewNeedDto::default()
-        },
-        Need::SpendGrows {
-            current,
-            previous,
-            forecast,
-            grower,
-        } => OverviewNeedDto {
-            kind: "spend".into(),
-            tone: "warn".into(),
-            current: Some(current),
-            previous: Some(previous),
-            forecast: Some(forecast),
-            grower,
-            kit: Some(COSTS_KIT.into()),
-            ..OverviewNeedDto::default()
-        },
-        Need::Stuck { pulls, people } => OverviewNeedDto {
-            kind: "pulls".into(),
-            tone: "warn".into(),
-            pulls: Some(pulls),
-            people: Some(people),
-            kit: Some(GIT_KIT.into()),
-            ..OverviewNeedDto::default()
-        },
-        Need::Decide { components } => OverviewNeedDto {
-            kind: "components".into(),
-            tone: "warn".into(),
-            components: Some(components),
-            kit: Some(COMPONENTS_KIT.into()),
             ..OverviewNeedDto::default()
         },
         Need::RunsFailed { runs } => OverviewNeedDto {
@@ -1356,23 +969,7 @@ fn reason_dto(r: &Reason) -> OverviewReasonDto {
 /// Everything read, folded into the answer by the rules above.
 pub fn compose(org: Uuid, read: &Read, now: OffsetDateTime) -> OrganizationOverviewDto {
     let w = read.windows;
-    let subjects = read.members.as_deref().map(subjects_of).unwrap_or_default();
-    // Names of every tenant a cost can be keyed by.
-    let mut places: BTreeMap<String, String> = read
-        .rows
-        .iter()
-        .map(|r| (r.id.to_string(), r.name.clone()))
-        .collect();
-    places.insert(org.to_string(), read.name.clone());
-    let spend = match &read.spend {
-        Some(Ok(s)) => Some(s),
-        _ => None,
-    };
-    let costs = match &read.spend {
-        None => "hidden",
-        Some(Ok(_)) => "shown",
-        Some(Err(_)) => "unreadable",
-    };
+    let places = places_of(org, &read.name, &read.rows);
 
     let runs = read.runs.as_deref().unwrap_or_default();
     let broken = broken_connections(runs);
@@ -1381,150 +978,38 @@ pub fn compose(org: Uuid, read: &Read, now: OffsetDateTime) -> OrganizationOverv
         .flat_map(|b| b.projects.iter().cloned())
         .collect();
 
-    let git = read.kits.has(Some(GIT_KIT));
-    let pulls = read.pulls.as_deref().filter(|_| git).unwrap_or_default();
-    let stuck_pulls = stuck(pulls, STUCK_DAYS);
-    let mut stuck_by: BTreeMap<String, u32> = BTreeMap::new();
-    for p in &stuck_pulls {
-        if let Some(id) = &p.project_id {
-            *stuck_by.entry(id.clone()).or_default() += 1;
-        }
-    }
-    let member_of = |login: &str| read.accounts.get(&login.to_ascii_lowercase()).cloned();
-    let queues = waiting_on(&stuck_pulls, &member_of);
-    let people_waited = count(queues.iter().filter(|q| q.who.is_some()).count());
-
-    let current_by = spend.map(|s| by_tenant(&s.current));
-    let previous_by = spend.map(|s| by_tenant(&s.previous));
+    let signals = blocks::merge(read.blocks.iter().map(|(_, a)| a.signals.clone()));
+    let stuck_by = signals.stuck.clone().unwrap_or_default();
     let health = workspace_health(
         &read.rows,
         &HealthInputs {
-            spend: current_by.as_ref(),
-            previous: previous_by.as_ref(),
+            spend: signals.spend.as_ref(),
+            previous: signals.previous.as_ref(),
             stuck: &stuck_by,
             broken: &broken_projects,
             now,
         },
     );
-
-    let spend_dto = spend.map(|s| {
-        let current = s.current.report(GroupBy::Payer, false);
-        let with_own = s.current.report(GroupBy::Payer, true);
-        let previous = s.previous.report(GroupBy::Payer, false).total;
-        let month = s.month.report(GroupBy::Payer, false).total;
-        let who = attribute(&s.current, &subjects);
-        OverviewSpendDto {
-            currency: s.current.currency.clone(),
-            has_prices: s.current.has_prices(),
-            current: current.total,
-            previous,
-            forecast: forecast(month, w.elapsed_days, w.month_days),
-            own_keys: (with_own.total - current.total).max(0.0),
-            attributed: who.attributed,
-            unattributed: who.unattributed,
-            sessions: who.sessions,
-            unpriced: with_own.unpriced,
-        }
-    });
-
-    let grower = match (&current_by, &previous_by) {
-        (Some(cur), Some(prev)) => cur
-            .iter()
-            .map(|(k, c)| (k, c - prev.get(k).copied().unwrap_or(0.0)))
-            .filter(|(_, d)| *d > 0.0)
-            .max_by(|a, b| a.1.total_cmp(&b.1))
-            .map(|(k, _)| places.get(k).cloned().unwrap_or_else(|| k.clone())),
-        _ => None,
-    };
-    let registry = read.registry.as_deref();
-    let states = |s: &str| {
-        count(
-            registry
-                .unwrap_or_default()
-                .iter()
-                .filter(|x| *x == s)
-                .count(),
-        )
-    };
-    let undecided = states("candidate");
     let needs = needs(&NeedInputs {
         broken: &broken,
         project_names: &places,
-        spend: spend_dto
-            .as_ref()
-            .map(|s| (s.current, s.previous, s.forecast, grower.clone())),
-        stuck: count(stuck_pulls.len()),
-        waiting_on: people_waited,
-        undecided,
         other_failures: other_failures(runs),
     });
-
-    let projects: Vec<&Row> = read.rows.iter().filter(|r| r.workspace.is_some()).collect();
-    let open_ages: Vec<u32> = pulls
-        .iter()
-        .filter(|p| p.waiting != "draft")
-        .filter_map(|p| p.days_open)
-        .collect();
-
-    let people = match (spend, read.members.as_deref()) {
-        (Some(s), Some(members)) => {
-            let who = attribute(&s.current, &subjects);
-            let on_pulls: BTreeSet<String> = pulls
-                .iter()
-                .flat_map(|p| p.author.iter().chain(&p.waiting_on).chain(&p.reviewers))
-                .filter_map(|login| member_of(login).map(|(person, _)| person))
-                .collect();
-            let with_spend = count(who.spenders.len());
-            OverviewPeopleDto {
-                active: Some(count(members.len())),
-                with_spend: Some(with_spend),
-                per_person: (with_spend > 0).then(|| who.attributed / f64::from(with_spend)),
-                idle: Some(
-                    idle(members, &who.spenders, &on_pulls)
-                        .into_iter()
-                        .map(|person| OverviewPersonDto {
-                            name: read.names.get(&person).cloned(),
-                            person_id: person,
-                        })
-                        .collect(),
-                ),
-            }
-        }
-        (_, members) => OverviewPeopleDto {
-            active: members.map(|m| count(m.len())),
-            with_spend: None,
-            per_person: None,
-            idle: None,
+    let people = OverviewPeopleDto {
+        active: read.members.as_ref().map(|m| count(m.len())),
+        idle: match (&signals.activity, read.members.as_deref()) {
+            (Activity::Seen(active), Some(members)) => Some(
+                idle(members, active)
+                    .into_iter()
+                    .map(|person| OverviewPersonDto {
+                        name: read.names.get(&person).cloned(),
+                        person_id: person,
+                    })
+                    .collect(),
+            ),
+            _ => None,
         },
     };
-
-    let money = spend.map(|s| {
-        let mut out = Vec::new();
-        for (group, name) in GROUPS {
-            for include_personal in [false, true] {
-                let rows = breakdown(&s.current, &s.previous, group, include_personal, &subjects)
-                    .into_iter()
-                    .map(|r| OverviewMoneyRowDto {
-                        label: match group {
-                            GroupBy::Project => places.get(&r.key).cloned(),
-                            GroupBy::Person => read.names.get(&r.key).cloned(),
-                            _ => None,
-                        },
-                        key: r.key,
-                        cost: r.cost,
-                        previous: r.previous,
-                        unpriced: r.unpriced,
-                    })
-                    .collect();
-                out.push(OverviewMoneyDto {
-                    group_by: name.into(),
-                    include_personal,
-                    rows,
-                });
-            }
-        }
-        out
-    });
 
     OrganizationOverviewDto {
         organization_id: org.to_string(),
@@ -1536,39 +1021,18 @@ pub fn compose(org: Uuid, read: &Read, now: OffsetDateTime) -> OrganizationOverv
         stuck_days: STUCK_DAYS,
         growth_alert: GROWTH_ALERT,
         quiet_days: QUIET_DAYS,
-        costs: costs.into(),
-        needs: needs
-            .into_iter()
-            .map(need_dto)
-            .filter(|n| read.kits.has(n.kit.as_deref()))
+        needs: needs.into_iter().map(need_dto).collect(),
+        blocks: read
+            .blocks
+            .iter()
+            .map(|(b, a)| OverviewBlockDto::of(b, a.clone()))
             .collect(),
-        spend: spend_dto,
-        // Pull requests are project-git's: without it the block is unknown.
-        delivery: if git {
-            OverviewDeliveryDto {
-                merged: sum_u32(projects.iter().map(|r| r.pulls_merged)),
-                window_days: count(super::rollups::ACTIVITY_DAYS),
-                open: sum_u32(projects.iter().map(|r| r.pulls_open)),
-                median_wait_days: median(&open_ages),
-            }
-        } else {
-            OverviewDeliveryDto {
-                merged: None,
-                window_days: count(super::rollups::ACTIVITY_DAYS),
-                open: None,
-                median_wait_days: None,
-            }
-        },
         kits: match &read.kits {
             Kits::All => None,
             Kits::Only(kits) => Some(kits.clone()),
         },
-        specs: OverviewSpecsDto {
-            specs: sum_u32(projects.iter().map(|r| r.specs)),
-            failing: sum_u32(projects.iter().map(|r| r.specs_failing)),
-            open_findings: sum_u32(projects.iter().map(|r| r.open_findings)),
-        },
         people,
+        currency: signals.currency.clone(),
         workspaces: health
             .into_iter()
             .map(|ws| OverviewWorkspaceDto {
@@ -1600,34 +1064,6 @@ pub fn compose(org: Uuid, read: &Read, now: OffsetDateTime) -> OrganizationOverv
                     .collect(),
             })
             .collect(),
-        money,
-        waiting_on: read.pulls.as_ref().filter(|_| git).map(|_| {
-            queues
-                .into_iter()
-                .map(|q| OverviewQueueDto {
-                    person_id: q.person_id,
-                    who: q.who,
-                    count: q.count,
-                    oldest_days: q.oldest_days,
-                })
-                .collect()
-        }),
-        pulls_without_reviewers: read.pulls.as_ref().filter(|_| git).map(|_| {
-            let mut rows: Vec<_> = stuck_pulls
-                .iter()
-                .filter(|p| p.waiting == "nobody")
-                .map(|p| OverviewPullDto {
-                    id: p.id.clone(),
-                    number: p.number,
-                    title: p.title.clone(),
-                    url: p.url.clone(),
-                    project: p.project_id.as_ref().and_then(|id| places.get(id)).cloned(),
-                    quiet_days: idle_days(p),
-                })
-                .collect();
-            rows.sort_by_key(|p| std::cmp::Reverse(p.quiet_days));
-            rows
-        }),
         recent_failures: read.runs.as_ref().map(|runs| {
             let mut recent: Vec<_> = runs.iter().filter(|r| is_other_failure(r)).collect();
             recent.sort_by_key(|r| std::cmp::Reverse(r.created_at));
@@ -1640,12 +1076,6 @@ pub fn compose(org: Uuid, read: &Read, now: OffsetDateTime) -> OrganizationOverv
                     created_at: rfc3339(r.created_at),
                 })
                 .collect()
-        }),
-        decisions: registry.map(|_| OverviewDecisionsDto {
-            undecided,
-            candidates: states("candidate"),
-            registered: states("registered"),
-            published: states("published"),
         }),
     }
 }
