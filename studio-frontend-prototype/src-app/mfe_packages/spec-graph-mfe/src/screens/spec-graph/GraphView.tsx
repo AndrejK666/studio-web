@@ -16,10 +16,12 @@ import type { GraphNode, Neighbors, SearchHit } from '../../api/types';
 import { kindOf, label, side, type Side } from '../../model/graph';
 import { useSpecGraphTranslations } from '../../i18n';
 import styles from './SpecGraphScreen.module.css';
+import { refusalText } from '@constructor-studio/mfe-shared';
 
 type Text = ReturnType<typeof useSpecGraphTranslations>['t'];
 
-const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+// The gear's own sentence (a 503 names what to configure), not the transport's status line.
+const message = (e: unknown) => refusalText(e) ?? (e instanceof Error ? e.message : String(e));
 const fit = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
 const ROW = 34;

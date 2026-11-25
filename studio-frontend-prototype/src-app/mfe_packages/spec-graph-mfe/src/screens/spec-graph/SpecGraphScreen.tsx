@@ -19,7 +19,7 @@ import {
   FRONTX_SHARED_PROPERTY_THEME,
 } from '@gears-frontx/react';
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Skeleton } from '@gears-frontx/ui-kit';
-import { STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT, useScreenAvailability } from '@constructor-studio/mfe-shared';
+import { STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT, refusalText, useScreenAvailability } from '@constructor-studio/mfe-shared';
 import { SpecGraphApiService } from '../../api/SpecGraphApiService';
 import type { Decision, DocumentFindings, Finding, SpecGraphProject } from '../../api/types';
 import { counts, documentsInOrder, place, without } from '../../model/findings';
@@ -51,7 +51,8 @@ interface Reading {
   dismissed: number;
 }
 
-const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+// The gear's own sentence (a 503 names what to configure), not the transport's status line.
+const message = (e: unknown) => refusalText(e) ?? (e instanceof Error ? e.message : String(e));
 
 function useTheme(bridge: ChildMfeBridge): string {
   const read = () => {

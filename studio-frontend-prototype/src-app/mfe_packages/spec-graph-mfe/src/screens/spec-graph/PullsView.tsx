@@ -20,6 +20,7 @@ import { place, plainThread } from '../../model/findings';
 import { pullsOf } from '../../model/pulls';
 import { useSpecGraphTranslations } from '../../i18n';
 import styles from './SpecGraphScreen.module.css';
+import { refusalText } from '@constructor-studio/mfe-shared';
 
 type Text = ReturnType<typeof useSpecGraphTranslations>['t'];
 
@@ -27,7 +28,8 @@ const ENDED = ['succeeded', 'failed', 'cancelled', 'interrupted'];
 /** How many 25 s waits a model review is followed for: about twenty minutes. */
 const MAX_WAITS = 48;
 
-const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+// The gear's own sentence (a 503 names what to configure), not the transport's status line.
+const message = (e: unknown) => refusalText(e) ?? (e instanceof Error ? e.message : String(e));
 
 interface Pending {
   pull: OpenPullRequest;
