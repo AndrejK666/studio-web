@@ -1,0 +1,86 @@
+# The spec-graph service: the Spec graph kit's engine (studio-spec-graph, ADR-0071 kit `spec-graph`).
+# It builds a project's documents into a typed graph in graph-storage (the project's tenant), runs
+# the deterministic rules and the model judges, and reviews pull requests. Called by the Studio
+# backend, inside the cluster only (no ingress). A release of its own, beside Studio's (`studio`),
+# so Studio's deployments neither need nor touch it. The image is built outside this repository
+# (Docker Hub `vasylcf/spec-graph`); its settings are documented with it.
+#
+# What it reads and does not create:
+# - its keys, in the Secret `existingSecret`, made by the operator:
+#     NS_API_KEY              the bearer token the backend sends to this service: the same value as
+#                             Studio's appSecrets `spec_graph_secret` (`nsq_` + 40 random characters)
+#     NS_GRAPH_CLIENT_SECRET  the secret of the Keycloak client `studio.clientId` (client_credentials)
+#                             it reads and writes graph-storage as, in projects whose organization
+#                             has the Spec graph kit
+#     NS_OPENAI_KEY           optional: the model runs (contradictions, realization, status, a review
+#                             with the model); without it the deterministic check and review still work
+#   A changed Secret is read on the next Pod start: bump `secretRevision` (any digest) to roll it.
+#
+# Studio's side: backend.specGraph.url http://spec-graph:<port>, backend.specGraph.gitUrl = the same
+# gateway as `studio.gatewayUrl` (the service clones a project's sources through the Git proxy there,
+# with the caller's token), appSecrets spec_graph_secret.
+
+image:
+  repository: vasylcf/spec-graph
+  tag: ""                  # REQUIRED: a published tag, e.g. 0.1.0
+  pullPolicy: IfNotPresent
+
+port: 8099
+
+existingSecret: studio-spec-graph
+secretRevision: ""
+
+# Studio as this Pod reaches it.
+studio:
+  # The gateway with its /cf prefix: graph-storage (?tenant=<project>) and the Git proxy. REQUIRED.
+  gatewayUrl: ""
+  # Keycloak's token endpoint of Studio's realm, for this service's own token. REQUIRED.
+  tokenUrl: ""
+  clientId: spec-graph
+  # A ConfigMap with `ca.pem`, only when the token endpoint's certificate is private.
+  caConfigMap: ""
+
+# More settings of the service, e.g. NS_RUN_SLOTS (runs at once), NS_REVIEW_TAU.
+extraEnv: {}
+
+# One volume: the keys' hashes, the registered projects, their clones, the runs and the labels.
+# ReadWriteOnce (a Cinder volume is attached to one node): one replica, Recreate. Kept when the
+# release is uninstalled.
+persistence:
+  size: 10Gi
+  storageClass: ""         # empty leaves it to the cluster default
+  existingClaim: ""
+
+resources:
+  requests: { cpu: 100m, memory: 512Mi }
+  # Not measured on the cluster yet: raise it if a run is OOM-killed.
+  limits: { memory: 2Gi }
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile: { type: RuntimeDefault }
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  capabilities: { drop: ["ALL"] }
+
+# Only the Studio backend's Pods may call it, as for gears-matcher: it runs paid model work for
+# whoever holds the key. NetworkPolicies add up, so a namespace that allows all traffic from within
+# itself still does, and the key is then the gate. Egress is not restricted: it reaches Studio's
+# gateway, Keycloak and the model provider.
+networkPolicy:
+  enabled: true
+  backendPodLabels:
+    app.kubernetes.io/name: studio-web
+    app.kubernetes.io/instance: studio
+    app.kubernetes.io/component: backend
+
+imagePullSecrets: []
+nodeSelector: {}
+tolerations: []
+affinity: {}
+nameOverride: ""
+fullnameOverride: ""

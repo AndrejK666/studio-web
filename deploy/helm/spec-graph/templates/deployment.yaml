@@ -1,0 +1,95 @@
+{{- $gateway := required "studio.gatewayUrl: Studio's gateway with /cf, as this pod reaches it" .Values.studio.gatewayUrl -}}
+{{- $tag := required "image.tag: a published tag of the image" .Values.image.tag -}}
+{{- $token := required "studio.tokenUrl: Keycloak's token endpoint of Studio's realm" .Values.studio.tokenUrl -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "spec-graph.fullname" . }}
+  labels: {{- include "spec-graph.labels" . | nindent 4 }}
+spec:
+  # One replica: state is files on one ReadWriteOnce volume, and a run is a thread of the
+  # process and its subprocesses. Recreate, so two pods never want the volume at once.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: {{- include "spec-graph.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "spec-graph.selectorLabels" . | nindent 8 }}
+      annotations:
+        # A new value rolls the Pod, which reads the Secret again.
+        spec-graph/secret-revision: {{ .Values.secretRevision | quote }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: spec-graph
+          image: "{{ .Values.image.repository }}:{{ $tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext: {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.port }}
+          env:
+            - name: NS_GRAPH_URL
+              value: {{ $gateway | trimSuffix "/" | quote }}
+            - name: NS_GRAPH_TOKEN_URL
+              value: {{ $token | quote }}
+            - name: NS_GRAPH_CLIENT_ID
+              value: {{ .Values.studio.clientId | quote }}
+            {{- if .Values.studio.caConfigMap }}
+            - name: NS_GRAPH_CA_FILE
+              value: /etc/spec-graph/ca.pem
+            {{- end }}
+            - name: NS_API_KEY
+              valueFrom:
+                secretKeyRef: {name: {{ .Values.existingSecret | quote }}, key: NS_API_KEY}
+            - name: NS_GRAPH_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef: {name: {{ .Values.existingSecret | quote }}, key: NS_GRAPH_CLIENT_SECRET}
+            - name: NS_OPENAI_KEY
+              valueFrom:
+                secretKeyRef: {name: {{ .Values.existingSecret | quote }}, key: NS_OPENAI_KEY, optional: true}
+            {{- range $k, $v := .Values.extraEnv }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            {{- if .Values.studio.caConfigMap }}
+            - name: ca
+              mountPath: /etc/spec-graph
+              readOnly: true
+            {{- end }}
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            initialDelaySeconds: 20
+            periodSeconds: 30
+            failureThreshold: 4
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ .Values.persistence.existingClaim | default (printf "%s-data" (include "spec-graph.fullname" .)) }}
+        {{- if .Values.studio.caConfigMap }}
+        - name: ca
+          configMap:
+            name: {{ .Values.studio.caConfigMap }}
+            items: [{key: ca.pem, path: ca.pem}]
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}

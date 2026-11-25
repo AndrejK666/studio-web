@@ -1,0 +1,18 @@
+{{- if not .Values.persistence.existingClaim }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "spec-graph.fullname" . }}-data
+  labels: {{- include "spec-graph.labels" . | nindent 4 }}
+  annotations:
+    # Clones, runs and labels outlive an uninstall by mistake.
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- with .Values.persistence.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.size }}
+{{- end }}
