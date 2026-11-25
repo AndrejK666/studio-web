@@ -17,21 +17,13 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 
-export type ProviderCode =
-  | 'github'
-  | 'gitlab'
-  | 'bitbucket'
-  | 'anthropic'
-  | 'openai'
-  | 'slack'
-  | 'slack_webhook'
-  | 'zulip'
-  | 'zulip_webhook'
-  | 'discord'
-  | 'discord_webhook';
-
-/** The single place that knows which provider looks like what. */
-const ICONS = {
+/**
+ * The single place that knows which provider looks like what. Open on
+ * purpose: the providers are whatever drivers the deployment has (`GET
+ * /providers`), so a provider this map does not name draws the generic plug
+ * rather than being refused.
+ */
+const ICONS: Readonly<Record<string, LucideIcon>> = {
   github: Github,
   gitlab: Gitlab,
   // lucide has no Bitbucket mark; a repository glyph is the honest stand-in.
@@ -50,11 +42,10 @@ const ICONS = {
   slack_webhook: Webhook,
   zulip_webhook: Webhook,
   discord_webhook: Webhook,
-} satisfies Record<ProviderCode, LucideIcon>;
-
+};
 
 export function iconFor(code: string): LucideIcon {
-  return (ICONS as Record<string, LucideIcon>)[code] ?? Plug;
+  return ICONS[code] ?? Plug;
 }
 
 /** Every connection this screen creates is inherited by the whole organization. */

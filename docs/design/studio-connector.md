@@ -118,7 +118,7 @@ the workspace's, or the organization's (`ConnectorService::model_key_for`).
 |-------|---------------|------------|
 | REST | Catalogue, probe, and each provider capability through a connection | `OperationBuilder` routes in `rest.rs` |
 | Service | The catalogue, credstore, driver dispatch, the write composition | `service.rs` |
-| Drivers | One provider's API each | `ConnectorDriver` in `driver.rs`; `github.rs`, `github_write.rs`, `gitlab.rs`, `bitbucket.rs`, `ai_providers.rs`, `slack.rs`, `zulip.rs`, `discord.rs` |
+| Drivers | One provider's API each | `ConnectorDriver` in `driver.rs`; `github.rs`, `github_write.rs`, `gitlab.rs`, `bitbucket.rs`, `slack.rs`, `zulip.rs`, `discord.rs` |
 | SDK | What other gears use: a repository bound to a connection, a git checkout | `sdk.rs`, `repository.rs` (`Repository`), `clone.rs` (`git_checkout`) |
 | Plugins | Make a driver present in the assembly | `plugin.rs`, one gear per provider |
 | Background | Repository import into the knowledge graph | `graph_sync.rs`, `graph_sync_task.rs` (`graph` feature) |
@@ -394,8 +394,7 @@ the providers it links.
 `plugin.rs`, one gear per provider, each in a child module because two gears
 in one module that both depend on `types_registry` emit the same alias and
 fail to compile: `github-connector-plugin`, `gitlab-connector-plugin`,
-`bitbucket-connector-plugin`, `anthropic-connector-plugin`,
-`openai-connector-plugin`, `slack-connector-plugin`,
+`bitbucket-connector-plugin`, `slack-connector-plugin`,
 `slack-webhook-connector-plugin`, `zulip-connector-plugin`,
 `zulip-webhook-connector-plugin`, `discord-connector-plugin`,
 `discord-webhook-connector-plugin`, `kubernetes-connector-plugin`,
@@ -405,9 +404,17 @@ an organization kit's assembly strategy runs on: its address and secret, one
 option `strategy`, verified with `GET /v1/info`; ADR-0074). Each registers its instance (vendor
 `constructorfabric`, priority 100 by default) and publishes its
 `ConnectorDriver`. A profile that does not declare the connector contract
-skips the scoped registration instead of failing the boot. Model providers
-have no account endpoint, so their `test()` lists models and reports what the
-key can reach. The three chat drivers share rendering in `notify.rs`. The Kubernetes driver
+skips the scoped registration instead of failing the boot. A kit brings a
+driver of its own through the connector-driver port (`sdk::drivers`,
+ADR-0079): it implements `ConnectorDriver`, registers it with
+`register_driver` and submits its instance id as a `DriverSlot`, which this
+gear looks for beside its own. The model providers' drivers
+(`anthropic-connector-plugin`, `openai-connector-plugin`) are the assistant
+kit's, in `llm_proxy/`; they have no account endpoint, so their `test()` lists
+models and reports what the key can reach. Every driver also describes the
+form a connection is made with (`form_fields`, `holder`, `holder_fixed`),
+which `GET /providers` returns as `fields`, `holder` and `holder_fixed`, so a
+client draws the form with no code per provider. The three chat drivers share rendering in `notify.rs`. The Kubernetes driver
 (`kubernetes.rs`) is a cluster an organization's environments deploy into
 (ADR-0043): its credential is a service-account token or a kubeconfig with
 inline data only, and `ClusterAccess` is what `studio-environments` reaches the

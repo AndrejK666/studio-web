@@ -26,7 +26,8 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use super::driver::{
-    AccessToken, ConnectionAuth, ConnectorCategory, ConnectorDriver, DriverIdentity, SignedIn,
+    AccessToken, ConnectionAuth, ConnectorCategory, ConnectorDriver, DriverIdentity, FormField,
+    Holder, SignedIn,
 };
 use super::oauth::{OAuthClient, Pkce, Tokens};
 use super::research_api::{ACCESS_KEY_PREFIX, ResearchApi};
@@ -99,6 +100,21 @@ impl ConnectorDriver for ResearchDriver {
 
     fn credential_hint(&self) -> &'static str {
         "Log in to Research, make an access key (rk-…) and paste it here"
+    }
+
+    /// Only the key: the address is the one this Studio is set up with, and
+    /// a typed one is refused.
+    fn form_fields(&self) -> Vec<FormField> {
+        vec![
+            FormField::token("Paste a Research access key (rk-…)", "rk-…", true)
+                .hint("Log in to Research, make an access key and paste it here."),
+        ]
+    }
+
+    /// A Research account is the person's own (ADR-0049 §5), signed in to or
+    /// its key pasted.
+    fn holder(&self) -> Holder {
+        Holder::Personal
     }
 
     fn signs_in(&self) -> bool {

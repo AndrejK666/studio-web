@@ -296,6 +296,33 @@ export interface ConnectorProvider {
    *  signs in, its own access key (Constructor Research's `rk-` key). Absent:
    *  every provider that does not sign in. */
   pasted_key?: boolean;
+  /** The form a connection is made with, in the order it is drawn: the address, the credential and the
+   *  provider's options. Absent from an older backend: the address and the credential. */
+  fields?: ProviderField[];
+  /** Who may hold a connection: anyone, only the organization, or a person first. */
+  holder?: ProviderHolder;
+  /** `holder` is the only one: the form offers no choice and sends it as the scope. */
+  holder_fixed?: boolean;
+}
+
+export type ProviderHolder = 'any' | 'organization' | 'personal';
+
+/** One field of a provider's form, as its driver describes it. */
+export interface ProviderField {
+  /** `base_url`, `token`, or else the name of one of the connection's options. */
+  name: string;
+  label: string;
+  kind: 'text' | 'secret' | 'url' | 'select';
+  required: boolean;
+  /** A sentence beside the field; empty when there is none. */
+  hint: string;
+  placeholder: string;
+  /** A shape the value comes in that the form helps with: `kubeconfig` (a file or pasted YAML whose server is the address). */
+  format?: string | null;
+  /** A regular expression the whole value matches. */
+  pattern?: string | null;
+  max_length?: number | null;
+  choices?: { value: string; label: string }[];
 }
 
 /** A connection as Integrations lists it. */

@@ -29,7 +29,13 @@ import {
 } from '@gears-frontx/ui-kit';
 import { ConnectorsApiService, OrganizationProvider, useEverLoaded, useHostChrome, useOrganization } from '@constructor-studio/mfe-shared';
 import { useConnectSourceScreenTranslations, useConnectSourceText } from '../../i18n';
-import { isDraftUsable } from '../../model/connectionDraft';
+import {
+  BASE_URL_FIELD,
+  TOKEN_FIELD,
+  isDraftUsable,
+  optionFields,
+  providerFields,
+} from '../../model/connectionDraft';
 import { CONNECT_SLICE_KEY, editDraft, resetForm } from '../../slices/connectSlice';
 import { closeConnectDialog, requestConnectionCreate } from '../../actions/connectActions';
 import '../../events/connectEvents';
@@ -67,6 +73,11 @@ const DialogBody: React.FC = () => {
   } = useApiQuery(connectors.providers);
   const providers = providerData?.items ?? [];
   const chosen = providers.find((provider) => provider.provider === draft.provider);
+  // The form is the chosen provider's, as its driver describes it.
+  const fields = chosen ? providerFields(chosen) : [];
+  const address = chosen ? fields.find((field) => field.name === BASE_URL_FIELD) : undefined;
+  const token = fields.find((field) => field.name === TOKEN_FIELD);
+  const options = optionFields(fields);
 
 
   useEffect(() => {
@@ -85,7 +96,7 @@ const DialogBody: React.FC = () => {
    */
   const showSkeleton = !useEverLoaded(isLoaded) && !translationsFailed;
 
-  const blocked = submitting || orgLoading || !orgId || !isDraftUsable(draft);
+  const blocked = submitting || orgLoading || !orgId || !isDraftUsable(draft, fields);
 
   const providerPlaceholder = providersLoading
     ? t('loading_providers')
@@ -117,7 +128,8 @@ const DialogBody: React.FC = () => {
                 value={draft.provider}
                 modal={false}
                 disabled={providersLoading}
-                onValueChange={(next) => dispatch(editDraft({ provider: next ?? '' }))}
+                // Another provider's form: what was typed for the last one's address and options does not carry over.
+                onValueChange={(next) => dispatch(editDraft({ provider: next ?? '', baseUrl: '', options: {} }))}
               >
                 <SelectTrigger id={ids.provider} className={styles.providerTrigger}>
                   <SelectValue placeholder={providerPlaceholder}>
@@ -148,21 +160,43 @@ const DialogBody: React.FC = () => {
               <FieldDescription>{t('field_label_hint')}</FieldDescription>
             </Field>
 
-            <Field>
-              <FieldLabel className={styles.fieldLabel} htmlFor={ids.baseUrl}>
-                {t('field_base_url')}
-              </FieldLabel>
-              <Input
-                id={ids.baseUrl}
-                value={draft.baseUrl}
-                placeholder={chosen?.default_base_url ?? ''}
-                onChange={(event) => dispatch(editDraft({ baseUrl: event.target.value }))}
-              />
-            </Field>
+            {options.map((field) => (
+              <Field key={field.name} data-connection-option={field.name}>
+                <FieldLabel className={styles.fieldLabel} htmlFor={`${ids.token}-${field.name}`}>
+                  {field.label}
+                </FieldLabel>
+                <Input
+                  id={`${ids.token}-${field.name}`}
+                  type={field.kind === 'secret' ? 'password' : 'text'}
+                  value={draft.options[field.name] ?? ''}
+                  placeholder={field.placeholder}
+                  maxLength={field.max_length ?? undefined}
+                  onChange={(event) =>
+                    dispatch(editDraft({ options: { ...draft.options, [field.name]: event.target.value } }))
+                  }
+                />
+                {field.hint && <FieldDescription>{field.hint}</FieldDescription>}
+              </Field>
+            ))}
+
+            {/* No address where the provider's form has none: a webhook's URL is its credential, Research's address is the deployment's. */}
+            {(!chosen || address) && (
+              <Field>
+                <FieldLabel className={styles.fieldLabel} htmlFor={ids.baseUrl}>
+                  {t('field_base_url')}
+                </FieldLabel>
+                <Input
+                  id={ids.baseUrl}
+                  value={draft.baseUrl}
+                  placeholder={address?.placeholder ?? ''}
+                  onChange={(event) => dispatch(editDraft({ baseUrl: event.target.value }))}
+                />
+              </Field>
+            )}
 
             <Field data-invalid={Boolean(tokenError)}>
               <FieldLabel className={styles.fieldLabel} htmlFor={ids.token}>
-                {chosen?.credential_label || t('field_token')}
+                {token?.label || t('field_token')}
               </FieldLabel>
               <Input
                 id={ids.token}
@@ -170,9 +204,10 @@ const DialogBody: React.FC = () => {
                 autoComplete="off"
                 aria-invalid={Boolean(tokenError) || undefined}
                 value={draft.token}
-                placeholder={chosen?.credential_hint ?? ''}
+                placeholder={token?.placeholder ?? ''}
                 onChange={(event) => dispatch(editDraft({ token: event.target.value }))}
               />
+              {token?.hint && <FieldDescription>{token.hint}</FieldDescription>}
               <FieldError className={styles.fieldError} title={tokenError ?? undefined}>
                 {tokenError}
               </FieldError>

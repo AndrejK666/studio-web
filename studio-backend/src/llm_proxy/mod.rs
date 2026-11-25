@@ -13,9 +13,22 @@
 //! ClientHub rather than calling one itself.
 
 pub mod config;
+/// The model providers' connector drivers, contributed through
+/// studio-connector's driver port (ADR-0079).
+mod connector_drivers;
 pub mod gear;
 pub mod keys;
 pub mod port;
 pub mod providers;
 pub mod rest;
 pub mod usage_tap;
+
+// One module per plugin gear: `#[toolkit::gear]` aliases its dependencies at
+// module scope, so two gears in one module collide (see connectors/plugin.rs).
+/// Anthropic — the credential `@theia/ai-claude-code` authenticates with. Its
+/// key test goes out through this gear's provider layer.
+#[path = "plugins/anthropic/mod.rs"]
+mod anthropic_connector_plugin;
+/// OpenAI — what `@theia/ai-codex` uses.
+#[path = "plugins/openai/mod.rs"]
+mod openai_connector_plugin;

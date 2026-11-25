@@ -39,8 +39,9 @@ pub const CONNECTOR_PLUGIN_TYPE: &str =
 pub const GITLAB_INSTANCE_ID: &str = "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.gitlab_connector.v1";
 pub const GITHUB_INSTANCE_ID: &str = "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.github_connector.v1";
 pub const BITBUCKET_INSTANCE_ID: &str = "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.bitbucket_connector.v1";
-pub const ANTHROPIC_INSTANCE_ID: &str = "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.anthropic_connector.v1";
-pub const OPENAI_INSTANCE_ID: &str = "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.openai_connector.v1";
+// A kit's driver names its own instance id, beside its driver, and submits it
+// as a `sdk::drivers::DriverSlot` (ADR-0079): the model providers' are in
+// `llm_proxy::connector_drivers`.
 // Chat platforms. Two ids per platform, because a bot token and an incoming
 // webhook are different credentials with different reach — see
 // `super::slack`'s module note — and a driver is addressed by exactly one id.

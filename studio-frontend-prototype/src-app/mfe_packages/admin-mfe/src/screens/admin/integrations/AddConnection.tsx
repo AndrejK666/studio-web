@@ -7,9 +7,13 @@
  * on a Studio with no sign-in client. On the organization's page the choice is the organization (the
  * default) or yourself; a cluster or a registry starts organization-wide, a
  * signed-in account is the person's own.
+ *
+ * The credential form is the driver's (`GET /providers`: `fields`, `holder`, `holder_fixed`): which fields, in which
+ * order, required or not, and who may hold the connection. Nothing here is per provider but Research's tile while
+ * this Studio cannot offer it, which no driver is there to describe.
  */
 
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { apiRegistry } from '@gears-frontx/react';
 import {
   Button,
@@ -21,11 +25,16 @@ import {
 } from '@gears-frontx/ui-kit';
 import { rememberSignInReturn, SIGN_IN_CALLBACK_PATH, type OrganizationRef } from '@constructor-studio/mfe-shared';
 import { AdminApiService } from '../../../api/AdminApiService';
-import type { ConnectorIdentity, ConnectorProvider } from '../../../api/types';
+import type { ConnectorIdentity, ConnectorProvider, ProviderField } from '../../../api/types';
 import {
-  ASSEMBLY_SERVICE,
+  BASE_URL_FIELD,
   CATEGORY_KEYS,
+  TOKEN_FIELD,
   connectWays,
+  fieldText,
+  fieldValid,
+  formFields,
+  optionFields,
   personalProviders,
   reachFor,
   type ConnectWay,
@@ -220,23 +229,34 @@ function CredentialForm({
   const api = apiRegistry.getService(AdminApiService);
   const [label, setLabel] = useState('');
   const [baseUrl, setBaseUrl] = useState('');
-  const [strategy, setStrategy] = useState('');
+  const [values, setValues] = useState<Record<string, string>>({});
   const [pat, setPat] = useState('');
   const [reveal, setReveal] = useState(false);
   const [busy, setBusy] = useState<'probe' | 'save' | null>(null);
   const [result, setResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const assembly = provider.provider === ASSEMBLY_SERVICE;
-  const validStrategy = /^[a-z][a-z0-9_]{0,39}$/.test(strategy.trim());
-  // Research's address is this Studio's own, and its credential an `rk-` key the member made there.
-  const research = provider.provider === 'research';
-  const keyLabel = research ? t('int_research_key') : provider.credential_label;
+  // The form is the driver's: the address, the credential and the options, in its order.
+  const fields = formFields(provider);
+  const address = fields.find((f) => f.name === BASE_URL_FIELD);
+  const token = fields.find((f) => f.name === TOKEN_FIELD);
+  const options = optionFields(fields);
+  // A holder that is the only one is not offered: it is the scope.
+  const holderFixed = !!provider.holder_fixed;
+  const scope: Reach = holderFixed ? (provider.holder === 'personal' ? 'personal' : 'organization') : reach;
+  const keyLabel = token ? fieldText(t, provider.provider, token, 'label') : '';
+  const keyHint = token ? fieldText(t, provider.provider, token, 'hint') : '';
+  const tokenOk = !token?.required || !!pat.trim();
+  const addressOk = !address || fieldValid(address, baseUrl);
+  const optionsOk = options.every((f) => fieldValid(f, values[f.name] ?? ''));
 
   const submit = async (mode: 'probe' | 'save') => {
     setBusy(mode);
     setError(null);
     setResult(null);
     const body = { provider: provider.provider, base_url: baseUrl.trim() || undefined, token: pat };
+    const given = Object.fromEntries(
+      options.map((f) => [f.name, (values[f.name] ?? '').trim()] as const).filter(([, v]) => v)
+    );
     try {
       if (mode === 'probe') {
         const id = await api.probeConnection.fetch(body);
@@ -251,9 +271,9 @@ function CredentialForm({
         const r = await api.createConnection.fetch({
           ...body,
           label,
-          scope: assembly ? 'organization' : reach,
+          scope,
           owner_tenant_id: org.id,
-          ...(assembly ? { options: { strategy: strategy.trim() } } : {}),
+          ...(Object.keys(given).length ? { options: given } : {}),
         });
         onAdded(r);
       }
@@ -267,13 +287,95 @@ function CredentialForm({
   const kind = (CATEGORY_KEYS as readonly string[]).includes(provider.category)
     ? t(`int_cat_${provider.category}`).toLowerCase()
     : provider.category;
-  const urlPlaceholder = !provider.default_base_url
-    ? t('int_url_required')
-    : provider.category === 'ai'
-      ? t('int_url_ai', { url: provider.default_base_url })
-      : provider.category === 'notification'
-        ? t('int_url_notification', { url: provider.default_base_url })
-        : t('int_url_self_hosted', { url: provider.default_base_url });
+  const defaultUrl = address?.placeholder || provider.default_base_url;
+  const urlPlaceholder =
+    address?.required || !defaultUrl
+      ? t('int_url_required')
+      : provider.category === 'ai'
+        ? t('int_url_ai', { url: defaultUrl })
+        : provider.category === 'notification'
+          ? t('int_url_notification', { url: defaultUrl })
+          : t('int_url_self_hosted', { url: defaultUrl });
+
+  const field = (f: ProviderField) => {
+    if (f.name === BASE_URL_FIELD) {
+      return (
+        <label key={f.name} className={styles.field}>
+          {t('int_instance_url')}
+          <Input placeholder={urlPlaceholder} value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
+        </label>
+      );
+    }
+    if (f.name === TOKEN_FIELD) {
+      return (
+        <React.Fragment key={f.name}>
+          <span className={styles.field}>{keyLabel}</span>
+          {keyHint && (
+            <p className={own.hint} data-field-hint={f.name}>
+              {keyHint}
+            </p>
+          )}
+          {f.format === 'kubeconfig' ? (
+            <KubeconfigField
+              value={pat}
+              reveal={reveal}
+              onReveal={() => setReveal((v) => !v)}
+              placeholder={f.placeholder}
+              label={keyLabel}
+              onChange={(text) => {
+                setPat(text);
+                // The connection's address is the API server the kubeconfig names, unless one is typed.
+                const server = kubeconfigServer(text);
+                if (address && server && !baseUrl.trim()) setBaseUrl(server);
+              }}
+            />
+          ) : (
+            <div className={own.actions}>
+              <Input
+                className={styles.grow}
+                type={reveal ? 'text' : 'password'}
+                aria-label={keyLabel}
+                placeholder={f.placeholder}
+                value={pat}
+                onChange={(e) => setPat(e.target.value)}
+              />
+              <Button type="button" size="sm" variant="ghost" onClick={() => setReveal((v) => !v)}>
+                {reveal ? t('int_hide') : t('int_show')}
+              </Button>
+            </div>
+          )}
+          <p className={own.hint}>{t('int_credstore_hint')}</p>
+        </React.Fragment>
+      );
+    }
+    const value = values[f.name] ?? '';
+    const set = (v: string) => setValues((all) => ({ ...all, [f.name]: v }));
+    const hint = fieldText(t, provider.provider, f, 'hint');
+    return (
+      <label key={f.name} className={styles.field} data-connection-option={f.name}>
+        {fieldText(t, provider.provider, f, 'label')}
+        {f.kind === 'select' ? (
+          <NativeSelect value={value} onChange={(e) => set(e.target.value)}>
+            <NativeSelectOption value="">—</NativeSelectOption>
+            {(f.choices ?? []).map((c) => (
+              <NativeSelectOption key={c.value} value={c.value}>
+                {c.label}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+        ) : (
+          <Input
+            type={f.kind === 'secret' ? 'password' : 'text'}
+            placeholder={f.placeholder || undefined}
+            value={value}
+            onChange={(e) => set(e.target.value)}
+            maxLength={f.max_length ?? undefined}
+          />
+        )}
+        {hint && <span className={own.hint}>{hint}</span>}
+      </label>
+    );
+  };
 
   return (
     <div className={own.form}>
@@ -288,7 +390,7 @@ function CredentialForm({
         </span>
       </div>
 
-      {!fixedReach && !assembly && (
+      {!fixedReach && !holderFixed && (
         <label className={styles.field}>
           {t('int_available_to')}
           <NativeSelect value={reach} onChange={(e) => onReach(e.target.value as Reach)} data-connection-reach>
@@ -297,7 +399,7 @@ function CredentialForm({
           </NativeSelect>
         </label>
       )}
-      <p className={own.hint}>{reach === 'organization' ? t('int_reach_org_hint') : t('int_reach_personal_hint')}</p>
+      <p className={own.hint}>{scope === 'organization' ? t('int_reach_org_hint') : t('int_reach_personal_hint')}</p>
 
       <label className={styles.field}>
         {t('int_label')}
@@ -308,61 +410,9 @@ function CredentialForm({
         />
       </label>
 
-      {assembly && (
-        <label className={styles.field}>
-          {t('int_assembly_strategy')}
-          <Input value={strategy} onChange={(e) => setStrategy(e.target.value)} maxLength={40} />
-          <span className={own.hint}>{t('int_assembly_strategy_hint')}</span>
-        </label>
-      )}
-
       {/* A webhook's URL is its whole address; asking for an instance URL too invites a contradiction. */}
-      {/* Research's address is the one this Studio is set up with; a typed one is refused. */}
-      {research ? null : provider.fixed_target ? (
-        <p className={own.hint}>{t('int_webhook_hint')}</p>
-      ) : (
-        <label className={styles.field}>
-          {t('int_instance_url')}
-          <Input placeholder={urlPlaceholder} value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
-        </label>
-      )}
-
-      <span className={styles.field}>{keyLabel}</span>
-      {research && (
-        <p className={own.hint} data-research-key-hint>
-          {t('int_research_key_hint')}
-        </p>
-      )}
-      {provider.provider === 'kubernetes' ? (
-        <KubeconfigField
-          value={pat}
-          reveal={reveal}
-          onReveal={() => setReveal((v) => !v)}
-          placeholder={provider.credential_hint}
-          label={provider.credential_label}
-          onChange={(text) => {
-            setPat(text);
-            // The connection's address is the API server the kubeconfig names, unless one is typed.
-            const server = kubeconfigServer(text);
-            if (server && !baseUrl.trim()) setBaseUrl(server);
-          }}
-        />
-      ) : (
-        <div className={own.actions}>
-          <Input
-            className={styles.grow}
-            type={reveal ? 'text' : 'password'}
-            aria-label={keyLabel}
-            placeholder={research ? 'rk-…' : provider.credential_hint}
-            value={pat}
-            onChange={(e) => setPat(e.target.value)}
-          />
-          <Button type="button" size="sm" variant="ghost" onClick={() => setReveal((v) => !v)}>
-            {reveal ? t('int_hide') : t('int_show')}
-          </Button>
-        </div>
-      )}
-      <p className={own.hint}>{t('int_credstore_hint')}</p>
+      {!address && provider.fixed_target && <p className={own.hint}>{t('int_webhook_hint')}</p>}
+      {fields.map(field)}
 
       {result && (
         <p className={own.hint} role="status" data-connection-probe>
@@ -383,7 +433,7 @@ function CredentialForm({
           type="button"
           size="sm"
           variant="outline"
-          disabled={!pat.trim() || (assembly && !baseUrl.trim()) || busy !== null}
+          disabled={!tokenOk || !addressOk || busy !== null}
           onClick={() => void submit('probe')}
           data-connection-probe-go
         >
@@ -392,7 +442,7 @@ function CredentialForm({
         <Button
           type="button"
           size="sm"
-          disabled={!pat.trim() || !label.trim() || (assembly && (!validStrategy || !baseUrl.trim())) || busy !== null}
+          disabled={!tokenOk || !label.trim() || !addressOk || !optionsOk || busy !== null}
           onClick={() => void submit('save')}
           data-connection-create
         >

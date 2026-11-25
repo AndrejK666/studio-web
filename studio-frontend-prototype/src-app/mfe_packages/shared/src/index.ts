@@ -134,6 +134,7 @@ export type {
   NotifyTargetDto,
   NotifyTargetListDto,
   ProviderDto,
+  ProviderFieldDto,
   ProviderListDto,
   RemoteRepoDto,
   RemoteRepoListDto,

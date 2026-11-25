@@ -238,8 +238,6 @@ pub fn plugin_instances() -> Vec<Value> {
         ("studio-connector", connectors::GITLAB_INSTANCE_ID),
         ("studio-connector", connectors::GITHUB_INSTANCE_ID),
         ("studio-connector", connectors::BITBUCKET_INSTANCE_ID),
-        ("studio-connector", connectors::ANTHROPIC_INSTANCE_ID),
-        ("studio-connector", connectors::OPENAI_INSTANCE_ID),
         ("studio-connector", connectors::SLACK_INSTANCE_ID),
         ("studio-connector", connectors::SLACK_WEBHOOK_INSTANCE_ID),
         ("studio-connector", connectors::ZULIP_INSTANCE_ID),
@@ -252,6 +250,12 @@ pub fn plugin_instances() -> Vec<Value> {
         ("studio-connector", connectors::ASSEMBLY_SERVICE_INSTANCE_ID),
     ]
     .into_iter()
+    // Kits' drivers, as each submitted its slot (ADR-0079).
+    .chain(
+        crate::connectors::sdk::drivers::slots()
+            .into_iter()
+            .map(|id| ("studio-connector", id)),
+    )
     .map(|(gear, instance_id)| json!({ "gear": gear, "instance_id": instance_id }))
     .collect()
 }

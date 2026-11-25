@@ -8,7 +8,6 @@
 # This list only shrinks. Do not add a line: contribute through a core port
 # instead (MCP tools, Overview blocks, access rules, connector drivers,
 # background work, cost metering). When you remove a reference, remove its line.
-connectors -> llm_proxy
 organizations -> artifact_ingest
 organizations -> components_catalog
 organizations -> documents
