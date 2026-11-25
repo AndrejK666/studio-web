@@ -35,7 +35,9 @@ use sea_orm::sea_query::{Expr as SqlExpr, Value as SqlValue};
 use sea_orm::{Condition, Order};
 use serde_json::Value;
 
-use super::{Direction, Expr, Op};
+use uuid::Uuid;
+
+use super::{Direction, Expr, Fold, GroupKey, Kind, Metric, Op, RelatedHop, TIMESTAMP_SHAPE};
 
 /// The longest `_in` list asked as one containment per value; a longer one
 /// is one list test ([`Sql::contained`]).
@@ -45,6 +47,9 @@ const OR_LIST_MAX: usize = 16;
 #[derive(Default)]
 struct Sql {
     params: Vec<SqlValue>,
+    /// The owners whose objects a filter on related objects may read; `None`
+    /// is every owner in the tenant.
+    related_owners: Option<Vec<Uuid>>,
 }
 
 impl Sql {
@@ -266,6 +271,11 @@ impl Sql {
                 format!("({})", parts.join(" OR "))
             }
             Expr::Not(e) => format!("(NOT {})", self.expr(e)),
+            Expr::Related { hop, filter, .. } => match hop {
+                Some(hop) => self.related(hop, filter),
+                // The planner resolves every relation; one it did not is no match.
+                None => "FALSE".to_string(),
+            },
             Expr::Cmp { path, op, arg } => {
                 if is_id(path)
                     && let Some(sql) = self.id_cmp(op, arg)
@@ -322,6 +332,68 @@ impl Sql {
             }
         }
     }
+}
+
+impl Sql {
+    /// Some object one relation away from the row matches `filter`: an
+    /// `EXISTS` over the edges by the row's end (the primary key reads it
+    /// forwards, `studio_domain_edges_dst` backwards), joined to the objects.
+    ///
+    /// Inside the subquery the related object is the only table with
+    /// `payload` and `instance_id`, so `filter` compiles as it does for the
+    /// root and reads the related object; the row itself is named by table.
+    fn related(&mut self, hop: &RelatedHop, filter: &Expr) -> String {
+        let (near, far) = if hop.reverse {
+            ("dst", "src")
+        } else {
+            ("src", "dst")
+        };
+        let edge_type = self.param(SqlValue::String(Some(hop.edge_type_id.clone())));
+        let relation = self.param(SqlValue::String(Some(hop.relation.clone())));
+        let types = Value::Array(
+            hop.node_type_ids
+                .iter()
+                .cloned()
+                .map(Value::String)
+                .collect(),
+        );
+        let types = self.param(SqlValue::Json(Some(Box::new(types))));
+        let owners = match self.related_owners.clone() {
+            None => String::new(),
+            Some(list) if list.is_empty() => " AND FALSE".to_string(),
+            Some(list) => {
+                let list = Value::Array(
+                    list.iter()
+                        .map(|o| Value::String(o.to_string()))
+                        .collect(),
+                );
+                let p = self.param(SqlValue::Json(Some(Box::new(list))));
+                format!(" AND ro.owner_id::text IN (SELECT jsonb_array_elements_text({p}::jsonb))")
+            }
+        };
+        let inner = self.expr(filter);
+        format!(
+            "EXISTS (SELECT 1 FROM studio_domain_edges AS re \
+             JOIN studio_domain_objects AS ro \
+             ON ro.tenant_id = re.tenant_id AND ro.instance_id = re.{far} \
+             WHERE re.tenant_id = studio_domain_objects.tenant_id \
+             AND re.{near} = studio_domain_objects.instance_id \
+             AND re.edge_type_id = {edge_type} AND re.relation IN ({relation}, '') \
+             AND ro.type_id IN (SELECT jsonb_array_elements_text({types}::jsonb)){owners} \
+             AND {inner})"
+        )
+    }
+}
+
+/// A `where` as one SQL condition, its filters on related objects reading
+/// only objects of `owners` (the PDP's answer for the related types).
+pub(super) fn condition_owned_by(e: &Expr, owners: &[Uuid]) -> Condition {
+    let mut sql = Sql {
+        related_owners: Some(owners.to_vec()),
+        ..Sql::default()
+    };
+    let text = sql.expr(e);
+    Condition::all().add(sql.done(text))
 }
 
 /// The object's own id, not a payload field.
@@ -462,14 +534,74 @@ pub(super) fn after(keys: &[(Vec<String>, Direction)], at: &[Option<Value>], id:
 }
 
 /// The grouping key of an aggregate: the grouped values as one JSON array,
-/// `null` where a field is absent.
-pub(super) fn group_key(paths: &[Vec<String>]) -> SqlExpr {
+/// `null` where a field is absent. A bucketed key is the first day of its
+/// bucket as `YYYY-MM-DD` text, `null` where the value is not a timestamp.
+pub(super) fn group_key(keys: &[GroupKey]) -> SqlExpr {
     let mut sql = Sql::default();
-    let parts: Vec<String> = paths
+    let parts: Vec<String> = keys
         .iter()
-        .map(|p| {
-            let v = sql.value_at(p);
-            format!("CASE WHEN jsonb_typeof({v}) = 'null' THEN NULL ELSE {v} END")
+        .map(|k| {
+            let v = sql.value_at(&k.path);
+            match k.bucket {
+                None => format!("CASE WHEN jsonb_typeof({v}) = 'null' THEN NULL ELSE {v} END"),
+                Some(b) => {
+                    let shape = sql.param(SqlValue::String(Some(TIMESTAMP_SHAPE.to_string())));
+                    bucket(&v, &shape, b.unit())
+                }
+            }
+        })
+        .collect();
+    sql.done(format!("jsonb_build_array({})", parts.join(", ")))
+}
+
+/// The bucket the timestamp at `v` falls in, as JSON text, or SQL `NULL`.
+///
+/// Nothing is cast that could fail: the text must have `shape` first
+/// ([`TIMESTAMP_SHAPE`]), and then a day the month has (the shape lets
+/// `02-30` through). Each test is a `CASE` of its own, which Postgres
+/// evaluates in order. The fraction of a second goes before the cast: it
+/// never moves the day, and rounded to microseconds it could.
+fn bucket(v: &str, shape: &str, unit: &str) -> String {
+    let t = format!("({v} #>> '{{}}')");
+    let month_days = format!(
+        "EXTRACT(DAY FROM ((substr({t}, 1, 7) || '-01')::date + INTERVAL '1 month' - INTERVAL '1 day'))::int"
+    );
+    let day = format!(
+        "(CASE WHEN length({t}) = 10 THEN {t}::date \
+         ELSE (upper(regexp_replace({t}, '[.][0-9]+', ''))::timestamptz AT TIME ZONE 'UTC')::date END)"
+    );
+    format!(
+        "(CASE WHEN jsonb_typeof({v}) = 'string' AND {t} ~ {shape} THEN \
+         CASE WHEN substr({t}, 9, 2)::int <= {month_days} THEN \
+         to_jsonb(to_char(date_trunc('{unit}', {day}::timestamp), 'YYYY-MM-DD')) END END)"
+    )
+}
+
+/// An aggregate's folds, one per metric in order, as a JSON array of text
+/// (`null` where a group has no value of the kind): numbers folded as
+/// `numeric`, exactly, and handed over as text so no float rounding sits
+/// between Postgres and the answer; timestamps as text by code point, the
+/// order `order_by` gives them.
+pub(super) fn folds(metrics: &[Metric]) -> SqlExpr {
+    let mut sql = Sql::default();
+    let parts: Vec<String> = metrics
+        .iter()
+        .map(|m| {
+            let v = sql.value_at(std::slice::from_ref(&m.field));
+            let f = match m.fold {
+                Fold::Sum => "SUM",
+                Fold::Avg => "AVG",
+                Fold::Min => "MIN",
+                Fold::Max => "MAX",
+            };
+            match m.kind {
+                Kind::Number => format!(
+                    "({f}(CASE WHEN jsonb_typeof({v}) = 'number' THEN ({v} #>> '{{}}')::numeric END))::text"
+                ),
+                Kind::Time => format!(
+                    "{f}(CASE WHEN jsonb_typeof({v}) = 'string' THEN ({v} #>> '{{}}') COLLATE \"C\" END)"
+                ),
+            }
         })
         .collect();
     sql.done(format!("jsonb_build_array({})", parts.join(", ")))
@@ -573,5 +705,78 @@ mod tests {
             }
             assert!(!text.contains(&format!("${}", n + 1)), "{text}");
         }
+    }
+
+    fn related(reverse: bool, owners: Option<Vec<uuid::Uuid>>) -> (String, usize) {
+        use super::super::RelatedHop;
+        let hop = RelatedHop {
+            edge_type_id: "gts.cf.studio.domainrel.delivers.v1~".to_string(),
+            relation: "delivers".to_string(),
+            reverse,
+            node_type_ids: vec!["a".to_string(), "b".to_string()],
+        };
+        let filter = Expr::Cmp {
+            path: vec!["status".to_string()],
+            op: Op::Eq,
+            arg: json!("active"),
+        };
+        let mut sql = Sql {
+            related_owners: owners,
+            ..Sql::default()
+        };
+        let text = sql.related(&hop, &filter);
+        (text, sql.params.len())
+    }
+
+    /// A filter on a related object is one correlated `EXISTS` over the
+    /// edges, by the row's end of them; the type list is one parameter.
+    #[test]
+    fn a_related_filter_is_an_exists_over_the_edges() {
+        let (forwards, n) = related(false, None);
+        assert!(forwards.starts_with("EXISTS (SELECT 1 FROM studio_domain_edges AS re"), "{forwards}");
+        assert!(forwards.contains("ro.instance_id = re.dst"), "{forwards}");
+        assert!(forwards.contains("re.src = studio_domain_objects.instance_id"), "{forwards}");
+        assert!(forwards.contains("re.relation IN ($2, '')"), "{forwards}");
+        assert!(!forwards.contains("owner_id"), "{forwards}");
+        // edge type, relation, types, then the inner filter's field and value
+        assert_eq!(n, 5);
+        let (backwards, _) = related(true, None);
+        assert!(backwards.contains("ro.instance_id = re.src"), "{backwards}");
+        assert!(backwards.contains("re.dst = studio_domain_objects.instance_id"), "{backwards}");
+        // The PDP's owners narrow the related objects, and none reads none.
+        let (owned, n) = related(false, Some(vec![uuid::Uuid::nil()]));
+        assert!(owned.contains("ro.owner_id::text IN"), "{owned}");
+        assert_eq!(n, 6);
+        let (nobody, _) = related(false, Some(vec![]));
+        assert!(nobody.contains(" AND FALSE "), "{nobody}");
+    }
+
+    /// A bucket casts nothing before the text has a timestamp's shape and a
+    /// day its month has; the shape travels as a parameter.
+    #[test]
+    fn a_bucket_casts_only_a_checked_timestamp() {
+        use super::super::{Bucket, GroupKey};
+        let mut sql = Sql::default();
+        let v = sql.value_at(&["started_at".to_string()]);
+        let shape = sql.param(sea_orm::sea_query::Value::String(Some(
+            super::TIMESTAMP_SHAPE.to_string(),
+        )));
+        let text = super::bucket(&v, &shape, Bucket::Week.unit());
+        let checked = text.find(" ~ $2").expect("the shape test");
+        let cast = text.find("::timestamptz").expect("the cast");
+        assert!(checked < cast, "{text}");
+        assert!(text.find("substr(").unwrap() < cast, "{text}");
+        assert!(text.contains("date_trunc('week'"), "{text}");
+        // group_key compiles a plain and a bucketed key side by side.
+        let _ = super::group_key(&[
+            GroupKey {
+                path: vec!["status".to_string()],
+                bucket: None,
+            },
+            GroupKey {
+                path: vec!["started_at".to_string()],
+                bucket: Some(Bucket::Month),
+            },
+        ]);
     }
 }

@@ -167,7 +167,11 @@ Cheap on SQL, and kept in the graph executor too so the two answer alike:
   `dst`. Every edge carries its declared relation's name as its
   discriminator, so a relation never answers for another of the same verb.
 - **Aggregates**: `aggregate: { group_by: ["status"] }`, so a summary screen
-  is a query, not a new route.
+  is a query, not a new route; with `sum`, `avg`, `min`, `max` per group and
+  timestamps grouped by day, week or month.
+- **Filters on related objects**: `where: { "delivers": { "status": { "_eq":
+  "active" } } }` keeps the rows with such an object one declared relation
+  away (`EXISTS` over the edges).
 - **Several projects, counts only** (a gear's read through the port,
   studio-web#1077): `project_ids: [...]` narrows by the indexed scope column
   to any of them, and `limit: 0` returns no rows, only `total` and the
@@ -361,7 +365,7 @@ not among them (the platform pages by cursor), so `/query` moves to cursors.
 | Filter and order | In memory, over what was read | SQL with casts from the model |
 | Count, pages | Over the first 5,000 | `count(*)`; pages by cursor (`OFFSET` while screens move) |
 | Relations | Forwards only; one verb mixes relations (`warnings`) | Both directions; the relation name separates them |
-| Aggregates | None | `count` and `group_by` |
+| Aggregates | None | `count`, `group_by` (timestamps by day, week, month), `sum`, `avg`, `min`, `max` |
 | Access | PDP answer applied to rows in memory | PDP answer as a SQL predicate, at every level |
 | Concurrent writes | Last writer wins, silently | `if_version`, 409 on conflict |
 | Loading | One object per call | Batches of up to 1,000; connectors write model types |
@@ -409,6 +413,18 @@ What is built (2026-10-26, branch `AndrejK666/domain-read-model`):
   condition in SQL. A cursor from one executor reads on in the other.
   `offset` stays while screens move; saved views ask the next page by cursor
   and jump by offset only to a page not read yet (`PageCursors`).
+- Folds, buckets and relation filters (2026-11-25): `aggregate` takes `sum`,
+  `avg` (numeric fields), `min`, `max` (numeric or timestamp fields) per
+  group, answered on each group as `{"sum": {"field": value}}`, and a
+  grouped timestamp may be cut to a bucket, `bucket: {"created_at": "day" |
+  "week" | "month"}`, keyed by the bucket's first day (UTC; weeks from Monday). Both
+  executors fold numbers as exact decimals and bucket only text shaped as
+  RFC 3339 or a bare date, so they answer alike; a field of another type is
+  a 400. A root `where` may name a declared relation in place of a field,
+  `{"delivers": {"status": {"_eq": "active"}}}` (`~name` backwards), one hop:
+  an `EXISTS` over `studio_domain_edges` in SQL, one relation read from the
+  candidate rows in the graph executor; the related objects are narrowed by
+  the PDP in both.
 - Not built: phase 0's measurement, `if_version`; the version check of a
   tenant document is two steps, not one transaction.
 

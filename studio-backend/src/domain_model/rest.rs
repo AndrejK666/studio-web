@@ -1396,6 +1396,10 @@ pub struct QueryObjectsRequest {
     /// `{"status": {"_eq": "active"}}`, combined with `_and`, `_or`, `_not`.
     /// Operators: `_eq _neq _gt _gte _lt _lte _in _nin _contains _is_null`.
     /// `id` is the object's own id. A field the type does not declare is a 400.
+    /// A declared relation's name in place of a field filters by the objects one
+    /// hop away: `{"delivers": {"status": {"_eq": "active"}}}` keeps the rows
+    /// that deliver an active project (`~delivers` reads the relation backwards);
+    /// root `where` only, one hop.
     #[serde(default, rename = "where")]
     #[schema(value_type = Option<Object>)]
     pub filter: Option<Value>,
@@ -1424,8 +1428,9 @@ pub struct QueryObjectsRequest {
     /// Rows to return, 1..=200, default 50.
     #[serde(default)]
     pub limit: Option<usize>,
-    /// Counts of the matching objects grouped by up to three fields, answered
-    /// beside the page as `groups`.
+    /// Counts of the matching objects grouped by up to three fields (a timestamp
+    /// by day, week or month), with sums, averages, minimums and maximums per
+    /// group, answered beside the page as `groups`.
     #[serde(default)]
     pub aggregate: Option<QueryAggregateDto>,
 }
@@ -1433,9 +1438,30 @@ pub struct QueryObjectsRequest {
 #[derive(Debug)]
 #[toolkit_macros::api_dto(request)]
 pub struct QueryAggregateDto {
-    /// The fields to group by; none counts every match as one group.
+    /// The fields to group by, at most three; none counts every match as one
+    /// group.
     #[serde(default)]
     pub group_by: Vec<String>,
+    /// Grouped timestamp fields cut to a bucket, `{"created_at": "day" |
+    /// "week" | "month"}`: the group's key is then the bucket's first day,
+    /// `YYYY-MM-DD` (UTC; weeks start on Monday), and `null` where the value
+    /// is not a timestamp. Each names a field of `group_by`.
+    #[serde(default)]
+    pub bucket: Option<std::collections::BTreeMap<String, String>>,
+    /// Numeric fields to add up per group, answered as `sum`.
+    #[serde(default)]
+    pub sum: Vec<String>,
+    /// Numeric fields to average per group, answered as `avg`.
+    #[serde(default)]
+    pub avg: Vec<String>,
+    /// Numeric or timestamp fields whose least value per group is answered as
+    /// `min`.
+    #[serde(default)]
+    pub min: Vec<String>,
+    /// Numeric or timestamp fields whose greatest value per group is answered
+    /// as `max`.
+    #[serde(default)]
+    pub max: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -1445,6 +1471,24 @@ pub struct QueryGroupDto {
     #[schema(value_type = Vec<Object>)]
     pub key: Vec<Value>,
     pub count: u64,
+    /// Per field of `aggregate.sum`, the group's sum; `null` where no row
+    /// holds a number there. Present when a sum was asked for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<Object>)]
+    pub sum: Option<Value>,
+    /// Per field of `aggregate.avg`, the group's average.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<Object>)]
+    pub avg: Option<Value>,
+    /// Per field of `aggregate.min`, the least value: by value for a number,
+    /// by code point for a timestamp (as `order_by` sorts it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<Object>)]
+    pub min: Option<Value>,
+    /// Per field of `aggregate.max`, the greatest value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<Object>)]
+    pub max: Option<Value>,
 }
 
 #[derive(Debug)]
@@ -1551,7 +1595,7 @@ async fn query_objects(
     Extension(handle): Extension<Handle>,
     Json(req): Json<QueryObjectsRequest>,
 ) -> ApiResult<JsonBody<QueryObjectsResponse>> {
-    use super::query::{Aggregate, Direction, OrderBy, Query, QueryError, Selection};
+    use super::query::{Aggregate, Bucket, Direction, OrderBy, Query, QueryError, Selection};
 
     let bad = |m: String| {
         StudioDomainModelError::invalid_argument()
@@ -1582,6 +1626,31 @@ async fn query_objects(
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let aggregate = match req.aggregate {
+        None => None,
+        Some(a) => {
+            let mut bucket = std::collections::BTreeMap::new();
+            for (field, unit) in a.bucket.unwrap_or_default() {
+                let b = serde_json::from_value::<Bucket>(Value::String(unit.clone())).map_err(
+                    |_| {
+                        bad(format!(
+                            "`aggregate.bucket` on `{field}` is `day`, `week` or `month`, \
+                             not `{unit}`"
+                        ))
+                    },
+                )?;
+                bucket.insert(field, b);
+            }
+            Some(Aggregate {
+                group_by: a.group_by,
+                bucket,
+                sum: a.sum,
+                avg: a.avg,
+                min: a.min,
+                max: a.max,
+            })
+        }
+    };
     let query = Query {
         type_ref: req.type_ref,
         scope: req.project_id,
@@ -1595,9 +1664,7 @@ async fn query_objects(
             include,
             limit: req.limit,
         },
-        aggregate: req.aggregate.map(|a| Aggregate {
-            group_by: a.group_by,
-        }),
+        aggregate,
     };
     // A type whose kit is not installed here is absent for everybody: say
     // which kit brings it rather than "unknown type" (ADR-0070 §6).
@@ -1640,7 +1707,11 @@ async fn query_objects(
         warnings: outcome.warnings,
         groups: outcome.groups.map(|gs| {
             gs.into_iter()
-                .map(|g| QueryGroupDto {
+                .map(|mut g| QueryGroupDto {
+                    sum: g.folds.remove("sum"),
+                    avg: g.folds.remove("avg"),
+                    min: g.folds.remove("min"),
+                    max: g.folds.remove("max"),
                     key: g.key,
                     count: g.count,
                 })
@@ -1814,7 +1885,10 @@ pub fn register_routes(
             "One request reads a type's objects filtered (`where`, Hasura-style \
              operators), ordered, projected to `fields`, with declared relations \
              followed through `include` (backwards with a leading `~`), nested up to \
-             three levels, and optionally counted by group (`aggregate`). Pages go by \
+             three levels, and optionally counted by group (`aggregate`: `group_by` \
+             fields or timestamp buckets, with `sum`, `avg`, `min`, `max` per group). \
+             A `where` may filter by a related object's fields one relation away. \
+             Pages go by \
              cursor: an answer with more rows carries `next_cursor`, sent back as \
              `cursor` for the next page (`offset` still works meanwhile). Every field \
              and relation named is checked against the model and a wrong one is a 400 \

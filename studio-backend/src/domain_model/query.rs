@@ -27,7 +27,13 @@
 //!
 //! A relation is followed from its source, or with `~name` from its target
 //! back to its source. Each edge carries the declared relation it is, so two
-//! relations of one verb do not answer for each other.
+//! relations of one verb do not answer for each other. A root `where` can
+//! reach one relation away too: `{"delivers": {"status": {"_eq": "active"}}}`
+//! keeps the rows with such an object, as `EXISTS` over the edges in SQL.
+//!
+//! An `aggregate` counts the matches per group of up to three keys (a
+//! timestamp cut to its day, week or month), with sums, averages, minimums
+//! and maximums of the fields the model types as numbers or timestamps.
 //!
 //! Pages go by cursor: an answer with more rows after it carries
 //! `next_cursor`, the last row's sort values and id, and the next request
@@ -39,7 +45,7 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 use toolkit_security::SecurityContext;
@@ -160,12 +166,52 @@ impl Query {
     }
 }
 
-/// Counts over the root's matches, grouped by up to [`MAX_GROUP_BY`] fields.
+/// Counts over the root's matches, grouped by up to [`MAX_GROUP_BY`] fields,
+/// with sums, averages, minimums and maximums of fields per group.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Aggregate {
     #[serde(default)]
     pub group_by: Vec<String>,
+    /// Grouped timestamp fields cut to a bucket: `{"created_at": "month"}`
+    /// groups by the month `created_at` falls in. Each names a field of
+    /// `group_by`.
+    #[serde(default)]
+    pub bucket: BTreeMap<String, Bucket>,
+    /// Numeric fields to add up per group.
+    #[serde(default)]
+    pub sum: Vec<String>,
+    /// Numeric fields to average per group.
+    #[serde(default)]
+    pub avg: Vec<String>,
+    /// Numeric or timestamp fields whose least value each group reports.
+    #[serde(default)]
+    pub min: Vec<String>,
+    /// Numeric or timestamp fields whose greatest value each group reports.
+    #[serde(default)]
+    pub max: Vec<String>,
+}
+
+/// The span a bucketed timestamp is cut to: the day (UTC) it falls on, the
+/// ISO week (starting Monday) or the month. A bucket's key is its first day,
+/// `YYYY-MM-DD`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Bucket {
+    Day,
+    Week,
+    Month,
+}
+
+impl Bucket {
+    /// Postgres's `date_trunc` unit.
+    fn unit(self) -> &'static str {
+        match self {
+            Self::Day => "day",
+            Self::Week => "week",
+            Self::Month => "month",
+        }
+    }
 }
 
 /// One query: the type it starts from and what to read of it.
@@ -321,6 +367,50 @@ enum Expr {
         op: Op,
         arg: Value,
     },
+    /// Some object one declared relation away matches `filter`:
+    /// `{"delivers": {"status": {"_eq": "active"}}}`.
+    Related {
+        name: String,
+        filter: Box<Expr>,
+        /// The relation, once the planner has found it in the model.
+        hop: Option<RelatedHop>,
+        /// The graph executor's answer: the ids of the rows that have such an
+        /// object, read before the rows are filtered. The SQL executor asks
+        /// with `EXISTS` instead and leaves it empty.
+        matched: Option<HashSet<String>>,
+    },
+}
+
+/// The relation a [`Expr::Related`] follows, as the model declares it.
+#[derive(Debug, Clone)]
+struct RelatedHop {
+    edge_type_id: String,
+    relation: String,
+    reverse: bool,
+    node_type_ids: Vec<String>,
+}
+
+impl RelatedHop {
+    fn hop(&self) -> Hop<'_> {
+        Hop {
+            edge_type_id: &self.edge_type_id,
+            relation: Some(&self.relation),
+            node_type_ids: &self.node_type_ids,
+            reverse: self.reverse,
+        }
+    }
+}
+
+/// Does `ops` read as operators on a field (`{"_eq": 1}`) rather than a
+/// filter on a related object (`{"status": {"_eq": 1}}`)? Any key that is an
+/// operator, or starts with `_` without being a combinator, makes it the
+/// former, so a mistyped operator is still named as one.
+fn is_comparison(ops: &Map<String, Value>) -> bool {
+    ops.is_empty()
+        || ops.keys().any(|k| {
+            Op::parse(k).is_some()
+                || (k.starts_with('_') && !matches!(k.as_str(), "_and" | "_or" | "_not"))
+        })
 }
 
 fn parse_expr(v: &Value) -> Result<Expr, String> {
@@ -353,6 +443,15 @@ fn parse_expr(v: &Value) -> Result<Expr, String> {
                 let ops = val.as_object().ok_or_else(|| {
                     format!("`{field}` takes operators, as in {{\"{field}\": {{\"_eq\": …}}}}")
                 })?;
+                if !is_comparison(ops) {
+                    parts.push(Expr::Related {
+                        name: field.to_string(),
+                        filter: Box::new(parse_expr(val)?),
+                        hop: None,
+                        matched: None,
+                    });
+                    continue;
+                }
                 for (token, arg) in ops {
                     let op = Op::parse(token).ok_or_else(|| {
                         format!("`{token}` on `{field}` is not an operator; use {}", Op::ALL)
@@ -388,6 +487,29 @@ fn fields_of(e: &Expr, out: &mut Vec<String>) {
         Expr::And(list) | Expr::Or(list) => list.iter().for_each(|e| fields_of(e, out)),
         Expr::Not(e) => fields_of(e, out),
         Expr::Cmp { path, .. } => out.push(path[0].clone()),
+        // Fields of the related type, checked against it by the planner.
+        Expr::Related { .. } => {}
+    }
+}
+
+/// Every relation filter of an expression, mutably, outermost first: for the
+/// planner to resolve and the graph executor to answer.
+fn related_of_mut<'a>(e: &'a mut Expr, out: &mut Vec<&'a mut Expr>) {
+    match e {
+        Expr::And(list) | Expr::Or(list) => list.iter_mut().for_each(|e| related_of_mut(e, out)),
+        Expr::Not(e) => related_of_mut(e, out),
+        Expr::Cmp { .. } => {}
+        Expr::Related { .. } => out.push(e),
+    }
+}
+
+/// Does the expression filter by a related object anywhere?
+fn has_related(e: &Expr) -> bool {
+    match e {
+        Expr::And(list) | Expr::Or(list) => list.iter().any(has_related),
+        Expr::Not(e) => has_related(e),
+        Expr::Cmp { .. } => false,
+        Expr::Related { .. } => true,
     }
 }
 
@@ -460,6 +582,9 @@ fn eval(e: &Expr, node: &ObjectNode, id: &Value) -> bool {
                 Op::IsNull => unreachable!("handled above"),
             }
         }
+        Expr::Related { matched, .. } => matched
+            .as_ref()
+            .is_some_and(|m| m.contains(&node.instance_id)),
     }
 }
 
@@ -506,15 +631,9 @@ fn extending(ontology: &Ontology, target: &str) -> Vec<String> {
         .collect()
 }
 
-fn plan(
-    ontology: &Ontology,
-    entities: &[String],
-    label: &str,
-    sel: &Selection,
-    depth: usize,
-) -> Result<Plan, QueryError> {
-    // A field is admitted when any of the types the rows can be has it: a
-    // relation pointing at a base returns objects of what extends it.
+/// The fields rows of `entities` may have: any of the types' fields, because a
+/// relation pointing at a base returns objects of what extends it.
+fn admitted_fields(ontology: &Ontology, entities: &[String]) -> Vec<String> {
     let mut admitted: Vec<String> = vec!["id".to_string()];
     for e in entities {
         for p in ontology.effective_properties(e) {
@@ -523,27 +642,209 @@ fn plan(
             }
         }
     }
-    let check = |field: &str, role: &str| -> Result<(), QueryError> {
-        let head = field.split('.').next().unwrap_or(field);
-        if admitted.iter().any(|a| a == head) {
-            return Ok(());
-        }
-        let mut known = admitted.clone();
-        known.sort();
-        Err(invalid(format!(
-            "`{field}` in {role} is not a field of `{label}`; it has: {}",
-            known.join(", ")
-        )))
+    admitted
+}
+
+/// `field` (by its first segment) is one of `admitted`, or a 400 naming them.
+fn check_field(
+    admitted: &[String],
+    label: &str,
+    field: &str,
+    role: &str,
+) -> Result<(), QueryError> {
+    let head = field.split('.').next().unwrap_or(field);
+    if admitted.iter().any(|a| a == head) {
+        return Ok(());
+    }
+    let mut known = admitted.to_vec();
+    known.sort();
+    Err(invalid(format!(
+        "`{field}` in {role} is not a field of `{label}`; it has: {}",
+        known.join(", ")
+    )))
+}
+
+/// A relation as a request names it, found in the model.
+struct ResolvedRelation {
+    edge_type_id: String,
+    /// The declared relation's own name, which its edges carry.
+    relation: String,
+    reverse: bool,
+    /// The entity at the far end, and every entity that extends it.
+    target: String,
+    targets: Vec<String>,
+}
+
+impl ResolvedRelation {
+    fn node_type_ids(&self, ontology: &Ontology) -> Vec<String> {
+        self.targets.iter().map(|t| ontology.type_id_of(t)).collect()
+    }
+}
+
+/// The relation `name` (`delivers`, `team.delivers`, `~delivers`) from rows
+/// of `entities`, or a 400 naming the relations they have.
+fn resolve_relation(
+    ontology: &Ontology,
+    entities: &[String],
+    label: &str,
+    name: &str,
+) -> Result<ResolvedRelation, QueryError> {
+    let chains: HashSet<String> = entities
+        .iter()
+        .flat_map(|e| ontology.ancestors(e))
+        .collect();
+    let declared = ontology.declared_relations();
+    let (reverse, written) = match name.strip_prefix(REVERSE) {
+        Some(rest) => (true, rest),
+        None => (false, name),
     };
+    let (owner, bare) = match written.split_once('.') {
+        Some((o, n)) => (ontology.resolve_entity_id(o), n),
+        None => (None, written),
+    };
+    // Forwards, the rows are the relation's source; backwards, its target.
+    let near_end = |d: &super::ontology::DeclaredRelation| {
+        if reverse {
+            d.target_entity.as_ref().is_some_and(|t| chains.contains(t))
+        } else {
+            chains.contains(&d.source)
+        }
+    };
+    let hits: Vec<_> = declared
+        .iter()
+        .filter(|d| d.name == bare && near_end(d))
+        .filter(|d| owner.as_ref().is_none_or(|o| *o == d.source))
+        .collect();
+    let Some(d) = hits.first() else {
+        let mut offered: Vec<String> = declared
+            .iter()
+            .filter(|d| d.target_entity.is_some())
+            .filter_map(|d| {
+                if chains.contains(&d.source) {
+                    Some(d.name.clone())
+                } else if d.target_entity.as_ref().is_some_and(|t| chains.contains(t)) {
+                    Some(format!("{REVERSE}{}.{}", d.source, d.name))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        offered.sort();
+        offered.dedup();
+        return Err(invalid(format!(
+            "`{label}` has no relation `{name}`; it has: {}",
+            offered.join(", ")
+        )));
+    };
+    let far = |h: &super::ontology::DeclaredRelation| {
+        if reverse {
+            Some(h.source.clone())
+        } else {
+            h.target_entity.clone()
+        }
+    };
+    if hits.iter().any(|h| h.verb != d.verb || far(h) != far(d)) {
+        return Err(invalid(format!(
+            "`{name}` means different relations on the types `{label}` can be; qualify it: {}",
+            hits.iter()
+                .map(|h| format!("{}{}.{}", if reverse { "~" } else { "" }, h.source, h.name))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )));
+    }
+    let Some(target) = far(d) else {
+        return Err(invalid(format!(
+            "`{name}` points at `{}`, which is not in the loaded model",
+            d.target
+        )));
+    };
+    Ok(ResolvedRelation {
+        edge_type_id: gts::edge_type_id(&d.verb),
+        relation: d.name.clone(),
+        reverse,
+        targets: extending(ontology, &target),
+        target,
+    })
+}
+
+/// Find every relation filter of a root `where` in the model and check its
+/// fields against the related type. One hop: a related object's filter does
+/// not follow a relation again.
+fn plan_related(
+    ontology: &Ontology,
+    entities: &[String],
+    label: &str,
+    filter: &mut Expr,
+) -> Result<(), QueryError> {
+    let mut found = Vec::new();
+    related_of_mut(filter, &mut found);
+    for e in found {
+        let Expr::Related {
+            name,
+            filter: inner,
+            hop,
+            ..
+        } = e
+        else {
+            continue;
+        };
+        let r = resolve_relation(ontology, entities, label, name)?;
+        if has_related(inner) {
+            return Err(invalid(format!(
+                "the `where` on `{name}` follows another relation: a filter reaches one \
+                 relation away, not two"
+            )));
+        }
+        let admitted = admitted_fields(ontology, &r.targets);
+        let mut used = Vec::new();
+        fields_of(inner, &mut used);
+        for f in &used {
+            check_field(
+                &admitted,
+                &r.target,
+                f,
+                &format!("the `where` on `{name}`"),
+            )?;
+        }
+        *hop = Some(RelatedHop {
+            node_type_ids: r.node_type_ids(ontology),
+            edge_type_id: r.edge_type_id,
+            relation: r.relation,
+            reverse: r.reverse,
+        });
+    }
+    Ok(())
+}
+
+fn plan(
+    ontology: &Ontology,
+    entities: &[String],
+    label: &str,
+    sel: &Selection,
+    depth: usize,
+) -> Result<Plan, QueryError> {
+    let admitted = admitted_fields(ontology, entities);
+    let check = |field: &str, role: &str| check_field(&admitted, label, field, role);
 
     let filter = match &sel.filter {
         None => None,
         Some(v) => {
-            let e = parse_expr(v).map_err(invalid)?;
+            let mut e = parse_expr(v).map_err(invalid)?;
             let mut used = Vec::new();
             fields_of(&e, &mut used);
             for f in &used {
                 check(f, "`where`")?;
+            }
+            if has_related(&e) {
+                // Under `include` the rows are filtered in memory per parent,
+                // where no relation read stands behind them to answer it.
+                if depth > 0 {
+                    return Err(invalid(
+                        "a `where` on a related object works on the query's root, not under \
+                         `include`",
+                    ));
+                }
+                plan_related(ontology, entities, label, &mut e)?;
             }
             Some(e)
         }
@@ -567,85 +868,16 @@ fn plan(
         )));
     }
 
-    let chains: std::collections::HashSet<String> = entities
-        .iter()
-        .flat_map(|e| ontology.ancestors(e))
-        .collect();
-    let declared = ontology.declared_relations();
     let mut include = Vec::new();
     for (name, child) in &sel.include {
-        let (reverse, written) = match name.strip_prefix(REVERSE) {
-            Some(rest) => (true, rest),
-            None => (false, name.as_str()),
-        };
-        let (owner, bare) = match written.split_once('.') {
-            Some((o, n)) => (ontology.resolve_entity_id(o), n),
-            None => (None, written),
-        };
-        // Forwards, the rows are the relation's source; backwards, its target.
-        let near_end = |d: &super::ontology::DeclaredRelation| {
-            if reverse {
-                d.target_entity.as_ref().is_some_and(|t| chains.contains(t))
-            } else {
-                chains.contains(&d.source)
-            }
-        };
-        let hits: Vec<_> = declared
-            .iter()
-            .filter(|d| d.name == bare && near_end(d))
-            .filter(|d| owner.as_ref().is_none_or(|o| *o == d.source))
-            .collect();
-        let Some(d) = hits.first() else {
-            let mut offered: Vec<String> = declared
-                .iter()
-                .filter(|d| d.target_entity.is_some())
-                .filter_map(|d| {
-                    if chains.contains(&d.source) {
-                        Some(d.name.clone())
-                    } else if d.target_entity.as_ref().is_some_and(|t| chains.contains(t)) {
-                        Some(format!("{REVERSE}{}.{}", d.source, d.name))
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            offered.sort();
-            offered.dedup();
-            return Err(invalid(format!(
-                "`{label}` has no relation `{name}`; it has: {}",
-                offered.join(", ")
-            )));
-        };
-        let far = |h: &super::ontology::DeclaredRelation| {
-            if reverse {
-                Some(h.source.clone())
-            } else {
-                h.target_entity.clone()
-            }
-        };
-        if hits.iter().any(|h| h.verb != d.verb || far(h) != far(d)) {
-            return Err(invalid(format!(
-                "`{name}` means different relations on the types `{label}` can be; qualify it: {}",
-                hits.iter()
-                    .map(|h| format!("{}{}.{}", if reverse { "~" } else { "" }, h.source, h.name))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )));
-        }
-        let Some(target) = far(d) else {
-            return Err(invalid(format!(
-                "`{name}` points at `{}`, which is not in the loaded model",
-                d.target
-            )));
-        };
-        let targets = extending(ontology, &target);
+        let r = resolve_relation(ontology, entities, label, name)?;
         include.push(IncludePlan {
             name: name.clone(),
-            edge_type_id: gts::edge_type_id(&d.verb),
-            relation: d.name.clone(),
-            reverse,
-            node_type_ids: targets.iter().map(|t| ontology.type_id_of(t)).collect(),
-            plan: plan(ontology, &targets, &target, child, depth + 1)?,
+            node_type_ids: r.node_type_ids(ontology),
+            plan: plan(ontology, &r.targets, &r.target, child, depth + 1)?,
+            edge_type_id: r.edge_type_id,
+            relation: r.relation,
+            reverse: r.reverse,
         });
     }
 
@@ -1019,12 +1251,79 @@ fn expand<'a>(
     })
 }
 
-/// The aggregate's fields, checked against the type like any other field.
-fn group_paths(
+// ── Aggregates ────────────────────────────────────────────────────────────
+
+/// How many sums, averages, minimums and maximums one aggregate may ask for.
+pub const MAX_FOLDS: usize = 16;
+
+/// What a field holds, as far as an aggregate cares: a number to add up, or
+/// a timestamp (RFC 3339 text) to bucket and to take the least or greatest of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    Number,
+    Time,
+}
+
+/// A declared type expression (`integer`, `decimal?`, `timestamp`) as a
+/// [`Kind`]; `None` for everything an aggregate cannot fold.
+fn kind_of(type_expr: &str) -> Option<Kind> {
+    let t = type_expr.trim().trim_end_matches('?').trim();
+    match t.to_ascii_lowercase().as_str() {
+        "integer" | "int" | "number" | "decimal" | "float" | "double" => Some(Kind::Number),
+        "timestamp" | "datetime" | "date-time" | "date" => Some(Kind::Time),
+        _ => None,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Fold {
+    Sum,
+    Avg,
+    Min,
+    Max,
+}
+
+impl Fold {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Sum => "sum",
+            Self::Avg => "avg",
+            Self::Min => "min",
+            Self::Max => "max",
+        }
+    }
+}
+
+/// One fold of one field per group.
+#[derive(Debug, Clone)]
+struct Metric {
+    fold: Fold,
+    field: String,
+    kind: Kind,
+}
+
+/// One grouping key: a field's value, or the bucket its timestamp falls in.
+#[derive(Debug, Clone)]
+struct GroupKey {
+    path: Vec<String>,
+    bucket: Option<Bucket>,
+}
+
+#[derive(Debug)]
+struct AggregatePlan {
+    keys: Vec<GroupKey>,
+    metrics: Vec<Metric>,
+}
+
+/// The aggregate checked against the type: every field one it has, a bucket
+/// only on a timestamp, a sum or an average only of a number, a minimum or a
+/// maximum of either. The fields of `entity` itself, as `group_by` always
+/// read them.
+fn aggregate_plan(
     ontology: &Ontology,
     entity: &str,
     aggregate: Option<&Aggregate>,
-) -> Result<Option<Vec<Vec<String>>>, QueryError> {
+) -> Result<Option<AggregatePlan>, QueryError> {
     let Some(a) = aggregate else {
         return Ok(None);
     };
@@ -1033,28 +1332,249 @@ fn group_paths(
             "`aggregate.group_by` takes at most {MAX_GROUP_BY} fields"
         )));
     }
+    let properties = ontology.effective_properties(entity);
     let known: Vec<String> = std::iter::once("id".to_string())
-        .chain(
-            ontology
-                .effective_properties(entity)
-                .into_iter()
-                .map(|p| p.name),
-        )
+        .chain(properties.iter().map(|p| p.name.clone()))
         .collect();
-    let mut paths = Vec::new();
-    for f in &a.group_by {
-        let head = f.split('.').next().unwrap_or(f);
-        if !known.iter().any(|k| k == head) {
-            let mut known = known.clone();
-            known.sort();
+    let not_a_field = |f: &str, role: &str| {
+        let mut known = known.clone();
+        known.sort();
+        invalid(format!(
+            "`{f}` in `aggregate.{role}` is not a field of `{entity}`; it has: {}",
+            known.join(", ")
+        ))
+    };
+    // The top-level field `f` of the kinds `want`, or a 400 naming those it has.
+    let typed = |f: &str, role: &str, want: &[Kind]| -> Result<Kind, QueryError> {
+        let Some(p) = properties.iter().find(|p| p.name == f) else {
+            return Err(not_a_field(f, role));
+        };
+        if let Some(k) = kind_of(&p.type_expr).filter(|k| want.contains(k)) {
+            return Ok(k);
+        }
+        let mut fitting: Vec<&str> = properties
+            .iter()
+            .filter(|p| kind_of(&p.type_expr).is_some_and(|k| want.contains(&k)))
+            .map(|p| p.name.as_str())
+            .collect();
+        fitting.sort_unstable();
+        let what = match want {
+            [Kind::Number] => "numeric",
+            [Kind::Time] => "timestamp",
+            _ => "numeric or timestamp",
+        };
+        Err(invalid(format!(
+            "`aggregate.{role}` takes {what} fields; `{f}` of `{entity}` is `{}`. \
+             Its {what} fields: {}",
+            p.type_expr,
+            if fitting.is_empty() {
+                "none".to_string()
+            } else {
+                fitting.join(", ")
+            }
+        )))
+    };
+
+    let mut keys = Vec::new();
+    for f in a.bucket.keys() {
+        if !a.group_by.contains(f) {
             return Err(invalid(format!(
-                "`{f}` in `aggregate.group_by` is not a field of `{entity}`; it has: {}",
-                known.join(", ")
+                "`aggregate.bucket` names `{f}`, which `aggregate.group_by` does not: \
+                 a bucket cuts a grouped field"
             )));
         }
-        paths.push(f.split('.').map(str::to_string).collect());
     }
-    Ok(Some(paths))
+    for f in &a.group_by {
+        if let Some(b) = a.bucket.get(f) {
+            typed(f, "bucket", &[Kind::Time])?;
+            keys.push(GroupKey {
+                path: vec![f.clone()],
+                bucket: Some(*b),
+            });
+            continue;
+        }
+        let head = f.split('.').next().unwrap_or(f);
+        if !known.iter().any(|k| k == head) {
+            return Err(not_a_field(f, "group_by"));
+        }
+        keys.push(GroupKey {
+            path: f.split('.').map(str::to_string).collect(),
+            bucket: None,
+        });
+    }
+    let mut metrics = Vec::new();
+    for (fold, fields, want) in [
+        (Fold::Sum, &a.sum, &[Kind::Number][..]),
+        (Fold::Avg, &a.avg, &[Kind::Number][..]),
+        (Fold::Min, &a.min, &[Kind::Number, Kind::Time][..]),
+        (Fold::Max, &a.max, &[Kind::Number, Kind::Time][..]),
+    ] {
+        for f in fields {
+            let kind = typed(f, fold.name(), want)?;
+            if !metrics
+                .iter()
+                .any(|m: &Metric| m.fold == fold && m.field == *f)
+            {
+                metrics.push(Metric {
+                    fold,
+                    field: f.clone(),
+                    kind,
+                });
+            }
+        }
+    }
+    if metrics.len() > MAX_FOLDS {
+        return Err(invalid(format!(
+            "`aggregate` takes at most {MAX_FOLDS} sums, averages, minimums and maximums together"
+        )));
+    }
+    Ok(Some(AggregatePlan { keys, metrics }))
+}
+
+/// What a timestamp has to look like to be bucketed: RFC 3339 (`T`, `t` or a
+/// space between date and time, an offset of at most 14 hours) or a bare date.
+/// Both executors read only what matches; the SQL one gets it as a bound
+/// parameter, so it is written for Postgres's regular expressions and Rust's
+/// alike (no `\d`, which Rust reads as any Unicode digit).
+const TIMESTAMP_SHAPE: &str = "^[1-9][0-9]{3}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])\
+([Tt ]([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]([.][0-9]+)?([Zz]|[+-](0[0-9]|1[0-4]):[0-5][0-9]))?$";
+
+/// The bucket `v` falls in, as its first day (`YYYY-MM-DD`, UTC), or `null`
+/// when it is not a timestamp — the reading the SQL executor's bucket has.
+fn bucket_of(v: Option<&Value>, bucket: Bucket) -> Value {
+    use chrono::{Datelike, NaiveDate};
+    static SHAPE: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(TIMESTAMP_SHAPE).expect("TIMESTAMP_SHAPE"));
+    let Some(s) = v.and_then(Value::as_str).filter(|s| SHAPE.is_match(s)) else {
+        return Value::Null;
+    };
+    let day = if s.len() == 10 {
+        NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()
+    } else {
+        // The fraction never moves the day; Postgres rounds it to
+        // microseconds, which could.
+        let whole = strip_fraction(s);
+        let normal = format!("{}T{}", &whole[..10], whole[11..].to_ascii_uppercase());
+        chrono::DateTime::parse_from_rfc3339(&normal)
+            .ok()
+            .map(|t| t.with_timezone(&chrono::Utc).date_naive())
+    };
+    let Some(day) = day else {
+        return Value::Null;
+    };
+    let first = match bucket {
+        Bucket::Day => Some(day),
+        Bucket::Week => day.checked_sub_days(chrono::Days::new(u64::from(
+            day.weekday().num_days_from_monday(),
+        ))),
+        Bucket::Month => day.with_day(1),
+    };
+    first.map_or(Value::Null, |d| {
+        Value::String(d.format("%Y-%m-%d").to_string())
+    })
+}
+
+/// `s` without its fractional seconds (`.123`), if it has any.
+fn strip_fraction(s: &str) -> String {
+    match s.find('.') {
+        Some(dot) => {
+            let rest = &s[dot + 1..];
+            let digits = rest.chars().take_while(char::is_ascii_digit).count();
+            format!("{}{}", &s[..dot], &rest[digits..])
+        }
+        None => s.to_string(),
+    }
+}
+
+/// A decimal as JSON: an integer when it is whole and fits, a float otherwise.
+/// Both executors fold in exact decimals and convert here, so they answer the
+/// same number.
+fn decimal_json(d: &bigdecimal::BigDecimal) -> Value {
+    use bigdecimal::ToPrimitive;
+    if *d == d.with_scale(0)
+        && let Some(i) = d.to_i64()
+    {
+        return Value::from(i);
+    }
+    // Through text: Rust's parse rounds to the nearest float, always.
+    d.to_string()
+        .parse::<f64>()
+        .ok()
+        .and_then(serde_json::Number::from_f64)
+        .map_or(Value::Null, Value::Number)
+}
+
+/// A JSON number as an exact decimal.
+fn decimal_of(v: &Value) -> Option<bigdecimal::BigDecimal> {
+    match v {
+        Value::Number(n) => n.to_string().parse().ok(),
+        _ => None,
+    }
+}
+
+/// The folds of one group as the answer carries them:
+/// `{"sum": {"field": value}, "min": {...}}`, one entry per fold asked for.
+fn folds_json(metrics: &[Metric], values: Vec<Value>) -> Map<String, Value> {
+    let mut out = Map::new();
+    for (m, v) in metrics.iter().zip(values) {
+        let entry = out
+            .entry(m.fold.name())
+            .or_insert_with(|| Value::Object(Map::new()));
+        if let Value::Object(fields) = entry {
+            fields.insert(m.field.clone(), v);
+        }
+    }
+    out
+}
+
+/// One fold over the values one group's rows hold: a number's sum, average,
+/// least or greatest by value, a timestamp's least or greatest by code point
+/// (as `order_by` sorts them). `null` when no row holds a value of the kind.
+fn fold(m: &Metric, values: &[&Value]) -> Value {
+    match m.kind {
+        Kind::Number => {
+            let numbers: Vec<bigdecimal::BigDecimal> =
+                values.iter().filter_map(|v| decimal_of(v)).collect();
+            if numbers.is_empty() {
+                return Value::Null;
+            }
+            let picked = match m.fold {
+                Fold::Sum => numbers.iter().sum(),
+                Fold::Avg => {
+                    let total: bigdecimal::BigDecimal = numbers.iter().sum();
+                    total / bigdecimal::BigDecimal::from(numbers.len() as u64)
+                }
+                Fold::Min => numbers.iter().min().cloned().unwrap_or_default(),
+                Fold::Max => numbers.iter().max().cloned().unwrap_or_default(),
+            };
+            decimal_json(&picked)
+        }
+        Kind::Time => {
+            let texts = values.iter().filter_map(|v| v.as_str());
+            let picked = match m.fold {
+                Fold::Max => texts.max(),
+                _ => texts.min(),
+            };
+            picked.map_or(Value::Null, |s| Value::String(s.to_string()))
+        }
+    }
+}
+
+/// The SQL executor's folds, as its `jsonb_build_array` of text answers them,
+/// in the reading [`fold`] gives.
+fn folds_from_sql(metrics: &[Metric], raw: &Value) -> Vec<Value> {
+    let items = raw.as_array().map(Vec::as_slice).unwrap_or(&[]);
+    metrics
+        .iter()
+        .enumerate()
+        .map(|(i, m)| match (m.kind, items.get(i)) {
+            (Kind::Number, Some(Value::String(s))) => s
+                .parse::<bigdecimal::BigDecimal>()
+                .map_or(Value::Null, |d| decimal_json(&d)),
+            (Kind::Time, Some(Value::String(s))) => Value::String(s.clone()),
+            _ => Value::Null,
+        })
+        .collect()
 }
 
 /// Largest group first, then by key, so both executors answer in one order.
@@ -1069,26 +1589,125 @@ fn sorted(mut groups: Vec<Group>) -> Vec<Group> {
     groups
 }
 
-/// The groups of `matched`, counted here: the graph executor's aggregate.
-fn groups_of(matched: &[ObjectNode], paths: &[Vec<String>]) -> Vec<Group> {
-    let mut counts: Vec<(Vec<Value>, u64)> = Vec::new();
+/// The groups of `matched`, counted and folded here: the graph executor's
+/// aggregate.
+fn groups_of(matched: &[ObjectNode], agg: &AggregatePlan) -> Vec<Group> {
+    let mut groups: Vec<(Vec<Value>, Vec<&ObjectNode>)> = Vec::new();
     for n in matched {
         let id = Value::String(n.instance_id.clone());
-        let key: Vec<Value> = paths
+        let key: Vec<Value> = agg
+            .keys
             .iter()
-            .map(|p| lookup(n, p, &id).cloned().unwrap_or(Value::Null))
+            .map(|k| {
+                let v = lookup(n, &k.path, &id);
+                match k.bucket {
+                    Some(b) => bucket_of(v, b),
+                    None => v.cloned().unwrap_or(Value::Null),
+                }
+            })
             .collect();
-        match counts.iter_mut().find(|(k, _)| *k == key) {
-            Some((_, c)) => *c += 1,
-            None => counts.push((key, 1)),
+        match groups.iter_mut().find(|(k, _)| *k == key) {
+            Some((_, rows)) => rows.push(n),
+            None => groups.push((key, vec![n])),
         }
     }
     sorted(
-        counts
+        groups
             .into_iter()
-            .map(|(key, count)| Group { key, count })
+            .map(|(key, rows)| {
+                let values = agg
+                    .metrics
+                    .iter()
+                    .map(|m| {
+                        let held: Vec<&Value> = rows
+                            .iter()
+                            .filter_map(|n| n.value.get(&m.field).filter(|v| !v.is_null()))
+                            .collect();
+                        fold(m, &held)
+                    })
+                    .collect();
+                Group {
+                    key,
+                    count: rows.len() as u64,
+                    folds: folds_json(&agg.metrics, values),
+                }
+            })
             .collect(),
     )
+}
+
+// ── Filters on related objects ────────────────────────────────────────────
+
+/// How many rows one relation read of the graph executor starts from.
+const RELATED_SEEDS: usize = 1_000;
+
+/// The node types every relation filter of `e` reaches, for the read model
+/// to ask the PDP about their owners.
+fn related_type_ids(e: &Expr, out: &mut Vec<String>) {
+    match e {
+        Expr::And(list) | Expr::Or(list) => list.iter().for_each(|e| related_type_ids(e, out)),
+        Expr::Not(e) => related_type_ids(e, out),
+        Expr::Cmp { .. } => {}
+        Expr::Related { hop, .. } => {
+            for t in hop.iter().flat_map(|h| &h.node_type_ids) {
+                if !out.contains(t) {
+                    out.push(t.clone());
+                }
+            }
+        }
+    }
+}
+
+/// The graph executor's answer to each relation filter of `filter`: follow
+/// the relation from every candidate row, keep the related objects the caller
+/// may read and the filter matches, and note which rows reached one. False
+/// when the graph stopped a read early, so some rows may be missing.
+async fn answer_related(
+    store: &dyn DomainStore,
+    ctx: &SecurityContext,
+    access: &Access,
+    filter: &mut Expr,
+    seeds: &[String],
+    warnings: &mut Vec<String>,
+) -> Result<bool, QueryError> {
+    let mut complete = true;
+    let mut found = Vec::new();
+    related_of_mut(filter, &mut found);
+    for e in found {
+        let Expr::Related {
+            name,
+            filter: inner,
+            hop: Some(hop),
+            matched,
+        } = e
+        else {
+            continue;
+        };
+        let mut hits = HashSet::new();
+        for chunk in seeds.chunks(RELATED_SEEDS) {
+            let hood = store.neighbours(ctx, chunk, hop.hop()).await?;
+            if hood.truncated && complete {
+                complete = false;
+                warnings.push(format!(
+                    "the graph stopped early following `{name}`: rows whose only match was \
+                     past that point are missing"
+                ));
+            }
+            let reachable = access.retain(ctx, hood.nodes).await;
+            let fits: HashSet<String> = reachable
+                .into_iter()
+                .filter(|n| eval(inner, n, &Value::String(n.instance_id.clone())))
+                .map(|n| n.instance_id)
+                .collect();
+            for edge in hood.edges {
+                if fits.contains(&edge.to) {
+                    hits.insert(edge.from);
+                }
+            }
+        }
+        *matched = Some(hits);
+    }
+    Ok(complete)
 }
 
 /// A gear's read of its own objects: [`run`] with the page bound lifted to
@@ -1140,7 +1759,7 @@ async fn run_with(
     let entity = ontology
         .resolve_entity_id(&q.type_ref)
         .ok_or_else(|| invalid(format!("unknown domain type: {}", q.type_ref)))?;
-    let warnings: Vec<String> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
     let mut plan = plan(
         ontology,
         std::slice::from_ref(&entity),
@@ -1158,7 +1777,7 @@ async fn run_with(
     // its `total` and order would cover only the first objects the graph
     // lists.
     let scan_limit = bulk.map_or(SCAN_LIMIT, |_| BULK_LIMIT);
-    let group_by = group_paths(ontology, &entity, q.aggregate.as_ref())?;
+    let agg = aggregate_plan(ontology, &entity, q.aggregate.as_ref())?;
     // One scope or several; each executor narrows by them the same way: the
     // object's `_scope`, which the read model keeps as its `scope` column.
     let scopes: Option<Vec<String>> = match (&q.scope, &q.scopes) {
@@ -1220,17 +1839,52 @@ async fn run_with(
             }
             Some(admitted)
         };
+        // A filter on related objects reads only those the caller may read,
+        // or it would say whether a hidden object matches: the same
+        // predicate, over the owners of the related types.
+        let related_owners = match &plan.filter {
+            Some(f) if !access.is_unconstrained() && has_related(f) => {
+                let mut ids = Vec::new();
+                related_type_ids(f, &mut ids);
+                let mut admitted = Vec::new();
+                for owner in mirror.owners(tenant, &ids, None).await? {
+                    if access.admits_owner(ctx, owner).await {
+                        admitted.push(owner);
+                    }
+                }
+                Some(admitted)
+            }
+            _ => None,
+        };
         let root = super::mirror::RootSelect {
             type_ids,
             scopes,
-            filter: plan.filter.as_ref().map(sql::condition),
+            filter: plan
+                .filter
+                .as_ref()
+                .map(|f| match related_owners.as_deref() {
+                    None => sql::condition(f),
+                    Some(owners) => sql::condition_owned_by(f, owners),
+                }),
             order: sql::order(&plan.order_by),
             owners,
         };
-        let groups = match &group_by {
-            Some(paths) => Some(sorted(
-                mirror.groups(tenant, &root, sql::group_key(paths)).await?,
-            )),
+        let groups = match &agg {
+            Some(a) => {
+                let found = mirror
+                    .groups(tenant, &root, sql::group_key(&a.keys), sql::folds(&a.metrics))
+                    .await?;
+                Some(sorted(
+                    found
+                        .into_iter()
+                        .map(|(key, count, raw)| Group {
+                            key,
+                            count,
+                            folds: folds_json(&a.metrics, folds_from_sql(&a.metrics, &raw)),
+                        })
+                        .collect(),
+                ))
+            }
             None => None,
         };
         let (mut nodes, total) = if counts_only {
@@ -1316,10 +1970,17 @@ async fn run_with(
     // Before `where` and `total`: a count that included rows the caller cannot
     // see would say they exist (ADR-0035 §5).
     let found = access.retain(ctx, found).await;
+    let mut complete = complete;
+    if let Some(filter) = plan.filter.as_mut()
+        && has_related(filter)
+    {
+        let seeds: Vec<String> = found.iter().map(|n| n.instance_id.clone()).collect();
+        complete &= answer_related(store, ctx, access, filter, &seeds, &mut warnings).await?;
+    }
 
     let matched = select(found, &plan);
     let total = matched.len();
-    let groups = group_by.as_deref().map(|paths| groups_of(&matched, paths));
+    let groups = agg.as_ref().map(|a| groups_of(&matched, a));
     let start = match &after {
         _ if counts_only => total,
         Some(c) => matched
@@ -1938,5 +2599,266 @@ mod tests {
         assert!(equal(&json!(1), &json!(1.0)));
         assert_eq!(compare(&json!(2), &json!(10)), Some(Ordering::Less));
         assert_eq!(compare(&json!("2"), &json!(10)), None);
+    }
+
+    // ── Filters on related objects ─────────────────────────────────────────
+
+    #[tokio::test]
+    async fn a_where_reaches_one_relation_away() {
+        let s = fixture().await;
+        let teams = |w: Value| query("team", json!({"where": w, "order_by": [{"field": "name"}]}));
+        // Core delivers Apollo (active) and Gemini (paused); Edge nothing.
+        let out = s
+            .query(
+                &ctx(),
+                &teams(json!({"delivers": {"status": {"_eq": "paused"}}})),
+            )
+            .await
+            .unwrap();
+        assert_eq!(names(&out.rows), ["Core"]);
+        assert_eq!(out.rows.total, 1);
+        // `_not` keeps the rows with no such object, Edge among them.
+        let out = s
+            .query(
+                &ctx(),
+                &teams(json!({"_not": {"delivers": {"status": {"_eq": "paused"}}}})),
+            )
+            .await
+            .unwrap();
+        assert_eq!(names(&out.rows), ["Edge"]);
+        // Combined with the row's own fields, and with `_and` inside.
+        let out = s
+            .query(
+                &ctx(),
+                &teams(json!({
+                    "name": {"_eq": "Core"},
+                    "delivers": {"_and": [{"status": {"_eq": "active"}}, {"name": {"_contains": "pol"}}]},
+                })),
+            )
+            .await
+            .unwrap();
+        assert_eq!(names(&out.rows), ["Core"]);
+        // Backwards: the projects a team called Core delivers.
+        let q = query(
+            "project",
+            json!({"where": {"~delivers": {"name": {"_eq": "Core"}}}, "order_by": [{"field": "name"}]}),
+        );
+        let out = s.query(&ctx(), &q).await.unwrap();
+        assert_eq!(names(&out.rows), ["Apollo", "Gemini"]);
+    }
+
+    #[tokio::test]
+    async fn a_relation_filter_names_what_the_model_has() {
+        let s = fixture().await;
+        let m = refusal(&s, "team", json!({"where": {"members": {"name": {"_eq": "AK"}}}})).await;
+        assert!(
+            m.contains("has no relation `members`") && m.contains("has_members"),
+            "{m}"
+        );
+        let m = refusal(
+            &s,
+            "team",
+            json!({"where": {"delivers": {"colour": {"_eq": "red"}}}}),
+        )
+        .await;
+        assert!(
+            m.contains("`colour`") && m.contains("on `delivers`") && m.contains("status"),
+            "{m}"
+        );
+        let m = refusal(
+            &s,
+            "team",
+            json!({"where": {"delivers": {"includes_2": {"name": {"_eq": "Core"}}}}}),
+        )
+        .await;
+        assert!(m.contains("one relation away"), "{m}");
+        let m = refusal(
+            &s,
+            "team",
+            json!({"include": {"delivers": {"where": {"~delivers": {"name": {"_eq": "Core"}}}}}}),
+        )
+        .await;
+        assert!(m.contains("not under `include`"), "{m}");
+        // A mistyped operator is still named as one, not taken for a relation.
+        let m = refusal(&s, "team", json!({"where": {"name": {"_like": "C%"}}})).await;
+        assert!(m.contains("not an operator"), "{m}");
+    }
+
+    #[tokio::test]
+    async fn a_relation_filter_does_not_see_what_the_caller_cannot() {
+        let (store, _, _) = two_projects().await;
+        let open = DomainModelService::new(store.clone());
+        let q = query(
+            "team",
+            json!({"where": {"delivers": {"name": {"_eq": "gemini"}}}}),
+        );
+        assert_eq!(open.query(&ctx(), &q).await.unwrap().rows.total, 1);
+        // Gemini sits in a project this caller has no grant on: whether it
+        // matches is not theirs to learn.
+        let s = DomainModelService::new(store).with_policy(Arc::new(OneProject));
+        assert_eq!(s.query(&ctx(), &q).await.unwrap().rows.total, 0);
+        let q = query(
+            "team",
+            json!({"where": {"delivers": {"name": {"_eq": "apollo"}}}}),
+        );
+        assert_eq!(s.query(&ctx(), &q).await.unwrap().rows.total, 1);
+    }
+
+    // ── Aggregates: folds and buckets ──────────────────────────────────────
+
+    async fn versioned() -> DomainModelService {
+        let s = DomainModelService::new(Arc::new(InMemoryDomainStore::default()));
+        for (key, status, version, started) in [
+            ("a", "active", json!(3), json!("2026-03-02T10:00:00Z")),
+            ("b", "active", json!(5), json!("2026-03-08T23:30:00-02:00")),
+            ("c", "paused", json!(1.5), json!("2026-01-31")),
+            ("d", "active", json!("seven"), json!("not a date")),
+            ("e", "paused", Value::Null, json!("2026-02-30T00:00:00Z")),
+        ] {
+            object(
+                &s,
+                "project",
+                key,
+                json!({"name": key, "status": status, "version": version, "started_at": started}),
+            )
+            .await;
+        }
+        s
+    }
+
+    fn aggregate_query(aggregate: Value) -> Query {
+        Query {
+            type_ref: "project".to_string(),
+            aggregate: Some(serde_json::from_value(aggregate).unwrap()),
+            ..Default::default()
+        }
+    }
+
+    fn group_json(g: &Group) -> Value {
+        let mut out = json!({"key": g.key, "count": g.count});
+        for (k, v) in &g.folds {
+            out[k] = v.clone();
+        }
+        out
+    }
+
+    #[tokio::test]
+    async fn groups_fold_numbers_and_timestamps() {
+        let s = versioned().await;
+        let out = s
+            .query(
+                &ctx(),
+                &aggregate_query(json!({
+                    "group_by": ["status"],
+                    "sum": ["version"], "avg": ["version"],
+                    "min": ["version", "started_at"], "max": ["started_at"],
+                })),
+            )
+            .await
+            .unwrap();
+        let groups: Vec<Value> = out.groups.unwrap().iter().map(group_json).collect();
+        assert_eq!(
+            groups,
+            [
+                // Only numbers fold: "seven" is not one.
+                json!({"key": ["active"], "count": 3,
+                    "sum": {"version": 8}, "avg": {"version": 4},
+                    "min": {"version": 3, "started_at": "2026-03-02T10:00:00Z"},
+                    "max": {"started_at": "not a date"}}),
+                json!({"key": ["paused"], "count": 2,
+                    "sum": {"version": 1.5}, "avg": {"version": 1.5},
+                    "min": {"version": 1.5, "started_at": "2026-01-31"},
+                    "max": {"started_at": "2026-02-30T00:00:00Z"}}),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn timestamps_group_by_day_week_and_month() {
+        let s = versioned().await;
+        let keys = |bucket: &str| aggregate_query(json!({"group_by": ["started_at"], "bucket": {"started_at": bucket}}));
+        let mut by_month: Vec<(Value, u64)> = s
+            .query(&ctx(), &keys("month"))
+            .await
+            .unwrap()
+            .groups
+            .unwrap()
+            .into_iter()
+            .map(|g| (g.key[0].clone(), g.count))
+            .collect();
+        by_month.sort_by_key(|(k, _)| k.to_string());
+        // 23:30 at -02:00 is the 9th in UTC; neither a word nor 30 February
+        // is a timestamp.
+        assert_eq!(
+            by_month,
+            [
+                (json!("2026-01-01"), 1),
+                (json!("2026-03-01"), 2),
+                (Value::Null, 2),
+            ]
+        );
+        let by_week: Vec<Value> = s
+            .query(&ctx(), &keys("week"))
+            .await
+            .unwrap()
+            .groups
+            .unwrap()
+            .into_iter()
+            .map(|g| g.key[0].clone())
+            .collect();
+        // 2 March 2026 is a Monday, the 9th the next one.
+        for week in ["2026-03-02", "2026-03-09", "2026-01-26"] {
+            assert!(by_week.contains(&json!(week)), "{by_week:?}");
+        }
+        let by_day = s.query(&ctx(), &keys("day")).await.unwrap().groups.unwrap();
+        assert!(by_day.iter().any(|g| g.key == [json!("2026-03-09")]));
+    }
+
+    #[tokio::test]
+    async fn an_aggregate_folds_only_what_its_type_allows() {
+        let s = versioned().await;
+        let s = &s;
+        let refused = move |a: Value| async move {
+            match s.query(&ctx(), &aggregate_query(a)).await {
+                Err(QueryError::Invalid(m)) => m,
+                other => panic!("expected a refusal, got {other:?}"),
+            }
+        };
+        let m = refused(json!({"sum": ["name"]})).await;
+        assert!(m.contains("numeric") && m.contains("version"), "{m}");
+        let m = refused(json!({"avg": ["started_at"]})).await;
+        assert!(m.contains("numeric"), "{m}");
+        let m = refused(json!({"max": ["status"]})).await;
+        assert!(m.contains("numeric or timestamp") && m.contains("started_at"), "{m}");
+        let m = refused(json!({"group_by": ["version"], "bucket": {"version": "day"}})).await;
+        assert!(m.contains("timestamp"), "{m}");
+        let m = refused(json!({"group_by": ["status"], "bucket": {"started_at": "day"}})).await;
+        assert!(m.contains("does not"), "{m}");
+        let m = refused(json!({"min": ["colour"]})).await;
+        assert!(m.contains("not a field of `project`"), "{m}");
+        // No group: every match is one group, folded whole.
+        let out = s
+            .query(&ctx(), &aggregate_query(json!({"sum": ["version"]})))
+            .await
+            .unwrap();
+        let groups = out.groups.unwrap();
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].folds["sum"], json!({"version": 9.5}));
+    }
+
+    #[test]
+    fn a_bucket_is_its_first_day_in_utc() {
+        let at = |s: &str, b| bucket_of(Some(&json!(s)), b);
+        assert_eq!(at("2026-03-04T12:00:00Z", Bucket::Day), json!("2026-03-04"));
+        assert_eq!(at("2026-03-04 23:00:00-05:00", Bucket::Day), json!("2026-03-05"));
+        assert_eq!(at("2026-03-04t01:00:00.123456789+03:00", Bucket::Day), json!("2026-03-03"));
+        assert_eq!(at("2026-03-04", Bucket::Week), json!("2026-03-02"));
+        assert_eq!(at("2026-03-01", Bucket::Week), json!("2026-02-23"));
+        assert_eq!(at("2024-02-29T00:00:00Z", Bucket::Month), json!("2024-02-01"));
+        for not in ["2026-02-30", "2026-13-01", "2026-03-04T25:00:00Z", "yesterday", "2026-03-04T10:00:00"] {
+            assert_eq!(at(not, Bucket::Day), Value::Null, "{not}");
+        }
+        assert_eq!(bucket_of(Some(&json!(7)), Bucket::Day), Value::Null);
+        assert_eq!(bucket_of(None, Bucket::Day), Value::Null);
     }
 }
