@@ -1016,3 +1016,85 @@ impl ProjectRepositories for Repositories {
         }))
     }
 }
+
+/// What the project's spec pipeline asks for at its last step
+/// (`documents::pipeline`): a gear match of the project's specifications,
+/// the product's proposal of which gears build it. Nothing in the product
+/// changes; a member adds a proposed gear.
+#[async_trait]
+pub trait ProductProposals: Send + Sync {
+    /// Start a match of `project`'s specifications under `key`, or answer
+    /// the one already started under it: the same key never matches twice.
+    /// `ctx` acts in `org`, the project's organization. `Err` is the reason,
+    /// for a person: the matcher is not set up, the project has no PRD.
+    async fn propose(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        project: Uuid,
+        key: &str,
+    ) -> Result<ProposalStarted, String>;
+}
+
+/// A gear match the pipeline started, or found started.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProposalStarted {
+    pub match_id: Uuid,
+    /// The match's state as stored (`queued`, `running`, `succeeded`, …).
+    pub state: String,
+}
+
+/// [`ProductProposals`] over the shipped strategy's gear matches.
+pub struct Proposals {
+    service: Arc<super::service::ProductService>,
+    matches: Arc<super::gear_match::GearMatches>,
+}
+
+impl Proposals {
+    pub fn new(
+        service: Arc<super::service::ProductService>,
+        matches: Arc<super::gear_match::GearMatches>,
+    ) -> Self {
+        Self { service, matches }
+    }
+}
+
+#[async_trait]
+impl ProductProposals for Proposals {
+    async fn propose(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+        project: Uuid,
+        key: &str,
+    ) -> Result<ProposalStarted, String> {
+        use super::gear_match::services::SHIPPED_STRATEGY;
+        // The product id the match is told, as a person's match is.
+        let product_id = self
+            .service
+            .get_project_product(ctx, &project.to_string())
+            .await
+            .ok()
+            .flatten()
+            .and_then(|n| {
+                n.value
+                    .get("product_id")
+                    .and_then(Value::as_str)
+                    .filter(|p| !p.is_empty())
+                    .map(str::to_owned)
+            })
+            .unwrap_or_else(|| format!("project-{}", &project.simple().to_string()[..8]));
+        let request = super::gear_match::StartRequest {
+            idempotency_key: Some(key.to_owned()),
+            ..super::gear_match::StartRequest::default()
+        };
+        self.matches
+            .start(ctx, org, project, &product_id, SHIPPED_STRATEGY, request)
+            .await
+            .map(|m| ProposalStarted {
+                match_id: m.id,
+                state: m.state,
+            })
+            .map_err(|e| e.to_string())
+    }
+}
