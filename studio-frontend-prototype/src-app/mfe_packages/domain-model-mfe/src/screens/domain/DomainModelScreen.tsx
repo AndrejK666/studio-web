@@ -17,7 +17,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button } from '@gears-frontx/ui-kit';
-import { openScreen, usePollWhileVisible } from '@constructor-studio/mfe-shared';
+import { kitAbsent, openScreen, usePollWhileVisible } from '@constructor-studio/mfe-shared';
 import { dmApi, type Candidate } from '../../api/client';
 import { estimateLabel, etaLabel, readFraction, tokensLabel, type SpecModelBuildEstimate } from '../../model/build-eta';
 import type { Obligation } from '../../model/behaviour';
@@ -145,7 +145,12 @@ export function DomainModelScreen() {
     dmApi
       .productFindings(projectId, orgId)
       .then((r) => live && setProduct({ repo: r.repo, items: orderProductFindings(r.items) }))
-      .catch((e: unknown) => live && setProduct({ error: errText(e) }));
+      .catch((e: unknown) => {
+        if (!live) return;
+        // The findings are the Spec mapping kit's: without it, that is said, not a failure.
+        const why = kitAbsent(e, { kit: 'spec-mapping' });
+        setProduct(why ? { absent: why } : { error: errText(e) });
+      });
     return () => {
       live = false;
     };
