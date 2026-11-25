@@ -34,7 +34,8 @@ import {
   SheetTitle,
   Skeleton,
 } from '@gears-frontx/ui-kit';
-import { isNotFound, openScreen, useHostChrome, useOrganization } from '@constructor-studio/mfe-shared';
+import { kitAbsent, openScreen, useHostChrome, useOrganization, type KitAbsence } from '@constructor-studio/mfe-shared';
+import { KitAbsentState } from '@constructor-studio/mfe-shared/page';
 import type { Connection, DeployEnvironment, Deployment } from '../../api/types';
 import { clusterConnections, registryConnections, researchConnections } from '../../model/environments';
 import {
@@ -110,6 +111,8 @@ function OrgResearch({
   const [deployments, setDeployments] = useState<Deployment[]>([]);
   const [deploymentError, setDeploymentError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The environments are the Delivery kit's (studio-environments): without it this kit has nowhere to run.
+  const [absent, setAbsent] = useState<KitAbsence | null>(null);
   const [editing, setEditing] = useState<DeployEnvironment | 'new' | null>(null);
   const [answers, setAnswers] = useState<Record<string, { ok: boolean; text: string }>>({});
   const [busy, setBusy] = useState<string | null>(null);
@@ -134,6 +137,7 @@ function OrgResearch({
       .then(([envs, conns, deps]) => {
         if (!live) return;
         setError(null);
+        setAbsent(null);
         setEnvironments(envs.items);
         setMayManage(envs.may_manage);
         setConnections(conns.items);
@@ -143,7 +147,9 @@ function OrgResearch({
       .catch((e: unknown) => {
         if (!live) return;
         setEnvironments([]);
-        setError(isNotFound(e) ? t('no_backend') : errText(e));
+        const why = kitAbsent(e, { kit: 'delivery' });
+        setAbsent(why);
+        setError(why ? null : errText(e));
       });
     return () => {
       live = false;
@@ -179,6 +185,8 @@ function OrgResearch({
       setBusy(null);
     }
   };
+
+  if (absent) return <KitAbsentState absence={absent} name="Delivery" level="organization" />;
 
   return (
     <>
