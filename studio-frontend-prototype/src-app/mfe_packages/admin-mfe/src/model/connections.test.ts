@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { ProjectSource } from '@constructor-studio/mfe-shared';
 import type { RemoteRepo, StoredConnection } from '../api/types';
 import {
+  connectWays,
   environmentsByConnection,
   hasRepository,
   missingCategories,
@@ -99,6 +100,15 @@ describe('the organization page', () => {
     expect(reachFor({ provider: 'kubernetes' }, 'personal')).toBe('organization');
     expect(reachFor({ provider: 'research', sign_in: true }, 'organization')).toBe('personal');
     expect(reachFor({ provider: 'github' }, 'personal')).toBe('personal');
+    // A pasted Research key is the person's own account too.
+    expect(reachFor({ provider: 'research', sign_in: false }, 'organization')).toBe('personal');
+  });
+
+  it('says which ways a provider is connected: sign in, paste, or either', () => {
+    expect(connectWays({})).toEqual(['paste']);
+    expect(connectWays({ sign_in: true })).toEqual(['sign_in']);
+    expect(connectWays({ sign_in: true, pasted_key: true })).toEqual(['sign_in', 'paste']);
+    expect(connectWays({ sign_in: false, pasted_key: true })).toEqual(['paste']);
   });
 
   it('shows an address only when it is not the provider’s default', () => {

@@ -75,7 +75,7 @@ pub enum ConnectorCategory {
     /// it, and only the server uses its credential.
     Registry,
     /// A platform that builds and runs products on hardware it allocates
-    /// (Constructor Research, ADR-0049). Signed in to, not pasted.
+    /// (Constructor Research, ADR-0049). Signed in to, or its own key pasted.
     Compute,
     /// A service an assembly strategy runs on (ADR-0074, amendment): an
     /// organization's kit names the strategy, the connection holds the
@@ -688,10 +688,27 @@ pub trait ConnectorDriver: Send + Sync + 'static {
      */
 
     /// Whether a connection is made by signing in rather than by pasting a
-    /// credential. A signed-in provider's connections are never created from
-    /// a pasted one: what it stores is not what a call is made with.
+    /// credential. A signed-in provider's connections are created from a
+    /// pasted one only when it also [takes a pasted key](Self::takes_pasted_key):
+    /// what a sign-in stores is otherwise not what a call is made with.
     fn signs_in(&self) -> bool {
         false
+    }
+
+    /// Whether a connection may be made with a pasted credential. Every
+    /// provider that does not sign in does; one that signs in may too, when
+    /// its own access key is a credential a call is made with as it is
+    /// (Constructor Research's `rk-` key).
+    fn takes_pasted_key(&self) -> bool {
+        !self.signs_in()
+    }
+
+    /// Refuse a pasted credential that cannot be this provider's, in a
+    /// sentence a person can act on, before it is tested. Most providers take
+    /// any text and let the test decide.
+    fn check_pasted_key(&self, token: &str) -> anyhow::Result<()> {
+        let _ = token;
+        Ok(())
     }
 
     /// Where to send the person to sign in, bound to `state` and the PKCE

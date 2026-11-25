@@ -16,9 +16,10 @@ use super::{http_client, register_driver};
 /// client Studio is registered as with the Constructor identity provider and
 /// where Research's public API is (ADR-0049 §1, §6).
 ///
-/// A deployment that has no client yet leaves `client_id` empty, and the
-/// driver is not registered: Constructor Research is then not offered, rather
-/// than offered and failing at the sign-in.
+/// A deployment without `api_url` does not offer Constructor Research at all.
+/// One that has it but no client yet (`client_id` empty) offers it key-only:
+/// a member pastes an `rk-` access key made in Research, and there is no
+/// sign-in to fail. With the client, both ways are offered.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
     #[serde(default = "default_vendor")]
@@ -77,6 +78,26 @@ fn default_scope() -> String {
 }
 
 impl Config {
+    /// The driver this section describes: none without `api_url`, key-only
+    /// without a complete client.
+    fn driver(&self, http: reqwest::Client) -> Option<ResearchDriver> {
+        let api_url = self.api_url.trim().trim_end_matches('/');
+        if api_url.is_empty() {
+            return None;
+        }
+        let oauth = match self.client() {
+            Ok(client) => Some(client),
+            Err(missing) => {
+                info!(
+                    "research-connector-plugin: `{missing}` is not configured, so \
+                     Constructor Research takes pasted access keys only"
+                );
+                None
+            }
+        };
+        Some(ResearchDriver::new(http, oauth, api_url.to_owned()))
+    }
+
     /// The client, or what is missing for one.
     fn client(&self) -> Result<OAuthClient, &'static str> {
         let issuer = self.issuer.trim().trim_end_matches('/');
@@ -85,7 +106,6 @@ impl Config {
             (self.client_id.trim(), "client_id"),
             (self.client_secret.trim(), "client_secret"),
             (self.redirect_uri.trim(), "redirect_uri"),
-            (self.api_url.trim(), "api_url"),
         ] {
             if value.is_empty() {
                 return Err(name);
@@ -116,21 +136,14 @@ pub struct ResearchConnectorPlugin {}
 impl Gear for ResearchConnectorPlugin {
     async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
         let cfg: Config = ctx.config_or_default()?;
-        let oauth = match cfg.client() {
-            Ok(client) => client,
-            Err(missing) => {
-                info!(
-                    "research-connector-plugin: `{missing}` is not configured, so \
-                     Constructor Research is not offered"
-                );
-                return Ok(());
-            }
+        let Some(driver) = cfg.driver(http_client()?) else {
+            info!(
+                "research-connector-plugin: `api_url` is not configured, so \
+                 Constructor Research is not offered"
+            );
+            return Ok(());
         };
-        let driver: Arc<dyn ConnectorDriver> = Arc::new(ResearchDriver::new(
-            http_client()?,
-            oauth,
-            cfg.api_url.trim().trim_end_matches('/').to_owned(),
-        ));
+        let driver: Arc<dyn ConnectorDriver> = Arc::new(driver);
         register_driver(ctx, RESEARCH_INSTANCE_ID, &cfg.vendor, cfg.priority, driver).await
     }
 }
@@ -171,6 +184,35 @@ mod tests {
             ["https://a.example.com/cb", "https://b.example.com/cb"]
         );
         assert_eq!(c.redirect_uri(None).unwrap(), "https://a.example.com/cb");
+    }
+
+    #[test]
+    fn without_a_client_the_driver_is_key_only() {
+        let cfg = Config {
+            api_url: "https://training.constructor.app/api/platform-account/v1/".into(),
+            ..Config::default()
+        };
+        let d = cfg.driver(reqwest::Client::new()).unwrap();
+        assert!(!d.signs_in());
+        assert!(d.takes_pasted_key());
+        assert_eq!(
+            d.default_base_url(),
+            "https://training.constructor.app/api/platform-account/v1"
+        );
+    }
+
+    #[test]
+    fn with_a_client_the_driver_signs_in_too() {
+        let d = configured().driver(reqwest::Client::new()).unwrap();
+        assert!(d.signs_in());
+        assert!(d.takes_pasted_key());
+    }
+
+    #[test]
+    fn without_an_api_url_research_is_not_offered() {
+        let mut c = configured();
+        c.api_url = " ".into();
+        assert!(c.driver(reqwest::Client::new()).is_none());
     }
 
     #[test]

@@ -314,6 +314,70 @@ describe('Integrations: adding', () => {
       redirect_uri: 'https://studio.example/connections/oauth/callback',
     });
   });
+
+  it('takes a pasted Research access key where this Studio has no sign-in, kept to the person', async () => {
+    serve({
+      connectorProviders: read('connectorProviders', {
+        items: [
+          provider({}),
+          provider({
+            provider: 'research',
+            display_name: 'Constructor Research',
+            category: 'compute',
+            credential_label: 'Research access key',
+            sign_in: false,
+            pasted_key: true,
+          }),
+        ],
+      }),
+    });
+    render(<IntegrationsSection />);
+    await row('Acme GitHub');
+    click(document, '[data-connection-add]');
+    click(document, '[data-provider="research"]');
+    const form = document.querySelector('[data-connection-form="research"]') as HTMLElement;
+    // Nothing to sign in to, no address to type: the key and how to make one.
+    expect(form.querySelector('[data-connection-ways]')).toBeNull();
+    expect(form.querySelector('[data-connection-signin]')).toBeNull();
+    expect(within(form).queryByPlaceholderText(/int_url/)).toBeNull();
+    expect(form.querySelector('[data-research-key-hint]')?.textContent).toBe('int_research_key_hint');
+    expect((form.querySelector('[data-connection-reach]') as HTMLSelectElement).value).toBe('personal');
+    fireEvent.change(within(form).getByPlaceholderText('int_label_placeholder'), { target: { value: 'My Research' } });
+    fireEvent.change(within(form).getByLabelText('int_research_key'), { target: { value: 'rk-abc' } });
+    click(form, '[data-connection-create]');
+    await waitFor(() =>
+      expect(calls.find((c) => c.what === 'createConnection')?.body).toEqual({
+        provider: 'research',
+        base_url: undefined,
+        token: 'rk-abc',
+        label: 'My Research',
+        scope: 'personal',
+        owner_tenant_id: 'o1',
+      })
+    );
+  });
+
+  it('offers both the sign-in and a pasted key where this Studio has both', async () => {
+    serve({
+      connectorProviders: read('connectorProviders', {
+        items: [
+          provider({}),
+          provider({ provider: 'research', display_name: 'Constructor Research', category: 'compute', sign_in: true, pasted_key: true }),
+        ],
+      }),
+    });
+    render(<IntegrationsSection />);
+    await row('Acme GitHub');
+    click(document, '[data-connection-add]');
+    click(document, '[data-provider="research"]');
+    const form = document.querySelector('[data-connection-form="research"]') as HTMLElement;
+    expect(form.querySelector('[data-connection-signin]')).not.toBeNull();
+    click(form, '[data-connection-way="paste"]');
+    expect(form.querySelector('[data-connection-signin]')).toBeNull();
+    expect(within(form).getByLabelText('int_research_key')).toBeTruthy();
+    click(form, '[data-connection-way="sign_in"]');
+    expect(form.querySelector('[data-connection-signin]')).not.toBeNull();
+  });
 });
 
 describe('Integrations: a connection', () => {

@@ -292,6 +292,9 @@ pub struct ProviderInfo {
     pub token_optional: bool,
     /// Whether a connection is made by signing in (ADR-0049).
     pub sign_in: bool,
+    /// Whether a connection may be made with a pasted credential; for a
+    /// provider that also signs in, its own access key.
+    pub pasted_key: bool,
 }
 
 pub struct ConnectorService {
@@ -619,6 +622,7 @@ impl ConnectorService {
                 fixed_target: d.fixed_target(),
                 token_optional: d.token_optional(),
                 sign_in: d.signs_in(),
+                pasted_key: d.takes_pasted_key(),
             })
             .collect()
     }
@@ -977,7 +981,7 @@ impl ConnectorService {
             options,
         } = req;
         let driver = self.driver(provider)?;
-        if driver.signs_in() {
+        if !driver.takes_pasted_key() {
             return Err(anyhow!(
                 "a {} connection is made by signing in, not with a pasted credential",
                 driver.display_name()
@@ -990,6 +994,9 @@ impl ConnectorService {
         let token = token.trim();
         if token.is_empty() && !driver.token_optional() {
             return Err(anyhow!("token is required"));
+        }
+        if !token.is_empty() {
+            driver.check_pasted_key(token)?;
         }
         let base_url = resolve_base_url(driver.as_ref(), base_url)?;
         let scope = ConnectionScope::parse(scope)?;
@@ -1098,6 +1105,9 @@ impl ConnectorService {
         let token = token.trim();
         if token.is_empty() && !driver.token_optional() {
             return Err(anyhow!("token is required"));
+        }
+        if !token.is_empty() {
+            driver.check_pasted_key(token)?;
         }
         let base_url = resolve_base_url(driver.as_ref(), base_url)?;
         driver
@@ -1418,6 +1428,7 @@ impl ConnectorService {
                 if t.is_empty() {
                     return Err(anyhow!("token must not be empty"));
                 }
+                driver.check_pasted_key(t)?;
                 t.to_string()
             }
             None => self.auth(ctx, &existing).await?.token,
@@ -2766,7 +2777,8 @@ mod base_url_rule_tests {
             redirect_uris: vec!["http://localhost:8081/connections/oauth/callback".into()],
         };
         let api = "http://research.localhost:8095/api/platform-account/v1";
-        let driver = crate::connectors::research::ResearchDriver::new(http(), oauth, api.into());
+        let driver =
+            crate::connectors::research::ResearchDriver::new(http(), Some(oauth), api.into());
         assert_eq!(resolve_base_url(&driver, None).unwrap(), api);
         assert!(resolve_base_url(&driver, Some(api)).is_err());
     }

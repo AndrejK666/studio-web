@@ -327,7 +327,7 @@ backend:
   # Until clientId (and the secret) are set, Constructor Research is not offered.
   research:
     issuer: ""        # https://<stand>/idp
-    clientId: ""      # constructor-studio
+    clientId: ""      # constructor-studio; empty: Research takes pasted rk- keys only
     redirectUri: ""   # https://<portal>/connections/oauth/callback; several comma-separated, the first the default
     apiUrl: ""        # https://<stand>/api/platform-account/v1
   resources:

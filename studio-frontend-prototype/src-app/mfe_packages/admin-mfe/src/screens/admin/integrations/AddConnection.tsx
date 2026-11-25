@@ -3,7 +3,8 @@
  * the provider picker by kind, then the credential form ("Test connection"
  * probes without saving, "Test & save" does both in one server-side step), or,
  * for a provider made by signing in (Constructor Research, ADR-0049), the
- * sign-in. On the organization's page the choice is the organization (the
+ * sign-in. Research also takes a pasted `rk-` access key, and offers only that
+ * on a Studio with no sign-in client. On the organization's page the choice is the organization (the
  * default) or yourself; a cluster or a registry starts organization-wide, a
  * signed-in account is the person's own.
  */
@@ -21,7 +22,15 @@ import {
 import { rememberSignInReturn, SIGN_IN_CALLBACK_PATH, type OrganizationRef } from '@constructor-studio/mfe-shared';
 import { AdminApiService } from '../../../api/AdminApiService';
 import type { ConnectorIdentity, ConnectorProvider } from '../../../api/types';
-import { ASSEMBLY_SERVICE, CATEGORY_KEYS, personalProviders, reachFor, type Reach } from '../../../model/connections';
+import {
+  ASSEMBLY_SERVICE,
+  CATEGORY_KEYS,
+  connectWays,
+  personalProviders,
+  reachFor,
+  type ConnectWay,
+  type Reach,
+} from '../../../model/connections';
 import { kubeconfigServer } from '../../../model/kubeconfig';
 import { ErrorLine, errText, useAdmin } from '../common';
 import { ConnectorLogo, LogoSlot } from './ConnectorLogo';
@@ -53,6 +62,8 @@ export function AddConnection({
   const [find, setFind] = useState('');
   const startReach: Reach = personal ? 'personal' : 'organization';
   const [reach, setReach] = useState<Reach>(startReach);
+  // Which way a provider that offers both is being connected; the first it offers until picked.
+  const [way, setWay] = useState<ConnectWay | null>(null);
   // A profile never offers what only the organization may hold (a cluster, a registry).
   const offered = personal ? personalProviders(providers) : providers;
 
@@ -68,11 +79,35 @@ export function AddConnection({
   }
 
   if (picked) {
+    const ways = connectWays(picked);
+    const current = way && ways.includes(way) ? way : ways[0];
+    const back = () => {
+      setPicked(null);
+      setWay(null);
+      setReach(startReach);
+    };
     return (
       <Card data-connection-form={picked.provider}>
         <CardContent className={styles.cardBody}>
-          {picked.sign_in ? (
-            <SignInForm org={org} provider={picked} onBack={() => setPicked(null)} onClose={onClose} />
+          {ways.length > 1 && (
+            <div className={own.actions} role="group" aria-label={t('int_way_label')} data-connection-ways>
+              {ways.map((w) => (
+                <Button
+                  key={w}
+                  type="button"
+                  size="sm"
+                  variant={w === current ? 'secondary' : 'ghost'}
+                  aria-pressed={w === current}
+                  onClick={() => setWay(w)}
+                  data-connection-way={w}
+                >
+                  {w === 'sign_in' ? t('int_way_sign_in') : t('int_way_paste_key')}
+                </Button>
+              ))}
+            </div>
+          )}
+          {current === 'sign_in' ? (
+            <SignInForm org={org} provider={picked} onBack={back} onClose={onClose} />
           ) : (
             <CredentialForm
               org={org}
@@ -80,10 +115,7 @@ export function AddConnection({
               reach={reach}
               onReach={setReach}
               fixedReach={personal}
-              onBack={() => {
-                setPicked(null);
-                setReach(startReach);
-              }}
+              onBack={back}
               onClose={onClose}
               onAdded={onAdded}
             />
@@ -196,6 +228,9 @@ function CredentialForm({
   const [error, setError] = useState<string | null>(null);
   const assembly = provider.provider === ASSEMBLY_SERVICE;
   const validStrategy = /^[a-z][a-z0-9_]{0,39}$/.test(strategy.trim());
+  // Research's address is this Studio's own, and its credential an `rk-` key the member made there.
+  const research = provider.provider === 'research';
+  const keyLabel = research ? t('int_research_key') : provider.credential_label;
 
   const submit = async (mode: 'probe' | 'save') => {
     setBusy(mode);
@@ -282,7 +317,8 @@ function CredentialForm({
       )}
 
       {/* A webhook's URL is its whole address; asking for an instance URL too invites a contradiction. */}
-      {provider.fixed_target ? (
+      {/* Research's address is the one this Studio is set up with; a typed one is refused. */}
+      {research ? null : provider.fixed_target ? (
         <p className={own.hint}>{t('int_webhook_hint')}</p>
       ) : (
         <label className={styles.field}>
@@ -291,7 +327,12 @@ function CredentialForm({
         </label>
       )}
 
-      <span className={styles.field}>{provider.credential_label}</span>
+      <span className={styles.field}>{keyLabel}</span>
+      {research && (
+        <p className={own.hint} data-research-key-hint>
+          {t('int_research_key_hint')}
+        </p>
+      )}
       {provider.provider === 'kubernetes' ? (
         <KubeconfigField
           value={pat}
@@ -311,8 +352,8 @@ function CredentialForm({
           <Input
             className={styles.grow}
             type={reveal ? 'text' : 'password'}
-            aria-label={provider.credential_label}
-            placeholder={provider.credential_hint}
+            aria-label={keyLabel}
+            placeholder={research ? 'rk-…' : provider.credential_hint}
             value={pat}
             onChange={(e) => setPat(e.target.value)}
           />

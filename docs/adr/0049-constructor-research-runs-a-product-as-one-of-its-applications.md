@@ -136,6 +136,16 @@ Disconnecting does not delete the key: `DELETE /access-keys/{id}` takes an
 identity provider token, not a key, and Research has no screen for keys yet.
 The key stays usable until its `expires_at`.
 
+*Amendment (2026-11-25): a pasted key.* A member may also paste an `rk-`
+access key made in Research itself. The connection stores it as it is, tests
+it with `GET /auth/session` like any pasted credential, and calls with it as
+it is; any other pasted text is refused before the test. A deployment that
+knows Research's `api_url` but has no `constructor-studio` client at that
+stand's identity provider offers Research key-only (no sign-in); one with the
+client offers both. `GET /providers` says which with `sign_in` and
+`pasted_key`. This is how a stand Studio is not registered with (the
+training stand) is reached.
+
 *Considered, first chosen, then replaced:* keep the refresh token
 (`offline_access`) and trade it for an access token on every call. Research
 does not need refresh tokens from this client, and a token from it is not

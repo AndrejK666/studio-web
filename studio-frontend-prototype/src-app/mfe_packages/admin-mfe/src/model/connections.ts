@@ -26,10 +26,22 @@ export const orgOnlyProvider = (p: { provider: string; category?: string }): boo
 /** Where a connection is attached, and how widely its token is readable. */
 export type Reach = 'organization' | 'workspace' | 'personal';
 
+/** How a provider's connection is made: by signing in, by pasting a credential,
+ *  or either way (Constructor Research with a sign-in client, ADR-0049 §1). */
+export type ConnectWay = 'sign_in' | 'paste';
+
+/** The ways a provider offers, the sign-in first. */
+export function connectWays(provider: Pick<ConnectorProvider, 'sign_in' | 'pasted_key'>): ConnectWay[] {
+  const ways: ConnectWay[] = [];
+  if (provider.sign_in) ways.push('sign_in');
+  if (provider.pasted_key ?? !provider.sign_in) ways.push('paste');
+  return ways;
+}
+
 /** The reach a newly picked provider starts with on the organization's page. */
 export function reachFor(provider: Pick<ConnectorProvider, 'provider' | 'sign_in'>, current: Reach): Reach {
-  // A signed-in account is the person's own (ADR-0049 §5).
-  if (provider.sign_in) return 'personal';
+  // A Research account is the person's own (ADR-0049 §5), signed in to or its key pasted.
+  if (provider.sign_in || provider.provider === 'research') return 'personal';
   // An environment takes only a cluster the organization holds.
   if (orgOnlyProvider(provider)) return 'organization';
   return current;

@@ -126,6 +126,16 @@ Studio is then configured with:
 | `client_secret` | the emulator's `--client-secret` |
 | `redirect_uri` | the portal's `/connections/oauth/callback` |
 
+## A Research stand without a sign-in client
+
+A stand where Studio has no `constructor-studio` client (the training stand,
+`https://training.constructor.app`) is still reachable: set only `api_url`
+(`https://<stand>/api/platform-account/v1`) and leave `issuer` and
+`client_id` empty. Research is then offered key-only: a member logs in to
+Research with a login and password, makes an access key there and pastes the
+`rk-…` key into **Add connection**. In Helm: `backend.research.apiUrl` set,
+`backend.research.issuer`/`clientId` empty, `researchEmulator.enabled=false`.
+
 ## A local stand against Research DEV
 
 A machine on the VPN reaches Research DEV (`https://dev-constructor.dev`), and

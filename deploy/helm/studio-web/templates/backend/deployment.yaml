@@ -432,8 +432,9 @@ spec:
             # which is all of them.
             - name: STUDIO_CREDSTORE_KEY
               valueFrom: { secretKeyRef: { name: {{ .Values.backend.appSecrets.existingSecret }}, key: credstore_key, optional: true } }
-            # Constructor Research (ADR-0049). Without a client id the driver is
-            # not registered; the secret is optional for the same reason.
+            # Constructor Research (ADR-0049). Without api_url the driver is not
+            # registered; without a client id it takes pasted rk- keys only, so the
+            # secret is optional.
             {{- if .Values.researchEmulator.enabled }}
             # The Research emulator stands in (docs/research-emulator.md); its
             # client secret guards nothing, so it is a plain value.

@@ -189,6 +189,11 @@ pub struct ProviderDto {
     /// `true` when a connection is made by signing in (`POST /oauth/start`)
     /// rather than with a pasted credential: Constructor Research.
     pub sign_in: bool,
+    /// `true` when a connection may be made with a pasted credential
+    /// (`POST /connections`). Every provider that does not sign in; one that
+    /// does when it also takes its own access key, so a client offers both:
+    /// Constructor Research takes an `rk-` key a member made in Research.
+    pub pasted_key: bool,
 }
 
 #[derive(Debug)]
@@ -732,6 +737,7 @@ async fn list_providers(
                 fixed_target: p.fixed_target,
                 token_optional: p.token_optional,
                 sign_in: p.sign_in,
+                pasted_key: p.pasted_key,
             })
             .collect(),
     }))

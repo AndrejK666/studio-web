@@ -44,6 +44,9 @@ const CALLBACK: &str = "https://studio.example.com/connections/oauth/callback";
 struct SignedIn {
     /// The challenge the person was sent with, by state.
     challenges: Mutex<HashMap<String, String>>,
+    /// Whether it also takes its own `rk-` access key pasted, as Research
+    /// does.
+    keys: bool,
 }
 
 #[async_trait]
@@ -62,6 +65,16 @@ impl ConnectorDriver for SignedIn {
     }
     fn signs_in(&self) -> bool {
         true
+    }
+    fn takes_pasted_key(&self) -> bool {
+        self.keys
+    }
+    fn check_pasted_key(&self, token: &str) -> anyhow::Result<()> {
+        if token.starts_with("rk-") {
+            Ok(())
+        } else {
+            Err(anyhow!("Constructor Research takes a Research access key"))
+        }
     }
     fn sign_in_url(
         &self,
@@ -115,7 +128,7 @@ impl ConnectorDriver for SignedIn {
         })
     }
     async fn test(&self, auth: &ConnectionAuth) -> anyhow::Result<DriverIdentity> {
-        if !auth.token.starts_with("at-") {
+        if !auth.token.starts_with("at-") && auth.token != "rk-good" {
             return Err(anyhow!(
                 "Constructor Research did not accept the sign-in (401)"
             ));
@@ -467,8 +480,20 @@ struct World {
 }
 
 fn world() -> World {
+    world_with(SignedIn::default())
+}
+
+/// A Research that also takes a pasted key.
+fn world_with_keys() -> World {
+    world_with(SignedIn {
+        keys: true,
+        ..SignedIn::default()
+    })
+}
+
+fn world_with(driver: SignedIn) -> World {
     let secrets = Arc::new(Secrets::default());
-    let driver: Arc<dyn ConnectorDriver> = Arc::new(SignedIn::default());
+    let driver: Arc<dyn ConnectorDriver> = Arc::new(driver);
     let svc = ConnectorService::new(
         Arc::new(Catalogues::default()),
         secrets.clone(),
@@ -643,6 +668,68 @@ async fn a_signed_in_provider_takes_no_pasted_credential() {
         .await
         .unwrap_err();
     assert!(pasted.to_string().contains("signing in"), "{pasted}");
+}
+
+fn pasted(token: &str) -> NewConnection<'_> {
+    NewConnection {
+        owner_tenant: ORG,
+        provider: "research",
+        label: "pasted",
+        base_url: None,
+        token,
+        scope: "personal",
+        options: Default::default(),
+    }
+}
+
+#[tokio::test]
+async fn a_pasted_research_key_is_tested_and_stored_as_it_is() {
+    let w = world_with_keys();
+    let ada = person(1);
+    let (c, who) = w.svc.create(&ada, None, pasted(" rk-good ")).await.unwrap();
+    assert_eq!(who.account, "research-user-7");
+    assert_eq!(c.account, "research-user-7");
+    assert_eq!(w.secrets.value(&c.secret_ref).as_deref(), Some("rk-good"));
+}
+
+#[tokio::test]
+async fn a_pasted_text_that_is_not_a_research_key_is_refused_before_the_test() {
+    let w = world_with_keys();
+    let err = w
+        .svc
+        .create(&person(1), None, pasted("eyJhbGciOi"))
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("Research access key"), "{err}");
+    assert!(w.secrets.keys().is_empty());
+}
+
+#[tokio::test]
+async fn a_research_key_the_provider_refuses_stores_nothing() {
+    let w = world_with_keys();
+    w.svc
+        .create(&person(1), None, pasted("rk-revoked"))
+        .await
+        .unwrap_err();
+    assert!(w.secrets.keys().is_empty());
+}
+
+#[tokio::test]
+async fn the_provider_list_says_which_providers_take_a_pasted_key() {
+    let both = world_with_keys()
+        .svc
+        .providers()
+        .into_iter()
+        .find(|p| p.provider == "research")
+        .unwrap();
+    assert!(both.sign_in && both.pasted_key);
+    let sign_in_only = world()
+        .svc
+        .providers()
+        .into_iter()
+        .find(|p| p.provider == "research")
+        .unwrap();
+    assert!(sign_in_only.sign_in && !sign_in_only.pasted_key);
 }
 
 #[tokio::test]

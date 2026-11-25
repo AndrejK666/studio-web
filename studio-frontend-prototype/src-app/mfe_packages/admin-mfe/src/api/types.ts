@@ -292,6 +292,10 @@ export interface ConnectorProvider {
   token_optional?: boolean;
   /** Made by signing in to the provider's identity provider (ADR-0049). */
   sign_in?: boolean;
+  /** A connection may be made with a pasted credential; for a provider that also
+   *  signs in, its own access key (Constructor Research's `rk-` key). Absent:
+   *  every provider that does not sign in. */
+  pasted_key?: boolean;
 }
 
 /** A connection as Integrations lists it. */
