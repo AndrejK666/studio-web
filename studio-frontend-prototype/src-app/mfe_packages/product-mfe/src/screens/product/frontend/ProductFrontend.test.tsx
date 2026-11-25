@@ -9,6 +9,15 @@ vi.mock('../../../i18n', () => ({
   }),
 }));
 
+// The shared kit-absent state reads its own words and the bridge.
+vi.mock('@gears-frontx/react', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@gears-frontx/react')>()),
+  useScreenTranslations: () => ({ isLoaded: true }),
+  useTranslation: () => ({ language: 'en', t: (key: string) => key }),
+  useMfeBridge: () => null,
+  useSharedProperty: () => null,
+}));
+
 import { api, type CatalogNode, type ProjectProduct } from '../../../api/client';
 import { FRONTX_NODE_TYPE } from '../../../model/frontend-constructor';
 import { ScopeContext, type Scope } from '../../common';
@@ -119,5 +128,15 @@ describe('ProductFrontend', () => {
     vi.spyOn(api, 'projectProduct').mockResolvedValue(null);
     mount();
     expect(await screen.findByText('down')).toBeTruthy();
+  });
+
+  it('says the Components kit is not installed when its catalogue is not there', async () => {
+    vi.spyOn(api, 'listComponents').mockRejectedValue(
+      Object.assign(new Error('Request failed with status code 404'), { response: { status: 404, data: '' } })
+    );
+    vi.spyOn(api, 'projectConfig').mockResolvedValue({ frontend: { mfes: [], shell: shellRef } });
+    vi.spyOn(api, 'projectProduct').mockResolvedValue({ gears: ['gear-a'] });
+    mount();
+    await waitFor(() => expect(document.querySelector('[data-kit-absent="components"]')).toBeTruthy());
   });
 });

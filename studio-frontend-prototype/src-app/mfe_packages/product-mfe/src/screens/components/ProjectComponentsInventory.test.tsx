@@ -145,6 +145,13 @@ describe('ProjectComponentsInventory', () => {
     expect(screen.queryByText('retry')).toBeNull();
   });
 
+  it('leaves the plan out the same way where the spec-mapping gear does not run (503)', async () => {
+    vi.spyOn(api, 'projectPlan').mockRejectedValue({ response: { status: 503, data: '' } });
+    draw();
+    expect(await screen.findByText(/partial_plan_kit/)).toBeTruthy();
+    expect(screen.queryByText('retry')).toBeNull();
+  });
+
   it('does not wait for the code: the rows show while its conformance is still read', async () => {
     vi.spyOn(api, 'conformance').mockReturnValue(new Promise(() => undefined) as never);
     draw();

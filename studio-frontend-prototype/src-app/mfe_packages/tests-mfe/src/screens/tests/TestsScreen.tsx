@@ -28,13 +28,15 @@ import {
   CardTitle,
 } from '@gears-frontx/ui-kit';
 import {
+  kitAbsent,
   useScreenAvailability,
   openScreen,
+  type KitAbsence,
   STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT,
   STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE,
 } from '@constructor-studio/mfe-shared';
 import { GridFailed } from '@constructor-studio/mfe-shared/grid';
-import { PageEmpty, PageLoading, ProjectPage } from '@constructor-studio/mfe-shared/page';
+import { KitAbsentState, PageEmpty, PageLoading, ProjectPage } from '@constructor-studio/mfe-shared/page';
 import { TestsApiService } from '../../api/TestsApiService';
 import type { CiRunList, Conformance, OpenPullRequest, PullRequestChecks } from '../../api/types';
 import {
@@ -69,7 +71,17 @@ interface Read {
   pulls: OpenPullRequest[] | null;
 }
 
-type Failed = { error: string };
+/** A read that failed; `absent` when it failed because the kit it belongs to is not here. */
+type Failed = { error: string; absent?: KitAbsence | null };
+
+/**
+ * The kits whose gears this tab reads (ADR-0079 §7): the CI runs and pull
+ * requests are project-git's (studio-artifact-ingest), the document checks
+ * project-specs' (studio-documents), spec ↔ code spec-mapping's.
+ */
+const RUNS_KIT = 'project-git';
+const CHECKS_KIT = 'project-specs';
+const SPEC_KIT = 'spec-mapping';
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -159,6 +171,8 @@ function ProjectTests({
 }) {
   const [read, setRead] = useState<Read | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The runs come from project-git's gear: without that kit the tab has nothing of its own to show.
+  const [absent, setAbsent] = useState<KitAbsence | null>(null);
   // Read apart, because each is slow in its own way and the CI answers without them.
   const [checks, setChecks] = useState<PullRequestChecks | Failed | null>(null);
   const [conformance, setConformance] = useState<Conformance | Failed | null>(null);
@@ -166,6 +180,7 @@ function ProjectTests({
   const [attempt, setAttempt] = useState(0);
   const retry = () => {
     setError(null);
+    setAbsent(null);
     setAttempt((n) => n + 1);
   };
 
@@ -197,12 +212,17 @@ function ProjectTests({
           pulls: pulls?.items ?? null,
         });
       })
-      .catch((e: unknown) => mine() && setError(message(e)));
+      .catch((e: unknown) => {
+        if (!mine()) return;
+        const why = kitAbsent(e, { kit: RUNS_KIT });
+        if (why) setAbsent(why);
+        else setError(message(e));
+      });
     if (pullsShown)
       api.pullRequestChecks
         .fetch({ project_id: forProject, publish: false })
         .then((c) => mine() && setChecks(c))
-        .catch((e: unknown) => mine() && setChecks({ error: message(e) }));
+        .catch((e: unknown) => mine() && setChecks({ error: message(e), absent: kitAbsent(e, { kit: CHECKS_KIT }) }));
     if (workspaceId) {
       Promise.all([
         api.declaredCapabilities({ projectId: forProject }).fetch({ staleTime: 0 }),
@@ -223,7 +243,7 @@ function ProjectTests({
           });
         })
         .then((c) => mine() && setConformance(c))
-        .catch((e: unknown) => mine() && setConformance({ error: message(e) }));
+        .catch((e: unknown) => mine() && setConformance({ error: message(e), absent: kitAbsent(e, { kit: SPEC_KIT }) }));
     }
     return () => {
       alive = false;
@@ -291,8 +311,9 @@ function ProjectTests({
         )
       }
     >
+      {absent && <KitAbsentState absence={absent} />}
       {error && <GridFailed message={t('load_failed', { error })} retry={t('retry')} onRetry={retry} />}
-      {!error && !read && <PageLoading label={t('loading')} />}
+      {!error && !absent && !read && <PageLoading label={t('loading')} />}
 
       {read && (
         <div className={styles.cards} data-tests-cards>
@@ -368,7 +389,8 @@ function ProjectTests({
                       .join(' · ') || t('pulls_all_green')}
                   </span>
                 )}
-                <span className={styles.muted}>
+                {checks && 'error' in checks && checks.absent ? null : (
+                <span className={styles.muted} data-tests-docs-line>
                   {checks === null
                     ? t('docs_checking')
                     : 'error' in checks
@@ -379,6 +401,7 @@ function ProjectTests({
                           ? t.count('docs_failing', docFailing)
                           : t('docs_pass')}
                 </span>
+                )}
               </CardContent>
             </Card>
           )}
@@ -388,7 +411,9 @@ function ProjectTests({
               <CardTitle>{t('card_spec')}</CardTitle>
             </CardHeader>
             <CardContent className={styles.cardBody}>
-              {conformance && 'error' in conformance ? (
+              {conformance && 'error' in conformance && conformance.absent ? (
+                <KitAbsentState absence={conformance.absent} compact />
+              ) : conformance && 'error' in conformance ? (
                 <span className={styles.error} title={conformance.error} data-tests-spec-error>
                   {t('spec_error')}
                 </span>

@@ -25,6 +25,10 @@ vi.mock('../../i18n', () => ({ useTestsTranslations: translations }));
 vi.mock('@gears-frontx/react', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@gears-frontx/react')>()),
   apiRegistry: { getService: () => service },
+  // The shared kit-absent state reads its own words and the bridge.
+  useScreenTranslations: () => ({ isLoaded: true }),
+  useTranslation: () => ({ language: 'en', t: (key: string) => key }),
+  useMfeBridge: () => null,
   useSharedProperty: (id: string) =>
     id.includes('context.project.')
       ? scope.project
@@ -184,6 +188,29 @@ describe('TestsScreen', () => {
     render(<TestsScreen bridge={bridge()} />);
     expect(await screen.findByText('mainline_red')).toBeTruthy();
     expect(document.querySelector('[data-tests-pulls-card]')).toBeTruthy();
+  });
+
+  it('says project-git is not installed, not that the runs failed, when its gear refuses with KIT_NOT_INSTALLED', async () => {
+    const refusal = Object.assign(new Error('Request failed with status code 400'), {
+      response: {
+        status: 400,
+        data: { context: { violations: [{ type: 'KIT_NOT_INSTALLED', subject: 'project-git', description: 'not here' }] } },
+      },
+    });
+    service.ciRuns = () => ({ fetch: () => Promise.reject(refusal) });
+    render(<TestsScreen bridge={bridge()} />);
+    await waitFor(() => expect(document.querySelector('[data-kit-absent="project-git"]')).toBeTruthy());
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('draws spec ↔ code as absent when the spec-mapping gear is not there (404)', async () => {
+    service.declaredCapabilities = () => ({
+      fetch: () => Promise.reject(Object.assign(new Error('404'), { response: { status: 404, data: '' } })),
+    });
+    render(<TestsScreen bridge={bridge()} />);
+    expect(await screen.findByText('mainline_red')).toBeTruthy();
+    await waitFor(() => expect(document.querySelector('[data-tests-spec-card] [data-kit-absent="spec-mapping"]')).toBeTruthy());
+    expect(document.querySelector('[data-tests-spec-error]')).toBeNull();
   });
 
   it('asks for a project when none is open', () => {
