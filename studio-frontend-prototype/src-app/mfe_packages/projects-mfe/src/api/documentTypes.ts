@@ -84,6 +84,20 @@ export type DecideBindingDto =
   | { action: 'confirm' | 'reject' | 'reset' }
   | { action: 'set'; type_key: string };
 
+/** Mirrors `ConfirmTypesDto`: the bindings whose proposed type a person accepts. */
+export interface ConfirmTypesDto {
+  binding_ids: string[];
+}
+
+/** Why a bulk confirmation left a binding as it was (`ConfirmTypesSkippedDto.reason`). */
+export type ConfirmSkipReason = 'not_found' | 'other_project' | 'not_proposed';
+
+/** Mirrors `ConfirmTypesResultDto`. */
+export interface ConfirmTypesResultDto {
+  confirmed: DocumentBindingDto[];
+  skipped: { id: string; reason: string }[];
+}
+
 /** The detectors `POST …/quality/{detector}` accepts (`quality::Detector::parse`). */
 export type QualityDetector = 'purpose' | 'leak' | 'bloat' | 'traceability';
 

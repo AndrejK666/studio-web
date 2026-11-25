@@ -2,10 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 type BusHandler = (payload?: unknown) => void;
 
-const { listeners, emitted, decide, invalidate } = vi.hoisted(() => ({
+const { listeners, emitted, decide, confirm, invalidate } = vi.hoisted(() => ({
   listeners: new Map<string, BusHandler>(),
   emitted: [] as [string, unknown][],
   decide: vi.fn(),
+  confirm: vi.fn(),
   invalidate: vi.fn(() => Promise.resolve()),
 }));
 
@@ -21,6 +22,7 @@ vi.mock('@gears-frontx/react', async (importOriginal) => ({
   apiRegistry: {
     getService: () => ({
       decideBinding: (target: unknown) => ({ fetch: (body: unknown) => decide(target, body) }),
+      confirmTypes: (target: unknown) => ({ fetch: (body: unknown) => confirm(target, body) }),
       specsPerSource: (params: unknown) => ({ specsPerSource: params }),
     }),
   },
@@ -31,7 +33,7 @@ vi.mock('../api/DocumentsApiService', () => ({ DocumentsApiService: class {} }))
 import type { AppDispatch, FrontXApp } from '@gears-frontx/react';
 import { initTypeDecisionEffects } from './typeDecisionEffects';
 import { decisionSettled, decisionStarted } from '../slices/typeDecisionSlice';
-import type { TypeDecisionRequest } from '../events/specsEvents';
+import type { TypeDecisionRequest, TypesConfirmRequest } from '../events/specsEvents';
 
 const APP = {} as FrontXApp;
 const REQUEST: TypeDecisionRequest = {
@@ -56,6 +58,7 @@ beforeEach(() => {
   listeners.clear();
   emitted.length = 0;
   decide.mockReset();
+  confirm.mockReset();
   invalidate.mockClear();
 });
 
@@ -112,5 +115,95 @@ describe('a type decision', () => {
     harness().request();
     await settle();
     expect(emitted[0][1]).toMatchObject({ refusal: { kind: 'i18n', key: 'type_refused' } });
+  });
+});
+
+describe('a bulk confirmation', () => {
+  const BULK: TypesConfirmRequest = {
+    projectId: 'p-1',
+    workspaceId: 'w-1',
+    targets: [
+      { id: 'b-1', name: 'design.md', typeName: 'Design Document' },
+      { id: 'b-2', name: 'prd.md', typeName: 'Product Requirements (PRD)' },
+    ],
+  };
+  const request = (body: TypesConfirmRequest = BULK) => {
+    const dispatch = vi.fn();
+    initTypeDecisionEffects(dispatch as unknown as AppDispatch, APP);
+    listeners.get('mfe/projects/types-confirm-requested')?.(body);
+    return dispatch;
+  };
+
+  it("sends every target in one call to the project's batch route, each pending until it settles", async () => {
+    confirm.mockResolvedValue({ confirmed: [{ id: 'b-1' }, { id: 'b-2' }], skipped: [] });
+    const dispatch = request();
+    expect(confirm).toHaveBeenCalledWith(
+      { workspaceId: 'w-1', projectId: 'p-1' },
+      { binding_ids: ['b-1', 'b-2'] }
+    );
+    expect(dispatch.mock.calls).toEqual([[decisionStarted('b-1')], [decisionStarted('b-2')]]);
+    await settle();
+    expect(dispatch.mock.calls.slice(2)).toEqual([[decisionSettled('b-1')], [decisionSettled('b-2')]]);
+  });
+
+  it('reports the outcome, reloads the list and drops the Specs counts', async () => {
+    confirm.mockResolvedValue({ confirmed: [{ id: 'b-1' }, { id: 'b-2' }], skipped: [] });
+    request();
+    await settle();
+    expect(emitted).toEqual([
+      [
+        'mfe/projects/types-confirmed',
+        { projectId: 'p-1', outcome: { kind: 'confirmed', confirmed: 2, failed: [] } },
+      ],
+      ['mfe/projects/specs-changed', { projectId: 'p-1' }],
+    ]);
+    expect(invalidate).toHaveBeenCalledWith(APP, { specsPerSource: { scope: 'p-1' } });
+  });
+
+  it('names the ones the server skipped', async () => {
+    confirm.mockResolvedValue({
+      confirmed: [{ id: 'b-1' }],
+      skipped: [{ id: 'b-2', reason: 'not_proposed' }],
+    });
+    request();
+    await settle();
+    expect(emitted[0]).toEqual([
+      'mfe/projects/types-confirmed',
+      {
+        projectId: 'p-1',
+        outcome: {
+          kind: 'confirmed',
+          confirmed: 1,
+          failed: [{ name: 'prd.md', reason: 'not_proposed' }],
+        },
+      },
+    ]);
+    expect(names()).toContain('mfe/projects/specs-changed');
+  });
+
+  it('changes nothing when nothing was confirmed', async () => {
+    confirm.mockResolvedValue({ confirmed: [], skipped: [{ id: 'b-1', reason: 'not_found' }] });
+    request();
+    await settle();
+    expect(names()).toEqual(['mfe/projects/types-confirmed']);
+    expect(invalidate).not.toHaveBeenCalled();
+  });
+
+  it('reports a refused call and lets every row go', async () => {
+    confirm.mockRejectedValue(new Error(''));
+    const dispatch = request();
+    await settle();
+    expect(emitted).toEqual([
+      [
+        'mfe/projects/types-confirmed',
+        { projectId: 'p-1', outcome: { kind: 'refused', refusal: { kind: 'i18n', key: 'confirm_refused' } } },
+      ],
+    ]);
+    expect(dispatch).toHaveBeenLastCalledWith(decisionSettled('b-2'));
+  });
+
+  it('sends nothing for no targets', () => {
+    request({ ...BULK, targets: [] });
+    expect(confirm).not.toHaveBeenCalled();
   });
 });

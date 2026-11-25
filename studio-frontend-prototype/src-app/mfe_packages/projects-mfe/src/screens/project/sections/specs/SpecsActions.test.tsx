@@ -36,6 +36,12 @@ vi.mock('../../upload/UploadDocumentsButton', () => ({
   ),
 }));
 
+vi.mock('./ConfirmTypesActions', () => ({
+  ConfirmTypesActions: ({ projectId, workspaceId }: { projectId: string; workspaceId: string }) => (
+    <span>{`confirm types ${projectId}/${workspaceId}`}</span>
+  ),
+}));
+
 import { SpecsActions } from './SpecsActions';
 
 const repo = (id: string) => ({ id, origin: 'repository' as const });
@@ -60,6 +66,11 @@ describe("the Specs header's Check", () => {
     given({ shown: null });
     const { container } = renderActions();
     expect(container.textContent).toBe('upload p-1');
+  });
+
+  it("offers the bulk Confirm beside Check, in the project's workspace", () => {
+    renderActions();
+    expect(screen.getByText('confirm types p-1/w-1')).toBeTruthy();
   });
 
   it('checks every shown row when none is selected', () => {

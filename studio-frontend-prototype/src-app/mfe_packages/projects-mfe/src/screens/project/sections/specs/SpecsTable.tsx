@@ -32,6 +32,8 @@ import {
 } from '@constructor-studio/mfe-shared/grid';
 import { SPECS_FILTER_KEYS, useSpecsLoad } from '../../../../shared/useSpecsLoad';
 import { specsSelected, specsShown } from '../../../../slices/specsCheckSlice';
+import { proposedTypes } from '../../../../slices/typeDecisionSlice';
+import { proposedTargets } from '../../../../model/specsConfirm';
 import {
   SPECS_FILTER_SLICE_KEY,
   setSpecsDocumentType,
@@ -162,6 +164,17 @@ export const SpecsTable: React.FC<SpecsTableProps> = ({
   useEffect(() => {
     if (snapshot) dispatch(specsShown(snapshot.shown));
   }, [dispatch, snapshot]);
+
+  // Bulk *Confirm* counts every proposed type of the project, whatever the filters show.
+  useEffect(() => {
+    if (rows) dispatch(proposedTypes(proposedTargets(rows)));
+  }, [dispatch, rows]);
+  useEffect(
+    () => () => {
+      dispatch(proposedTypes(null));
+    },
+    [dispatch]
+  );
 
   // Check takes the ticked rows when there are any (#879). Every load clears them, and the kit says
   // so only while the grid is mounted: ticks left behind by a switch of section would be checked unseen.
