@@ -22,12 +22,24 @@
 //!
 //! Field names travel as bound parameters (`payload -> $1 -> $2`), never as
 //! SQL text.
+//!
+//! Equality with a string or a boolean is asked as containment instead,
+//! `payload @> '{"field": "value"}'`: the same answer (containment of a
+//! scalar under a key is equality of kind and value, and a list holding the
+//! value does not contain it), read from the payload once rather than four
+//! times through `jsonb_typeof` and `#>>`, and one the GIN index on
+//! `payload` can answer when the value is rare. Numbers keep the cast, which
+//! compares them as `f64` the way the in-memory reading does.
 
 use sea_orm::sea_query::{Expr as SqlExpr, Value as SqlValue};
 use sea_orm::{Condition, Order};
 use serde_json::Value;
 
 use super::{Direction, Expr, Op};
+
+/// The longest `_in` list asked as one containment per value; a longer one
+/// is one list test ([`Sql::contained`]).
+const OR_LIST_MAX: usize = 16;
 
 /// SQL text and the parameters its `$n` placeholders name, numbered from 1.
 #[derive(Default)]
@@ -170,10 +182,69 @@ impl Sql {
         })
     }
 
-    fn any_of(&mut self, v: &str, arg: &Value) -> String {
+    /// `payload @> {path: arg}` for a string or a boolean `arg`: what
+    /// [`Sql::eq`] answers for those, on the payload as a whole. `None` for
+    /// any other value, which keeps the typed reading.
+    fn contains_at(&mut self, path: &[String], arg: &Value) -> Option<String> {
+        if !matches!(arg, Value::String(_) | Value::Bool(_)) {
+            return None;
+        }
+        let mut doc = arg.clone();
+        for seg in path.iter().rev() {
+            let mut m = serde_json::Map::new();
+            m.insert(seg.clone(), doc);
+            doc = Value::Object(m);
+        }
+        let p = self.param(SqlValue::Json(Some(Box::new(doc))));
+        Some(format!("(payload @> {p}::jsonb)"))
+    }
+
+    /// The value at `path` (read as `v`) equals `arg`: containment where it
+    /// answers, [`Sql::eq`] otherwise.
+    fn eq_at(&mut self, path: &[String], v: &str, arg: &Value) -> String {
+        self.contains_at(path, arg)
+            .unwrap_or_else(|| self.eq(v, arg))
+    }
+
+    /// `_eq` / `_in` when every value is a string or a boolean: containment
+    /// alone, never NULL and outside any `COALESCE`, so the planner sees
+    /// each `@>` and can answer it from the GIN index. `None` otherwise.
+    ///
+    /// A list longer than [`OR_LIST_MAX`] is one test instead, the list
+    /// containing the field's value (`$list @> jsonb_build_array(v)`): one
+    /// parameter and one read of the payload however long it is, where a
+    /// chunk lookup by thousands of owner ids would otherwise plan thousands
+    /// of clauses. The same answer: a list of scalars contains `[v]` only
+    /// when `v` is one of them, never when `v` is a list, an object, another
+    /// kind or absent (`[null]`).
+    fn contained(&mut self, path: &[String], op: &Op, arg: &Value) -> Option<String> {
+        let scalar = |a: &Value| matches!(a, Value::String(_) | Value::Bool(_));
+        match op {
+            Op::Eq if scalar(arg) => self.contains_at(path, arg),
+            Op::In => {
+                let list = arg.as_array()?;
+                if list.is_empty() || !list.iter().all(scalar) {
+                    return None;
+                }
+                if list.len() > OR_LIST_MAX {
+                    let v = self.value_at(path);
+                    let p = self.param(SqlValue::Json(Some(Box::new(arg.clone()))));
+                    return Some(format!("({p}::jsonb @> jsonb_build_array({v}))"));
+                }
+                let items: Vec<String> = list
+                    .iter()
+                    .filter_map(|a| self.contains_at(path, a))
+                    .collect();
+                Some(format!("({})", items.join(" OR ")))
+            }
+            _ => None,
+        }
+    }
+
+    fn any_of(&mut self, path: &[String], v: &str, arg: &Value) -> String {
         let items: Vec<String> = arg
             .as_array()
-            .map(|l| l.iter().map(|a| self.eq(v, a)).collect())
+            .map(|l| l.iter().map(|a| self.eq_at(path, v, a)).collect())
             .unwrap_or_default();
         if items.is_empty() {
             "FALSE".to_string()
@@ -201,6 +272,9 @@ impl Sql {
                 {
                     return sql;
                 }
+                if let Some(sql) = self.contained(path, op, arg) {
+                    return sql;
+                }
                 let v = self.value_at(path);
                 let absent = format!("(jsonb_typeof({v}) IS NULL OR jsonb_typeof({v}) = 'null')");
                 let body = match op {
@@ -211,18 +285,18 @@ impl Sql {
                             format!("(NOT {absent})")
                         }
                     }
-                    Op::Eq => self.eq(&v, arg),
+                    Op::Eq => self.eq_at(path, &v, arg),
                     Op::Neq => {
-                        let eq = self.eq(&v, arg);
+                        let eq = self.eq_at(path, &v, arg);
                         format!("(NOT {absent} AND NOT ({eq}))")
                     }
                     Op::Gt => self.ordered(&v, ">", arg),
                     Op::Gte => self.ordered(&v, ">=", arg),
                     Op::Lt => self.ordered(&v, "<", arg),
                     Op::Lte => self.ordered(&v, "<=", arg),
-                    Op::In => self.any_of(&v, arg),
+                    Op::In => self.any_of(path, &v, arg),
                     Op::Nin => {
-                        let any = self.any_of(&v, arg);
+                        let any = self.any_of(path, &v, arg);
                         format!("(NOT {absent} AND NOT ({any}))")
                     }
                     Op::Contains => {
@@ -409,34 +483,95 @@ mod tests {
     use super::Sql;
 
     fn compiled(op: Op, arg: serde_json::Value) -> (String, usize) {
+        let (text, params) = compiled_at(&["id"], op, arg);
+        (text, params.len())
+    }
+
+    /// The text and the parameters a comparison on `path` compiles to.
+    fn compiled_at(
+        path: &[&str],
+        op: Op,
+        arg: serde_json::Value,
+    ) -> (String, Vec<sea_orm::sea_query::Value>) {
         let mut sql = Sql::default();
         let text = sql.expr(&Expr::Cmp {
-            path: vec!["id".to_string()],
+            path: path.iter().map(|s| (*s).to_string()).collect(),
             op,
             arg,
         });
-        (text, sql.params.len())
+        (text, sql.params)
     }
 
-    /// `id` reads the key column, so the primary key answers it, and a list
-    /// is one parameter however long it is.
-    #[test]
-    fn an_id_is_compared_on_the_key_column() {
-        let (eq, n) = compiled(Op::Eq, json!("a"));
-        assert_eq!(eq, "(instance_id = $1)");
-        assert_eq!(n, 1);
-        let (any, n) = compiled(Op::In, json!(["a", "b", "c"]));
-        assert!(any.starts_with("(instance_id = ANY("), "{any}");
-        assert_eq!(n, 1);
-        let (nin, _) = compiled(Op::Nin, json!(["a"]));
-        assert!(nin.starts_with("(NOT (instance_id = ANY("), "{nin}");
-        for text in [&eq, &any, &nin] {
-            assert!(!text.contains("to_jsonb"), "{text}");
+    fn json_param(v: &sea_orm::sea_query::Value) -> serde_json::Value {
+        match v {
+            sea_orm::sea_query::Value::Json(Some(j)) => (**j).clone(),
+            other => panic!("not a JSON parameter: {other:?}"),
         }
-        // Nothing to match: no parameter, no row.
-        assert_eq!(compiled(Op::In, json!([])), ("(FALSE)".to_string(), 0));
-        assert_eq!(compiled(Op::Eq, json!(7)), ("(FALSE)".to_string(), 0));
-        // Orderings keep the JSON reading.
-        assert!(compiled(Op::Gt, json!("a")).0.contains("to_jsonb"));
+    }
+
+    /// Equality with a string or a boolean is one containment of the field's
+    /// path, bare (no `COALESCE`, no cast) so the GIN index can answer it.
+    #[test]
+    fn a_string_or_boolean_equality_is_containment() {
+        let (eq, params) = compiled_at(&["project_id"], Op::Eq, json!("p1"));
+        assert_eq!(eq, "(payload @> $1::jsonb)");
+        assert_eq!(params.len(), 1);
+        assert_eq!(json_param(&params[0]), json!({"project_id": "p1"}));
+
+        let (nested, params) = compiled_at(&["source", "kind"], Op::Eq, json!(true));
+        assert_eq!(nested, "(payload @> $1::jsonb)");
+        assert_eq!(json_param(&params[0]), json!({"source": {"kind": true}}));
+
+        // `_in` of scalars: one containment each, joined by OR.
+        let (any, params) = compiled_at(&["impact"], Op::In, json!(["high", "low"]));
+        assert_eq!(any, "((payload @> $1::jsonb) OR (payload @> $2::jsonb))");
+        assert_eq!(json_param(&params[1]), json!({"impact": "low"}));
+        // A long list is one test of the list, one parameter for its values.
+        let many: Vec<String> = (0..40).map(|i| format!("o{i}")).collect();
+        let (long, params) = compiled_at(&["owner"], Op::In, json!(many));
+        assert_eq!(
+            long,
+            "($2::jsonb @> jsonb_build_array((payload -> $1::text)))"
+        );
+        assert_eq!(params.len(), 2);
+        assert_eq!(json_param(&params[1]), json!(many));
+
+        for text in [&eq, &nested, &any] {
+            assert!(!text.contains("jsonb_typeof"), "{text}");
+            assert!(!text.contains("COALESCE"), "{text}");
+        }
+    }
+
+    /// What containment cannot say keeps the typed reading: numbers (compared
+    /// as `f64`), a list with a number in it, and the negations, which still
+    /// ask that the field is present.
+    #[test]
+    fn numbers_and_negations_keep_the_typed_reading() {
+        let (num, _) = compiled_at(&["score"], Op::Eq, json!(2));
+        assert!(num.contains("::float8"), "{num}");
+        assert!(!num.contains("@>"), "{num}");
+
+        let (mixed, _) = compiled_at(&["score"], Op::In, json!(["unknown", 2]));
+        assert!(mixed.starts_with("COALESCE("), "{mixed}");
+        assert!(mixed.contains("(payload @> $"), "{mixed}");
+        assert!(mixed.contains("::float8"), "{mixed}");
+
+        let (neq, _) = compiled_at(&["status"], Op::Neq, json!("closed"));
+        assert!(neq.contains("jsonb_typeof"), "{neq}");
+        assert!(neq.contains("NOT ((payload @> $"), "{neq}");
+
+        // Every `$n` the text names is a parameter it binds, and no more.
+        let cases = [
+            compiled_at(&["status"], Op::Neq, json!("closed")),
+            compiled_at(&["score"], Op::In, json!(["unknown", 2])),
+            compiled_at(&["status"], Op::Nin, json!(["a", "b"])),
+        ];
+        for (text, params) in cases {
+            let n = params.len();
+            for i in 1..=n {
+                assert!(text.contains(&format!("${i}")), "${i} unused in {text}");
+            }
+            assert!(!text.contains(&format!("${}", n + 1)), "{text}");
+        }
     }
 }
