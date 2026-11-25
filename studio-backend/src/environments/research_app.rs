@@ -241,6 +241,21 @@ fn service_for<'o>(deployment: &Value, services: &'o [Value]) -> Option<&'o Valu
     })
 }
 
+/// The name of the port of Service `svc` that sends to container port `port`
+/// by number (its `targetPort`, or its `port` when it has none).
+fn front_port_name(svc: &Value, port: u16) -> Option<String> {
+    seq(svc, &["spec", "ports"]).iter().find_map(|p| {
+        let target = p
+            .get("targetPort")
+            .or_else(|| p.get("port"))
+            .and_then(Value::as_u64)?;
+        if target != u64::from(port) {
+            return None;
+        }
+        s(p, &["name"]).filter(|n| !n.is_empty()).map(str::to_owned)
+    })
+}
+
 /// The Service ports an Ingress routes to, as `(service, port name or number)`.
 fn ingress_targets(ingresses: &[Value]) -> BTreeSet<(String, String)> {
     let mut out = BTreeSet::new();
@@ -336,7 +351,14 @@ fn service_of(
         else {
             continue;
         };
-        let pname = s(p, &["name"]).unwrap_or_default().to_owned();
+        // A container port with no name takes the name of the Service port
+        // in front of it: Gearbox's generated UI names `http` only there.
+        let pname = match s(p, &["name"]).filter(|n| !n.is_empty()) {
+            Some(n) => n.to_owned(),
+            None => front
+                .and_then(|svc| front_port_name(svc, port))
+                .unwrap_or_default(),
+        };
         let public = if o.ingresses.is_empty() {
             PUBLIC_PORT_NAMES.contains(&pname.as_str())
         } else {
@@ -974,6 +996,43 @@ fn readdress(svc: &mut ServiceSpec, names: &BTreeSet<String>, namespace: &str) {
             f.content = text;
         }
     }
+}
+
+/// `text` (a server's configuration, such as nginx's) with every URL that
+/// names another service made Research's: `proxy_pass http://api-gateway:8087;`
+/// becomes `proxy_pass http://svc-api-gateway:8087;`. `None` when nothing
+/// changed. nginx resolves a `proxy_pass` host as it starts and stops when it
+/// cannot: a generated UI's nginx, built for the chart's `api-gateway`, never
+/// started in Research (Research DEV, 2026-11-24).
+pub fn readdress_text(text: &str, names: &BTreeSet<String>, namespace: &str) -> Option<String> {
+    let mut out = String::with_capacity(text.len() + 32);
+    let mut rest = text;
+    let mut changed = false;
+    while let Some(i) = rest.find("://") {
+        let (before, after) = rest.split_at(i + 3);
+        out.push_str(before);
+        let end = after
+            .find(|c: char| {
+                c.is_whitespace() || matches!(c, '/' | '?' | '#' | ';' | '"' | '\'' | ')' | '>' | ',')
+            })
+            .unwrap_or(after.len());
+        let (authority, tail) = after.split_at(end);
+        let (userinfo, hostport) = match authority.rfind('@') {
+            Some(a) => authority.split_at(a + 1),
+            None => ("", authority),
+        };
+        let (host, port) = split_port(hostport);
+        match service_host(host, names, namespace) {
+            Some(h) => {
+                out.push_str(&format!("{userinfo}{h}{port}"));
+                changed = true;
+            }
+            None => out.push_str(authority),
+        }
+        rest = tail;
+    }
+    out.push_str(rest);
+    changed.then_some(out)
 }
 
 fn scalar(v: &Value) -> String {

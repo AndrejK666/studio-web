@@ -450,7 +450,10 @@ fn lay_out(
     images: &[BuildImage],
     app: &Application,
     database_image: &str,
+    namespace: &str,
 ) -> anyhow::Result<LaidOut> {
+    let names: std::collections::BTreeSet<String> =
+        app.services.iter().map(|s| s.name.clone()).collect();
     let rel = |p: &Path| -> anyhow::Result<String> {
         Ok(p.strip_prefix(root)
             .map_err(|_| anyhow!("{} is outside the uploaded tree", p.display()))?
@@ -473,6 +476,16 @@ fn lay_out(
             text.push_str(&spec.overlay(&dir));
             for (path, content) in spec.overlay_files() {
                 write(&context.join(&dir).join(path), &content)?;
+            }
+        }
+        // The generated UI's nginx (`COPY nginx.conf`) proxies to the API
+        // Gateway by the chart's name; Research reaches it at `svc-<name>`.
+        if is_generated_ui(i) {
+            let conf = context.join("nginx.conf");
+            if let Ok(text) = std::fs::read_to_string(&conf)
+                && let Some(fixed) = research_app::readdress_text(&text, &names, namespace)
+            {
+                write(&conf, &fixed)?;
             }
         }
         // Research takes only `Dockerfile` or `<name>.dockerfile`.
@@ -1007,8 +1020,15 @@ impl ResearchBuildTask {
             )
             .map_err(|e| stop("prepare", &resume)(e.into()))?;
             let root = prepared.work.join("repo");
-            let (all, bakes, laid) = lay_out(&prepared.work, &root, &images, &app, &database_image)
-                .map_err(stop("prepare", &resume))?;
+            let (all, bakes, laid) = lay_out(
+                &prepared.work,
+                &root,
+                &images,
+                &app,
+                &database_image,
+                &p.namespace,
+            )
+            .map_err(stop("prepare", &resume))?;
             let keys = {
                 let (laid, salt) = (laid.clone(), p.research_project.clone());
                 tokio::task::spawn_blocking(move || research_keys::image_keys(&laid, &salt))
@@ -2075,8 +2095,15 @@ spec:
             context: "repo".into(),
         }];
         let app = shop("studio-research-pending/shop:build");
-        let (builds, bakes, _) =
-            lay_out(&work, &work.join("repo"), &images, &app, "postgres:18").unwrap();
+        let (builds, bakes, _) = lay_out(
+            &work,
+            &work.join("repo"),
+            &images,
+            &app,
+            "postgres:18",
+            "shop-dev",
+        )
+        .unwrap();
         let read = |p: &str| std::fs::read_to_string(work.join(p)).unwrap();
         let dockerfile = read("repo/studio-shop.dockerfile");
         let config = read("repo/studio-research/shop/files/etc/shop/shop.yaml");
@@ -2110,6 +2137,142 @@ spec:
         );
         assert!(config.contains("listen: 0.0.0.0:8087"));
         assert!(ignore.starts_with("*\n!src\n") && ignore.contains("!studio-research/**"));
+    }
+
+    /// What Gearbox renders for a product with a FrontX frontend: the API
+    /// Gateway, and the UI whose nginx proxies to it (gearbox 82b909a).
+    const GENERATED_UI_CHART: &str = r#"
+apiVersion: v1
+kind: Service
+metadata: { name: api-gateway }
+spec:
+  selector: { app.kubernetes.io/name: api-gateway }
+  ports: [{ name: http, port: 8087, targetPort: 8087 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: api-gateway }
+spec:
+  template:
+    metadata: { labels: { app.kubernetes.io/name: api-gateway } }
+    spec:
+      containers:
+        - name: api-gateway
+          image: studio-research-pending/api-gateway:build
+          ports: [{ name: http, containerPort: 8087 }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: studioweb-frontend }
+spec:
+  selector: { app.kubernetes.io/name: studioweb-frontend }
+  ports: [{ name: http, port: 8080, targetPort: 8080 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: studioweb-frontend }
+spec:
+  template:
+    metadata: { labels: { app.kubernetes.io/name: studioweb-frontend } }
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 65532 }
+      containers:
+        - name: ui
+          image: "studio-research-pending/ui:build"
+          ports: [{ containerPort: 8080 }]
+          readinessProbe: { httpGet: { path: /, port: 8080 } }
+          volumeMounts: [{ name: tmp, mountPath: /tmp }]
+      volumes: [{ name: tmp, emptyDir: {} }]
+"#;
+
+    #[test]
+    fn a_generated_ui_s_nginx_proxies_to_the_gateway_at_research_s_address() {
+        // Research DEV, 2026-11-24: studioweb-frontend `failed` with no log;
+        // its nginx was built to proxy to `api-gateway`, a name Research
+        // does not resolve (it reaches the gateway at `svc-api-gateway`).
+        let work = std::env::temp_dir().join(format!("research-ui-{}", Uuid::new_v4().simple()));
+        let frontend = work.join("repo/frontend");
+        std::fs::create_dir_all(&frontend).unwrap();
+        std::fs::write(
+            frontend.join("Dockerfile"),
+            "FROM nginxinc/nginx-unprivileged:1.28-alpine\nCOPY nginx.conf /etc/nginx/nginx.conf\n",
+        )
+        .unwrap();
+        std::fs::write(
+            frontend.join("nginx.conf"),
+            "http {\n  server {\n    listen 8080;\n    location /api/ {\n      proxy_pass http://api-gateway:8087;\n    }\n    location /cf/ { proxy_pass http://api-gateway:8087/; }\n  }\n}\n",
+        )
+        .unwrap();
+        let images = [BuildImage {
+            app: "ui".into(),
+            name: "gbx-studioweb-frontend".into(),
+            dockerfile: "repo/frontend/Dockerfile".into(),
+            context: "repo/frontend".into(),
+        }];
+        let none = |_: &str, _: &str| None;
+        let pw = |_: &str| "pw".to_owned();
+        let app = research_app::application_of(
+            GENERATED_UI_CHART,
+            &Inputs {
+                hardware: None,
+                secret: &none,
+                database_password: &pw,
+                database_image: "postgres:18",
+                namespace: "studioweb-research-x",
+            },
+        )
+        .unwrap();
+        lay_out(
+            &work,
+            &work.join("repo"),
+            &images,
+            &app,
+            "postgres:18",
+            "studioweb-research-x",
+        )
+        .unwrap();
+        let conf = std::fs::read_to_string(frontend.join("nginx.conf")).unwrap();
+        let _ = std::fs::remove_dir_all(&work);
+        assert!(
+            conf.contains("proxy_pass http://svc-api-gateway:8087;"),
+            "{conf}"
+        );
+        assert!(
+            conf.contains("proxy_pass http://svc-api-gateway:8087/;"),
+            "{conf}"
+        );
+        assert!(!conf.contains("//api-gateway"), "{conf}");
+        assert!(conf.contains("listen 8080;"));
+    }
+
+    #[test]
+    fn a_generated_ui_s_port_is_public_by_its_service_s_name() {
+        let none = |_: &str, _: &str| None;
+        let pw = |_: &str| "pw".to_owned();
+        let app = research_app::application_of(
+            GENERATED_UI_CHART,
+            &Inputs {
+                hardware: None,
+                secret: &none,
+                database_password: &pw,
+                database_image: "postgres:18",
+                namespace: "studioweb-research-x",
+            },
+        )
+        .unwrap();
+        let ui = app
+            .services
+            .iter()
+            .find(|s| s.name == "studioweb-frontend")
+            .unwrap();
+        assert_eq!(
+            ui.ports,
+            [research_app::PortSpec {
+                name: "http".into(),
+                port: 8080,
+                public: true,
+            }]
+        );
     }
 
     #[test]
