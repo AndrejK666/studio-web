@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { stubResizeObserver } from '@frontx-test-utils/stubResizeObserver';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ConnectorProvider, StoredConnection } from '../../../api/types';
+import type { ConnectorProvider, ProviderField, StoredConnection } from '../../../api/types';
 
 // The kit's DataGrid measures its table.
 stubResizeObserver();
@@ -62,6 +62,28 @@ const provider = (p: Partial<ConnectorProvider>): ConnectorProvider => ({
   ...p,
 });
 
+/** One field of a provider's form, as `GET /providers` describes it. */
+const field = (name: string, label: string, over: Partial<ProviderField> = {}): ProviderField => ({
+  name,
+  label,
+  kind: name === 'token' ? 'secret' : name === 'base_url' ? 'url' : 'text',
+  required: true,
+  hint: '',
+  placeholder: '',
+  ...over,
+});
+
+/** Research's form as its driver says it: only the key, and the account is the person's own. */
+const RESEARCH_FORM: Partial<ConnectorProvider> = {
+  holder: 'personal',
+  fields: [
+    field('token', 'Paste a Research access key (rk-…)', {
+      placeholder: 'rk-…',
+      hint: 'Log in to Research, make an access key and paste it here.',
+    }),
+  ],
+};
+
 const connection = (c: Partial<StoredConnection>): StoredConnection => ({
   id: 'c1',
   owner_tenant_id: 'o1',
@@ -78,8 +100,15 @@ const connection = (c: Partial<StoredConnection>): StoredConnection => ({
 const PROVIDERS = [
   provider({}),
   provider({ provider: 'anthropic', display_name: 'Anthropic', category: 'ai', default_base_url: 'https://api.anthropic.com' }),
-  provider({ provider: 'kubernetes', display_name: 'Kubernetes', category: 'cluster', default_base_url: '' }),
-  provider({ provider: 'research', display_name: 'Constructor Research', category: 'compute', sign_in: true }),
+  provider({
+    provider: 'kubernetes',
+    display_name: 'Kubernetes',
+    category: 'cluster',
+    default_base_url: '',
+    holder: 'organization',
+    fields: [field('base_url', 'Instance URL'), field('token', 'Personal Access Token (PAT)', { format: 'kubeconfig' })],
+  }),
+  provider({ provider: 'research', display_name: 'Constructor Research', category: 'compute', sign_in: true, ...RESEARCH_FORM }),
 ];
 
 const created = { connection: connection({ id: 'c9' }), account: 'new-bot', display_name: 'New Bot' };
@@ -229,6 +258,13 @@ describe('Integrations: adding', () => {
           category: 'service',
           default_base_url: '',
           credential_label: 'Shared secret',
+          holder: 'organization',
+          holder_fixed: true,
+          fields: [
+            field('strategy', 'Strategy ID', { pattern: '^[a-z][a-z0-9_]{0,39}$', max_length: 40 }),
+            field('base_url', 'Instance URL'),
+            field('token', 'Shared secret'),
+          ],
         })],
       }),
     });
@@ -241,7 +277,10 @@ describe('Integrations: adding', () => {
     fireEvent.change(within(form).getByPlaceholderText('int_label_placeholder'), { target: { value: 'Acme' } });
     fireEvent.change(within(form).getByPlaceholderText('int_url_required'), { target: { value: 'https://matcher.example' } });
     fireEvent.change(within(form).getByLabelText('Shared secret'), { target: { value: 'test-secret' } });
-    fireEvent.change(within(form).getByLabelText(/int_assembly_strategy/), { target: { value: 'acme_matcher' } });
+    // A strategy id has the shape the driver gives: saving waits for one.
+    fireEvent.change(within(form).getByLabelText(/Strategy ID/), { target: { value: 'Acme Matcher' } });
+    expect((form.querySelector('[data-connection-create]') as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(within(form).getByLabelText(/Strategy ID/), { target: { value: 'acme_matcher' } });
     click(form, '[data-connection-create]');
     await waitFor(() => expect(calls.find((c) => c.what === 'createConnection')?.body).toMatchObject({
       provider: 'assembly-service',
@@ -327,6 +366,7 @@ describe('Integrations: adding', () => {
             credential_label: 'Research access key',
             sign_in: false,
             pasted_key: true,
+            ...RESEARCH_FORM,
           }),
         ],
       }),
@@ -340,10 +380,12 @@ describe('Integrations: adding', () => {
     expect(form.querySelector('[data-connection-ways]')).toBeNull();
     expect(form.querySelector('[data-connection-signin]')).toBeNull();
     expect(within(form).queryByPlaceholderText(/int_url/)).toBeNull();
-    expect(form.querySelector('[data-research-key-hint]')?.textContent).toBe('int_research_key_hint');
+    expect(form.querySelector('[data-field-hint="token"]')?.textContent).toBe(
+      'Log in to Research, make an access key and paste it here.'
+    );
     expect((form.querySelector('[data-connection-reach]') as HTMLSelectElement).value).toBe('personal');
     fireEvent.change(within(form).getByPlaceholderText('int_label_placeholder'), { target: { value: 'My Research' } });
-    fireEvent.change(within(form).getByLabelText('int_research_key'), { target: { value: 'rk-abc' } });
+    fireEvent.change(within(form).getByLabelText('Paste a Research access key (rk-…)'), { target: { value: 'rk-abc' } });
     click(form, '[data-connection-create]');
     await waitFor(() =>
       expect(calls.find((c) => c.what === 'createConnection')?.body).toEqual({
@@ -362,7 +404,14 @@ describe('Integrations: adding', () => {
       connectorProviders: read('connectorProviders', {
         items: [
           provider({}),
-          provider({ provider: 'research', display_name: 'Constructor Research', category: 'compute', sign_in: true, pasted_key: true }),
+          provider({
+            provider: 'research',
+            display_name: 'Constructor Research',
+            category: 'compute',
+            sign_in: true,
+            pasted_key: true,
+            ...RESEARCH_FORM,
+          }),
         ],
       }),
     });
@@ -374,7 +423,7 @@ describe('Integrations: adding', () => {
     expect(form.querySelector('[data-connection-signin]')).not.toBeNull();
     click(form, '[data-connection-way="paste"]');
     expect(form.querySelector('[data-connection-signin]')).toBeNull();
-    expect(within(form).getByLabelText('int_research_key')).toBeTruthy();
+    expect(within(form).getByLabelText('Paste a Research access key (rk-…)')).toBeTruthy();
     click(form, '[data-connection-way="sign_in"]');
     expect(form.querySelector('[data-connection-signin]')).not.toBeNull();
   });

@@ -39,11 +39,11 @@ import { AdminApiService } from '../../../api/AdminApiService';
 import type { ConnectorProvider, StoredConnection } from '../../../api/types';
 import {
   CATEGORY_KEYS,
-  GEAR_REPOSITORY,
   HEALTH_TTL_MS,
   MISSING_EXPLAINED,
   missingCategories,
   nonDefaultAddress,
+  usedByKind,
 } from '../../../model/connections';
 import { errText, useAdmin, useConfirm } from '../common';
 import { ConnectorLogo, LogoSlot } from './ConnectorLogo';
@@ -347,13 +347,15 @@ export function ConnectionTable({
 
   const usedBy = useCallback(
     (c: StoredConnection) => {
-      if (c.provider === 'kubernetes' || c.provider === 'registry') {
+      // What uses a connection follows from its kind: an environment deploys with a cluster or a registry.
+      const used = usedByKind(categoryOf(c.provider));
+      if (used === 'environments') {
         const names = envUses.get(c.id);
         return names?.length ? t('int_used_envs', { names: names.join(', ') }) : t('int_used_none');
       }
-      return c.provider === GEAR_REPOSITORY ? t('int_used_gear_repos') : '—';
+      return used === 'gear_repositories' ? t('int_used_gear_repos') : '—';
     },
-    [envUses, t]
+    [categoryOf, envUses, t]
   );
 
   const remove = useCallback(

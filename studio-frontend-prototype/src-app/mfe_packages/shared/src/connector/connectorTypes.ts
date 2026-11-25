@@ -17,6 +17,40 @@ export interface ProviderDto {
    * (an incoming webhook), so there is no channel to list and none to pick.
    */
   fixed_target: boolean;
+  /** A connection may be stored without a credential: a public gear repository. */
+  token_optional?: boolean;
+  /** Made by signing in to the provider's identity provider (ADR-0049). */
+  sign_in?: boolean;
+  /** A connection may be made with a pasted credential. */
+  pasted_key?: boolean;
+  /**
+   * The form a connection is made with, in the order it is drawn: the address,
+   * the credential and the provider's options, as its driver describes them.
+   * Absent from an older backend: the address and the credential.
+   */
+  fields?: ProviderFieldDto[];
+  /** Who may hold a connection: anyone, only the organization, or a person first. */
+  holder?: 'any' | 'organization' | 'personal';
+  /** `holder` is the only one: a form offers no choice. */
+  holder_fixed?: boolean;
+}
+
+/** One field of a provider's form. */
+export interface ProviderFieldDto {
+  /** `base_url`, `token`, or else the name of one of the connection's options. */
+  name: string;
+  label: string;
+  kind: 'text' | 'secret' | 'url' | 'select';
+  required: boolean;
+  /** A sentence beside the field; empty when there is none. */
+  hint: string;
+  placeholder: string;
+  /** A shape the value comes in that a form may help with: `kubeconfig`. */
+  format?: string | null;
+  /** A regular expression the whole value matches. */
+  pattern?: string | null;
+  max_length?: number | null;
+  choices?: { value: string; label: string }[];
 }
 
 export interface ProviderListDto {
@@ -54,6 +88,8 @@ export interface CreateConnectionBody {
   label: string;
   base_url?: string;
   token: string;
+  /** The provider's options, as its form names them. */
+  options?: Record<string, string>;
   scope: string;
   owner_tenant_id: string;
 }

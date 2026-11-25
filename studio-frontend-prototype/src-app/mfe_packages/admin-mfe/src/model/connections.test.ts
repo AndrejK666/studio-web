@@ -1,10 +1,15 @@
 // The "picking repositories" cases are the prototype's (src/project-sources.test.ts at 00828880), unchanged.
 import { describe, expect, it } from 'vitest';
 import type { ProjectSource } from '@constructor-studio/mfe-shared';
-import type { RemoteRepo, StoredConnection } from '../api/types';
+import type { ConnectorProvider, ProviderField, RemoteRepo, StoredConnection } from '../api/types';
 import {
   connectWays,
   environmentsByConnection,
+  fieldText,
+  fieldValid,
+  formFields,
+  optionFields,
+  usedByKind,
   hasRepository,
   missingCategories,
   nonDefaultAddress,
@@ -93,15 +98,83 @@ describe('the organization page', () => {
     expect(missingCategories(providers, [])).toEqual(['source_code', 'ai', 'cluster']);
   });
 
-  it('keeps a cluster or a registry to the organization and a signed-in account to the person', () => {
-    expect(orgOnlyProvider({ provider: 'kubernetes' })).toBe(true);
+  it('keeps a connection where its driver says it is held', () => {
+    expect(orgOnlyProvider({ provider: 'kubernetes', holder: 'organization' })).toBe(true);
+    expect(orgOnlyProvider({ provider: 'github', category: 'source_code', holder: 'any' })).toBe(false);
+    expect(reachFor({ provider: 'kubernetes', holder: 'organization' }, 'personal')).toBe('organization');
+    expect(reachFor({ provider: 'github', holder: 'any' }, 'personal')).toBe('personal');
+    // A pasted Research key is the person's own account too: its driver says so, not its name.
+    expect(reachFor({ provider: 'research', sign_in: false, holder: 'personal' }, 'organization')).toBe('personal');
+  });
+
+  it('reads the holder from the kind where an older backend does not say it', () => {
+    expect(orgOnlyProvider({ provider: 'x', category: 'cluster' })).toBe(true);
     expect(orgOnlyProvider({ provider: 'x', category: 'registry' })).toBe(true);
+    expect(orgOnlyProvider({ provider: 'x', category: 'service' })).toBe(true);
     expect(orgOnlyProvider({ provider: 'github', category: 'source_code' })).toBe(false);
-    expect(reachFor({ provider: 'kubernetes' }, 'personal')).toBe('organization');
     expect(reachFor({ provider: 'research', sign_in: true }, 'organization')).toBe('personal');
-    expect(reachFor({ provider: 'github' }, 'personal')).toBe('personal');
-    // A pasted Research key is the person's own account too.
-    expect(reachFor({ provider: 'research', sign_in: false }, 'organization')).toBe('personal');
+  });
+
+  it('draws the form its driver describes, else the address and the credential', () => {
+    const base: ConnectorProvider = {
+      provider: 'github',
+      display_name: 'GitHub',
+      default_base_url: 'https://api.github.com',
+      instance_id: 'i',
+      category: 'source_code',
+      credential_label: 'PAT',
+      credential_hint: 'ghp_…',
+    };
+    expect(formFields(base).map((f) => [f.name, f.kind, f.required, f.placeholder])).toEqual([
+      ['base_url', 'url', false, 'https://api.github.com'],
+      ['token', 'secret', true, 'ghp_…'],
+    ]);
+    expect(formFields({ ...base, fixed_target: true }).map((f) => f.name)).toEqual(['token']);
+    expect(formFields({ ...base, default_base_url: '' })[0].required).toBe(true);
+    const described: ProviderField[] = [
+      { name: 'strategy', label: 'Strategy ID', kind: 'text', required: true, hint: '', placeholder: '' },
+      { name: 'token', label: 'Secret', kind: 'secret', required: true, hint: '', placeholder: '' },
+    ];
+    expect(formFields({ ...base, fields: described })).toBe(described);
+    expect(optionFields(described).map((f) => f.name)).toEqual(['strategy']);
+  });
+
+  it('checks a value against its field: required, pattern, length and choices', () => {
+    const field: ProviderField = {
+      name: 'strategy',
+      label: 'Strategy ID',
+      kind: 'text',
+      required: true,
+      hint: '',
+      placeholder: '',
+      pattern: '^[a-z][a-z0-9_]{0,39}$',
+      max_length: 40,
+    };
+    expect(fieldValid(field, '')).toBe(false);
+    expect(fieldValid(field, 'acme_matcher')).toBe(true);
+    expect(fieldValid(field, 'Acme')).toBe(false);
+    expect(fieldValid({ ...field, pattern: null }, 'x'.repeat(41))).toBe(false);
+    expect(fieldValid({ ...field, required: false }, '  ')).toBe(true);
+    const select: ProviderField = { ...field, kind: 'select', pattern: null, choices: [{ value: 'a', label: 'A' }] };
+    expect(fieldValid(select, 'a')).toBe(true);
+    expect(fieldValid(select, 'b')).toBe(false);
+  });
+
+  it('takes a field’s words from the dictionary where it has them, else the driver’s', () => {
+    const field: ProviderField = { name: 'strategy', label: 'Strategy ID', kind: 'text', required: true, hint: 'snake_case', placeholder: '' };
+    const dictionary: Record<string, string> = { int_field_assembly_service_strategy: 'ID стратегии' };
+    const t = Object.assign((key: string) => dictionary[key] ?? `screen.admin:${key}`, { count: (key: string) => key });
+    expect(fieldText(t, 'assembly-service', field, 'label')).toBe('ID стратегии');
+    expect(fieldText(t, 'assembly-service', field, 'hint')).toBe('snake_case');
+    expect(fieldText(t, 'other', field, 'label')).toBe('Strategy ID');
+  });
+
+  it('says what uses a connection from its kind', () => {
+    expect(usedByKind('cluster')).toBe('environments');
+    expect(usedByKind('registry')).toBe('environments');
+    expect(usedByKind('gears')).toBe('gear_repositories');
+    expect(usedByKind('source_code')).toBeNull();
+    expect(usedByKind(undefined)).toBeNull();
   });
 
   it('says which ways a provider is connected: sign in, paste, or either', () => {

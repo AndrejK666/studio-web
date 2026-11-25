@@ -1,10 +1,17 @@
 // From the prototype at 00828880: `App.tsx`'s connectors constants (CATEGORIES, MISSING_MEANS, HEALTH_TTL_MS,
-// ORG_ONLY_PROVIDER, Reach), `environments.ts`'s environmentsByConnection, `gear-repositories.ts`'s GEAR_REPOSITORY
+// ORG_ONLY_PROVIDER, Reach), `environments.ts`'s environmentsByConnection
 // and `project-sources.ts`'s supportsPullRequests/repoKey/hasRepository/withPicked — the pure parts, unchanged
 // (`project-sources.ts` itself also calls the api, so it did not move whole). Titles and blurbs are in i18n.
 
-import type { ProjectSource } from '@constructor-studio/mfe-shared';
-import type { ConnectorProvider, EnvironmentUse, RemoteRepo, StoredConnection } from '../api/types';
+import type { ProjectSource, ScreenText } from '@constructor-studio/mfe-shared';
+import type {
+  ConnectorProvider,
+  EnvironmentUse,
+  ProviderField,
+  ProviderHolder,
+  RemoteRepo,
+  StoredConnection,
+} from '../api/types';
 
 /** Provider groups in the picker, in its order. Keys match `ConnectorDriver::category()`. */
 export const CATEGORY_KEYS = ['source_code', 'ai', 'notification', 'cluster', 'registry', 'compute', 'service'] as const;
@@ -15,13 +22,20 @@ export const MISSING_EXPLAINED: readonly string[] = ['source_code', 'ai', 'notif
 /** How long a connection's answer to a test is trusted before it is asked again. */
 export const HEALTH_TTL_MS = 5 * 60_000;
 
-/** The id of a gear-repository connection (ADR-0046). */
-export const GEAR_REPOSITORY = 'gear-repository';
-export const ASSEMBLY_SERVICE = 'assembly-service';
+/** The kinds whose connections an environment deploys with (ADR-0043, ADR-0048). */
+const ENVIRONMENT_KINDS: readonly string[] = ['cluster', 'registry'];
 
-/** A provider whose connections only the organization holds: a cluster or a registry, which only the server uses. */
-export const orgOnlyProvider = (p: { provider: string; category?: string }): boolean =>
-  p.category === 'cluster' || p.category === 'registry' || [ASSEMBLY_SERVICE, 'kubernetes', 'registry'].includes(p.provider);
+type HeldBy = { provider: string; category?: string; holder?: ProviderHolder; sign_in?: boolean };
+
+/** Who may hold a provider's connection, as its driver says; from its kind where an older backend says nothing. */
+function holderOf(p: HeldBy): ProviderHolder {
+  if (p.holder) return p.holder;
+  if (p.sign_in) return 'personal';
+  return p.category && [...ENVIRONMENT_KINDS, 'service'].includes(p.category) ? 'organization' : 'any';
+}
+
+/** A provider whose connections only the organization holds: a cluster, a registry or a service, which only the server uses. */
+export const orgOnlyProvider = (p: HeldBy): boolean => holderOf(p) === 'organization';
 
 /** Where a connection is attached, and how widely its token is readable. */
 export type Reach = 'organization' | 'workspace' | 'personal';
@@ -38,13 +52,71 @@ export function connectWays(provider: Pick<ConnectorProvider, 'sign_in' | 'paste
   return ways;
 }
 
-/** The reach a newly picked provider starts with on the organization's page. */
-export function reachFor(provider: Pick<ConnectorProvider, 'provider' | 'sign_in'>, current: Reach): Reach {
-  // A Research account is the person's own (ADR-0049 §5), signed in to or its key pasted.
-  if (provider.sign_in || provider.provider === 'research') return 'personal';
-  // An environment takes only a cluster the organization holds.
-  if (orgOnlyProvider(provider)) return 'organization';
-  return current;
+/** The reach a newly picked provider starts with on the organization's page: the holder its driver names, else the current one. */
+export function reachFor(provider: HeldBy, current: Reach): Reach {
+  const holder = holderOf(provider);
+  return holder === 'any' ? current : holder;
+}
+
+/** The address field: what a form without a described one asks for, and where a field writes it. */
+export const BASE_URL_FIELD = 'base_url';
+/** The credential field. */
+export const TOKEN_FIELD = 'token';
+
+/**
+ * A provider's form, in the order it is drawn, as its driver describes it. An older backend describes none:
+ * then the address (none for a fixed target, whose credential is its whole address) and the credential.
+ */
+export function formFields(provider: ConnectorProvider): ProviderField[] {
+  if (provider.fields?.length) return provider.fields;
+  const token: ProviderField = {
+    name: TOKEN_FIELD,
+    label: provider.credential_label,
+    kind: 'secret',
+    required: !provider.token_optional,
+    hint: '',
+    placeholder: provider.credential_hint,
+  };
+  if (provider.fixed_target) return [token];
+  const address: ProviderField = {
+    name: BASE_URL_FIELD,
+    label: 'Instance URL',
+    kind: 'url',
+    required: !provider.default_base_url,
+    hint: '',
+    placeholder: provider.default_base_url,
+  };
+  return [address, token];
+}
+
+/** The fields that are the connection's options: neither its address nor its credential. */
+export const optionFields = (fields: readonly ProviderField[]): ProviderField[] =>
+  fields.filter((f) => f.name !== BASE_URL_FIELD && f.name !== TOKEN_FIELD);
+
+/** Whether a value fills its field: present when required, in its shape and length when given. */
+export function fieldValid(field: ProviderField, value: string): boolean {
+  const v = value.trim();
+  if (!v) return !field.required;
+  if (field.max_length != null && v.length > field.max_length) return false;
+  if (field.pattern) {
+    try {
+      if (!new RegExp(field.pattern).test(v)) return false;
+    } catch {
+      // A pattern this browser cannot read is the server's to check.
+    }
+  }
+  if (field.kind === 'select' && field.choices?.length) return field.choices.some((c) => c.value === v);
+  return true;
+}
+
+/**
+ * A field's words: the dictionary's `int_field_<provider>_<name>` (and `…_hint`) where it has them, so a provider's
+ * words can be translated, else the driver's own. Not a list of providers: a dictionary entry or none.
+ */
+export function fieldText(t: ScreenText, provider: string, field: ProviderField, part: 'label' | 'hint'): string {
+  const key = `int_field_${provider}_${field.name}${part === 'hint' ? '_hint' : ''}`.replace(/[^a-z0-9_]/gi, '_');
+  const said = t(key);
+  return said && said !== key && !said.endsWith(`:${key}`) ? said : field[part];
 }
 
 /** The organization's page lists the shared connections: never a person's own. */
@@ -57,8 +129,8 @@ export function personalConnections(connections: readonly StoredConnection[]): S
   return connections.filter((c) => c.scope === 'personal');
 }
 
-/** What a person may connect as their own: anything but a cluster or a registry, which only the organization holds. */
-export function personalProviders<P extends { provider: string; category?: string }>(providers: readonly P[]): P[] {
+/** What a person may connect as their own: anything but what only the organization holds. */
+export function personalProviders<P extends HeldBy>(providers: readonly P[]): P[] {
   return providers.filter((p) => !orgOnlyProvider(p));
 }
 
@@ -77,6 +149,12 @@ export function missingCategories(
 export function nonDefaultAddress(baseUrl: string, defaultUrl: string): string | null {
   if (!baseUrl || baseUrl.replace(/\/$/, '') === defaultUrl.replace(/\/$/, '')) return null;
   return baseUrl.replace(/^https?:\/\//, '');
+}
+
+/** What uses a connection of a kind: an environment deploys with a cluster or a registry; a tier reads a gear repository. */
+export function usedByKind(category: string | undefined): 'environments' | 'gear_repositories' | null {
+  if (category && ENVIRONMENT_KINDS.includes(category)) return 'environments';
+  return category === 'gears' ? 'gear_repositories' : null;
 }
 
 /** Which environments deploy with each cluster or registry connection. */
