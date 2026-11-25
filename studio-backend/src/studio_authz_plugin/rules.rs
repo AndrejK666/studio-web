@@ -103,6 +103,10 @@ pub(super) fn decide(
 /// ```
 pub struct GearHeldMetadata {
     /// The gear that registered it, for the logs.
+    #[allow(
+        dead_code,
+        reason = "names the registering gear for readers of the registry"
+    )]
     pub gear: &'static str,
     /// Full GTS ids of the tenant-metadata types only that gear writes.
     pub type_ids: &'static [&'static str],

@@ -742,6 +742,10 @@ impl IngestService {
     /// graph, reporting each phase (and the counts so far) to `progress`.
     /// No deadline: everything is linked before it returns.
     #[allow(clippy::too_many_arguments)]
+    #[allow(
+        dead_code,
+        reason = "the no-deadline entry point; the task calls run_sync_until"
+    )]
     pub async fn run_sync(
         &self,
         ctx: &SecurityContext,
