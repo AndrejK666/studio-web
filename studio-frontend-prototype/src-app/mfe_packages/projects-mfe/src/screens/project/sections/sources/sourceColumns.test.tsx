@@ -129,15 +129,18 @@ describe('the Source cell', () => {
 
     expect(screen.getByRole('img', { name: 'GitHub' }).getAttribute('title')).toBe('GitHub');
     expect(screen.getByText('api')).toBeTruthy();
-    expect(screen.getByText('acme/api · main')).toBeTruthy();
+    expect(container.querySelector('[title="acme/api · main"]')?.textContent).toBe('acme/api · main');
     expect(container.querySelector('.lucide-github')).not.toBeNull();
   });
 
   it('gives the name and the path in full as their titles, for when they are cut', () => {
-    cell('source', sourceRow({ fullPath: 'acme/a-long-repository-name', name: 'a-long-repository-name' }));
+    const { container } = cell(
+      'source',
+      sourceRow({ fullPath: 'acme/a-long-repository-name', name: 'a-long-repository-name' })
+    );
 
     expect(screen.getByText('a-long-repository-name').getAttribute('title')).toBe('a-long-repository-name');
-    expect(screen.getByText('acme/a-long-repository-name · main').getAttribute('title')).toBe(
+    expect(container.querySelector('[title="acme/a-long-repository-name · main"]')?.textContent).toBe(
       'acme/a-long-repository-name · main'
     );
   });
@@ -146,6 +149,61 @@ describe('the Source cell', () => {
     cell('source', sourceRow({ branch: null }));
 
     expect(screen.getByText('acme/api')).toBeTruthy();
+    expect(screen.getAllByRole('link')).toHaveLength(1);
+  });
+
+  it('links the path to the repository and the branch to its page, each in a new tab', () => {
+    cell('source', sourceRow());
+
+    const repository = screen.getByRole('link', { name: 'Open acme/api in GitHub' });
+    expect(repository.getAttribute('href')).toBe('https://github.com/acme/api');
+    expect(repository.getAttribute('target')).toBe('_blank');
+    expect(repository.getAttribute('rel')).toBe('noopener noreferrer');
+    expect(repository.textContent).toBe('acme/api');
+    const branch = screen.getByRole('link', { name: 'Open branch main of acme/api in GitHub' });
+    expect(branch.getAttribute('href')).toBe('https://github.com/acme/api/tree/main');
+    expect(branch.getAttribute('target')).toBe('_blank');
+    expect(branch.getAttribute('rel')).toBe('noopener noreferrer');
+  });
+
+  it("opens a self-hosted GitLab repository and its branch from its connection's API base", () => {
+    cell(
+      'source',
+      sourceRow({
+        provider: 'gitlab',
+        name: 'platform-api',
+        fullPath: 'platform/aps/platform-api',
+        cloneUrl: 'git@gitlab.constr.dev:platform/aps/platform-api.git',
+        baseUrl: 'https://gitlab.constr.dev/api/v4',
+      })
+    );
+
+    expect(
+      screen.getByRole('link', { name: 'Open platform/aps/platform-api in GitLab' }).getAttribute('href')
+    ).toBe('https://gitlab.constr.dev/platform/aps/platform-api');
+    expect(
+      screen
+        .getByRole('link', { name: 'Open branch main of platform/aps/platform-api in GitLab' })
+        .getAttribute('href')
+    ).toBe('https://gitlab.constr.dev/platform/aps/platform-api/-/tree/main');
+  });
+
+  it('keeps a click on a link from reaching the row', () => {
+    const onRow = vi.fn();
+    const { render: draw } = column('source');
+    render(<div onClick={onRow}>{typeof draw === 'function' ? draw(sourceRow()) : draw}</div>);
+
+    fireEvent.click(screen.getByRole('link', { name: 'Open acme/api in GitHub' }));
+    fireEvent.click(screen.getByRole('link', { name: 'Open branch main of acme/api in GitHub' }));
+
+    expect(onRow).not.toHaveBeenCalled();
+  });
+
+  it('shows the path as text when nothing says where the repository lives', () => {
+    cell('source', sourceRow({ cloneUrl: 'git@github.com:acme/api.git' }));
+
+    expect(screen.queryByRole('link')).toBeNull();
+    expect(screen.getByText('acme/api · main')).toBeTruthy();
   });
 
   it('draws a provider it has no mark for as a cloud, and no provider without a name', () => {

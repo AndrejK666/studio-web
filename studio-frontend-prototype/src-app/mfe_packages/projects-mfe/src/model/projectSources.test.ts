@@ -2,13 +2,16 @@ import { describe, expect, it } from 'vitest';
 import type { ProjectSource } from '@constructor-studio/mfe-shared';
 import {
   repositoryKey,
+  providerSiteUrl,
   repositoryWebUrl,
+  sourceWebUrls,
   supportsPullRequests,
   branchNameProblem,
   withBranch,
   withShareMode,
   withSources,
   withoutSource,
+  type SourceWebInput,
 } from './projectSources';
 
 const source = (connection: string, fullPath: string): ProjectSource => ({
@@ -54,6 +57,104 @@ describe('repositoryWebUrl', () => {
     '',
   ])('%s gives none', (cloneUrl) => {
     expect(repositoryWebUrl(cloneUrl)).toBeNull();
+  });
+});
+
+describe('providerSiteUrl', () => {
+  it.each([
+    ['https://api.github.com', 'https://github.com'],
+    ['https://api.github.com/', 'https://github.com'],
+    ['https://ghe.example.com/api/v3', 'https://ghe.example.com'],
+    ['https://gitlab.constr.dev/api/v4/', 'https://gitlab.constr.dev'],
+    ['https://gitlab.constr.dev', 'https://gitlab.constr.dev'],
+    ['https://example.com/gitlab/api/v4', 'https://example.com/gitlab'],
+    ['https://api.bitbucket.org/2.0', 'https://bitbucket.org'],
+  ])('%s is the site %s', (base, site) => {
+    expect(providerSiteUrl(base)).toBe(site);
+  });
+
+  it.each([null, '', 'not a url', 'ssh://git.example.com'])('%s names no site', (base) => {
+    expect(providerSiteUrl(base)).toBeNull();
+  });
+});
+
+describe('sourceWebUrls', () => {
+  const source = (overrides: Partial<SourceWebInput> = {}): SourceWebInput => ({
+    provider: 'github',
+    cloneUrl: 'https://github.com/acme/api.git',
+    baseUrl: null,
+    fullPath: 'acme/api',
+    branch: 'main',
+    ...overrides,
+  });
+
+  it('opens a GitHub repository and its branch', () => {
+    expect(sourceWebUrls(source())).toEqual({
+      repository: 'https://github.com/acme/api',
+      branch: 'https://github.com/acme/api/tree/main',
+    });
+  });
+
+  it('opens a GitLab repository and its branch under /-/tree', () => {
+    expect(
+      sourceWebUrls(
+        source({
+          provider: 'gitlab',
+          cloneUrl: 'https://gitlab.constr.dev/platform/aps/platform-api.git',
+          fullPath: 'platform/aps/platform-api',
+        })
+      )
+    ).toEqual({
+      repository: 'https://gitlab.constr.dev/platform/aps/platform-api',
+      branch: 'https://gitlab.constr.dev/platform/aps/platform-api/-/tree/main',
+    });
+  });
+
+  it('builds a self-hosted repository from the connection base when the clone URL is SSH', () => {
+    expect(
+      sourceWebUrls(
+        source({
+          provider: 'gitlab',
+          cloneUrl: 'git@gitlab.constr.dev:platform/aps/platform-api.git',
+          baseUrl: 'https://gitlab.constr.dev',
+          fullPath: 'platform/aps/platform-api',
+        })
+      )?.repository
+    ).toBe('https://gitlab.constr.dev/platform/aps/platform-api');
+  });
+
+  it('strips an API path from the connection base', () => {
+    expect(
+      sourceWebUrls(
+        source({ cloneUrl: 'git@ghe.example.com:acme/api.git', baseUrl: 'https://ghe.example.com/api/v3' })
+      )
+    ).toEqual({
+      repository: 'https://ghe.example.com/acme/api',
+      branch: 'https://ghe.example.com/acme/api/tree/main',
+    });
+    expect(
+      sourceWebUrls(
+        source({ provider: 'gitlab', cloneUrl: 'ssh://git@gl/acme/api.git', baseUrl: 'https://gl.example/api/v4' })
+      )?.branch
+    ).toBe('https://gl.example/acme/api/-/tree/main');
+  });
+
+  it('keeps the slashes of a branch and escapes the rest', () => {
+    expect(sourceWebUrls(source({ branch: 'feature/a#b' }))?.branch).toBe(
+      'https://github.com/acme/api/tree/feature/a%23b'
+    );
+  });
+
+  it('has no branch page without a branch or for an unknown provider', () => {
+    expect(sourceWebUrls(source({ branch: null }))?.branch).toBeNull();
+    expect(sourceWebUrls(source({ provider: 'azure' }))).toEqual({
+      repository: 'https://github.com/acme/api',
+      branch: null,
+    });
+  });
+
+  it('is none when neither the clone URL nor a base says where', () => {
+    expect(sourceWebUrls(source({ cloneUrl: 'git@github.com:acme/api.git' }))).toBeNull();
   });
 });
 

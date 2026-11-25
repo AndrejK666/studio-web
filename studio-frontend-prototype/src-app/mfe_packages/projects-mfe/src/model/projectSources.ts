@@ -47,6 +47,72 @@ export function repositoryWebUrl(cloneUrl: string): string | null {
   return `${parts.protocol}//${parts.host}/${parts.path}`;
 }
 
+/** What names a source's repository on its provider's site. */
+export interface SourceWebInput {
+  provider: string | null;
+  cloneUrl: string;
+  /** The connection's base URL, which may be an API one; `null` when unknown. */
+  baseUrl: string | null;
+  fullPath: string;
+  branch: string | null;
+}
+
+/** A source's pages on its provider's site: the repository, and its branch where the provider is known. */
+export interface SourceWebUrls {
+  repository: string;
+  branch: string | null;
+}
+
+/**
+ * The site a connection's base URL stands for: an API base
+ * (`https://api.github.com`, `https://ghe/api/v3`, `https://gitlab/api/v4`)
+ * is not the site, a plain one is used as is. `null` without an http(s) base.
+ */
+export function providerSiteUrl(baseUrl: string | null): string | null {
+  const base = (baseUrl ?? '').trim();
+  if (!base) return null;
+  let url: URL;
+  try {
+    url = new URL(base);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
+  const api = /^api\.(github\.com|bitbucket\.org)$/i.exec(url.host);
+  if (api) return `https://${api[1].toLowerCase()}`;
+  const path = url.pathname.replace(/\/api\/v\d+\/?$/i, '').replace(/\/+$/, '');
+  return `${url.protocol}//${url.host}${path}`;
+}
+
+function branchPath(provider: string | null, branch: string): string | null {
+  const ref = branch.split('/').map(encodeURIComponent).join('/');
+  switch (provider) {
+    case 'github':
+      return `/tree/${ref}`;
+    case 'gitlab':
+      return `/-/tree/${ref}`;
+    case 'bitbucket':
+      return `/src/${ref}`;
+    default:
+      return null;
+  }
+}
+
+/**
+ * Where a source opens on its provider's site. The clone URL names the
+ * repository when it is an http(s) one; otherwise the connection's site and
+ * the source's path do. `null` when neither says where.
+ */
+export function sourceWebUrls(source: SourceWebInput): SourceWebUrls | null {
+  const fromClone = repositoryWebUrl(source.cloneUrl);
+  const site = fromClone === null ? providerSiteUrl(source.baseUrl) : null;
+  const path = source.fullPath.replace(/^\/+|\/+$/g, '');
+  const repository = fromClone ?? (site !== null && path ? `${site}/${path}` : null);
+  if (repository === null) return null;
+  const tail = source.branch ? branchPath(source.provider, source.branch) : null;
+  return { repository, branch: tail === null ? null : `${repository}${tail}` };
+}
+
 export function sameRepository(a: string, b: string): boolean {
   const key = repositoryKey(a);
   return key !== null && key === repositoryKey(b);

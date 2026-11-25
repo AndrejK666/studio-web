@@ -2,7 +2,7 @@
 // @cpt-dod:cpt-studiofrontend-dod-project-sources-menu:p1
 // @cpt-dod:cpt-studiofrontend-dod-project-sources-menu-open-in:p1
 // @cpt-dod:cpt-studiofrontend-dod-project-sources-menu-disconnect:p1
-import { repositoryWebUrl } from './projectSources';
+import { sourceWebUrls } from './projectSources';
 import type { SourceLastSync, SourceRow, SourceSync } from './sourceRows';
 
 export type SyncDisabled =
@@ -81,7 +81,7 @@ export function sourceRowMenu(row: SourceRow, connectionsRead: boolean): SourceM
   items.push({ kind: 'open_specs' });
   // @cpt-end:cpt-studiofrontend-algo-project-sources-row-menu:p2:inst-8
   // @cpt-begin:cpt-studiofrontend-algo-project-sources-row-menu:p2:inst-9
-  const url = repositoryWebUrl(row.cloneUrl);
+  const url = sourceWebUrls(row)?.repository ?? null;
   if (row.provider !== null && url !== null) {
     items.push({ kind: 'open_in', url, provider: row.provider });
   }
