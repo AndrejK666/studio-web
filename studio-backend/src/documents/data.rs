@@ -1613,6 +1613,7 @@ impl DocumentsData {
                 "requirements",
                 "inferred_capabilities",
                 "content_sha",
+                "confirmed_by",
                 "updated_at",
             ];
             for chunk in models.chunks(500) {

@@ -105,6 +105,8 @@ pub struct Binding {
     pub conforms: Option<bool>,
     /// The classifier's confidence in `type_key`, when it gave one.
     pub confidence: Option<f32>,
+    /// The project's spec pipeline confirmed the type, not a person.
+    pub auto_confirmed: bool,
     pub updated_at: String,
 }
 
@@ -165,6 +167,9 @@ pub struct SpecRow {
     /// The binding's confidence in its proposed type. `None` for an authored
     /// row, a never-classified file, and a classifier that gave none.
     pub confidence: Option<f32>,
+    /// True when the project's spec pipeline confirmed the type, its
+    /// proposal having scored at or over the project's threshold.
+    pub auto_confirmed: bool,
     /// What the document's recorded Spec Quality verdicts say. Default — no
     /// date, no findings — when none was ever recorded, which is also how a
     /// refusal reads: Spec Quality records nothing for a type it will not take.
@@ -388,6 +393,7 @@ pub fn rows(
             repo,
             repo_full_path,
             confidence: b.confidence,
+            auto_confirmed: b.auto_confirmed,
             review: known.review(&b.node_id),
         });
     }
@@ -407,6 +413,7 @@ pub fn rows(
             repo: String::new(),
             repo_full_path: String::new(),
             confidence: None,
+            auto_confirmed: false,
             review: known.review(&authored_subject(&d.id)),
         });
     }
@@ -437,6 +444,7 @@ pub fn rows(
             repo,
             repo_full_path,
             confidence: None,
+            auto_confirmed: false,
             review: known.review(&c.node_id),
         });
     }
@@ -622,6 +630,7 @@ mod tests {
             state,
             conforms: None,
             confidence: None,
+            auto_confirmed: false,
             updated_at: "2026-09-01T00:00:00Z".to_owned(),
         }
     }

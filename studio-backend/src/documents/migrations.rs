@@ -49,6 +49,7 @@ impl MigratorTrait for Migrator {
             Box::new(m0028::Migration),
             Box::new(m0029::Migration),
             Box::new(m0030::Migration),
+            Box::new(m0031::Migration),
         ]
     }
 }
@@ -1860,6 +1861,52 @@ CREATE TABLE IF NOT EXISTS studio_spec_model_uploads (
             manager
                 .get_connection()
                 .execute_unprepared("DROP TABLE IF EXISTS studio_spec_model_uploads;")
+                .await?;
+            Ok(())
+        }
+    }
+}
+
+/// Who confirmed a binding's type: `auto` when a project's spec pipeline
+/// confirmed a proposal at or over its threshold, `person` when somebody did.
+mod m0031 {
+    use toolkit_db::sea_orm_migration::prelude::*;
+    use toolkit_db::sea_orm_migration::sea_orm::ConnectionTrait;
+
+    use super::{UNSUPPORTED, is_postgres};
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m0031_binding_confirmed_by"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            manager
+                .get_connection()
+                .execute_unprepared(
+                    "ALTER TABLE studio_document_bindings ADD COLUMN IF NOT EXISTS confirmed_by TEXT;",
+                )
+                .await?;
+            Ok(())
+        }
+
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            if !is_postgres(manager) {
+                return Err(DbErr::Custom(UNSUPPORTED.to_owned()));
+            }
+            manager
+                .get_connection()
+                .execute_unprepared(
+                    "ALTER TABLE studio_document_bindings DROP COLUMN IF EXISTS confirmed_by;",
+                )
                 .await?;
             Ok(())
         }

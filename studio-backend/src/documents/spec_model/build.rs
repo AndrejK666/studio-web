@@ -1,13 +1,16 @@
 //! One build of a project's model: the documents nobody has extracted at
-//! their current revision are read by a model on the key of the member who
-//! asked (`docs/project-domain-model.md`, "A person's key, never Studio's").
+//! their current revision are read by a model -- on the key of the member who
+//! asked, or, when the project's spec pipeline starts it after a sync, on the
+//! organization's AI connection (`super::super::pipeline`). Never on a key
+//! Studio holds (`docs/project-domain-model.md`).
 //!
-//! WHY NOT A studio-tasks RUN. A run is executed by the queue worker, which
-//! acts as `studio-tasks` and never as the person who asked
-//! (`tasks/dispatch.rs`), and a model is reached only on a person's key. So a
-//! build runs in this process under the caller's context, like a long
-//! request. What it costs to lose one is small: every document finished is
-//! kept by revision, and the next build starts where this one stopped.
+//! WHY NOT A studio-tasks RUN. A build is long -- a model call or more per
+//! document -- and a run holds the queue's lease for fifteen minutes. So a
+//! build runs in this process, spawned, under the context that asked: a
+//! person's, or the pipeline's worker acting in the organization, which
+//! reaches only the organization's (or workspace's) connections. What it
+//! costs to lose one is small: every document finished is kept by revision,
+//! and the next build starts where this one stopped.
 //!
 //! Up to [`PARALLEL_READS`] documents are read at once: each document's
 //! extraction is kept on its own, by path and revision, so the order they

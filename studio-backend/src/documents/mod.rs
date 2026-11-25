@@ -31,6 +31,8 @@ mod model_table;
 pub mod overview_block;
 mod parts;
 mod paths;
+/// The automatic spec pipeline after a sync (specs → model → mapping → product).
+mod pipeline;
 pub(crate) mod port;
 mod pr_checks;
 mod process_store;
@@ -87,6 +89,7 @@ pub(crate) fn declared_types() -> Vec<crate::domain_model::port::TypeNeed> {
     out.push(process_store::stage_need());
     out.push(process_store::capability_need());
     out.extend(review_store::needs());
+    out.extend(pipeline::VIEW.needs());
     out
 }
 
@@ -246,6 +249,17 @@ impl toolkit::Gear for StudioDocumentsGear {
                 service.clone(),
                 ctx.client_hub(),
             )));
+
+        // The project's spec pipeline (`pipeline`): one run per project after
+        // each repository sync, through the derived-view mechanism.
+        crate::tasks::sdk::register(Arc::new(crate::derived_view::DeriveTask::new(
+            Arc::new(pipeline::SpecPipeline::new(
+                ctx.client_hub(),
+                service.clone(),
+            )),
+            ctx.client_hub(),
+        )))?;
+        crate::derived_view::RecomputeOnSync::register(ctx.client_hub(), &pipeline::VIEW);
 
         self.service
             .set(service)

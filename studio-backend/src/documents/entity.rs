@@ -625,6 +625,13 @@ pub mod document_binding {
         pub inferred_capabilities: String,
         /// Digest of the content the verdicts above were computed from.
         pub content_sha: String,
+        /// Who confirmed the type, while `state` is `confirmed`: `auto` when
+        /// the project's spec pipeline did (a proposal at or over its
+        /// threshold), `person` when somebody did (`m0031`). NULL for every
+        /// other state, for a front matter that declared its type and
+        /// conforms, and for a confirmation recorded before the column.
+        #[serde(default)]
+        pub confirmed_by: Option<String>,
         #[serde(with = "crate::documents::stamp")]
         pub created_at: OffsetDateTime,
         #[serde(with = "crate::documents::stamp")]

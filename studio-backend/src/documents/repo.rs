@@ -1268,6 +1268,7 @@ impl DocumentsRepo {
                 document_binding::Column::Requirements,
                 document_binding::Column::InferredCapabilities,
                 document_binding::Column::ContentSha,
+                document_binding::Column::ConfirmedBy,
                 document_binding::Column::UpdatedAt,
             ])?;
             document_binding::Entity::insert_many(

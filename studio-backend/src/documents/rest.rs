@@ -449,6 +449,8 @@ pub struct DocumentBindingDto {
     /// Digest of the content these verdicts were computed from, so a caller can
     /// tell a current verdict from one that predates a re-sync.
     pub content_sha: String,
+    /// True when the project's spec pipeline confirmed the type, not a person.
+    pub auto_confirmed: bool,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -1749,6 +1751,7 @@ fn binding_dto(b: DocumentBinding, inherited: bool) -> DocumentBindingDto {
         validation: b.validation.map(Into::into),
         capabilities: b.capabilities,
         content_sha: b.content_sha,
+        auto_confirmed: b.auto_confirmed,
         created_at: b.created_at,
         updated_at: b.updated_at,
     }
@@ -3315,7 +3318,8 @@ async fn start_spec_model_build(
     let project_id = parse_project_id(&body.project_id)?;
     let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
     let reader = quality.reader()?;
-    let models = quality.models()?;
+    // A deployment without a model answers 503 now, not from the build.
+    let _ = quality.models()?;
     let (sources, _, coverage) =
         spec_model_state(&service, &ctx, workspace_id, project_id, reader.as_ref()).await?;
     let paths = body.paths.clone().unwrap_or_default();
@@ -3339,6 +3343,70 @@ async fn start_spec_model_build(
         s.path.clone_from(&body.path);
         s.paths = selected;
     });
+    tokio::spawn(run_spec_model_build(
+        Arc::clone(&service),
+        quality,
+        ctx,
+        workspace_id,
+        project_id,
+        pending,
+        sources,
+    ));
+    Ok((StatusCode::ACCEPTED, Json(build::state(project_id).into())))
+}
+
+/// Everything a build does once [`super::spec_model::build::begin`] marked
+/// it started: read `pending` on `ctx`'s key, judge the new candidates,
+/// record the findings and finish -- then hand the project's spec pipeline
+/// its next turn (`super::pipeline`), which reads the model this built. The
+/// reason it stopped, when it did not finish (no key, most often).
+///
+/// The `ctx` decides whose key: a person's for the build they asked for, the
+/// organization's AI connection for the one the pipeline starts as the
+/// task worker acting in the organization.
+pub(super) async fn run_spec_model_build(
+    service: Arc<DocumentsService>,
+    quality: Quality,
+    ctx: SecurityContext,
+    workspace_id: Uuid,
+    project_id: Uuid,
+    pending: Vec<super::spec_model::SourceText>,
+    sources: super::spec_model::Sources,
+) -> Option<String> {
+    use super::spec_model::build;
+    let reason = match quality.models() {
+        Ok(models) => {
+            read_judge_record(
+                &service,
+                &quality,
+                &models,
+                &ctx,
+                workspace_id,
+                project_id,
+                pending,
+                sources,
+            )
+            .await
+        }
+        Err(e) => Some(format!("{e}")),
+    };
+    build::finish(project_id, reason.clone());
+    super::pipeline::after_build(&quality.hub, &ctx, project_id).await;
+    reason
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn read_judge_record(
+    service: &Arc<DocumentsService>,
+    quality: &Quality,
+    models: &Arc<dyn crate::llm_proxy::port::ModelProviders>,
+    ctx: &SecurityContext,
+    workspace_id: Uuid,
+    project_id: Uuid,
+    pending: Vec<super::spec_model::SourceText>,
+    sources: super::spec_model::Sources,
+) -> Option<String> {
+    use super::spec_model::build;
     let findings_writer = quality.findings();
     let sources_for_record = super::spec_model::Sources {
         documents: sources.documents.clone(),
@@ -3349,52 +3417,279 @@ async fn start_spec_model_build(
         unread_because: sources.unread_because,
     };
     let documents = sources.documents;
-    tokio::spawn(async move {
-        let service_ref = &service;
-        let ctx_ref = &ctx;
-        let read = build::read_all(
-            project_id,
-            models.as_ref(),
-            &ctx,
-            pending,
-            move |doc, read| async move {
-                if let Err(error) = service_ref
-                    .put_spec_extraction(ctx_ref, workspace_id, project_id, &doc, &read)
-                    .await
-                {
-                    tracing::warn!(%error, path = %doc.path, "project domain model: an extraction could not be kept");
-                }
-            },
-        )
-        .await;
-        if let Err(build::Stop(reason)) = read {
-            build::finish(project_id, Some(reason));
-            return;
-        }
-        let reason = judge_new_candidates(
-            &service,
-            &models,
-            &ctx,
-            workspace_id,
-            project_id,
-            &documents,
-        )
+    let read = build::read_all(
+        project_id,
+        models.as_ref(),
+        ctx,
+        pending,
+        move |doc, read| async move {
+            if let Err(error) = service
+                .put_spec_extraction(ctx, workspace_id, project_id, &doc, &read)
+                .await
+            {
+                tracing::warn!(%error, path = %doc.path, "project domain model: an extraction could not be kept");
+            }
+        },
+    )
+    .await;
+    if let Err(build::Stop(reason)) = read {
+        return Some(reason);
+    }
+    let reason = judge_new_candidates(service, models, ctx, workspace_id, project_id, &documents)
         .await
         .err();
-        if let Some(writer) = findings_writer {
-            record_spec_model_findings(
-                &service,
-                writer.as_ref(),
-                &ctx,
-                workspace_id,
-                project_id,
-                &sources_for_record,
-            )
-            .await;
+    if let Some(writer) = findings_writer {
+        record_spec_model_findings(
+            service,
+            writer.as_ref(),
+            ctx,
+            workspace_id,
+            project_id,
+            &sources_for_record,
+        )
+        .await;
+    }
+    reason
+}
+
+/// What a build of the project's model would read now, for the spec
+/// pipeline: the sources, the documents not read at their revision, and a
+/// digest of every document the model is read from at its revision -- the
+/// same digest means the same input, whatever was read of it.
+pub(super) struct BuildPlan {
+    pub sources: super::spec_model::Sources,
+    pub pending: Vec<super::spec_model::SourceText>,
+    pub documents: usize,
+    pub digest: String,
+}
+
+pub(super) async fn plan_spec_model_build(
+    service: &Arc<DocumentsService>,
+    quality: &Quality,
+    ctx: &SecurityContext,
+    workspace_id: Uuid,
+    project_id: Uuid,
+) -> Result<BuildPlan, String> {
+    let reader = quality.reader().map_err(|e| format!("{e}"))?;
+    let (sources, _, coverage) =
+        spec_model_state(service, ctx, workspace_id, project_id, reader.as_ref())
+            .await
+            .map_err(|e| format!("the project's documents could not be read: {e}"))?;
+    let none: Vec<String> = Vec::new();
+    let pending = spec_model_pending(
+        &sources,
+        &coverage,
+        super::spec_model::select::Selection {
+            path: None,
+            paths: &none,
+            glob: None,
+        },
+    )
+    .map_err(|e| format!("{e}"))?;
+    let digest = super::pipeline::digest(
+        coverage
+            .iter()
+            .map(|c| format!("{}@{}", c.path, c.revision)),
+    );
+    Ok(BuildPlan {
+        documents: coverage.len(),
+        sources,
+        pending,
+        digest,
+    })
+}
+
+/// The ports a build reads through, for a caller outside the routes.
+pub(super) fn quality_of(hub: Arc<toolkit::client_hub::ClientHub>) -> Quality {
+    Quality { hub }
+}
+
+// ── the spec pipeline (`super::pipeline`) ────────────────────────────────────
+
+/// A project's automatic spec pipeline: its settings, and how each step last
+/// went.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct SpecPipelineDto {
+    pub project_id: String,
+    /// Whether the pipeline runs after a sync, auto-confirmation included.
+    pub enabled: bool,
+    /// A proposed type at or over it is confirmed automatically; `1.0`
+    /// confirms nothing.
+    pub auto_confirm_threshold: f64,
+    /// `computing`, `ready` or `failed`; null before the first run.
+    pub status: Option<String>,
+    /// When the steps were last recorded (RFC 3339).
+    pub computed_at: Option<String>,
+    /// When the run now going on was asked for.
+    pub requested_at: Option<String>,
+    /// Why the last run failed as a whole; a step that stopped says so on
+    /// the step instead.
+    pub error: Option<String>,
+    /// `specs`, `domain_model`, `mapping`, `product`, in that order; the ones
+    /// never run are absent.
+    pub steps: Vec<SpecPipelineStepDto>,
+}
+
+/// One step of the pipeline as it last went.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct SpecPipelineStepDto {
+    /// `specs`, `domain_model`, `mapping` or `product`.
+    pub step: String,
+    /// `done`, `unchanged` (its input is what it last ran on), `running`,
+    /// `waiting` (for the step before, or a person), `stopped` (see
+    /// `reason`), `off`.
+    pub state: String,
+    pub summary: Option<String>,
+    /// Why it waits or stopped: no bound document, no usable AI connection
+    /// of the organization, no gear matcher.
+    pub reason: Option<String>,
+    /// When it last ran (RFC 3339).
+    pub at: Option<String>,
+    /// What it made: the gear match id of the `product` step.
+    pub link: Option<String>,
+}
+
+/// The project whose pipeline to run.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct SpecPipelineRunRequest {
+    pub project_id: String,
+}
+
+/// The run queued.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct SpecPipelineRunDto {
+    pub run_id: String,
+}
+
+/// The settings to change; what is absent stays as it is.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct SpecPipelineSettingsRequest {
+    pub project_id: String,
+    pub enabled: Option<bool>,
+    /// From 0 to 1; `1.0` turns auto-confirmation off.
+    pub auto_confirm_threshold: Option<f64>,
+}
+
+async fn spec_pipeline_dto(
+    ctx: &SecurityContext,
+    service: &DocumentsService,
+    quality: &Quality,
+    project_id: Uuid,
+) -> ApiResult<SpecPipelineDto> {
+    use super::pipeline::{STEPS, VIEW, steps_of};
+    let settings = service.pipeline_settings(ctx, project_id).await;
+    let (state, rows) = match crate::derived_view::port(&quality.hub) {
+        Some(port) => {
+            let org = crate::derived_view::in_org_of(&quality.hub, ctx, project_id).await;
+            VIEW.read(port.as_ref(), &org, project_id)
+                .await
+                .map_err(internal)?
         }
-        build::finish(project_id, reason);
-    });
-    Ok((StatusCode::ACCEPTED, Json(build::state(project_id).into())))
+        None => (None, Vec::new()),
+    };
+    let by_step = steps_of(rows);
+    let steps = STEPS
+        .iter()
+        .filter_map(|s| by_step.get(*s))
+        .map(|s| SpecPipelineStepDto {
+            step: s.step.clone(),
+            state: s.state.as_str().to_owned(),
+            summary: s.summary.clone(),
+            reason: s.reason.clone(),
+            at: s.at.clone(),
+            link: s.link.clone(),
+        })
+        .collect();
+    Ok(SpecPipelineDto {
+        project_id: project_id.to_string(),
+        enabled: settings.enabled,
+        auto_confirm_threshold: f64::from(settings.auto_confirm_threshold),
+        status: state.as_ref().and_then(|st| {
+            serde_json::to_value(st.status)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_owned))
+        }),
+        computed_at: state.as_ref().and_then(|st| st.computed_at.clone()),
+        requested_at: state.as_ref().and_then(|st| st.requested_at.clone()),
+        error: state.and_then(|st| st.error),
+        steps,
+    })
+}
+
+async fn get_spec_pipeline(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Query(query): Query<SpecScopeQuery>,
+) -> ApiResult<JsonBody<SpecPipelineDto>> {
+    let project_id = parse_project_id(&query.project_id)?;
+    parent_workspace(&service, &ctx, project_id).await?;
+    Ok(Json(
+        spec_pipeline_dto(&ctx, &service, &quality, project_id).await?,
+    ))
+}
+
+async fn run_spec_pipeline(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Json(body): Json<SpecPipelineRunRequest>,
+) -> ApiResult<(StatusCode, JsonBody<SpecPipelineRunDto>)> {
+    let project_id = parse_project_id(&body.project_id)?;
+    parent_workspace(&service, &ctx, project_id).await?;
+    let run = super::pipeline::run_again(&quality.hub, &ctx, project_id)
+        .await
+        .map_err(|e| {
+            CanonicalError::service_unavailable()
+                .with_detail(format!("the spec pipeline could not be queued: {e:#}"))
+                .create()
+        })?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(SpecPipelineRunDto {
+            run_id: run.to_string(),
+        }),
+    ))
+}
+
+async fn put_spec_pipeline_settings(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(service): Extension<Arc<DocumentsService>>,
+    Extension(quality): Extension<Quality>,
+    Json(body): Json<SpecPipelineSettingsRequest>,
+) -> ApiResult<JsonBody<SpecPipelineDto>> {
+    let project_id = parse_project_id(&body.project_id)?;
+    parent_workspace(&service, &ctx, project_id).await?;
+    #[allow(clippy::cast_possible_truncation)]
+    let threshold = body.auto_confirm_threshold.map(|t| t as f32);
+    if threshold.is_some_and(|t| !super::pipeline::valid_threshold(t)) {
+        return Err(DocumentsError::invalid_argument()
+            .with_field_violation(
+                "auto_confirm_threshold",
+                "must be a number from 0 to 1".to_owned(),
+                "INVALID",
+            )
+            .create());
+    }
+    let settings = service
+        .put_pipeline_settings(&ctx, project_id, body.enabled, threshold)
+        .await
+        .map_err(internal)?;
+    // Turned on, or a threshold lowered: the proposals waiting are swept now
+    // rather than at the next sync. Best-effort.
+    if settings.enabled
+        && let Err(e) = super::pipeline::request(&quality.hub, &ctx, project_id).await
+    {
+        tracing::warn!(%project_id, error = %format!("{e:#}"), "spec pipeline: not queued after its settings changed");
+    }
+    Ok(Json(
+        spec_pipeline_dto(&ctx, &service, &quality, project_id).await?,
+    ))
 }
 
 /// The documents a build reads: every one not read at its revision, or the
@@ -8457,6 +8752,10 @@ pub struct SpecRowDto {
     /// binding keeps the classifier's number. Null for an authored row, a file
     /// nothing has classified, and a classifier that gave none.
     pub confidence: Option<f64>,
+    /// True when the project's spec pipeline confirmed the type (`state`
+    /// `confirmed`), its proposal having scored at or over the project's
+    /// threshold; a person may still change it. False otherwise.
+    pub auto_confirmed: bool,
     /// RFC 3339 time of the newest verdict recorded for this document, from
     /// ANY detector — `bloat` and `traceability`, which a sync runs over every
     /// typed document as a set, included. So it says that something looked,
@@ -8634,6 +8933,7 @@ async fn list_spec_rows(
             repo: r.repo,
             repo_full_path: r.repo_full_path,
             confidence: r.confidence.map(f64::from),
+            auto_confirmed: r.auto_confirmed,
             checked_at: r.review.checked_at,
             findings: r.review.findings,
         })
@@ -8906,6 +9206,7 @@ async fn read_both(
             type_key: b.type_key,
             conforms: b.conforms,
             confidence: b.confidence,
+            auto_confirmed: b.auto_confirmed,
             updated_at: b.updated_at,
         })
         .collect();
@@ -9304,6 +9605,67 @@ pub fn register_routes(
         .error_404(openapi)
         .error_500(openapi)
         .error_503(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::get("/studio-documents/v1/spec-pipeline")
+        .operation_id("studio_documents.get_spec_pipeline")
+        .summary("A project's automatic spec pipeline: its settings and how each step last went")
+        .description(
+            "After every repository sync a project's specs go on by themselves: proposed types \
+             at or over the project's threshold are confirmed (`auto_confirmed`), the project \
+             domain model is built on the organization's AI connection when the bound \
+             documents changed, what they need is recorded for the gear plan, and a gear match \
+             proposes the product. Each step runs once per input; one that stopped says why.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("project_id", true, "The project")
+        .handler(get_spec_pipeline)
+        .json_response_with_schema::<SpecPipelineDto>(openapi, StatusCode::OK, "The pipeline")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::post("/studio-documents/v1/spec-pipeline/runs")
+        .operation_id("studio_documents.run_spec_pipeline")
+        .summary("Run a project's spec pipeline now")
+        .description(
+            "Queues a run, joined to one already waiting. The steps that stopped run again for \
+             the same input -- after an AI connection was added to the organization, say.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .json_request::<SpecPipelineRunRequest>(openapi, "The project")
+        .handler(run_spec_pipeline)
+        .json_response_with_schema::<SpecPipelineRunDto>(openapi, StatusCode::ACCEPTED, "The run")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .error_503(openapi)
+        .register(router, openapi);
+
+    router = OperationBuilder::put("/studio-documents/v1/spec-pipeline/settings")
+        .operation_id("studio_documents.put_spec_pipeline_settings")
+        .summary("Turn a project's spec pipeline on or off, and set its auto-confirm threshold")
+        .description(
+            "Kept in the project's config (`spec_pipeline`). A threshold from 0 to 1; 1 confirms \
+             nothing automatically. Turned on, the pipeline runs at once.",
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .json_request::<SpecPipelineSettingsRequest>(openapi, "The settings to change")
+        .handler(put_spec_pipeline_settings)
+        .json_response_with_schema::<SpecPipelineDto>(openapi, StatusCode::OK, "The pipeline")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
         .register(router, openapi);
 
     router = OperationBuilder::get("/studio-documents/v1/spec-model")

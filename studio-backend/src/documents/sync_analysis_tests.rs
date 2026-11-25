@@ -370,7 +370,7 @@ fn detectors(runs: &[Value]) -> Vec<&str> {
 // ── which documents a sync analyses ──────────────────────────────────────
 
 /// A first sync: every typed document is new. `purpose` and `leak` run on
-/// each, `bloat` over the set, and each run carries the subjects its results
+/// each, `bloat` and `traceability` over the set, and each run carries the subjects its results
 /// are recorded against. A source file and an untyped note are not asked
 /// about -- the detectors judge a document against its type.
 #[tokio::test]
@@ -387,10 +387,13 @@ async fn a_first_sync_analyses_every_typed_document_and_records_against_its_bind
         ])
         .await;
     assert_eq!(changed, 2);
-    assert_eq!(queued, 3);
+    assert_eq!(queued, 4);
 
     let runs = rig.take_runs();
-    assert_eq!(detectors(&runs), ["purpose", "leak", "bloat"]);
+    assert_eq!(
+        detectors(&runs),
+        ["purpose", "leak", "bloat", "traceability"]
+    );
     for detector in ["purpose", "leak"] {
         let run = run_for(&runs, detector).unwrap();
         assert_eq!(item_ids(run), ["docs/a.md", "docs/b.md"], "{detector}");
@@ -457,7 +460,7 @@ async fn an_unchanged_document_that_never_had_a_purpose_verdict_is_analysed() {
 
     let (changed, queued) = rig.sync(&files).await;
     assert_eq!(changed, 0, "nothing's text changed");
-    assert_eq!(queued, 3);
+    assert_eq!(queued, 4);
     let runs = rig.take_runs();
     assert_eq!(
         item_ids(run_for(&runs, "purpose").unwrap()),
@@ -512,7 +515,7 @@ async fn an_edit_analyses_only_the_edited_document() {
     let (changed, queued) = rig
         .sync(&[("docs/a.md", &prd("first, edited")), ("docs/b.md", &b)])
         .await;
-    assert_eq!((changed, queued), (1, 3));
+    assert_eq!((changed, queued), (1, 4));
     let runs = rig.take_runs();
     assert_eq!(item_ids(run_for(&runs, "purpose").unwrap()), ["docs/a.md"]);
     assert_eq!(item_ids(run_for(&runs, "leak").unwrap()), ["docs/a.md"]);
@@ -552,7 +555,7 @@ async fn a_sync_analyses_at_most_the_cap_changed_documents_first() {
         ])
         .await;
     assert_eq!(changed, 3, "the outcome counts every changed document");
-    assert_eq!(queued, 3);
+    assert_eq!(queued, 4);
     let runs = rig.take_runs();
     let purpose = run_for(&runs, "purpose").unwrap();
     assert_eq!(
@@ -790,4 +793,117 @@ async fn tool_configuration_is_not_a_document_unless_a_person_says_so() {
     assert_eq!(state_of(kit).await, BindingState::NotADocument);
     assert_eq!(state_of(root_example).await, BindingState::Manual);
     assert_eq!(state_of(root_template).await, BindingState::NotADocument);
+}
+
+// ── the spec pipeline's auto-confirmation ────────────────────────────────
+
+/// The pipeline confirms a proposal at or over the threshold and marks it as
+/// its own; one below waits for a person. A person who confirms takes it
+/// over, and a re-sync of the same text keeps the pipeline's confirmation.
+#[tokio::test]
+async fn a_proposal_over_the_threshold_is_confirmed_automatically_and_one_below_waits() {
+    use super::model::{BindingState, DetectionSource};
+    use super::pipeline::PipelineSettings;
+    use super::service::{BindingAction, BindingDecision};
+
+    let _flag = CONFIGURED_FLAG.lock().await;
+    crate::spec_quality::set_configured_for_tests(false);
+    let rig = Rig::new(None).await;
+    let files = [
+        ("docs/a.md", "# Notes\n\nfirst\n"),
+        ("docs/b.md", "# Notes\n\nsecond\n"),
+    ];
+    rig.sync(&files).await;
+    // A detector's proposal: `detected`, at the confidence it gave.
+    for (path, confidence) in [("docs/a.md", 0.9_f32), ("docs/b.md", 0.6)] {
+        rig.service
+            .decide_binding(
+                &rig.ctx,
+                rig.workspace,
+                rig.binding(path),
+                BindingDecision {
+                    action: BindingAction::Set {
+                        type_key: "prd".to_owned(),
+                    },
+                    source: Some(DetectionSource::SpecQuality),
+                    confidence: Some(confidence),
+                    content: None,
+                },
+            )
+            .await
+            .unwrap();
+    }
+
+    let settings = PipelineSettings {
+        enabled: true,
+        auto_confirm_threshold: 0.8,
+    };
+    let confirmed = rig
+        .service
+        .auto_confirm_proposals(&rig.ctx, rig.workspace, None, &settings)
+        .await
+        .unwrap();
+    assert_eq!(confirmed, 1);
+    let read = |path: &'static str| {
+        let rig = &rig;
+        async move {
+            let (bindings, _) = rig
+                .service
+                .list_bindings(
+                    &rig.ctx,
+                    rig.workspace,
+                    None,
+                    crate::pagination::PageQuery::default(),
+                )
+                .await
+                .unwrap();
+            let b = bindings.into_iter().find(|b| b.path == path).unwrap();
+            (b.state, b.auto_confirmed)
+        }
+    };
+    assert_eq!(read("docs/a.md").await, (BindingState::Confirmed, true));
+    assert_eq!(read("docs/b.md").await, (BindingState::Detected, false));
+
+    // Nothing more to confirm: the sweep is idempotent.
+    assert_eq!(
+        rig.service
+            .auto_confirm_proposals(&rig.ctx, rig.workspace, None, &settings)
+            .await
+            .unwrap(),
+        0
+    );
+    // Turned off, nothing is confirmed whatever it scores.
+    let off = PipelineSettings {
+        enabled: false,
+        ..settings
+    };
+    assert_eq!(
+        rig.service
+            .auto_confirm_proposals(&rig.ctx, rig.workspace, None, &off)
+            .await
+            .unwrap(),
+        0
+    );
+
+    // A person confirms the one below: it is theirs, not the pipeline's.
+    rig.service
+        .decide_binding(
+            &rig.ctx,
+            rig.workspace,
+            rig.binding("docs/b.md"),
+            BindingDecision {
+                action: BindingAction::Confirm,
+                source: None,
+                confidence: None,
+                content: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(read("docs/b.md").await, (BindingState::Confirmed, false));
+
+    // The same text synced again keeps both confirmations as they were.
+    rig.sync(&files).await;
+    assert_eq!(read("docs/a.md").await, (BindingState::Confirmed, true));
+    assert_eq!(read("docs/b.md").await, (BindingState::Confirmed, false));
 }

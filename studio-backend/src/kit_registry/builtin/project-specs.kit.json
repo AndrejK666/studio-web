@@ -670,14 +670,17 @@
     "reads": [
       "GET /studio-documents/v1/workspaces/{workspace_id}/types",
       "GET /studio-documents/v1/spec-rows",
-      "GET /studio-spec-quality/v1/status"
+      "GET /studio-spec-quality/v1/status",
+      "GET /studio-documents/v1/spec-pipeline"
     ],
     "writes": [
       "POST /studio-documents/v1/workspaces/{workspace_id}/types",
       "DELETE /studio-documents/v1/workspaces/{workspace_id}/types/{key}",
       "POST /studio-documents/v1/review-requests",
       "POST /studio-documents/v1/review-requests/{request_id}/approvals",
-      "POST /studio-documents/v1/review-requests/{request_id}/cancel"
+      "POST /studio-documents/v1/review-requests/{request_id}/cancel",
+      "POST /studio-documents/v1/spec-pipeline/runs",
+      "PUT /studio-documents/v1/spec-pipeline/settings"
     ]
   },
   "gears": [
@@ -691,7 +694,9 @@
         "spec-upload",
         "decision",
         "review-request",
-        "approval"
+        "approval",
+        "spec-pipeline-step",
+        "spec-pipeline-view"
       ],
       "mcp_tools": [
         "review_requests",
@@ -702,7 +707,9 @@
         "DELETE /studio-documents/v1/workspaces/{workspace_id}/types/{key}",
         "POST /studio-documents/v1/review-requests",
         "POST /studio-documents/v1/review-requests/{request_id}/approvals",
-        "POST /studio-documents/v1/review-requests/{request_id}/cancel"
+        "POST /studio-documents/v1/review-requests/{request_id}/cancel",
+        "POST /studio-documents/v1/spec-pipeline/runs",
+        "PUT /studio-documents/v1/spec-pipeline/settings"
       ]
     },
     {

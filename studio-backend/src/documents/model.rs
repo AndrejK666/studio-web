@@ -905,6 +905,11 @@ pub struct DocumentBinding {
     /// Digest of the content last classified/validated, so the caller can tell
     /// a stale verdict from a current one after a re-sync.
     pub content_sha: String,
+    /// True when the project's spec pipeline confirmed the type, its
+    /// proposal having scored at or over the project's threshold; a person
+    /// may still change it. False for every other binding.
+    #[serde(default)]
+    pub auto_confirmed: bool,
     pub created_at: String,
     pub updated_at: String,
 }
