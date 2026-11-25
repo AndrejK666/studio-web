@@ -1,24 +1,22 @@
 /**
  * Organization › Overview, for the people who lead it (the prototype's
  * org-dashboard.tsx, ADR-0069 parity). One read — `GET /studio-organizations/
- * v1/overview` — and the prototype's words for it (overview/model.ts):
+ * v1/overview` — drawn as:
  *
  *   - the header: the organization, and how much needs attention;
- *   - four tiles: spend, delivery, specs, people;
+ *   - the tiles: one per kit block that has one (Spend, Delivery, Specs… —
+ *     each in its kit's own words, ADR-0079), then People, the organization's own;
  *   - "Needs attention › For you": the person's Inbox (InboxGroup.tsx; the
  *     server's `GET /studio-user/v1/me/inbox`), where the prototype had it;
- *   - "Needs attention › For others": refused connections, spend, who the
- *     stuck pull requests wait on, components to decide, idle people;
+ *   - "Needs attention › For others": refused connections, every block's
+ *     needs, failed runs, idle people;
  *   - the workspaces, each with its worst project and why.
  *
- * Where a row, a tile or a workspace leads is a screen of this portal, and
- * only one that shows where the person is: a kit's screen (Costs, Components)
- * only where its kit is installed (`useScreenAvailability`). A target with no
- * screen here gets no button rather than a dead one.
- *
- * Not yet here: the metrics board (charts over 7/30/90 days, Constructor
- * Insight's figures) — panels the kits that own those figures contribute,
- * once a screen can mount a kit's contribution (parity.md).
+ * This screen names no kit: a block of a kit not installed for the
+ * organization is not in the answer, and a tile or need leads where its block
+ * says. Where a row, a tile or a workspace leads is a screen of this portal,
+ * and only one that shows where the person is (`useScreenAvailability`): a
+ * target with no screen here gets no button rather than a dead one.
  */
 
 import React, { useId, useState } from 'react';
@@ -42,15 +40,15 @@ import {
 import { requestWorkspace } from '../../actions/workspaceActions';
 import { OverviewApiService } from '../../api/OverviewApiService';
 import {
-  GIT_KIT,
   attentionStatus,
-  growthText,
-  hasKit,
   othersAttention,
+  say,
+  wordsIn,
   workspaceLine,
   type NeedTarget,
+  type SayOptions,
 } from '../../overview/model';
-import type { OrgOverview, OrgPull, OrgRunFailure, OrgWorkspace } from '../../overview/types';
+import type { BlockDetails, BlockLink, BlockTile, OrgOverview, OrgRunFailure, OrgWorkspace } from '../../overview/types';
 import { BackgroundApiService } from '../../api/BackgroundApiService';
 import { RunDetails, when } from '../background/BackgroundGrids';
 import { useBackgroundTranslations, useOverviewTranslations } from '../../i18n';
@@ -62,14 +60,11 @@ type Text = ReturnType<typeof useOverviewTranslations>['t'];
 /** The whole Inbox (`screens/inbox`), opened from the top bar too. */
 const INBOX_ROUTE = '/inbox';
 
-/** Where a row's action leads (the prototype's views): Costs is the
- *  `org-costs` kit's screen, Components (`gears`) the `components` kit's;
- *  either is offered only where its kit is installed. */
+/** Where one of the organization's own rows leads: the shell's screens. A
+ *  kit's tile or need carries its own link. */
 export const TARGET_ROUTE: Record<NeedTarget, string> = {
   connectors: '/connections',
-  costs: '/costs',
   projects: '/organization/workspaces',
-  gears: '/components',
   people: '/people',
   tasks: '/organization/tasks',
 };
@@ -115,27 +110,36 @@ function OrganizationOverview({
     availability.route(TARGET_ROUTE[target]) ? TARGET_ROUTE[target] : null;
   const go = (target: NeedTarget) => {
     const route = routeOf(target);
-    if (!route) return;
-    if (target === 'gears') openScreen(bridge, route, 'needs-decision');
-    else openScreen(bridge, route);
+    if (route) openScreen(bridge, route);
+  };
+  /** A block's link: a screen inside a project (the project's level decides
+   *  what shows there), or one of this level's screens when it shows here. */
+  const follow = (link: BlockLink | null | undefined): (() => void) | null => {
+    if (!link) return null;
+    const { workspace_id: workspaceId, project_id: projectId } = link;
+    if (workspaceId && projectId) {
+      return () => openPlace(bridge, {
+        organizationId, workspaceId, projectId, route: link.route, view: link.view ?? undefined,
+      });
+    }
+    if (!availability.route(link.route)) return null;
+    return () => (link.view ? openScreen(bridge, link.route, link.view) : openScreen(bridge, link.route));
   };
   const read = useApiQuery(apiRegistry.getService(OverviewApiService).overview({ organizationId }));
   // A run that ended (a sync, a report, a build) may change what needs
   // attention: read again, from the organization on screen's live channel.
   useStudioEventRefresh(isRunEnding, () => void read.refetch());
   const o: OrgOverview | undefined = read.data;
-  const cash = (n: number) => money(n, o?.spend?.currency || 'USD', language);
-  // A component decision is taken on the Components kit's screen: where it is not installed nobody here can take
-  // it, so the row would lead nowhere. Other rows still say something worth knowing without their button.
-  const others = o ? othersAttention(o, cash).filter((r) => r.action.target !== 'gears' || routeOf('gears') !== null) : [];
+  const words: SayOptions = {
+    language,
+    money: (value, currency) => money(value, currency, language),
+    unknown: t('unknown'),
+  };
+  const others = o ? othersAttention(o, words) : [];
   // What waits on the reader, once their Inbox is read: the header counts both.
   const [you, setYou] = useState<number | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [showSpecs, setShowSpecs] = useState(false);
   const detailsId = useId();
-  const failingProjects = o?.workspaces.flatMap((ws) => ws.projects
-    .filter((project) => (project.specs_failing ?? 0) > 0)
-    .map((project) => ({ workspaceId: ws.id, workspace: ws.name, project }))) ?? [];
 
   return (
     <div className={styles.screen} data-org-overview>
@@ -165,63 +169,10 @@ function OrganizationOverview({
       {o && (
         <>
           <div className={styles.tiles} data-overview-tiles>
-            <Tile title={t('tile_spend')} open={routeOf('costs') ? { label: t('open_costs'), go: () => go('costs') } : null}>
-              {o.costs === 'hidden' ? (
-                <span className={styles.muted}>{t('tile_spend_hidden')}</span>
-              ) : o.costs === 'unreadable' || !o.spend ? (
-                <span className={styles.muted}>{t('tile_spend_unreadable')}</span>
-              ) : o.spend.has_prices === false ? (
-                <span className={styles.muted}>{t('tile_spend_prices_missing')}</span>
-              ) : o.spend.unpriced.length > 0 && o.spend.current === 0 ? (
-                <span className={styles.muted}>{t('tile_spend_unpriced')}</span>
-              ) : (
-                <>
-                  <span className={styles.big}>{cash(o.spend.current)}</span>
-                  <span className={styles.muted}>
-                    {t('tile_spend_sub', {
-                      growth: growthText(o.spend.current, o.spend.previous),
-                      forecast: cash(o.spend.forecast),
-                    })}
-                  </span>
-                  {o.spend.unpriced.length > 0 && <span className={styles.muted}>{t('tile_spend_unpriced')}</span>}
-                </>
-              )}
-            </Tile>
-            {/* Pull requests are the Git kit's: without it there is no delivery tile, not an unknown one. */}
-            {hasKit(o, GIT_KIT) && (
-              <Tile
-                title={t('tile_delivery')}
-                open={routeOf('projects') ? { label: t('open_workspaces'), go: () => go('projects') } : null}
-              >
-                <span className={styles.big}>{t('tile_delivery_value', { merged: shown(o.delivery.merged, t) })}</span>
-                <span className={styles.muted}>
-                  {t('tile_delivery_sub', {
-                    open: shown(o.delivery.open, t),
-                    wait: shown(o.delivery.median_wait_days, t),
-                  })}
-                </span>
-              </Tile>
-            )}
-            <Tile title={t('tile_specs')}>
-              <span className={styles.big}>
-                {t('tile_specs_value', { failing: shown(o.specs.failing, t), specs: shown(o.specs.specs, t) })}
-              </span>
-              <span className={styles.muted}>{t('tile_specs_sub', { findings: shown(o.specs.open_findings, t) })}</span>
-              {failingProjects.length > 0 && <>
-                <button type="button" className={styles.tileOpen} aria-expanded={showSpecs} onClick={() => setShowSpecs(!showSpecs)}>
-                  {t('open_failing_specs')}
-                </button>
-                {showSpecs && <ul className={styles.list}>{failingProjects.map(({ workspaceId, workspace, project }) => (
-                  <li key={project.id}>
-                    <button type="button" className={styles.tileOpen} onClick={() => openPlace(bridge, {
-                      organizationId, workspaceId, projectId: project.id, route: '/projects/specs', view: 'failing-specs',
-                    })}>
-                      {workspace} / {project.name} · {t('project_failing_specs', { count: project.specs_failing ?? 0 })}
-                    </button>
-                  </li>
-                ))}</ul>}
-              </>}
-            </Tile>
+            {(o.blocks ?? []).map((block) => block.tile && (
+              <BlockTileCard key={`${block.kit}/${block.id}`} block={`${block.kit}/${block.id}`} tile={block.tile}
+                words={words} follow={follow} />
+            ))}
             <Tile title={t('tile_people')} open={routeOf('people') ? { label: t('open_people'), go: () => go('people') } : null}>
               <span className={styles.big}>{t('tile_people_value', { active: shown(o.people.active, t) })}</span>
               <span className={styles.muted}>
@@ -253,10 +204,12 @@ function OrganizationOverview({
                 ) : (
                   <ul className={styles.list}>
                     {others.map((r) => {
-                      const pulls = r.key === 'queue:nobody' ? o.pulls_without_reviewers : null;
-                      const failures = r.action.target === 'tasks' ? o.recent_failures : null;
-                      const hasDetails = !!(pulls?.length || failures?.length);
+                      const failures = r.action?.target === 'tasks' ? o.recent_failures : null;
+                      const details = r.details?.rows.length ? r.details : null;
+                      const hasDetails = !!(details || failures?.length);
                       const show = expanded === r.key;
+                      const act = r.action?.target ? (routeOf(r.action.target) ? () => go(r.action!.target!) : null)
+                        : follow(r.action?.link);
                       return (
                       <li key={r.key} className={`${styles.row} ${styles[r.tone]}`} data-attention={r.key.split(':')[0]}>
                         <b>{r.sentence}</b>
@@ -265,16 +218,16 @@ function OrganizationOverview({
                           <button type="button" className={styles.action} aria-expanded={show}
                             aria-controls={show ? detailsId : undefined}
                             onClick={() => setExpanded(show ? null : r.key)}>
-                            {t(pulls ? 'show_unreviewed_pulls' : 'show_recent_failures')}
+                            {details ? wordsIn(details.label, language) : t('show_recent_failures')}
                           </button>
-                        ) : routeOf(r.action.target) && (
-                          <button type="button" className={styles.action} onClick={() => go(r.action.target)}>
+                        ) : act && r.action && (
+                          <button type="button" className={styles.action} onClick={act}>
                             {r.action.label}
                           </button>
                         )}
                         {show && hasDetails && (
                           <div id={detailsId} className={styles.attentionDetails}>
-                            {pulls && <ul>{pulls.map((pull) => <PullDetails key={pull.id} pull={pull} t={t} />)}</ul>}
+                            {details && <BlockDetailRows details={details} words={words} />}
                             {failures && <>
                               <ul>{failures.map((run) => (
                                 <FailedRun key={run.id} run={run} language={language}
@@ -324,19 +277,64 @@ function OrganizationOverview({
   );
 }
 
-function PullDetails({ pull, t }: { pull: OrgPull; t: Text }) {
-  const title = `#${pull.number} ${pull.title}`;
-  const url = pull.url && /^https?:\/\//i.test(pull.url) ? pull.url : null;
-  const repository = url?.match(/^https?:\/\/[^/]+\/(.+?)\/(?:pull|[-]\/merge_requests)\/\d+/i)?.[1];
+/** A kit block's tile, drawn from the block alone: its title, figure, quieter
+ *  lines, the list it folds out and where its figures come from. */
+function BlockTileCard({
+  block,
+  tile,
+  words,
+  follow,
+}: {
+  block: string;
+  tile: BlockTile;
+  words: SayOptions;
+  follow: (link: BlockLink | null | undefined) => (() => void) | null;
+}) {
+  const [open, setOpen] = useState(false);
+  const link = follow(tile.link);
+  const items = tile.items?.rows.length ? tile.items : null;
   return (
-    <li>
-      {url
-        ? <a href={url} target="_blank" rel="noreferrer">{title}</a>
-        : <span>{title}</span>}
-      <span className={styles.muted}>
-        {' · '}{[pull.project, repository, t('pull_idle_days', { days: pull.quiet_days })].filter(Boolean).join(' · ')}
-      </span>
-    </li>
+    <Tile
+      title={wordsIn(tile.title, words.language)}
+      block={block}
+      open={link && tile.link ? { label: wordsIn(tile.link.label, words.language), go: link } : null}
+    >
+      {tile.value && <span className={styles.big}>{say(tile.value, words)}</span>}
+      {tile.lines.map((line, i) => (
+        <span key={i} className={styles.muted}>{say(line, words)}</span>
+      ))}
+      {items && <>
+        <button type="button" className={styles.tileOpen} aria-expanded={open} onClick={() => setOpen(!open)}>
+          {wordsIn(items.label, words.language)}
+        </button>
+        {open && <ul className={styles.list}>{items.rows.map((row, i) => {
+          const go = follow(row.link);
+          const text = say(row.text, words);
+          return <li key={i}>{go
+            ? <button type="button" className={styles.tileOpen} onClick={go}>{text}</button>
+            : <span>{text}</span>}</li>;
+        })}</ul>}
+      </>}
+    </Tile>
+  );
+}
+
+/** What a kit's need is about: each row a title (a link where it has an
+ *  address) and quieter notes. */
+function BlockDetailRows({ details, words }: { details: BlockDetails; words: SayOptions }) {
+  return (
+    <ul>
+      {details.rows.map((row, i) => {
+        const href = row.href && /^https?:\/\//i.test(row.href) ? row.href : null;
+        const note = row.note.map((line) => say(line, words)).filter(Boolean).join(' · ');
+        return (
+          <li key={i}>
+            {href ? <a href={href} target="_blank" rel="noreferrer">{row.text}</a> : <span>{row.text}</span>}
+            {note && <span className={styles.muted}>{' · '}{note}</span>}
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 
@@ -413,16 +411,19 @@ function FailedRunDetails({ run, language, organizationId, workspaces }: FailedR
 
 function Tile({
   title,
+  block,
   open = null,
   children,
 }: {
   title: string;
+  /** The kit block it draws (`kit/id`), for tests and the walk. */
+  block?: string;
   /** The screen the tile's figures come from, when it shows here. */
   open?: { label: string; go: () => void } | null;
   children: React.ReactNode;
 }) {
   return (
-    <Card>
+    <Card data-overview-block={block}>
       <CardHeader>
         <CardTitle className={styles.tileTitle}>{title}</CardTitle>
       </CardHeader>
