@@ -21,7 +21,8 @@
         "icon": "lucide:file-code",
         "route": "/space",
         "order": 25,
-        "level": "project"
+        "level": "project",
+        "kit": "ide"
       }
     }
   ]

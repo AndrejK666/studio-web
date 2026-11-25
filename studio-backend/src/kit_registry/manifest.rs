@@ -856,6 +856,9 @@ const BUILTIN_MANIFESTS: &[(&str, &str)] = &[
         "studio-api-docs",
         include_str!("builtin/studio-api-docs.kit.json"),
     ),
+    // A project's IDE (`space-mfe`) and the desktop hand-off (studio-theia),
+    // out of the shell (ADR-0079); a base kit by default.
+    ("ide", include_str!("builtin/ide.kit.json")),
 ];
 
 /// Built-in kit `slug`'s `kit.json`, when it has one.

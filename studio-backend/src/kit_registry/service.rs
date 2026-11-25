@@ -898,6 +898,7 @@ pub const BUILTIN_ICONS: &[(&str, &str)] = &[
     (MNA_KIT, "lucide:handshake"),
     ("assistant", "lucide:sparkles"),
     ("project-git", "lucide:git-pull-request"),
+    ("ide", "lucide:file-code"),
 ];
 
 /// Built-in kit `slug`'s icon.
@@ -962,6 +963,12 @@ pub fn builtin_catalogue() -> Vec<KitDescriptor> {
             "Docs & API",
             "The backend's API reference, grouped by the gear that serves it, opened from the product menu.",
             &["platform"],
+        ),
+        kit(
+            "ide",
+            "IDE",
+            "A project's IDE in the browser (space-mfe), and a file handed to the desktop app where the project is open there.",
+            &["project"],
         ),
         kit(
             "components",
@@ -1379,6 +1386,7 @@ mod tests {
                 "org-reports",
                 "project-specs",
                 "studio-api-docs",
+                "ide",
                 "components",
                 "delivery",
                 "project-product",
