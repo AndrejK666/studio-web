@@ -93,7 +93,7 @@ describe('Product › Infrastructure', () => {
     draw();
     fireEvent.click(await screen.findByText('remove', { selector: '[data-infra-remove] , [data-infra-remove] *' }));
     fireEvent.click(await screen.findByText('remove', { selector: '[data-confirm], [data-confirm] *' }));
-    await waitFor(() => expect(put).toHaveBeenCalledWith('', 'p1', { base_revision: null, items: [] }));
+    await waitFor(() => expect(put).toHaveBeenCalledWith('o1', 'p1', { base_revision: null, items: [] }));
     // The list is read again after the save, while the reads are still stubbed.
     await waitFor(() => expect(api.productInfra).toHaveBeenCalledTimes(2));
   });

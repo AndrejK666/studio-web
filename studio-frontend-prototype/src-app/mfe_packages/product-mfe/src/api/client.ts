@@ -2,12 +2,14 @@
  * The prototype's client calls this kit makes, with the prototype's own
  * signatures (src/api.ts at 00828880), over `ProductApiService`.
  *
- * `api` keeps the bearer as the first argument because three models moved
- * unchanged call it that way (`infra-store.ts`, `project-sources.ts`,
- * `declared-profiles.ts`) and their tests spy on it; the argument is ignored —
- * the bearer travels with `authShared()`. Screens call `productApi`, the same
- * calls without it. Both go through `api` at call time, so a spy on `api` is
- * seen by either.
+ * `api`'s first argument is the organization on screen (the prototype's ignored
+ * bearer took that place; the bearer travels with `authShared()`). The routes
+ * that name the organization (`orgScoped`) get it from there, and nowhere
+ * else: no organization is kept in a module, so switching organizations cannot
+ * send a request, or serve a cached answer, under the one before. Screens call
+ * `productApiFor(orgId)` — through `useProductApi()`, from their scope — the
+ * same calls with the organization bound. Both go through `api` at call time,
+ * so a spy on `api` is seen by either.
  *
  * Every write to the product record fires `PRODUCT_CHANGED_EVENT` with the
  * project's id, as the prototype's did: the page's header, strip and map read
@@ -45,6 +47,9 @@ export const PRODUCT_CHANGED_EVENT = 'studio:product-changed';
 
 const svc = (): ProductApiService => apiRegistry.getService(ProductApiService);
 
+/** The organization on screen; null when the shell has not said. */
+export type Org = string | null;
+
 /** Every read here asks the server again: a page reads after a write. */
 const FRESH = { staleTime: 0 };
 
@@ -59,12 +64,13 @@ const CORPUS = { staleTime: 60_000 };
 const SCHEMA_TTL_MS = 60_000;
 const schemaCache = new Map<string, { at: number; answer: Promise<{ items: GearConfigSchema[]; total: number }> }>();
 
-function gearConfigSchemasCached(gears: string[]): Promise<{ items: GearConfigSchema[]; total: number }> {
-  const key = [...new Set(gears)].sort().join('\n');
+function gearConfigSchemasCached(org: Org, gears: string[]): Promise<{ items: GearConfigSchema[]; total: number }> {
+  // Each organization's corpus is its own: one's answer never serves another.
+  const key = [org ?? '', ...[...new Set(gears)].sort()].join('\n');
   const hit = schemaCache.get(key);
   if (hit && Date.now() - hit.at < SCHEMA_TTL_MS) return hit.answer;
   // Through a promise, so a missing service is a refused ask, not a throw.
-  const answer = Promise.resolve().then(() => svc().gearConfigSchemas().fetch({ gears }));
+  const answer = Promise.resolve().then(() => svc().gearConfigSchemas(org).fetch({ gears }));
   schemaCache.set(key, { at: Date.now(), answer });
   // A failed ask is not kept: the next one tries again.
   answer.catch(() => {
@@ -107,7 +113,7 @@ function bareSource(s: CatalogRepoSource): CatalogRepoSource {
 }
 
 export const api = {
-  projectConfig: async (_token: string, tenantId: string): Promise<ProjectConfig | null> => {
+  projectConfig: async (_org: Org, tenantId: string): Promise<ProjectConfig | null> => {
     try {
       return (await svc().projectConfig({ projectId: tenantId }).fetch(FRESH)).value;
     } catch (e) {
@@ -115,17 +121,17 @@ export const api = {
       throw e;
     }
   },
-  putProjectConfig: (_token: string, tenantId: string, value: ProjectConfig) =>
+  putProjectConfig: (_org: Org, tenantId: string, value: ProjectConfig) =>
     svc().putProjectConfig(tenantId).fetch(value),
 
-  projectProduct: async (_token: string, projectId: string): Promise<ProjectProduct | null> => {
-    const r = await svc().projectProduct({ projectId }).fetch(FRESH);
+  projectProduct: async (org: Org, projectId: string): Promise<ProjectProduct | null> => {
+    const r = await svc().projectProduct({ projectId, org }).fetch(FRESH);
     return r.nodes?.[0]?.value ?? null;
   },
-  saveProjectProduct: (_token: string, projectId: string, body: SaveProductBody) =>
-    productChanged(projectId, svc().saveProjectProduct(projectId).fetch(body)),
-  previewProduct: (_token: string, projectId: string, body: PreviewProductBody) => {
-    const ask = () => svc().previewProduct(projectId).fetch(body);
+  saveProjectProduct: (org: Org, projectId: string, body: SaveProductBody) =>
+    productChanged(projectId, svc().saveProjectProduct(org, projectId).fetch(body)),
+  previewProduct: (org: Org, projectId: string, body: PreviewProductBody) => {
+    const ask = () => svc().previewProduct(org, projectId).fetch(body);
     if (body.write) {
       const publishes = !!(body.publish || body.open_pr || body.onto_base);
       return productChanged(projectId, publishes ? ask() : retryOnTimeout(ask, SAVE_RETRIES, [502, 504]));
@@ -138,67 +144,66 @@ export const api = {
   },
   /** Queue the engine's check of the latest saved revision for `profile`; its
    *  verdict lands in the record's `checks`, its run in `check_runs`. */
-  startProductCheck: (_token: string, projectId: string, profile: string, strictness?: string) =>
+  startProductCheck: (org: Org, projectId: string, profile: string, strictness?: string) =>
     productChanged(
       projectId,
-      svc()
-        .startProductCheck(projectId)
+      svc().startProductCheck(org, projectId)
         .fetch({ profile, ...(strictness ? { strictness } : {}) })
     ),
   /** A studio-tasks run's state, for following a queued check. */
-  taskRunState: (_token: string, runId: string) => svc().taskRun({ runId, tenant: null }).fetch(FRESH),
-  productDescription: (_token: string, projectId: string) => svc().productDescription({ projectId }).fetch(FRESH),
-  productDescriptionRevisions: (_token: string, projectId: string) =>
-    svc().productDescriptionRevisions({ projectId }).fetch(FRESH),
-  productDescriptionRevision: (_token: string, projectId: string, revision: number) =>
-    svc().productDescriptionRevision({ projectId, revision }).fetch(FRESH),
-  productInfra: (_token: string, projectId: string) => svc().productInfra({ projectId }).fetch(FRESH),
-  putProductInfra: (_token: string, projectId: string, body: { base_revision?: number | null; items: InfraService[] }) =>
-    svc().putProductInfra(projectId).fetch(body),
-  outlineProductDescription: (_token: string, projectId: string, body: { text?: string; revision?: number }) =>
-    svc().outlineProductDescription(projectId).fetch(body),
-  productKind: (_token: string, projectId: string) => svc().productKind({ projectId }).fetch(FRESH),
-  confirmProductKind: (_token: string, projectId: string, kind: string) =>
-    svc().confirmProductKind(projectId).fetch({ kind }),
+  taskRunState: (_org: Org, runId: string) => svc().taskRun({ runId, tenant: null }).fetch(FRESH),
+  productDescription: (org: Org, projectId: string) => svc().productDescription({ projectId, org }).fetch(FRESH),
+  productDescriptionRevisions: (org: Org, projectId: string) =>
+    svc().productDescriptionRevisions({ projectId, org }).fetch(FRESH),
+  productDescriptionRevision: (org: Org, projectId: string, revision: number) =>
+    svc().productDescriptionRevision({ projectId, revision, org }).fetch(FRESH),
+  productInfra: (org: Org, projectId: string) => svc().productInfra({ projectId, org }).fetch(FRESH),
+  putProductInfra: (org: Org, projectId: string, body: { base_revision?: number | null; items: InfraService[] }) =>
+    svc().putProductInfra(org, projectId).fetch(body),
+  outlineProductDescription: (org: Org, projectId: string, body: { text?: string; revision?: number }) =>
+    svc().outlineProductDescription(org, projectId).fetch(body),
+  productKind: (org: Org, projectId: string) => svc().productKind({ projectId, org }).fetch(FRESH),
+  confirmProductKind: (org: Org, projectId: string, kind: string) =>
+    svc().confirmProductKind(org, projectId).fetch({ kind }),
   saveProductDescription: (
-    _token: string,
+    org: Org,
     projectId: string,
     body: { base_revision?: number | null; text: string; from_repository?: boolean }
-  ) => svc().saveProductDescription(projectId).fetch(body),
-  gdlFile: (_token: string, projectId: string, what: { gear: string } | { path: string }) =>
-    svc().gdlFile({ projectId, what }).fetch(FRESH),
-  gearConfigSchemas: (_token: string, gears: string[]) => gearConfigSchemasCached(gears),
-  completeProduct: (_token: string, gears: string[], config?: ProjectProduct['config']) =>
-    svc().completeProduct().fetch({ gears, config: config ?? {} }),
-  gearboxStatus: (_token: string, refresh = false, organizationId?: string) =>
-    svc().gearboxStatus({ refresh, organizationId }).fetch(FRESH),
-  gearboxCatalogue: (_token: string) => svc().gearboxCatalogue({}).fetch(CORPUS),
-  gearExplanations: (_token: string) => svc().gearExplanations({}).fetch(FRESH),
-  gearBrings: (_token: string, gears: string[], candidate: string, config?: ProjectProduct['config']) =>
-    svc().gearBrings().fetch({ gears, candidate, config: config ?? {} }),
+  ) => svc().saveProductDescription(org, projectId).fetch(body),
+  gdlFile: (org: Org, projectId: string, what: { gear: string } | { path: string }) =>
+    svc().gdlFile({ projectId, what, org }).fetch(FRESH),
+  gearConfigSchemas: (org: Org, gears: string[]) => gearConfigSchemasCached(org, gears),
+  completeProduct: (org: Org, gears: string[], config?: ProjectProduct['config']) =>
+    svc().completeProduct(org).fetch({ gears, config: config ?? {} }),
+  gearboxStatus: (org: Org, refresh = false, organizationId?: string) =>
+    svc().gearboxStatus({ refresh, organizationId, org }).fetch(FRESH),
+  gearboxCatalogue: (org: Org) => svc().gearboxCatalogue({ org }).fetch(CORPUS),
+  gearExplanations: (org: Org) => svc().gearExplanations({ org }).fetch(FRESH),
+  gearBrings: (org: Org, gears: string[], candidate: string, config?: ProjectProduct['config']) =>
+    svc().gearBrings(org).fetch({ gears, candidate, config: config ?? {} }),
   /** The project's name (account-management), for a product that has none yet. */
-  tenant: (_token: string, tenantId: string) => svc().tenant({ tenantId }).fetch(FRESH),
-  generateGearExplanation: (_token: string, gearId: string, force = false) =>
-    svc().generateGearExplanation(gearId).fetch({ force }),
-  updateGearExplanation: (_token: string, gearId: string, text: string) =>
-    svc().updateGearExplanation(gearId).fetch({ text }),
-  getProjectGearRepo: (_token: string, projectId: string) => svc().projectGearRepo({ projectId }).fetch(FRESH),
+  tenant: (_org: Org, tenantId: string) => svc().tenant({ tenantId }).fetch(FRESH),
+  generateGearExplanation: (org: Org, gearId: string, force = false) =>
+    svc().generateGearExplanation(org, gearId).fetch({ force }),
+  updateGearExplanation: (org: Org, gearId: string, text: string) =>
+    svc().updateGearExplanation(org, gearId).fetch({ text }),
+  getProjectGearRepo: (org: Org, projectId: string) => svc().projectGearRepo({ projectId, org }).fetch(FRESH),
 
-  projectTargets: (_token: string, projectId: string) => svc().projectTargets({ projectId }).fetch(FRESH),
+  projectTargets: (_org: Org, projectId: string) => svc().projectTargets({ projectId }).fetch(FRESH),
   /** The project's path from its product to running, as every tab draws it. */
-  projectPath: (_token: string, projectId: string) => svc().projectPath({ projectId }).fetch(FRESH),
-  infraPlan: (_token: string, projectId: string, environmentId: string) =>
+  projectPath: (_org: Org, projectId: string) => svc().projectPath({ projectId }).fetch(FRESH),
+  infraPlan: (_org: Org, projectId: string, environmentId: string) =>
     svc().infraPlan({ projectId, environmentId }).fetch(FRESH),
   /** Every environment's plan in one call, not one call per environment. */
-  infraPlans: async (_token: string, projectId: string): Promise<InfraPlan[]> =>
+  infraPlans: async (_org: Org, projectId: string): Promise<InfraPlan[]> =>
     (await svc().infraPlans({ projectId }).fetch(FRESH)).items,
-  infraServices: (_token: string, projectId: string) => svc().infraServices({ projectId }).fetch(FRESH),
-  putInfraServices: (_token: string, projectId: string, items: InfraService[]) =>
+  infraServices: (_org: Org, projectId: string) => svc().infraServices({ projectId }).fetch(FRESH),
+  putInfraServices: (_org: Org, projectId: string, items: InfraService[]) =>
     svc().putInfraServices(projectId).fetch({ items }),
-  deployments: (_token: string, params: { org?: string; project?: string; environment?: string }) =>
+  deployments: (_org: Org, params: { org?: string; project?: string; environment?: string }) =>
     svc().deployments(params).fetch(FRESH),
   projectImages: (
-    _token: string,
+    _org: Org,
     projectId: string,
     filter: {
       environment_id?: string;
@@ -211,20 +216,20 @@ export const api = {
     } = {}
   ) => svc().projectImages({ projectId, filter }).fetch(FRESH),
   importImage: (
-    _token: string,
+    _org: Org,
     projectId: string,
     body: { environment_id: string; source: string; name?: string; kind?: 'image' | 'chart' }
   ) => svc().importImage(projectId).fetch(body),
 
-  listComponents: (_token: string, projectId?: string) => svc().listComponents({ projectId }).fetch(FRESH),
-  listComponentProfiles: (_token: string, projectId?: string) => svc().listComponentProfiles({ projectId }).fetch(FRESH),
-  screenPreviews: (_token: string, component: string) => svc().screenPreviews({ component }).fetch(FRESH),
-  catalogSources: (_token: string) => svc().catalogSources({}).fetch(FRESH),
-  saveCatalogSources: (_token: string, items: CatalogRepoSource[]) =>
-    svc().saveCatalogSources().fetch({ items: items.map(bareSource) }),
-  syncComponents: (_token: string, body?: SyncComponentsBody) => svc().syncComponents().fetch(body),
+  listComponents: (org: Org, projectId?: string) => svc().listComponents({ projectId, org }).fetch(FRESH),
+  listComponentProfiles: (org: Org, projectId?: string) => svc().listComponentProfiles({ projectId, org }).fetch(FRESH),
+  screenPreviews: (org: Org, component: string) => svc().screenPreviews({ component, org }).fetch(FRESH),
+  catalogSources: (org: Org) => svc().catalogSources({ org }).fetch(FRESH),
+  saveCatalogSources: (org: Org, items: CatalogRepoSource[]) =>
+    svc().saveCatalogSources(org).fetch({ items: items.map(bareSource) }),
+  syncComponents: (org: Org, body?: SyncComponentsBody) => svc().syncComponents(org).fetch(body),
   /** A catalogue sync's run, as the prototype's poller read it. */
-  componentsCatalogTask: async (_token: string, taskId: string, tenant: string | null = null) => {
+  componentsCatalogTask: async (_org: Org, taskId: string, tenant: string | null = null) => {
     const run = await svc().taskRun({ runId: taskId, tenant }).fetch(FRESH);
     const n = (key: string) => {
       const v = run.result?.[key];
@@ -239,33 +244,33 @@ export const api = {
       stored: n('stored'),
     };
   },
-  projectComponents: (_token: string, projectId: string) => svc().projectComponents({ projectId }).fetch(FRESH),
-  refreshProjectComponents: (_token: string, projectId: string) =>
-    svc().refreshProjectComponents(projectId).fetch(undefined),
-  componentRegistry: (_token: string, params: { state?: string; project_id?: string; q?: string } = {}) =>
-    svc().componentRegistry(params).fetch(FRESH),
-  registryEntry: (_token: string, name: string) => svc().registryEntry({ name }).fetch(FRESH),
-  declareRegistry: (_token: string, name: string, input: import('./types').RegistryDeclareInput = {}) =>
-    svc().declareRegistry(name).fetch(input),
-  scaffoldGearToRepo: (_token: string, projectId: string, body: import('./types').ScaffoldBody) =>
-    svc().scaffoldGear(projectId).fetch(body),
+  projectComponents: (org: Org, projectId: string) => svc().projectComponents({ projectId, org }).fetch(FRESH),
+  refreshProjectComponents: (org: Org, projectId: string) =>
+    svc().refreshProjectComponents(org, projectId).fetch(undefined),
+  componentRegistry: (org: Org, params: { state?: string; project_id?: string; q?: string } = {}) =>
+    svc().componentRegistry({ ...params, org }).fetch(FRESH),
+  registryEntry: (org: Org, name: string) => svc().registryEntry({ name, org }).fetch(FRESH),
+  declareRegistry: (org: Org, name: string, input: import('./types').RegistryDeclareInput = {}) =>
+    svc().declareRegistry(org, name).fetch(input),
+  scaffoldGearToRepo: (org: Org, projectId: string, body: import('./types').ScaffoldBody) =>
+    svc().scaffoldGear(org, projectId).fetch(body),
 
-  declaredCapabilities: (_token: string, projectId: string) => svc().declaredCapabilities({ projectId }).fetch(FRESH),
-  declaredRequirements: (_token: string, projectId: string) => svc().declaredRequirements({ projectId }).fetch(FRESH),
-  projectPlan: (_token: string, projectId: string) => svc().projectPlan({ projectId }).fetch(FRESH),
+  declaredCapabilities: (org: Org, projectId: string) => svc().declaredCapabilities({ projectId, org }).fetch(FRESH),
+  declaredRequirements: (org: Org, projectId: string) => svc().declaredRequirements({ projectId, org }).fetch(FRESH),
+  projectPlan: (org: Org, projectId: string) => svc().projectPlan({ projectId, org }).fetch(FRESH),
 
   startGearMatch: (
-    _token: string,
+    org: Org,
     projectId: string,
     body: { paths?: string[]; glob?: string; extract_max_calls?: number; idempotency_key?: string } = {},
     strategy?: string
-  ) => svc().startGearMatch(projectId, strategy).fetch(body),
-  gearMatches: (_token: string, projectId: string, strategy?: string) =>
-    svc().gearMatches({ projectId, strategy }).fetch(FRESH),
-  gearMatch: (_token: string, projectId: string, matchId = 'latest', strategy?: string) =>
-    svc().gearMatch({ projectId, matchId, strategy }).fetch(FRESH),
+  ) => svc().startGearMatch(org, projectId, strategy).fetch(body),
+  gearMatches: (org: Org, projectId: string, strategy?: string) =>
+    svc().gearMatches({ projectId, strategy, org }).fetch(FRESH),
+  gearMatch: (org: Org, projectId: string, matchId = 'latest', strategy?: string) =>
+    svc().gearMatch({ projectId, matchId, strategy, org }).fetch(FRESH),
   connectStrategyService: (
-    _token: string,
+    _org: Org,
     organizationId: string,
     strategy: string,
     baseUrl: string,
@@ -283,38 +288,38 @@ export const api = {
         scope: 'organization',
         owner_tenant_id: organizationId,
       }),
-  gearMatchDiff: (_token: string, projectId: string, matchId: string, base?: string) =>
-    svc().gearMatchDiff({ projectId, matchId, base }).fetch(FRESH),
-  cancelGearMatch: (_token: string, projectId: string, matchId: string) =>
-    svc().cancelGearMatch(projectId, matchId).fetch({}),
+  gearMatchDiff: (org: Org, projectId: string, matchId: string, base?: string) =>
+    svc().gearMatchDiff({ projectId, matchId, base, org }).fetch(FRESH),
+  cancelGearMatch: (org: Org, projectId: string, matchId: string) =>
+    svc().cancelGearMatch(org, projectId, matchId).fetch({}),
   putGearMatchDecision: (
-    _token: string,
+    org: Org,
     projectId: string,
     body: { requirement_id: string; gear_id: string; decision: 'accepted' | 'rejected' | 'undecided'; match_id?: string }
-  ) => svc().putGearMatchDecision(projectId).fetch(body),
+  ) => svc().putGearMatchDecision(org, projectId).fetch(body),
   putGearMatchAnswer: (
-    _token: string,
+    org: Org,
     projectId: string,
     body: { question_id: string; text: string; topic?: string; match_id?: string }
-  ) => svc().putGearMatchAnswer(projectId).fetch(body),
-  assemblyStrategy: (_token: string, projectId: string) => svc().assemblyStrategy({ projectId }).fetch(FRESH),
-  setAssemblyStrategy: (_token: string, projectId: string, strategy: StrategyId | null) =>
-    svc().setAssemblyStrategy(projectId).fetch({ strategy }),
-  organizationAssemblyStrategy: (_token: string, organizationId: string) =>
+  ) => svc().putGearMatchAnswer(org, projectId).fetch(body),
+  assemblyStrategy: (org: Org, projectId: string) => svc().assemblyStrategy({ projectId, org }).fetch(FRESH),
+  setAssemblyStrategy: (org: Org, projectId: string, strategy: StrategyId | null) =>
+    svc().setAssemblyStrategy(org, projectId).fetch({ strategy }),
+  organizationAssemblyStrategy: (_org: Org, organizationId: string) =>
     svc().organizationAssemblyStrategy({ organizationId }).fetch(FRESH),
-  gearMatchUsage: (_token: string, organizationId: string, periodDays: number) =>
+  gearMatchUsage: (_org: Org, organizationId: string, periodDays: number) =>
     svc().gearMatchUsage({ organizationId, periodDays }).fetch(FRESH),
   setOrganizationAssemblyStrategy: (
-    _token: string,
+    _org: Org,
     organizationId: string,
     strategy: StrategyId | null
   ) => svc().setOrganizationAssemblyStrategy(organizationId).fetch({ strategy }),
-  matcherSettings: (_token: string, organizationId: string, strategy = 'gears_matcher') =>
+  matcherSettings: (_org: Org, organizationId: string, strategy = 'gears_matcher') =>
     svc().matcherSettings({ organizationId, strategy }).fetch(FRESH),
-  putMatcherSettings: (_token: string, organizationId: string, strategy: string, body: MatcherSettingsUpdate) =>
+  putMatcherSettings: (_org: Org, organizationId: string, strategy: string, body: MatcherSettingsUpdate) =>
     svc().putMatcherSettings(organizationId, strategy).fetch(body),
   conformance: (
-    _token: string,
+    org: Org,
     projectId: string,
     capabilities: string[],
     vocabulary: readonly Capability[],
@@ -326,18 +331,18 @@ export const api = {
       if (cap.terms?.length) terms[cap.key] = cap.terms;
       if (cap.contracts?.length) contracts[cap.key] = cap.contracts;
     }
-    return svc().conformance().fetch({ project_id: projectId, capabilities, terms, contracts, refresh });
+    return svc().conformance(org).fetch({ project_id: projectId, capabilities, terms, contracts, refresh });
   },
-  capabilities: (_token: string, workspaceId: string) => svc().capabilities({ workspaceId }).fetch(FRESH),
-  connections: (_token: string, tenant: string) => svc().connections({ tenant }).fetch(FRESH),
-  glossary: (_token: string, projectId: string) => svc().glossary({ projectId }).fetch(FRESH),
-  specModel: (_token: string, projectId: string) => svc().specModel({ projectId }).fetch(FRESH),
+  capabilities: (_org: Org, workspaceId: string) => svc().capabilities({ workspaceId }).fetch(FRESH),
+  connections: (_org: Org, tenant: string) => svc().connections({ tenant }).fetch(FRESH),
+  glossary: (_org: Org, projectId: string) => svc().glossary({ projectId }).fetch(FRESH),
+  specModel: (_org: Org, projectId: string) => svc().specModel({ projectId }).fetch(FRESH),
   /** The project's sources whose last clone or fetch failed: why a product built from them cannot resolve. */
-  cloneFailures: async (_token: string, projectId: string) =>
+  cloneFailures: async (_org: Org, projectId: string) =>
     (await svc().cloneStatus({ projectId }).fetch(FRESH)).items.filter((s) => s.state === 'failed'),
 
   listArtifactNodes: (
-    _token: string,
+    _org: Org,
     type?: string,
     scope?: string,
     cursor?: string,
@@ -358,14 +363,17 @@ export const api = {
 };
 
 type Api = typeof api;
-type WithoutBearer<F> = F extends (token: string, ...rest: infer A) => infer R ? (...rest: A) => R : never;
+type WithoutOrg<F> = F extends (org: Org, ...rest: infer A) => infer R ? (...rest: A) => R : never;
 
-/** The same calls without the bearer: what the screens use. */
-export type ProductApi = { [K in keyof Api]: WithoutBearer<Api[K]> };
+/** The same calls with the organization bound: what the screens use. */
+export type ProductApi = { [K in keyof Api]: WithoutOrg<Api[K]> };
 
-export const productApi: ProductApi = Object.fromEntries(
-  (Object.keys(api) as (keyof Api)[]).map((k) => [
-    k,
-    (...rest: unknown[]) => (api[k] as (token: string, ...a: unknown[]) => unknown)('', ...rest),
-  ])
-) as ProductApi;
+/** `api` with `org` bound: every call names that organization, whatever is on screen by the time it runs. */
+export function productApiFor(org: Org): ProductApi {
+  return Object.fromEntries(
+    (Object.keys(api) as (keyof Api)[]).map((k) => [
+      k,
+      (...rest: unknown[]) => (api[k] as (org: Org, ...a: unknown[]) => unknown)(org, ...rest),
+    ])
+  ) as ProductApi;
+}

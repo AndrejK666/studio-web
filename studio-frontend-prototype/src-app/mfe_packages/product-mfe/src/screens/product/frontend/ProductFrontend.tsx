@@ -7,15 +7,16 @@
 
 import { useEffect, useState } from 'react';
 import { Button } from '@gears-frontx/ui-kit';
-import { productApi, type FrontendPick, type ProjectConfig, type ProjectProduct } from '../../../api/client';
+import { type FrontendPick, type ProjectConfig, type ProjectProduct } from '../../../api/client';
 import { hasFrontend, newFrontend, withoutFrontend } from '../../../model/product-sections';
 import { useFrontendTranslations } from '../../../i18n';
-import { errText, useScope } from '../../common';
+import { errText, useScope, useProductApi } from '../../common';
 import { FrontendConstructor } from './FrontendConstructor';
 import { useFrontxDefaults } from './frontxDefaults';
 import common from '../../product.module.css';
 
 export function ProductFrontend({ onChanged }: { onChanged: () => void }) {
+  const productApi = useProductApi();
   const { projectId } = useScope();
   const { t } = useFrontendTranslations();
   const [cfg, setCfg] = useState<ProjectConfig | null | undefined>(undefined);
@@ -41,7 +42,7 @@ export function ProductFrontend({ onChanged }: { onChanged: () => void }) {
     return () => {
       alive = false;
     };
-  }, [projectId]);
+  }, [projectId, productApi]);
 
   /** Give the product a frontend, or take it away (`null`): the product keeps
    *  it, and a project's older record of one in its configuration goes too. */

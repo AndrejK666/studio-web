@@ -13,7 +13,7 @@
  * differs from the catalogue into the description, and the whole list into
  * the project's records. */
 
-import { api, type InfraService } from "../api/client";
+import { api, type InfraService, type Org } from "../api/client";
 
 /** Where the list was read from: said on screen, so a member knows what a
  *  save writes. */
@@ -42,12 +42,13 @@ const loaded = (r: { items: InfraService[]; source: InfraSource; revision: numbe
 });
 
 /** The store the product's views use: the server's. */
-export function infraStore(token: string, projectId: string): InfraStore {
+/** `org`: the organization on screen, which the product routes name. */
+export function infraStore(org: Org, projectId: string): InfraStore {
   return {
     source: "product-description",
     // Async, so a client that cannot be reached is a rejection, not a throw.
-    load: async () => loaded(await api.productInfra(token, projectId)),
-    save: async (items, base) => loaded(await api.putProductInfra(token, projectId, { base_revision: base, items })),
+    load: async () => loaded(await api.productInfra(org, projectId)),
+    save: async (items, base) => loaded(await api.putProductInfra(org, projectId, { base_revision: base, items })),
   };
 }
 

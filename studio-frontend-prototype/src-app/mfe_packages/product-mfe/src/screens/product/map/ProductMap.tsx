@@ -22,7 +22,7 @@ import {
   DropdownMenuTrigger,
   Input,
 } from '@gears-frontx/ui-kit';
-import { PRODUCT_CHANGED_EVENT, productApi } from '../../../api/client';
+import { PRODUCT_CHANGED_EVENT } from '../../../api/client';
 import type { SaveProductBody } from '../../../api/ProductApiService';
 import type {
   CatalogNode,
@@ -65,7 +65,7 @@ import {
 import { infrastructureOf, type ProductSectionId } from '../../../model/product-sections';
 import { PageLoading } from '@constructor-studio/mfe-shared/page';
 import { useMapTranslations } from '../../../i18n';
-import { errText, Segmented, StatusChip, useScope } from '../../common';
+import { errText, Segmented, StatusChip, useScope, useProductApi } from '../../common';
 import { useGearCatalogue } from '../catalogue';
 import { MapCanvas, groupKeyOf } from './MapCanvas';
 import { Detail, GdlView, Palette, paramsOf } from './MapPanels';
@@ -91,7 +91,6 @@ type Read = {
 };
 
 /** The bearer argument the moved-unchanged infra store still takes; `authShared()` carries the real one. */
-const NO_TOKEN = '';
 
 function storedLook(): MapLook {
   try {
@@ -111,7 +110,8 @@ export function ProductMap({
   /** What runs where, drawn over the nodes when given (not yet read). */
   overlay?: MapOverlay;
 }) {
-  const { projectId, container } = useScope();
+  const productApi = useProductApi();
+  const { projectId, orgId, container } = useScope();
   const { t } = useMapTranslations();
   const [read, setRead] = useState<Read | null>(null);
   // The map checks and composes for the profile the product runs as: the
@@ -157,7 +157,7 @@ export function ProductMap({
       productApi.listComponentProfiles(projectId).catch(() => ({ nodes: [] as CatalogNode[] })),
       productApi.projectConfig(projectId).catch(() => null),
       productApi.productDescription(projectId).catch(() => null),
-      infraStore(NO_TOKEN, projectId)
+      infraStore(orgId, projectId)
         .load()
         .then(
           (r) => r.items,
@@ -198,7 +198,7 @@ export function ProductMap({
     return () => {
       live = false;
     };
-  }, [projectId, round]);
+  }, [projectId, round, orgId, productApi]);
 
   // Any write to the product -- here, in a section, a check -- reads it again.
   useEffect(() => {
@@ -256,7 +256,7 @@ export function ProductMap({
     return () => {
       live = false;
     };
-  }, [schemaAsk, catalogueRead]);
+  }, [schemaAsk, catalogueRead, productApi]);
   const described = useMemo(() => describedConfigs(read?.description?.text ?? ''), [read]);
   const nodeById = useMemo(() => new Map((map?.nodes ?? []).map((n) => [n.id, n])), [map]);
   /** Each screen card's catalogue entry, by node: what its pictures are kept under. */

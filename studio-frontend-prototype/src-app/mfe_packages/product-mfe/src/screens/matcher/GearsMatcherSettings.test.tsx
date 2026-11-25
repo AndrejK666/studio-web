@@ -147,7 +147,7 @@ describe('GearsMatcherSettings', () => {
     });
     expect(choices).toEqual(['spec_mapping', 'gears_matcher']);
     fireEvent.click(document.querySelector('[data-gears-matcher-default-choice="gears_matcher"]')!);
-    await waitFor(() => expect(set).toHaveBeenCalledWith('', 'o1', 'gears_matcher'));
+    await waitFor(() => expect(set).toHaveBeenCalledWith('o1', 'o1', 'gears_matcher'));
   });
 
   it('with one strategy kit, says it is the default with nothing to choose', async () => {
@@ -191,9 +191,9 @@ describe('GearsMatcherSettings', () => {
     const read = vi.spyOn(api, 'gearMatchUsage').mockResolvedValue(usage());
     window.history.replaceState(null, '', '/?gmu.f.period=7');
     render(<GearsMatcherSettings orgId="o1" />);
-    await waitFor(() => expect(read).toHaveBeenCalledWith('', 'o1', 7));
+    await waitFor(() => expect(read).toHaveBeenCalledWith('o1', 'o1', 7));
     fireEvent.click(await found('[data-gear-match-usage-period="90"]'));
-    await waitFor(() => expect(read).toHaveBeenCalledWith('', 'o1', 90));
+    await waitFor(() => expect(read).toHaveBeenCalledWith('o1', 'o1', 90));
     expect(window.location.search).toContain('period=90');
   });
 
@@ -224,7 +224,7 @@ describe('GearsMatcherSettings', () => {
     fireEvent.change(await found('[data-gears-matcher-connect-secret]'), { target: { value: 's3cret' } });
     fireEvent.click(await found('[data-gears-matcher-connect-submit]'));
     await waitFor(() =>
-      expect(connect).toHaveBeenCalledWith('', 'o1', 'acme_matcher', 'https://acme.example/matcher', 's3cret', 'Acme matcher')
+      expect(connect).toHaveBeenCalledWith('o1', 'o1', 'acme_matcher', 'https://acme.example/matcher', 's3cret', 'Acme matcher')
     );
   });
 
@@ -257,7 +257,7 @@ describe('GearsMatcherSettings', () => {
     const before = reads.mock.calls.length;
     fireEvent.click(await found('[data-matcher-settings-save]'));
     await waitFor(() =>
-      expect(put).toHaveBeenCalledWith('', 'o1', 'gears_matcher', {
+      expect(put).toHaveBeenCalledWith('o1', 'o1', 'gears_matcher', {
         version: 2,
         overrides: { provider: 'openai', models: ['gpt-x'], max_calls: 300, max_extract_calls: null },
       })

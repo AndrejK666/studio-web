@@ -5,19 +5,20 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { productApi, type GearExplanation } from '../../../api/client';
+import { type GearExplanation } from '../../../api/client';
 import { layerOf } from '../../../model/domain-layers';
 import { entityGears, gearRefs } from '../../../model/entity-gears';
 import { runningNow, type Running } from '../../../model/gear-deploys-model';
 import { explanationIndex, type CatalogueIndex, type ExplanationIndex } from '../../../model/product-configurator';
 import { entitiesOf, type GlossaryEntry } from '../../../model/spec-model';
-import { errText } from '../../common';
+import { errText, useProductApi } from '../../common';
 
 /** The project's Domain entities each catalogue gear keeps, by engine id
  *  (entity-gears.ts): read once the catalogue is there, from the model the
  *  documents were last read into. Empty when there is no model or it cannot
  *  be read: the map does not need it. */
 export function useKeptEntities(projectId: string, index: CatalogueIndex | null): Map<string, string[]> {
+  const productApi = useProductApi();
   const [kept, setKept] = useState<Map<string, string[]>>(new Map());
   useEffect(() => {
     if (!index) return;
@@ -36,7 +37,7 @@ export function useKeptEntities(projectId: string, index: CatalogueIndex | null)
     return () => {
       live = false;
     };
-  }, [projectId, index]);
+  }, [projectId, index, productApi]);
   return kept;
 }
 
@@ -44,6 +45,7 @@ export function useKeptEntities(projectId: string, index: CatalogueIndex | null)
  *  null while read, or when this Studio keeps no deployments: the gears then
  *  say nothing about where they run. */
 export function useRunning(projectId: string): Running[] | null {
+  const productApi = useProductApi();
   const [running, setRunning] = useState<Running[] | null>(null);
   useEffect(() => {
     let live = true;
@@ -59,7 +61,7 @@ export function useRunning(projectId: string): Running[] | null {
     return () => {
       live = false;
     };
-  }, [projectId]);
+  }, [projectId, productApi]);
   return running;
 }
 
@@ -76,6 +78,7 @@ export interface Explanations {
 }
 
 export function useGearExplanations(): Explanations {
+  const productApi = useProductApi();
   const [byId, setById] = useState<Map<string, GearExplanation>>(() => new Map());
   const [error, setError] = useState<string | null>(null);
   const [mayManage, setMayManage] = useState(false);
@@ -93,7 +96,7 @@ export function useGearExplanations(): Explanations {
     return () => {
       live = false;
     };
-  }, []);
+  }, [productApi]);
   const put = useCallback((e: GearExplanation) => setById((current) => new Map(current).set(e.gear_id, e)), []);
   return { byId, put, error, mayManage };
 }

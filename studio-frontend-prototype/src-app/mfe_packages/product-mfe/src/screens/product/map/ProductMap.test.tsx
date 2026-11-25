@@ -113,11 +113,11 @@ describe('ProductMap', () => {
     expect(container.querySelector('[data-pmap-gdl-check="failed"]')).not.toBeNull();
     expect(container.querySelector('[data-pmap-gdl-verdict="current"]')).not.toBeNull();
     // The server reads which line is which node: the gear's line is tied to it.
-    expect(api.outlineProductDescription).toHaveBeenCalledWith('', 'p1', { text });
+    expect(api.outlineProductDescription).toHaveBeenCalledWith('o1', 'p1', { text });
     await waitFor(() => expect(container.querySelector('[data-gdl-line="2"]')?.className).toMatch(/owned/), WAIT);
     // Check now queues a check on the server.
     fireEvent.click(container.querySelector('[data-pmap-gdl-check-now]')!);
-    await waitFor(() => expect(api.startProductCheck).toHaveBeenCalledWith('', 'p1', 'prod'), WAIT);
+    await waitFor(() => expect(api.startProductCheck).toHaveBeenCalledWith('o1', 'p1', 'prod'), WAIT);
   });
 
   it('queues one check on the server when the kept verdict is about another text', async () => {

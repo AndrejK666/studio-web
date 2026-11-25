@@ -8,15 +8,16 @@
 
 import { useEffect, useState } from 'react';
 import { Button } from '@gears-frontx/ui-kit';
-import { productApi, type DeployEnvironment, type ProjectTargets } from '../../../api/client';
+import { type DeployEnvironment, type ProjectTargets } from '../../../api/client';
 import { verdictText } from '../../../model/product';
 import { infrastructureOf, type Infrastructure } from '../../../model/product-sections';
 import { useInfraTranslations } from '../../../i18n';
-import { EmptyState, openTab, StatusChip, useScope, type Tone } from '../../common';
+import { EmptyState, openTab, StatusChip, useScope, type Tone, useProductApi } from '../../common';
 import { ProductInfraServices } from './InfraServices';
 import styles from '../../product.module.css';
 
 export function ProductInfrastructure() {
+  const productApi = useProductApi();
   const { projectId, bridge } = useScope();
   const { t } = useInfraTranslations();
   const [infra, setInfra] = useState<Infrastructure | null>(null);
@@ -35,7 +36,7 @@ export function ProductInfrastructure() {
     return () => {
       alive = false;
     };
-  }, [projectId]);
+  }, [projectId, productApi]);
 
   const releases = () => openTab(bridge, 'releases');
   return (

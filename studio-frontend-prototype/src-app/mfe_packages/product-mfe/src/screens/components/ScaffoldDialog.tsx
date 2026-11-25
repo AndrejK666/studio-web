@@ -21,12 +21,12 @@ import {
   NativeSelectOption,
   Textarea,
 } from '@gears-frontx/ui-kit';
-import { productApi } from '../../api/client';
+
 import type { ScaffoldFile } from '../../api/types';
 import { subsystemOf } from '../../model/product-configurator';
 import { gearSlug } from '../../model/scaffold';
 import { useComponentsTranslations } from '../../i18n';
-import { errText } from '../common';
+import { errText, useProductApi } from '../common';
 import { scaffoldTargetLine } from './registryLines';
 import styles from './ProjectComponentsInventory.module.css';
 
@@ -56,6 +56,7 @@ export function ScaffoldDialog({
   container: RefObject<HTMLDivElement | null>;
   onClose: () => void;
 }) {
+  const productApi = useProductApi();
   const { t } = useComponentsTranslations();
   // What is typed, and what the preview was last asked with: the preview
   // asks the server, so it follows a field when the field is left.
@@ -99,7 +100,7 @@ export function ScaffoldDialog({
     return () => {
       alive = false;
     };
-  }, [projectId, capabilityName, problem, category, declared]);
+  }, [projectId, capabilityName, problem, category, declared, productApi]);
 
   const file = files?.[active];
   const push = async () => {

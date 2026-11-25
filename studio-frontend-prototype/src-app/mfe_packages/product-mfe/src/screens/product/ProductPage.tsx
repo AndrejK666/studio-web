@@ -27,7 +27,7 @@
 
 import { useEffect, useState } from 'react';
 import { Button } from '@gears-frontx/ui-kit';
-import { PRODUCT_CHANGED_EVENT, productApi } from '../../api/client';
+import { PRODUCT_CHANGED_EVENT } from '../../api/client';
 import type { FlowState, FlowStep } from '../../model/product-flow';
 import {
   PRODUCT_COMMAND_EVENT,
@@ -45,7 +45,7 @@ import { releaseSources } from '../../model/source-roles';
 import { shortCommit } from '../../model/screen-previews';
 import { useProductTranslations } from '../../i18n';
 import { PageLoading, ProjectPage } from '@constructor-studio/mfe-shared/page';
-import { errText, openTab, Segmented, StatusChip, useScope, type Tone } from '../common';
+import { errText, openTab, Segmented, StatusChip, useScope, type Tone, useProductApi } from '../common';
 import { ProjectComponentsInventory } from '../components/ProjectComponentsInventory';
 import { ProductBackend } from './configurator/ProductBackend';
 import { ProductFlow } from './flow/ProductFlow';
@@ -99,6 +99,7 @@ const ACTION_KEY: Record<ProductAction, string> = {
 };
 
 export function ProductPage() {
+  const productApi = useProductApi();
   const { projectId, bridge } = useScope();
   const { t } = useProductTranslations();
   const [section, setSection] = useState<PageSection>(() => {
@@ -130,7 +131,7 @@ export function ProductPage() {
     return () => {
       alive = false;
     };
-  }, [projectId, round]);
+  }, [projectId, round, productApi]);
 
   useEffect(() => {
     let alive = true;
@@ -150,7 +151,7 @@ export function ProductPage() {
     return () => {
       alive = false;
     };
-  }, [projectId, round]);
+  }, [projectId, round, productApi]);
 
   // A section wrote the product -- Backend previewed or saved it, Frontend
   // saved its pick: the header and the strip read the record again.
@@ -320,6 +321,7 @@ export function ProductPage() {
 /** The sources the newest description revision pins, one line each (the
  *  prototype's compact `ProductSources`, source-roles-view.tsx). */
 function ProductSources() {
+  const productApi = useProductApi();
   const { projectId } = useScope();
   const { t } = useProductTranslations();
   const [read, setRead] = useState<{ lines: ReturnType<typeof releaseSources>; revision: number } | null>(null);
@@ -335,7 +337,7 @@ function ProductSources() {
     return () => {
       live = false;
     };
-  }, [projectId]);
+  }, [projectId, productApi]);
   if (!read) return null;
   return (
     <div data-product-sources className={`${styles.row} ${styles.small} ${styles.muted}`}>

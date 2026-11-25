@@ -20,7 +20,7 @@
  */
 
 import { api } from "../api/client";
-import type { Connection, RemoteRepo, RepoEntry } from "../api/client";
+import type { Connection, Org, RemoteRepo, RepoEntry } from "../api/client";
 
 /** How the IDE's "Share with the team" lands edits: straight onto the
  *  project's branch, or on a per-person branch through a pull request. */
@@ -164,11 +164,11 @@ export function asRows(
 /** A project's repositories as rows, from its config and the connections
  *  visible from it. A connection list that cannot be read leaves the rows
  *  without token references rather than without rows. */
-export async function projectRepoRows(token: string, tenantId: string): Promise<RepoEntry[]> {
+export async function projectRepoRows(org: Org, tenantId: string): Promise<RepoEntry[]> {
   const [config, connections] = await Promise.all([
-    api.projectConfig(token, tenantId),
+    api.projectConfig(org, tenantId),
     api
-      .connections(token, tenantId)
+      .connections(org, tenantId)
       .then((p) => p.items)
       .catch((): Connection[] => []),
   ]);

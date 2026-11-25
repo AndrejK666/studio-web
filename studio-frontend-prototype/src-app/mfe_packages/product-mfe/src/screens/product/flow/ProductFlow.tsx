@@ -30,16 +30,7 @@ import {
   type PathStage,
   type StageState,
 } from '@constructor-studio/mfe-shared/path';
-import {
-  productApi,
-  type ArtifactNode,
-  type Deployment,
-  type ProductDescriptionRevision,
-  type ProductPreview,
-  type ProjectConfig,
-  type ProjectProduct,
-  type ProjectTargets,
-} from '../../../api/client';
+import { type ArtifactNode, type Deployment, type ProductDescriptionRevision, type ProductPreview, type ProjectConfig, type ProjectProduct, type ProjectTargets } from '../../../api/client';
 import { buildsOf, ideBuildsOf, productBuildsOf, repoPathsOf, type BuildRun, type IdeBuild } from '@constructor-studio/mfe-shared';
 import { buildsHint, deploysHint } from '../../../model/pipeline';
 import { profilesToCheck } from '../../../model/product';
@@ -47,7 +38,7 @@ import { lineDiff, productFlow, type DiffLine, type FlowState, type FlowStep } f
 import { infrastructureOf, type ProductSectionId } from '../../../model/product-sections';
 import { deployableBuilds } from '../../../model/project-deploys';
 import { useFlowTranslations } from '../../../i18n';
-import { errText, StatusChip, useScope } from '../../common';
+import { errText, StatusChip, useScope, useProductApi } from '../../common';
 import { buildableEnvironments } from './buildable';
 import common from '../../product.module.css';
 import styles from './flow.module.css';
@@ -121,6 +112,7 @@ export function ProductFlow({
   /** The steps as read, for the page's header and its sections' dots. */
   onSteps?: (steps: FlowStep[]) => void;
 }) {
+  const productApi = useProductApi();
   const { projectId, bridge } = useScope();
   const { t } = useFlowTranslations();
   const [read, setRead] = useState<Read | null>(null);
@@ -165,7 +157,7 @@ export function ProductFlow({
     return () => {
       live = false;
     };
-  }, [projectId, round, mine]);
+  }, [projectId, round, mine, productApi]);
 
   const steps = useMemo(() => {
     if (!read) return null;
@@ -256,6 +248,7 @@ function SaveStep({
   t: Text;
   onSaved: () => void;
 }) {
+  const productApi = useProductApi();
   const { projectId } = useScope();
   const [draft, setDraft] = useState<ProductPreview | null>(null);
   const [busy, setBusy] = useState<'check' | 'save' | null>(null);
@@ -371,6 +364,7 @@ function Revisions({
   t: Text;
   onRestored: () => void;
 }) {
+  const productApi = useProductApi();
   const { projectId, language } = useScope();
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<Omit<ProductDescriptionRevision, 'text'>[] | null>(null);
@@ -388,7 +382,7 @@ function Revisions({
     return () => {
       live = false;
     };
-  }, [open, projectId, latest.revision]);
+  }, [open, projectId, latest.revision, productApi]);
 
   async function show(revision: number) {
     setErr(null);

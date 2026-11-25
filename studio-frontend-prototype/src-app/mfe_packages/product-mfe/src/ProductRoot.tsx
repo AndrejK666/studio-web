@@ -20,7 +20,6 @@ import {
   useHostChrome,
 } from '@constructor-studio/mfe-shared';
 import { PageEmpty, PageLoading, ProjectPage } from '@constructor-studio/mfe-shared/page';
-import { setOrganization } from './api/ProductApiService';
 import { useProductTranslations } from './i18n';
 import { ScopeContext, type Scope } from './screens/common';
 import { ProductPage } from './screens/product/ProductPage';
@@ -51,10 +50,6 @@ export const ProductRoot: React.FC<{ bridge: ChildMfeBridge }> = ({ bridge }) =>
   const { containerRef, dataTheme, language } = useHostChrome();
   const { t, loading } = useProductTranslations();
 
-  // The catalogue, product and spec routes name the organization on screen.
-  // Set while rendering, not in an effect: the screens' own effects run first
-  // and read with it.
-  setOrganization(orgId);
 
   const scope: Scope | null = useMemo(
     () => (projectId ? { projectId, workspaceId, orgId, language, bridge, container: containerRef } : null),

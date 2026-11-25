@@ -21,7 +21,6 @@ import {
   STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE,
   useHostChrome,
 } from '@constructor-studio/mfe-shared';
-import { setOrganization } from './api/ProductApiService';
 import { useMatchTranslations } from './i18n';
 import { PageEmpty, PageLoading, ProjectPage } from '@constructor-studio/mfe-shared/page';
 import { ScopeContext, type Scope } from './screens/common';
@@ -53,9 +52,6 @@ export const GearsMatcherRoot: React.FC<{ bridge: ChildMfeBridge }> = ({ bridge 
   const { containerRef, dataTheme, language } = useHostChrome();
   const { t, loading } = useMatchTranslations();
 
-  // The product routes name the organization on screen; set while rendering,
-  // so the screens' own effects read with it.
-  setOrganization(orgId);
 
   const scope: Scope | null = useMemo(
     () => (projectId ? { projectId, workspaceId, orgId, language, bridge, container: containerRef } : null),

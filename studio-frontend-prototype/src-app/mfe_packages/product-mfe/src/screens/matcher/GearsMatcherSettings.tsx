@@ -18,7 +18,7 @@
 import { useEffect, useState } from 'react';
 import type { ChildMfeBridge } from '@gears-frontx/react';
 import { Button, Input, Skeleton } from '@gears-frontx/ui-kit';
-import { productApi } from '../../api/client';
+import { productApiFor } from '../../api/client';
 import { offeredStrategies, strategyName, type AssemblyStrategy, type StrategyId } from '../../model/assembly';
 import { serviceState, servicesOf, type GearMatchUsage, type MatcherService } from '../../model/gear-match-usage';
 import { useAssemblyTranslations } from '../../i18n';
@@ -41,7 +41,7 @@ function ConnectService({ orgId, strategy, name, t, onDone }: { orgId: string; s
     setBusy(true);
     setErr(null);
     try {
-      await productApi.connectStrategyService(orgId, strategy, url.trim(), secret, name);
+      await productApiFor(orgId).connectStrategyService(orgId, strategy, url.trim(), secret, name);
       setSecret('');
       onDone();
     } catch (e) {
@@ -184,7 +184,7 @@ export function GearsMatcherSettings({
 
   useEffect(() => {
     let live = true;
-    productApi.organizationAssemblyStrategy(orgId).then(
+    productApiFor(orgId).organizationAssemblyStrategy(orgId).then(
       (r) => live && setA(r),
       (e: unknown) => live && setErr(errText(e))
     );
@@ -195,7 +195,7 @@ export function GearsMatcherSettings({
 
   useEffect(() => {
     let live = true;
-    productApi.gearMatchUsage(orgId, period).then(
+    productApiFor(orgId).gearMatchUsage(orgId, period).then(
       (r) => {
         if (!live) return;
         setUsage(r);
@@ -216,7 +216,7 @@ export function GearsMatcherSettings({
     setBusy(true);
     setErr(null);
     try {
-      setA(await productApi.setOrganizationAssemblyStrategy(orgId, c));
+      setA(await productApiFor(orgId).setOrganizationAssemblyStrategy(orgId, c));
     } catch (e) {
       setErr(errText(e));
     } finally {

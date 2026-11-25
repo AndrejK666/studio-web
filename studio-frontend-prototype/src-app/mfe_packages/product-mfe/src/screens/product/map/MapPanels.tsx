@@ -8,7 +8,6 @@
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Button, Input } from '@gears-frontx/ui-kit';
-import { productApi } from '../../../api/client';
 import type { DescriptionOutline, GearConfigSchema, ProjectProduct } from '../../../api/types';
 import type { Mfe } from '../../../model/frontend-constructor';
 import { offers } from '../../../model/product-configurator';
@@ -26,7 +25,7 @@ import {
 import type { ProductSectionId, infrastructureOf } from '../../../model/product-sections';
 import type { DeployEnvironment } from '../../../api/types';
 import { useMapTranslations } from '../../../i18n';
-import { errText, Segmented, useScope } from '../../common';
+import { errText, Segmented, useProductApi, useScope } from '../../common';
 import type { Catalogue } from '../catalogue';
 import { InfraLane } from './InfraLane';
 import { useKeptCheck, type KeptCheck } from '../keptCheck';
@@ -264,6 +263,7 @@ export function gdlOf(node: MapNode): { gear: string } | { path: string } | null
  *  from, in the repository the server checked out. */
 function GdlSection({ what }: { what: { gear: string } | { path: string } }) {
   const { projectId } = useScope();
+  const productApi = useProductApi();
   const { t } = useMapTranslations();
   const [open, setOpen] = useState(false);
   const [file, setFile] = useState<{ source: string; path: string; text: string } | null>(null);
@@ -281,7 +281,7 @@ function GdlSection({ what }: { what: { gear: string } | { path: string } }) {
     return () => {
       live = false;
     };
-  }, [open, file, err, projectId, ask]);
+  }, [open, file, err, projectId, ask, productApi]);
   return (
     <div data-pmap-gdl-file={name}>
       <Button size="sm" variant="ghost" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
@@ -526,6 +526,7 @@ function GdlText({
   onSelect: (id: string | null) => void;
   t: ReturnType<typeof useMapTranslations>['t'];
 }) {
+  const productApi = useProductApi();
   const box = useRef<HTMLDivElement | null>(null);
   const draft = useMemo(() => (text ? { text } : null), [text]);
 
@@ -541,7 +542,7 @@ function GdlText({
     return () => {
       live = false;
     };
-  }, [projectId, draft]);
+  }, [projectId, draft, productApi]);
   const lines = useMemo(() => (outline ? productGdlLines(outline, nodeIds) : null), [outline, nodeIds]);
   const rows = useMemo((): { kind: 'same' | 'add' | 'del'; text: string; n: number | null }[] => {
     if (!draft) return [];

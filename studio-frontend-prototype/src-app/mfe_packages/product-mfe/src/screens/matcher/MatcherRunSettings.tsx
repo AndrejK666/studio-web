@@ -11,7 +11,7 @@
 import { useEffect, useState } from 'react';
 import { Button, Checkbox, Input, NativeSelect, NativeSelectOption } from '@gears-frontx/ui-kit';
 import { responseStatus } from '@constructor-studio/mfe-shared';
-import { productApi } from '../../api/client';
+import { productApiFor } from '../../api/client';
 import { draftOf, overridesOf, type MatcherSettings, type SettingsDraft } from '../../model/matcher-settings';
 import { errText } from '../common';
 import page from '../product.module.css';
@@ -63,7 +63,7 @@ export function MatcherRunSettings({
 
   useEffect(() => {
     let live = true;
-    productApi.matcherSettings(orgId, strategy).then(
+    productApiFor(orgId).matcherSettings(orgId, strategy).then(
       (r) => {
         if (!live) return;
         setS(r);
@@ -101,7 +101,7 @@ export function MatcherRunSettings({
     setSaveErr(null);
     setNote(null);
     try {
-      const r = await productApi.putMatcherSettings(orgId, strategy, { version: s.version, overrides: asked.overrides });
+      const r = await productApiFor(orgId).putMatcherSettings(orgId, strategy, { version: s.version, overrides: asked.overrides });
       setS(r);
       setDraft(draftOf(r));
       setNote('saved');

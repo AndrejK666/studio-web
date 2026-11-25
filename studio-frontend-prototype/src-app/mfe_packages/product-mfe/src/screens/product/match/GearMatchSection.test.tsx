@@ -178,7 +178,7 @@ describe('GearMatchSection', () => {
     expect((await found('[data-gear-match-candidate="gears-rust/authn-resolver"]')).textContent).toContain('resolves a bearer');
     fireEvent.click(await found('[data-gear-match-add]'));
     await waitFor(() => expect(decide).toHaveBeenCalled());
-    expect(complete).toHaveBeenCalledWith('', ['api-gateway', 'authn-resolver'], {});
+    expect(complete).toHaveBeenCalledWith('o1', ['api-gateway', 'authn-resolver'], {});
     expect(save.mock.calls[0][2]).toMatchObject({ product_id: 'todo-app', gears: ['api-gateway', 'authn-resolver', 'tenant-resolver'] });
     expect(decide.mock.calls[0][2]).toMatchObject({ gear_id: 'gears-rust/authn-resolver', decision: 'accepted', match_id: 'm1' });
   });
@@ -259,7 +259,7 @@ describe('GearMatchSection', () => {
     draw();
     fireEvent.click(await found('[data-gear-match-compare]'));
     await waitFor(() => expect(document.querySelector('[data-gear-match-diff]')).toBeTruthy());
-    expect(diff).toHaveBeenCalledWith('', 'p1', 'm1');
+    expect(diff).toHaveBeenCalledWith('o1', 'p1', 'm1');
     fireEvent.click(document.querySelector('[data-gear-match-start]')!);
     await waitFor(() => expect(start).toHaveBeenCalled());
     expect(start.mock.calls[0][2]?.idempotency_key).toBeTruthy();
@@ -288,10 +288,10 @@ describe('GearMatchSection', () => {
     const start = vi.spyOn(api, 'startGearMatch').mockResolvedValue({ run_id: 'r', match_id: 'm2', state: 'queued' });
     draw();
     fireEvent.change(await screen.findByLabelText('strategy_label'), { target: { value: 'acme_matcher' } });
-    await waitFor(() => expect(api.gearMatches).toHaveBeenCalledWith('', 'p1', 'acme_matcher'));
+    await waitFor(() => expect(api.gearMatches).toHaveBeenCalledWith('o1', 'p1', 'acme_matcher'));
     fireEvent.click(await found('[data-gear-match-start]'));
     await waitFor(() =>
-      expect(start).toHaveBeenCalledWith('', 'p1', expect.objectContaining({ idempotency_key: expect.any(String) }), 'acme_matcher')
+      expect(start).toHaveBeenCalledWith('o1', 'p1', expect.objectContaining({ idempotency_key: expect.any(String) }), 'acme_matcher')
     );
   });
 });

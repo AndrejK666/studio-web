@@ -41,16 +41,7 @@ import {
   TableRow,
   Textarea,
 } from '@gears-frontx/ui-kit';
-import {
-  productApi,
-  type DeployEnvironment,
-  type GearConfig,
-  type InfraPassport,
-  type InfraPlan,
-  type InfraService,
-  type ProductTechnology,
-  type ProjectImage,
-} from '../../../api/client';
+import { type DeployEnvironment, type GearConfig, type InfraPassport, type InfraPlan, type InfraService, type ProductTechnology, type ProjectImage } from '../../../api/client';
 import { gearKey } from '../../../model/frontend-constructor';
 import {
   configLines,
@@ -79,7 +70,7 @@ import { INFRA_SOURCE_TEXT, infraStore, type InfraLoaded } from '../../../model/
 import { gearLabel } from '../../../model/product';
 import { describedConfigs, gearConfigOf } from '../../../model/product-map';
 import { useInfraTranslations } from '../../../i18n';
-import { errText, openTab, StatusChip, useScope } from '../../common';
+import { errText, openTab, StatusChip, useScope, useProductApi } from '../../common';
 import styles from '../../product.module.css';
 import own from './infra.module.css';
 
@@ -109,7 +100,8 @@ export function ProductInfraServices({
   places: readonly InfraPlace[];
   environments: readonly DeployEnvironment[];
 }) {
-  const { projectId, bridge, container } = useScope();
+  const productApi = useProductApi();
+  const { projectId, orgId, bridge, container } = useScope();
   const { t } = useInfraTranslations();
   const [services, setServices] = useState<InfraService[] | null>(null);
   const [kept, setKept] = useState<Omit<InfraLoaded, 'items'> | null>(null);
@@ -134,7 +126,7 @@ export function ProductInfraServices({
   useEffect(() => {
     let live = true;
     Promise.all([
-      infraStore('', projectId).load(),
+      infraStore(orgId, projectId).load(),
       productApi.listComponents(projectId).catch(() => ({ nodes: [] })),
       productApi.projectImages(projectId, { limit: 200 }).catch(() => ({ items: [] as ProjectImage[], total: 0 })),
       productApi.projectProduct(projectId).catch(() => null),
@@ -165,14 +157,14 @@ export function ProductInfraServices({
     return () => {
       live = false;
     };
-  }, [projectId, envIds, round]);
+  }, [projectId, envIds, round, orgId, productApi]);
 
   /** Write the whole list; the plans are read again, since they follow it. */
   const save = async (next: InfraService[], what: string): Promise<boolean> => {
     setBusy(what);
     setError(null);
     try {
-      const saved = await infraStore('', projectId).save(next, kept?.revision ?? null);
+      const saved = await infraStore(orgId, projectId).save(next, kept?.revision ?? null);
       setServices(saved.items);
       setKept({ source: saved.source, revision: saved.revision });
       setNote(what);

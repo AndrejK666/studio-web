@@ -96,7 +96,7 @@ describe('ProductFrontend', () => {
     const put = vi.spyOn(api, 'putProjectConfig').mockResolvedValue(undefined);
     mount();
     fireEvent.click(await screen.findByText('remove'));
-    await waitFor(() => expect(put).toHaveBeenCalledWith('', 'p1', {}));
+    await waitFor(() => expect(put).toHaveBeenCalledWith('o1', 'p1', {}));
   });
 
   it('draws the constructor with the catalogue’s micro-frontends and saves a pick to the product', async () => {

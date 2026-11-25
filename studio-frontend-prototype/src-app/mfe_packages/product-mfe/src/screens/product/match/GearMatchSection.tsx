@@ -22,7 +22,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button, Input, NativeSelect, NativeSelectOption, Skeleton, Textarea } from '@gears-frontx/ui-kit';
 import { isNotFound, readListState, responseStatus, writeListState } from '@constructor-studio/mfe-shared';
-import { productApi } from '../../../api/client';
 import {
   coverageTone,
   failureHint,
@@ -40,7 +39,7 @@ import {
 import { MATCH_VIEWS, viewOf, type MatchView } from '../../../model/gear-match-grid';
 import { offeredStrategies, SHIPPED_SERVICE, type StrategyKit } from '../../../model/assembly';
 import { useMatchTranslations } from '../../../i18n';
-import { EmptyState, errText, Segmented, StatusChip, useScope } from '../../common';
+import { EmptyState, errText, Segmented, StatusChip, useScope, useProductApi } from '../../common';
 import { ScaffoldDialog } from '../../components/ScaffoldDialog';
 import { catalogueNames, pickNames } from '../../../model/product-configurator';
 import { useGearCatalogue } from '../catalogue';
@@ -86,6 +85,7 @@ export function GearMatchSection() {
 }
 
 function ProjectGearMatch({ projectId }: { projectId: string }) {
+  const productApi = useProductApi();
   const { t } = useMatchTranslations();
   const [strategies, setStrategies] = useState<StrategyKit[]>([]);
   const [strategy, setStrategy] = useState(SHIPPED_SERVICE);
@@ -122,7 +122,7 @@ function ProjectGearMatch({ projectId }: { projectId: string }) {
     return () => {
       live = false;
     };
-  }, [projectId]);
+  }, [projectId, productApi]);
 
   // The history and the product's picks; the spec plan, to say where the two agree.
   useEffect(() => {
@@ -147,7 +147,7 @@ function ProjectGearMatch({ projectId }: { projectId: string }) {
     return () => {
       live = false;
     };
-  }, [projectId, round, strategyParam]);
+  }, [projectId, round, strategyParam, productApi]);
 
   useEffect(() => {
     let live = true;
@@ -158,7 +158,7 @@ function ProjectGearMatch({ projectId }: { projectId: string }) {
     return () => {
       live = false;
     };
-  }, [projectId]);
+  }, [projectId, productApi]);
 
   const shown = selected ?? history?.[0]?.match_id ?? null;
 
@@ -184,7 +184,7 @@ function ProjectGearMatch({ projectId }: { projectId: string }) {
       live = false;
       if (timer) clearTimeout(timer);
     };
-  }, [projectId, shown, history, strategyParam]);
+  }, [projectId, shown, history, strategyParam, productApi]);
 
   const start = async () => {
     setStarting(true);
@@ -270,7 +270,7 @@ function ProjectGearMatch({ projectId }: { projectId: string }) {
         setBusy(null);
       }
     },
-    [match, projectId, t, refresh]
+    [match, projectId, t, refresh, productApi]
   );
 
   const decide = useCallback(
@@ -289,7 +289,7 @@ function ProjectGearMatch({ projectId }: { projectId: string }) {
         setBusy(null);
       }
     },
-    [match, projectId, refresh]
+    [match, projectId, refresh, productApi]
   );
 
   const cells = useMemo<MatchCells>(
@@ -480,7 +480,6 @@ function ScaffoldDialogFor({ r, onClose }: { r: GearMatchRequirement; onClose: (
   );
 }
 
-
 function MatchHeader({ match, t }: { match: GearMatch; t: T }) {
   const s = match.summary;
   const progress = progressOf(s);
@@ -567,8 +566,8 @@ function DiffView({ diff, history, t }: { diff: GearMatchDiff | 'none'; history:
   );
 }
 
-
 function QuestionForm({ q, matchId, t }: { q: GearMatchQuestion; matchId: string; t: T }) {
+  const productApi = useProductApi();
   const { projectId } = useScope();
   const [text, setText] = useState(q.answer ?? '');
   const [saved, setSaved] = useState(false);

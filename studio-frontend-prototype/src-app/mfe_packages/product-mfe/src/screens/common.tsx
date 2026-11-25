@@ -6,7 +6,7 @@
  * shared `ProjectPage`.
  */
 
-import React, { createContext, useContext, type ReactNode } from 'react';
+import React, { createContext, useContext, useMemo, type ReactNode } from 'react';
 import type { ChildMfeBridge } from '@gears-frontx/react';
 import {
   Badge,
@@ -18,6 +18,7 @@ import {
   EmptyTitle,
 } from '@gears-frontx/ui-kit';
 import { errorMessage, openScreen, refusalText } from '@constructor-studio/mfe-shared';
+import { productApiFor, type ProductApi } from '../api/client';
 import styles from './product.module.css';
 
 /** The gear's own words for a refusal, else the error's message (the prototype's `errText`). */
@@ -42,6 +43,16 @@ export function useScope(): Scope {
   const scope = useContext(ScopeContext);
   if (!scope) throw new Error('useScope outside the Product kit');
   return scope;
+}
+
+/**
+ * The kit's calls, naming the organization of this screen's scope: the shell's
+ * context reaches every request through here, not through state kept in a
+ * module, so a switch of organization never sends one under the one before.
+ */
+export function useProductApi(): ProductApi {
+  const { orgId } = useScope();
+  return useMemo(() => productApiFor(orgId), [orgId]);
 }
 
 /**

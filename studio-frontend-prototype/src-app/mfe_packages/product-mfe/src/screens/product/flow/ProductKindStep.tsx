@@ -11,15 +11,15 @@
 
 import { useEffect, useState } from 'react';
 import { Button } from '@gears-frontx/ui-kit';
-import { productApi } from '../../../api/client';
 import type { ProductKindAnswer } from '../../../api/types';
 import { kindTitle, type ProductKind } from '../../../model/product-kind';
 import { useFlowTranslations } from '../../../i18n';
-import { errText, StatusChip, useScope } from '../../common';
+import { errText, StatusChip, useScope, useProductApi } from '../../common';
 import common from '../../product.module.css';
 import styles from './flow.module.css';
 
 export function ProductKindStep() {
+  const productApi = useProductApi();
   const { projectId } = useScope();
   const { t } = useFlowTranslations();
   const [read, setRead] = useState<ProductKindAnswer | null>(null);
@@ -43,7 +43,7 @@ export function ProductKindStep() {
     return () => {
       live = false;
     };
-  }, [projectId]);
+  }, [projectId, productApi]);
 
   if (readErr) return <div className={common.error}>{t('kind_read_failed', { error: readErr })}</div>;
   if (!read) return null;

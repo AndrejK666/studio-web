@@ -11,7 +11,6 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { productApi } from '../../api/client';
 import { named, type ProjectSource } from '../../model/project-sources';
 import {
   descriptionHome,
@@ -22,7 +21,7 @@ import {
   type SourceFlag,
 } from '../../model/source-roles';
 import { useProductTranslations } from '../../i18n';
-import { useScope } from '../common';
+import { useScope, useProductApi } from '../common';
 import styles from '../product.module.css';
 
 const FLAGS: readonly { flag: SourceFlag; text: string; title: string }[] = [
@@ -31,6 +30,7 @@ const FLAGS: readonly { flag: SourceFlag; text: string; title: string }[] = [
 ];
 
 export function SourceRoles({ round }: { round?: unknown }) {
+  const productApi = useProductApi();
   const { projectId } = useScope();
   const { t } = useProductTranslations();
   const [sources, setSources] = useState<ProjectSource[] | null>(null);
@@ -55,7 +55,7 @@ export function SourceRoles({ round }: { round?: unknown }) {
     return () => {
       live = false;
     };
-  }, [projectId, round, tick]);
+  }, [projectId, round, tick, productApi]);
 
   const toggle = useCallback(
     async (dir: string, flag: SourceFlag, on: boolean) => {
@@ -72,7 +72,7 @@ export function SourceRoles({ round }: { round?: unknown }) {
         setSaving(null);
       }
     },
-    [projectId]
+    [projectId, productApi]
   );
 
   const rows = named(sources ?? []);

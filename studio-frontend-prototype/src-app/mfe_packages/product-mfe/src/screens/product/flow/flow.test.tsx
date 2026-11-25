@@ -174,7 +174,7 @@ describe('ProductKindStep', () => {
     expect(document.querySelector('[data-product-kind="undecided"]')).not.toBeNull();
     expect(screen.getByText('The specs say too little yet to tell.')).toBeTruthy();
     fireEvent.click(confirm);
-    await waitFor(() => expect(put).toHaveBeenCalledWith('', 'p1', 'gear_product'));
+    await waitFor(() => expect(put).toHaveBeenCalledWith('o1', 'p1', 'gear_product'));
     await waitFor(() => expect(document.querySelector('[data-product-kind="gear_product"]')).not.toBeNull());
   });
 

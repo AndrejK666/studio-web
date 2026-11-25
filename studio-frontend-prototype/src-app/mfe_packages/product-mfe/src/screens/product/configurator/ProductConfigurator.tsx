@@ -16,7 +16,7 @@
 import { useMemo, useRef, useState, type DragEvent } from 'react';
 import { Badge, Button, Input, Textarea } from '@gears-frontx/ui-kit';
 import { responseStatus, violationOfType } from '@constructor-studio/mfe-shared';
-import { productApi, type GearConfig, type ProductPreview } from '../../../api/client';
+import { type GearConfig, type ProductPreview } from '../../../api/client';
 import { gearDeployState, type GearDeployState, type ProductAt, type Running } from '../../../model/gear-deploys-model';
 import { gearLabel } from '../../../model/product';
 import {
@@ -40,7 +40,7 @@ import {
   type Readiness,
 } from '../../../model/product-configurator';
 import { useConfiguratorTranslations } from '../../../i18n';
-import { errText } from '../../common';
+import { errText, useProductApi } from '../../common';
 import { BringsWithIt } from './BringsWithIt';
 import { GearConfigForm } from './GearConfigForm';
 import { useGearExplanations, type Explanations } from './hooks';
@@ -610,6 +610,7 @@ function Explanation({
   explanations: Explanations;
   t: Text;
 }) {
+  const productApi = useProductApi();
   const kept = explanations.byId.get(gearId) ?? null;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
@@ -707,6 +708,7 @@ const EXPLAIN_AT_ONCE = 3;
 /** "Explain all without description": a model explains every gear that says
  *  nothing yet, three at a time, with progress and a way to stop. */
 function ExplainAll({ index, explanations, t }: { index: CatalogueIndex; explanations: Explanations; t: Text }) {
+  const productApi = useProductApi();
   const left = useMemo(() => unexplained(index, explanations.byId), [index, explanations.byId]);
   const [run, setRun] = useState<{ total: number; progress: BatchResult; stopping: boolean } | null>(null);
   const [said, setSaid] = useState<string | null>(null);

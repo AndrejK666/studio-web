@@ -21,7 +21,7 @@
 
 import { useEffect, useState } from 'react';
 import { Badge, Button } from '@gears-frontx/ui-kit';
-import { productApi, type GearConfig, type ProductChange, type ProjectProduct } from '../../../api/client';
+import { type GearConfig, type ProductChange, type ProjectProduct } from '../../../api/client';
 import {
   isFinished,
   matcherProposals,
@@ -41,7 +41,7 @@ import {
 import { isRunning } from '../../../model/gear-match';
 import { useAssemblyTranslations } from '../../../i18n';
 import { openScreen } from '@constructor-studio/mfe-shared';
-import { errText, openTab, Segmented, StatusChip, useScope } from '../../common';
+import { errText, openTab, Segmented, StatusChip, useScope, useProductApi } from '../../common';
 import { catalogueNames, indexCatalogue, pickNames } from '../../../model/product-configurator';
 import page from '../../product.module.css';
 
@@ -59,6 +59,7 @@ interface Pending {
 const PROJECT_KITS_ROUTE = '/project-kits';
 
 export function AssemblyPanel({ round, onChanged }: { round: number; onChanged: () => void }) {
+  const productApi = useProductApi();
   const { projectId, bridge } = useScope();
   const { t } = useAssemblyTranslations();
   const [a, setA] = useState<AssemblyStrategy | null>(null);
@@ -81,7 +82,7 @@ export function AssemblyPanel({ round, onChanged }: { round: number; onChanged: 
     return () => {
       live = false;
     };
-  }, [projectId, round]);
+  }, [projectId, round, productApi]);
 
   // A server without the strategy (an older backend) leaves the page as it was.
   if (readError && !a) return null;

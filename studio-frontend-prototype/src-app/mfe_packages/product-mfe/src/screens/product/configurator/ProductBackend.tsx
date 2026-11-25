@@ -22,12 +22,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Badge, Button } from '@gears-frontx/ui-kit';
 import { responseStatus } from '@constructor-studio/mfe-shared';
-import {
-  productApi,
-  type EnvironmentBinding,
-  type ProductDescriptionRevision,
-  type ProductPreview,
-} from '../../../api/client';
+import { type EnvironmentBinding, type ProductDescriptionRevision, type ProductPreview } from '../../../api/client';
 import {
   PRODUCT_PROFILES,
   checkLanded,
@@ -44,7 +39,7 @@ import {
 } from '../../../model/product';
 import { PRODUCT_COMMAND_EVENT, announceNext } from '../../../model/product-sections';
 import { useConfiguratorTranslations } from '../../../i18n';
-import { errText, StatusChip, useScope, type Tone } from '../../common';
+import { errText, StatusChip, useScope, type Tone, useProductApi } from '../../common';
 import { useGearCatalogue } from '../catalogue';
 import { applyFix, fixesFrom, nextStep, productionFixes, type Fix } from './components-flow';
 import { GearConfigForm } from './GearConfigForm';
@@ -83,6 +78,7 @@ export function descriptionConflictOf(e: unknown): DescriptionConflict | null {
 type Targets = { bindings: EnvironmentBinding[]; environments: { id: string; name: string }[] } | null;
 
 export function ProductBackend() {
+  const productApi = useProductApi();
   const { projectId } = useScope();
   const { t } = useConfiguratorTranslations();
   const product = useProjectProduct(projectId);
@@ -106,7 +102,7 @@ export function ProductBackend() {
     return () => {
       live = false;
     };
-  }, [projectId]);
+  }, [projectId, productApi]);
   const bindings = useMemo(() => targets?.bindings ?? [], [targets]);
   const autoProfiles = profilesToCheck(bindings);
 
@@ -137,7 +133,7 @@ export function ProductBackend() {
     return () => {
       live = false;
     };
-  }, [projectId]);
+  }, [projectId, productApi]);
 
   /** A save's check still running on the server, for its profile and description. */
   const [background, setBackground] = useState<{ profile: string; sha256: string; tries: number } | null>(null);

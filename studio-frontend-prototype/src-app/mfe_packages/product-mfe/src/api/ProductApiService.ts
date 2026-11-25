@@ -76,15 +76,14 @@ const ORG_SCOPED = [
   '/studio-domain-model/',
 ];
 
-let organization: string | null = null;
-
-/** The organization on screen: the root sets it from the shell's context. */
-export function setOrganization(id: string | null): void {
-  organization = id;
-}
-
-/** `path` naming the organization on screen, when it is one of `ORG_SCOPED` and there is one. */
-export function orgScoped(path: string, org: string | null = organization): string {
+/**
+ * `path` naming the organization on screen, when it is one of `ORG_SCOPED` and there is one.
+ * Every caller passes it: it comes from the shell's context through the screen's
+ * scope, never from state kept in this module, so a switch of organization
+ * cannot send a request under the one before. It is part of each read's params,
+ * so a read's cached answer is that organization's own.
+ */
+export function orgScoped(path: string, org: string | null): string {
   if (!org || !ORG_SCOPED.some((p) => path.startsWith(p)) || /[?&]organization_id=/.test(path)) return path;
   return `${path}${path.includes('?') ? '&' : '?'}organization_id=${encodeURIComponent(org)}`;
 }
@@ -169,109 +168,110 @@ export class ProductApiService extends BaseApiService {
 
   readonly projectProduct = this.protocol(RestEndpointProtocol).queryWith<
     { nodes: { value: ProjectProduct }[] },
-    { projectId: string }
-  >(({ projectId }) => orgScoped(`/studio-product/v1/projects/${enc(projectId)}/product`));
+    { projectId: string; org: string | null }
+  >(({ projectId, org }) => orgScoped(`/studio-product/v1/projects/${enc(projectId)}/product`, org));
 
-  saveProjectProduct(projectId: string) {
+  saveProjectProduct(org: string | null, projectId: string) {
     return this.rest.mutation<{ value: ProjectProduct }, SaveProductBody>(
       'PUT',
-      orgScoped(`/studio-product/v1/projects/${enc(projectId)}/product`)
+      orgScoped(`/studio-product/v1/projects/${enc(projectId)}/product`, org)
     );
   }
 
-  previewProduct(projectId: string) {
+  previewProduct(org: string | null, projectId: string) {
     return this.rest.mutation<ProductPreview, PreviewProductBody>(
       'POST',
-      orgScoped(`/studio-product/v1/projects/${enc(projectId)}/product/preview`)
+      orgScoped(`/studio-product/v1/projects/${enc(projectId)}/product/preview`, org)
     );
   }
 
-  readonly productDescription = this.protocol(RestEndpointProtocol).queryWith<ProductDescription, { projectId: string }>(
-    ({ projectId }) => orgScoped(`/studio-product/v1/product-description?${project(projectId)}`)
+  readonly productDescription = this.protocol(RestEndpointProtocol).queryWith<ProductDescription, { projectId: string; org: string | null }>(
+    ({ projectId, org }) => orgScoped(`/studio-product/v1/product-description?${project(projectId)}`, org)
   );
 
   /** The description's history (ADR-0053), newest first, without the texts. */
   readonly productDescriptionRevisions = this.protocol(RestEndpointProtocol).queryWith<
     { items: Omit<ProductDescriptionRevision, 'text'>[]; total: number },
-    { projectId: string }
-  >(({ projectId }) => orgScoped(`/studio-product/v1/product-description-revisions?${project(projectId)}`));
+    { projectId: string; org: string | null }
+  >(({ projectId, org }) => orgScoped(`/studio-product/v1/product-description-revisions?${project(projectId)}`, org));
 
   readonly productDescriptionRevision = this.protocol(RestEndpointProtocol).queryWith<
     ProductDescriptionRevision,
-    { projectId: string; revision: number }
-  >(({ projectId, revision }) =>
-    orgScoped(`/studio-product/v1/product-description-revisions/${revision}?${project(projectId)}`)
+    { projectId: string; revision: number; org: string | null }
+  >(({ projectId, revision, org }) =>
+    orgScoped(`/studio-product/v1/product-description-revisions/${revision}?${project(projectId)}`, org)
   );
 
   /** The infra services as the description says them, merged with the catalogue's passports and the project's records. */
-  readonly productInfra = this.protocol(RestEndpointProtocol).queryWith<ProductInfra, { projectId: string }>(
-    ({ projectId }) => orgScoped(`/studio-product/v1/product-infra?${project(projectId)}`)
+  readonly productInfra = this.protocol(RestEndpointProtocol).queryWith<ProductInfra, { projectId: string; org: string | null }>(
+    ({ projectId, org }) => orgScoped(`/studio-product/v1/product-infra?${project(projectId)}`, org)
   );
 
   /** Save the whole list: the description's `infra` (a new revision when it changes) and the project's records. */
-  putProductInfra(projectId: string) {
+  putProductInfra(org: string | null, projectId: string) {
     return this.rest.mutation<ProductInfra, { base_revision?: number | null; items: InfraService[] }>(
       'PUT',
-      orgScoped(`/studio-product/v1/product-infra?${project(projectId)}`)
+      orgScoped(`/studio-product/v1/product-infra?${project(projectId)}`, org)
     );
   }
 
   /** What a product.gdl says (a text, a revision, or the latest): infra, profiles, which lines say which part. */
-  outlineProductDescription(projectId: string) {
+  outlineProductDescription(org: string | null, projectId: string) {
     return this.rest.mutation<DescriptionOutline, { text?: string; revision?: number }>(
       'POST',
-      orgScoped(`/studio-product/v1/product-description-outlines?${project(projectId)}`)
+      orgScoped(`/studio-product/v1/product-description-outlines?${project(projectId)}`, org)
     );
   }
 
   /** What the product is: Studio's proposal from the specs, and the member's choice. */
-  readonly productKind = this.protocol(RestEndpointProtocol).queryWith<ProductKindAnswer, { projectId: string }>(
-    ({ projectId }) => orgScoped(`/studio-product/v1/product-kind?${project(projectId)}`)
+  readonly productKind = this.protocol(RestEndpointProtocol).queryWith<ProductKindAnswer, { projectId: string; org: string | null }>(
+    ({ projectId, org }) => orgScoped(`/studio-product/v1/product-kind?${project(projectId)}`, org)
   );
 
-  confirmProductKind(projectId: string) {
+  confirmProductKind(org: string | null, projectId: string) {
     return this.rest.mutation<ProductKindAnswer, { kind: string }>(
       'PUT',
-      orgScoped(`/studio-product/v1/product-kind?${project(projectId)}`)
+      orgScoped(`/studio-product/v1/product-kind?${project(projectId)}`, org)
     );
   }
 
-  saveProductDescription(projectId: string) {
+  saveProductDescription(org: string | null, projectId: string) {
     return this.rest.mutation<
       { revision: ProductDescriptionRevision; created: boolean },
       { base_revision?: number | null; text: string; from_repository?: boolean }
-    >('POST', orgScoped(`/studio-product/v1/product-description-revisions?${project(projectId)}`));
+    >('POST', orgScoped(`/studio-product/v1/product-description-revisions?${project(projectId)}`, org));
   }
 
   readonly gdlFile = this.protocol(RestEndpointProtocol).queryWith<
     { source: string; path: string; text: string },
-    { projectId: string; what: { gear: string } | { path: string } }
-  >(({ projectId, what }) =>
+    { projectId: string; what: { gear: string } | { path: string }; org: string | null }
+  >(({ projectId, what, org }) =>
     orgScoped(
-      `/studio-product/v1/gdl-file?${project(projectId)}&${'gear' in what ? `gear=${enc(what.gear)}` : `path=${enc(what.path)}`}`
+      `/studio-product/v1/gdl-file?${project(projectId)}&${'gear' in what ? `gear=${enc(what.gear)}` : `path=${enc(what.path)}`}`,
+      org
     )
   );
 
-  gearConfigSchemas() {
+  gearConfigSchemas(org: string | null) {
     return this.rest.mutation<{ items: GearConfigSchema[]; total: number }, { gears: string[] }>(
       'POST',
-      orgScoped('/studio-product/v1/gearbox/config-schema')
+      orgScoped('/studio-product/v1/gearbox/config-schema', org)
     );
   }
 
-  completeProduct() {
+  completeProduct(org: string | null) {
     return this.rest.mutation<
       { gears: string[]; changes: ProductChange[]; config: GearConfig },
       { gears: string[]; config: GearConfig }
-    >('POST', orgScoped('/studio-product/v1/gearbox/complete'));
+    >('POST', orgScoped('/studio-product/v1/gearbox/complete', org));
   }
 
   readonly gearboxStatus = this.protocol(RestEndpointProtocol).queryWith<
     GearboxStatus,
-    { refresh?: boolean; organizationId?: string }
-  >(({ refresh, organizationId }) => {
+    { refresh?: boolean; organizationId?: string; org: string | null }
+  >(({ refresh, organizationId, org }) => {
     const q = [refresh ? 'refresh=true' : '', organizationId ? `organization_id=${enc(organizationId)}` : ''].filter(Boolean);
-    return orgScoped(`/studio-product/v1/gearbox${q.length ? `?${q.join('&')}` : ''}`);
+    return orgScoped(`/studio-product/v1/gearbox${q.length ? `?${q.join('&')}` : ''}`, org);
   });
 
   /** The engine's catalogue: every gear its roots hold, and whose roots they are. */
@@ -286,20 +286,20 @@ export class ProductApiService extends BaseApiService {
       /** Whose each of those roots is: project ids by source id. */
       project_source_owners?: Record<string, string[]>;
     },
-    Record<string, never>
-  >(() => orgScoped('/studio-product/v1/gearbox/catalogue'));
+    { org: string | null }
+  >(({ org }) => orgScoped('/studio-product/v1/gearbox/catalogue', org));
 
   /** The organization's explanations of gears, and whether the caller may change them. */
   readonly gearExplanations = this.protocol(RestEndpointProtocol).queryWith<
     { items: GearExplanation[]; total: number; may_manage?: boolean },
-    Record<string, never>
-  >(() => orgScoped('/studio-product/v1/gear-explanations'));
+    { org: string | null }
+  >(({ org }) => orgScoped('/studio-product/v1/gear-explanations', org));
 
   /** What a candidate gear would bring into the product with it. */
-  gearBrings() {
+  gearBrings(org: string | null) {
     return this.rest.mutation<GearBrings, { gears: string[]; candidate: string; config: GearConfig }>(
       'POST',
-      orgScoped('/studio-product/v1/gearbox/brings')
+      orgScoped('/studio-product/v1/gearbox/brings', org)
     );
   }
 
@@ -308,24 +308,24 @@ export class ProductApiService extends BaseApiService {
     ({ tenantId }) => `/account-management/v1/tenants/${enc(tenantId)}`
   );
 
-  generateGearExplanation(gearId: string) {
+  generateGearExplanation(org: string | null, gearId: string) {
     return this.rest.mutation<GearExplanation, { force: boolean }>(
       'POST',
-      orgScoped(`/studio-product/v1/gear-explanations/${enc(gearId)}/generations`)
+      orgScoped(`/studio-product/v1/gear-explanations/${enc(gearId)}/generations`, org)
     );
   }
 
-  updateGearExplanation(gearId: string) {
+  updateGearExplanation(org: string | null, gearId: string) {
     return this.rest.mutation<GearExplanation, { text: string }>(
       'PUT',
-      orgScoped(`/studio-product/v1/gear-explanations/${enc(gearId)}`)
+      orgScoped(`/studio-product/v1/gear-explanations/${enc(gearId)}`, org)
     );
   }
 
   readonly projectGearRepo = this.protocol(RestEndpointProtocol).queryWith<
     { nodes: { value: ProjectGearRepo }[] },
-    { projectId: string }
-  >(({ projectId }) => orgScoped(`/studio-product/v1/projects/${enc(projectId)}/gear-repo`));
+    { projectId: string; org: string | null }
+  >(({ projectId, org }) => orgScoped(`/studio-product/v1/projects/${enc(projectId)}/gear-repo`, org));
 
   /* ── environments (studio-environments) ── */
 
@@ -396,62 +396,62 @@ export class ProductApiService extends BaseApiService {
 
   readonly listComponents = this.protocol(RestEndpointProtocol).queryWith<
     { nodes: CatalogNode[]; truncated?: boolean; shadowed?: string[] },
-    { projectId?: string }
-  >(({ projectId }) =>
-    orgScoped(`/studio-components-catalog/v1/components${projectId ? `?${project(projectId)}` : ''}`)
+    { projectId?: string; org: string | null }
+  >(({ projectId, org }) =>
+    orgScoped(`/studio-components-catalog/v1/components${projectId ? `?${project(projectId)}` : ''}`, org)
   );
 
   readonly listComponentProfiles = this.protocol(RestEndpointProtocol).queryWith<
     { nodes: CatalogNode[] },
-    { projectId?: string }
-  >(({ projectId }) =>
-    orgScoped(`/studio-components-catalog/v1/profiles${projectId ? `?${project(projectId)}` : ''}`)
+    { projectId?: string; org: string | null }
+  >(({ projectId, org }) =>
+    orgScoped(`/studio-components-catalog/v1/profiles${projectId ? `?${project(projectId)}` : ''}`, org)
   );
 
   readonly screenPreviews = this.protocol(RestEndpointProtocol).queryWith<
     { items: ScreenPreview[]; total: number },
-    { component: string }
-  >(({ component }) => orgScoped(`/studio-components-catalog/v1/screen-previews?component=${enc(component)}`));
+    { component: string; org: string | null }
+  >(({ component, org }) => orgScoped(`/studio-components-catalog/v1/screen-previews?component=${enc(component)}`, org));
 
   /** Parameterized by nothing but the organization on screen, which the path names. */
   readonly catalogSources = this.protocol(RestEndpointProtocol).queryWith<
     { items: CatalogRepoSource[]; total: number },
-    Record<string, never>
-  >(() => orgScoped('/studio-components-catalog/v1/sources'));
+    { org: string | null }
+  >(({ org }) => orgScoped('/studio-components-catalog/v1/sources', org));
 
   /** One registry entry with its evidence (Project › Components' "could be a gear"). */
   readonly registryEntry = this.protocol(RestEndpointProtocol).queryWith<
     import('./types').RegistryEntry,
-    { name: string }
-  >(({ name }) => orgScoped(`/studio-components-catalog/v1/registry/${enc(name)}`));
+    { name: string; org: string | null }
+  >(({ name, org }) => orgScoped(`/studio-components-catalog/v1/registry/${enc(name)}`, org));
 
   /** Declare a candidate a gear (ADR-0041 P3): a pull request adding its manifest. */
-  declareRegistry(name: string) {
+  declareRegistry(org: string | null, name: string) {
     return this.rest.mutation<import('./types').RegistryDeclareResult, import('./types').RegistryDeclareInput>(
       'POST',
-      orgScoped(`/studio-components-catalog/v1/registry/${enc(name)}/declare`)
+      orgScoped(`/studio-components-catalog/v1/registry/${enc(name)}/declare`, org)
     );
   }
 
   /** A starter gear for a capability nobody has built, on the project's route. */
-  scaffoldGear(projectId: string) {
+  scaffoldGear(org: string | null, projectId: string) {
     return this.rest.mutation<import('./types').ScaffoldResult, import('./types').ScaffoldBody>(
       'POST',
-      orgScoped(`/studio-product/v1/projects/${enc(projectId)}/scaffold`)
+      orgScoped(`/studio-product/v1/projects/${enc(projectId)}/scaffold`, org)
     );
   }
 
-  saveCatalogSources() {
+  saveCatalogSources(org: string | null) {
     return this.rest.mutation<{ items: CatalogRepoSource[]; total: number }, { items: CatalogRepoSource[] }>(
       'PUT',
-      orgScoped('/studio-components-catalog/v1/sources')
+      orgScoped('/studio-components-catalog/v1/sources', org)
     );
   }
 
-  syncComponents() {
+  syncComponents(org: string | null) {
     return this.rest.mutation<{ run_id: string; status: string }, SyncComponentsBody | undefined>(
       'POST',
-      orgScoped('/studio-components-catalog/v1/sync')
+      orgScoped('/studio-components-catalog/v1/sync', org)
     );
   }
 
@@ -464,44 +464,44 @@ export class ProductApiService extends BaseApiService {
       unreadable?: { sources: UnreadableSource[] };
       view?: DerivedViewState | null;
     },
-    { projectId: string }
-  >(({ projectId }) => orgScoped(`/studio-components-catalog/v1/project-components?${project(projectId)}`));
+    { projectId: string; org: string | null }
+  >(({ projectId, org }) => orgScoped(`/studio-components-catalog/v1/project-components?${project(projectId)}`, org));
 
   /** Compute the project's components again from what its syncs stored (202 with the run). */
-  refreshProjectComponents(projectId: string) {
+  refreshProjectComponents(org: string | null, projectId: string) {
     return this.rest.mutation<{ run_id: string; status: string }, undefined>(
       'POST',
-      orgScoped(`/studio-components-catalog/v1/project-components/refresh?${project(projectId)}`)
+      orgScoped(`/studio-components-catalog/v1/project-components/refresh?${project(projectId)}`, org)
     );
   }
 
   readonly componentRegistry = this.protocol(RestEndpointProtocol).queryWith<
     { items: RegistryEntry[]; total: number },
-    { state?: string; project_id?: string; q?: string }
-  >((params) => {
+    { state?: string; project_id?: string; q?: string; org: string | null }
+  >(({ org, ...params }) => {
     const qs = new URLSearchParams({ limit: '500' });
     for (const [k, v] of Object.entries(params)) if (v) qs.set(k, v);
-    return orgScoped(`/studio-components-catalog/v1/registry?${qs}`);
+    return orgScoped(`/studio-components-catalog/v1/registry?${qs}`, org);
   });
 
   /* ── the specs (studio-spec-mapping, studio-documents) ── */
 
   readonly declaredCapabilities = this.protocol(RestEndpointProtocol).queryWith<
     { items: DeclaredCapability[]; total: number },
-    { projectId: string }
-  >(({ projectId }) => orgScoped(`/studio-spec-mapping/v1/capabilities?${project(projectId)}`));
+    { projectId: string; org: string | null }
+  >(({ projectId, org }) => orgScoped(`/studio-spec-mapping/v1/capabilities?${project(projectId)}`, org));
 
   readonly declaredRequirements = this.protocol(RestEndpointProtocol).queryWith<
     { items: DeclaredRequirement[]; total: number },
-    { projectId: string }
-  >(({ projectId }) => orgScoped(`/studio-spec-mapping/v1/requirements?${project(projectId)}`));
+    { projectId: string; org: string | null }
+  >(({ projectId, org }) => orgScoped(`/studio-spec-mapping/v1/requirements?${project(projectId)}`, org));
 
   readonly projectPlan = this.protocol(RestEndpointProtocol).queryWith<
     { items: PlanRow[]; total: number; profile?: ProfileAdvice | null },
-    { projectId: string }
-  >(({ projectId }) => orgScoped(`/studio-spec-mapping/v1/plan?${project(projectId)}`));
+    { projectId: string; org: string | null }
+  >(({ projectId, org }) => orgScoped(`/studio-spec-mapping/v1/plan?${project(projectId)}`, org));
 
-  conformance() {
+  conformance(org: string | null) {
     return this.rest.mutation<
       Conformance,
       {
@@ -511,7 +511,7 @@ export class ProductApiService extends BaseApiService {
         contracts: Record<string, string[]>;
         refresh?: boolean;
       }
-    >('POST', orgScoped('/studio-spec-mapping/v1/conformance'));
+    >('POST', orgScoped('/studio-spec-mapping/v1/conformance', org));
   }
 
   readonly capabilities = this.protocol(RestEndpointProtocol).queryWith<{ items: Capability[] }, { workspaceId: string }>(
@@ -559,31 +559,31 @@ export class ProductApiService extends BaseApiService {
   /** Send the project's specifications to the gears-matcher: one background run. */
   /** Start a match; `strategy` is the service strategy (`gears_matcher` when absent, ADR-0074). */
   /** Queue the engine's check of the latest saved revision for one profile. */
-  startProductCheck(projectId: string) {
+  startProductCheck(org: string | null, projectId: string) {
     return this.rest.mutation<
       { run_id: string; profile: string; state: string },
       { profile?: string; strictness?: string }
-    >('POST', orgScoped(`/studio-product/v1/product-check-runs?${project(projectId)}`));
+    >('POST', orgScoped(`/studio-product/v1/product-check-runs?${project(projectId)}`, org));
   }
 
-  startGearMatch(projectId: string, strategy?: string) {
+  startGearMatch(org: string | null, projectId: string, strategy?: string) {
     return this.rest.mutation<
       { run_id: string; match_id: string; state: string },
       { paths?: string[]; glob?: string; extract_max_calls?: number; idempotency_key?: string }
-    >('POST', orgScoped(`/studio-product/v1/gear-matches?${project(projectId)}${strategyParam(strategy)}`));
+    >('POST', orgScoped(`/studio-product/v1/gear-matches?${project(projectId)}${strategyParam(strategy)}`, org));
   }
 
   readonly gearMatches = this.protocol(RestEndpointProtocol).queryWith<
     { items: GearMatchItem[]; total: number },
-    { projectId: string; strategy?: string }
-  >(({ projectId, strategy }) => orgScoped(`/studio-product/v1/gear-matches?${project(projectId)}${strategyParam(strategy)}`));
+    { projectId: string; strategy?: string; org: string | null }
+  >(({ projectId, strategy, org }) => orgScoped(`/studio-product/v1/gear-matches?${project(projectId)}${strategyParam(strategy)}`, org));
 
   /** One match (`latest` of a strategy, or its id), read per requirement. */
   readonly gearMatch = this.protocol(RestEndpointProtocol).queryWith<
     GearMatch,
-    { projectId: string; matchId: string; strategy?: string }
-  >(({ projectId, matchId, strategy }) =>
-    orgScoped(`/studio-product/v1/gear-matches/${enc(matchId)}?${project(projectId)}${strategyParam(strategy)}`)
+    { projectId: string; matchId: string; strategy?: string; org: string | null }
+  >(({ projectId, matchId, strategy, org }) =>
+    orgScoped(`/studio-product/v1/gear-matches/${enc(matchId)}?${project(projectId)}${strategyParam(strategy)}`, org)
   );
 
   /** Connect the service an assembly strategy runs on, for the organization (an `assembly-service` connection). */
@@ -604,44 +604,44 @@ export class ProductApiService extends BaseApiService {
 
   readonly gearMatchDiff = this.protocol(RestEndpointProtocol).queryWith<
     GearMatchDiff,
-    { projectId: string; matchId: string; base?: string }
-  >(({ projectId, matchId, base }) =>
-    orgScoped(`/studio-product/v1/gear-matches/${enc(matchId)}/diff?${project(projectId)}${base ? `&base=${enc(base)}` : ''}`)
+    { projectId: string; matchId: string; base?: string; org: string | null }
+  >(({ projectId, matchId, base, org }) =>
+    orgScoped(`/studio-product/v1/gear-matches/${enc(matchId)}/diff?${project(projectId)}${base ? `&base=${enc(base)}` : ''}`, org)
   );
 
-  cancelGearMatch(projectId: string, matchId: string) {
+  cancelGearMatch(org: string | null, projectId: string, matchId: string) {
     return this.rest.mutation<GearMatchItem, Record<string, never>>(
       'POST',
-      orgScoped(`/studio-product/v1/gear-matches/${enc(matchId)}/cancel?${project(projectId)}`)
+      orgScoped(`/studio-product/v1/gear-matches/${enc(matchId)}/cancel?${project(projectId)}`, org)
     );
   }
 
-  putGearMatchDecision(projectId: string) {
+  putGearMatchDecision(org: string | null, projectId: string) {
     return this.rest.mutation<
       { subject: string; value?: string | null },
       { requirement_id: string; gear_id: string; decision: 'accepted' | 'rejected' | 'undecided'; match_id?: string }
-    >('PUT', orgScoped(`/studio-product/v1/gear-match-decisions?${project(projectId)}`));
+    >('PUT', orgScoped(`/studio-product/v1/gear-match-decisions?${project(projectId)}`, org));
   }
 
-  putGearMatchAnswer(projectId: string) {
+  putGearMatchAnswer(org: string | null, projectId: string) {
     return this.rest.mutation<
       { subject: string; value?: string | null },
       { question_id: string; text: string; topic?: string; match_id?: string }
-    >('PUT', orgScoped(`/studio-product/v1/gear-match-answers?${project(projectId)}`));
+    >('PUT', orgScoped(`/studio-product/v1/gear-match-answers?${project(projectId)}`, org));
   }
 
   /* ── how a product is assembled (studio-product, ADR-0072) ── */
 
   /** The strategy the project's product is assembled by, where it comes from, and why it falls back. */
-  readonly assemblyStrategy = this.protocol(RestEndpointProtocol).queryWith<AssemblyStrategy, { projectId: string }>(
-    ({ projectId }) => orgScoped(`/studio-product/v1/project-assembly-strategy?${project(projectId)}`)
+  readonly assemblyStrategy = this.protocol(RestEndpointProtocol).queryWith<AssemblyStrategy, { projectId: string; org: string | null }>(
+    ({ projectId, org }) => orgScoped(`/studio-product/v1/project-assembly-strategy?${project(projectId)}`, org)
   );
 
   /** The project's own choice; `null` follows the organization's default. */
-  setAssemblyStrategy(projectId: string) {
+  setAssemblyStrategy(org: string | null, projectId: string) {
     return this.rest.mutation<AssemblyStrategy, { strategy: StrategyId | null }>(
       'PUT',
-      orgScoped(`/studio-product/v1/project-assembly-strategy?${project(projectId)}`)
+      orgScoped(`/studio-product/v1/project-assembly-strategy?${project(projectId)}`, org)
     );
   }
 

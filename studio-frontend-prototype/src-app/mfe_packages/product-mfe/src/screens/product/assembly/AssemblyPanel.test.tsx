@@ -135,10 +135,10 @@ describe('AssemblyPanel', () => {
       .mockResolvedValue(strategy({ strategy: 'gears_matcher', chosen: 'gears_matcher', source: 'project', project: 'gears_matcher' }));
     draw();
     fireEvent.click(await found('[data-product-assembly-choice="gears_matcher"]'));
-    await waitFor(() => expect(set).toHaveBeenCalledWith('', 'p1', 'gears_matcher'));
+    await waitFor(() => expect(set).toHaveBeenCalledWith('o1', 'p1', 'gears_matcher'));
     await found('[data-product-assembly-effective="gears_matcher"]');
     fireEvent.click(document.querySelector('[data-product-assembly-choice="default"]')!);
-    await waitFor(() => expect(set).toHaveBeenCalledWith('', 'p1', null));
+    await waitFor(() => expect(set).toHaveBeenCalledWith('o1', 'p1', null));
   });
 
   it('proposes from the spec plan and adds only what the person confirms', async () => {
@@ -164,7 +164,7 @@ describe('AssemblyPanel', () => {
     const changed = draw();
     fireEvent.click(await found('[data-product-assembly-propose]'));
     await found('[data-product-assembly-proposal="authn-resolver"]');
-    expect(complete).toHaveBeenCalledWith('', ['api-gateway', 'authn-resolver'], {});
+    expect(complete).toHaveBeenCalledWith('o1', ['api-gateway', 'authn-resolver'], {});
     expect(save).not.toHaveBeenCalled();
     // What the completion changed is said with its reason; a gear still wanting settings is flagged.
     expect(document.querySelector('[data-product-assembly-change="tenant-resolver"]')).toBeTruthy();
@@ -195,7 +195,7 @@ describe('AssemblyPanel', () => {
     fireEvent.click(await found('[data-product-assembly-confirm]'));
     await waitFor(() => expect(decide).toHaveBeenCalled());
     expect(decide.mock.calls[0][2]).toMatchObject({ gear_id: 'gears-rust/authn-resolver', decision: 'accepted' });
-    expect(read).toHaveBeenCalledWith('', 'p1', 'm1', 'gears_matcher');
+    expect(read).toHaveBeenCalledWith('o1', 'p1', 'm1', 'gears_matcher');
   });
 
   it('says when no gear match has finished, and why', async () => {
@@ -278,10 +278,10 @@ describe('AssemblyPanel', () => {
     draw();
     expect((await found('[data-product-assembly-effective]')).textContent).toContain('Acme matcher');
     fireEvent.click(await found('[data-product-assembly-run="acme_matcher"]'));
-    await waitFor(() => expect(start).toHaveBeenCalledWith('', 'p1', {}, 'acme_matcher'));
+    await waitFor(() => expect(start).toHaveBeenCalledWith('o1', 'p1', {}, 'acme_matcher'));
     fireEvent.click(await found('[data-product-assembly-propose]'));
     await found('[data-product-assembly-proposal="authn-resolver"]');
-    expect(list).toHaveBeenCalledWith('', 'p1', 'acme_matcher');
-    expect(read).toHaveBeenCalledWith('', 'p1', 'm1', 'acme_matcher');
+    expect(list).toHaveBeenCalledWith('o1', 'p1', 'acme_matcher');
+    expect(read).toHaveBeenCalledWith('o1', 'p1', 'm1', 'acme_matcher');
   });
 });

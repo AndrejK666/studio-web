@@ -30,8 +30,8 @@ import {
 } from '@constructor-studio/mfe-shared';
 import { ProjectPage } from '@constructor-studio/mfe-shared/page';
 import { GridFailed } from '@constructor-studio/mfe-shared/grid';
-import { productApi } from '../../api/client';
 import type { Conformance, PlanRow } from '../../api/types';
+import type { ProductApi } from '../../api/client';
 import { capabilityEntities, keptSentences, suggestedCategory } from '../../model/capability-entities';
 import { layerOf } from '../../model/domain-layers';
 import { entityGears, gearRefs } from '../../model/entity-gears';
@@ -42,7 +42,7 @@ import { gearProblem, rowCoverage } from '../../model/spec-coverage';
 import { entitiesOf, type Entity, type GlossaryEntry } from '../../model/spec-model';
 import { useComponentsTranslations } from '../../i18n';
 import { useGearCatalogue } from '../product/catalogue';
-import { errText, openTab, useScope } from '../common';
+import { errText, openTab, useScope, useProductApi } from '../common';
 import { InventoryGrid, type InventoryCells } from './InventoryGrid';
 import { ProjectCandidate } from './ProjectCandidate';
 import { ScaffoldDialog } from './ScaffoldDialog';
@@ -70,6 +70,7 @@ interface Read {
 /** What each environment the project deploys to runs now (the prototype's
  *  `useRunning`): null while read, or when this Studio keeps no deployments. */
 function useRunning(projectId: string): Running[] | null {
+  const productApi = useProductApi();
   const [running, setRunning] = useState<Running[] | null>(null);
   useEffect(() => {
     let live = true;
@@ -85,13 +86,13 @@ function useRunning(projectId: string): Running[] | null {
     return () => {
       live = false;
     };
-  }, [projectId]);
+  }, [projectId, productApi]);
   return running;
 }
 
 /** The code's conformance to the declared capabilities: two reads one after
  *  the other, seconds, so read beside the list rather than before it. */
-function readCode(projectId: string, workspaceId: string | null, refresh = false): Promise<Conformance> {
+function readCode(productApi: ProductApi, projectId: string, workspaceId: string | null, refresh = false): Promise<Conformance> {
   return Promise.all([
     productApi.declaredCapabilities(projectId),
     workspaceId ? productApi.capabilities(workspaceId) : Promise.resolve({ items: [] }),
@@ -117,7 +118,7 @@ function codeView(code: Conformance | null | undefined): DerivedViewState | null
 
 /** Plan × product × services × registry: what the inventory is drawn from.
  *  What could not be read is said in `partial` (as keys); only the plan is required. */
-async function readInventory(projectId: string): Promise<Read> {
+async function readInventory(productApi: ProductApi, projectId: string): Promise<Read> {
   const partial: string[] = [];
   const [plan, product, services, registry] = await Promise.all([
     // The plan is the Spec mapping kit's (ADR-0074): without it the plan's
@@ -161,6 +162,7 @@ export function ProjectComponentsInventory({
   onOpenProduct?: () => void;
   framed?: boolean;
 }) {
+  const productApi = useProductApi();
   const { projectId, workspaceId, bridge, container } = useScope();
   const { t } = useComponentsTranslations();
   const [read, setRead] = useState<Read | null>(null);
@@ -193,7 +195,7 @@ export function ProjectComponentsInventory({
     return () => {
       live = false;
     };
-  }, [scaffold, entities, projectId]);
+  }, [scaffold, entities, projectId, productApi]);
 
   // The catalogue says which subsystem the new gear most likely joins, and
   // gives the product's gears their maturity, read against where they run.
@@ -217,27 +219,27 @@ export function ProjectComponentsInventory({
 
   useEffect(() => {
     let live = true;
-    readInventory(projectId).then(
+    readInventory(productApi, projectId).then(
       (r) => live && setRead(r),
       (e: unknown) => live && setError(errText(e))
     );
     return () => {
       live = false;
     };
-  }, [projectId, round]);
+  }, [projectId, round, productApi]);
 
   // Beside the list, not before it: the rows show without the code's column.
   useEffect(() => {
     let live = true;
     // A read again keeps the last answer until the new one comes.
-    readCode(projectId, workspaceId, codeRound > 0).then(
+    readCode(productApi, projectId, workspaceId, codeRound > 0).then(
       (c) => live && setCode(c),
       () => live && setCode(null)
     );
     return () => {
       live = false;
     };
-  }, [projectId, workspaceId, round, codeRound]);
+  }, [projectId, workspaceId, round, codeRound, productApi]);
 
   /** Read the services again (a computation running, or asked for). */
   const rereadServices = () => {

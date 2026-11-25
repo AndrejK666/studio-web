@@ -6,10 +6,10 @@
  */
 
 import { useEffect, useState } from 'react';
-import { productApi, type GearConfig } from '../../../api/client';
+import { type GearConfig } from '../../../api/client';
 import { bringsSummary, contractLabel, type GearBrings } from '../../../model/gear-brings';
 import { useConfiguratorTranslations } from '../../../i18n';
-import { errText } from '../../common';
+import { errText, useProductApi } from '../../common';
 import common from '../../product.module.css';
 import styles from './configurator.module.css';
 
@@ -24,6 +24,7 @@ export function BringsWithIt({
   candidate: string;
   onClose: () => void;
 }) {
+  const productApi = useProductApi();
   const { t } = useConfiguratorTranslations();
   const [read, setRead] = useState<GearBrings | { error: string } | null>(null);
 
@@ -36,7 +37,7 @@ export function BringsWithIt({
     return () => {
       live = false;
     };
-  }, [picks, candidate, config]);
+  }, [picks, candidate, config, productApi]);
 
   return (
     <div className={styles.panel} role="region" aria-label={t('brings_title', { gear: candidate })}>

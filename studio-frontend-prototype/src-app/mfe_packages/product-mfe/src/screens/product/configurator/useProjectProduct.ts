@@ -6,15 +6,9 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import {
-  productApi,
-  type GearboxStatus,
-  type GearConfig,
-  type ProductChange,
-  type ProjectProduct,
-} from '../../../api/client';
+import { type GearboxStatus, type GearConfig, type ProductChange, type ProjectProduct } from '../../../api/client';
 import { productIdFrom } from '../../../model/product';
-import { errText } from '../../common';
+import { errText, useProductApi } from '../../common';
 
 export interface ProductState {
   /** The engine's status; null while loading or when the call failed. */
@@ -46,6 +40,7 @@ export interface ProductState {
 }
 
 export function useProjectProduct(projectId: string): ProductState {
+  const productApi = useProductApi();
   const [gearbox, setGearbox] = useState<GearboxStatus | null>(null);
   const [record, setRecord] = useState<ProjectProduct | null>(null);
   const [projectName, setProjectName] = useState<string | null>(null);
@@ -80,7 +75,7 @@ export function useProjectProduct(projectId: string): ProductState {
     return () => {
       live = false;
     };
-  }, [projectId]);
+  }, [projectId, productApi]);
 
   const name = record?.name ?? projectName ?? record?.product_id ?? projectId;
   const productId = record?.product_id ?? productIdFrom(projectName ?? name);
@@ -98,7 +93,7 @@ export function useProjectProduct(projectId: string): ProductState {
         .catch((cause) => setSaveError(errText(cause)));
     }, 400);
     return () => clearTimeout(timer);
-  }, [picks, config, loaded, projectId, productId, name]);
+  }, [picks, config, loaded, projectId, productId, name, productApi]);
 
   const setPicks = useCallback((update: (current: string[]) => string[]) => {
     dirty.current = true;
@@ -121,13 +116,13 @@ export function useProjectProduct(projectId: string): ProductState {
         setPicks(() => start);
       }
     },
-    [config, setPicks]
+    [config, setPicks, productApi]
   );
 
   const refresh = useCallback(async () => {
     const saved = await productApi.projectProduct(projectId).catch(() => null);
     if (saved) setRecord(saved);
-  }, [projectId]);
+  }, [projectId, productApi]);
 
   return {
     gearbox,

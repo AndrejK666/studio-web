@@ -7,7 +7,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent } from 'react';
 import type { ScreenPreview as ScreenPicture } from '../../../api/types';
-import { productApi } from '../../../api/client';
 import {
   MAP_LAYERS,
   SHELL_NODE,
@@ -25,6 +24,7 @@ import { shortCommit } from '../../../model/screen-previews';
 import { useMapTranslations } from '../../../i18n';
 import { DRAG_GEAR, DRAG_MFE, KIND_GLYPH, hueOf, kindWord, screensOf, stateWord, type MapLook, type Text } from './words';
 import styles from './ProductMap.module.css';
+import { useProductApi, useScope } from '../../common';
 
 const cx = (...names: (string | false | null | undefined)[]) => names.filter(Boolean).join(' ');
 
@@ -37,14 +37,18 @@ const cx = (...names: (string | false | null | undefined)[]) => names.filter(Boo
 const pictures = new Map<string, Promise<ScreenPicture[]>>();
 
 function usePictures(component: string | null): ScreenPicture[] | null {
+  const { orgId } = useScope();
+  const productApi = useProductApi();
   const [items, setItems] = useState<{ component: string; items: ScreenPicture[] } | null>(null);
   useEffect(() => {
     if (!component) return;
     let live = true;
-    let read = pictures.get(component);
+    // Each organization's catalogue keeps its own pictures.
+    const key = `${orgId ?? ''} ${component}`;
+    let read = pictures.get(key);
     if (!read) {
       read = loadScreenPreviews(component, () => productApi.screenPreviews(component).then((r) => r.items ?? []));
-      pictures.set(component, read);
+      pictures.set(key, read);
     }
     void read.then((r) => {
       if (live) setItems({ component, items: r });
@@ -52,7 +56,7 @@ function usePictures(component: string | null): ScreenPicture[] | null {
     return () => {
       live = false;
     };
-  }, [component]);
+  }, [component, orgId, productApi]);
   return component && items?.component === component ? items.items : null;
 }
 

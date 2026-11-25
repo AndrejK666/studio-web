@@ -11,19 +11,18 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Badge, Button } from '@gears-frontx/ui-kit';
-import { productApi } from '../../../api/client';
 import type { DeployEnvironment, InfraPassport, InfraService, ProductTechnology } from '../../../api/types';
 import { bindNeeds, deployable, importedFrom, offeredInfra, serviceFrom, sourceText, variableOf } from '../../../model/infra-services';
 import { infraStore } from '../../../model/infra-store';
 import { useMapTranslations } from '../../../i18n';
-import { errText, useScope } from '../../common';
+import { errText, useScope, useProductApi } from '../../common';
 import styles from './ProductMap.module.css';
 
 /** The bearer argument the moved-unchanged store still takes; `authShared()` carries the real one. */
-const NO_TOKEN = '';
 
 export function InfraLane({ needs, environments }: { needs: ProductTechnology[] | null; environments: DeployEnvironment[] }) {
-  const { projectId } = useScope();
+  const productApi = useProductApi();
+  const { projectId, orgId } = useScope();
   const { t } = useMapTranslations();
   const [services, setServices] = useState<InfraService[] | null>(null);
   const [offered, setOffered] = useState<InfraPassport[]>([]);
@@ -36,7 +35,7 @@ export function InfraLane({ needs, environments }: { needs: ProductTechnology[] 
   useEffect(() => {
     let live = true;
     Promise.all([
-      infraStore(NO_TOKEN, projectId)
+      infraStore(orgId, projectId)
         .load()
         .catch(() => ({ items: [] as InfraService[] })),
       productApi.listComponents(projectId).catch(() => ({ nodes: [] })),
@@ -48,14 +47,14 @@ export function InfraLane({ needs, environments }: { needs: ProductTechnology[] 
     return () => {
       live = false;
     };
-  }, [projectId, round]);
+  }, [projectId, round, orgId, productApi]);
 
   const save = useCallback(
     async (next: InfraService[], what: string) => {
       setBusy(what);
       setError(null);
       try {
-        const saved = await infraStore(NO_TOKEN, projectId).save(next, null);
+        const saved = await infraStore(orgId, projectId).save(next, null);
         setServices(saved.items);
         setNote(what);
       } catch (e) {
@@ -64,7 +63,7 @@ export function InfraLane({ needs, environments }: { needs: ProductTechnology[] 
         setBusy(null);
       }
     },
-    [projectId]
+    [projectId, orgId]
   );
 
   const importImage = async (s: InfraService) => {

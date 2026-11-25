@@ -10,11 +10,11 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { Button, Input, NativeSelect, NativeSelectOption } from '@gears-frontx/ui-kit';
-import { productApi, type GearConfig, type GearConfigSchema } from '../../../api/client';
+import { type GearConfig, type GearConfigSchema } from '../../../api/client';
 import { configRows, configText, configValue, unsetRequired, type ConfigRow } from '../../../model/gear-config';
 import { gearLabel } from '../../../model/product';
 import { useConfiguratorTranslations } from '../../../i18n';
-import { errText } from '../../common';
+import { errText, useProductApi } from '../../common';
 import common from '../../product.module.css';
 import styles from './configurator.module.css';
 
@@ -29,6 +29,7 @@ export interface GearConfigProduct {
 }
 
 export function GearConfigForm({ product }: { product: GearConfigProduct }) {
+  const productApi = useProductApi();
   const { t } = useConfiguratorTranslations();
   const { picks, config } = product;
   const [schemas, setSchemas] = useState<GearConfigSchema[]>([]);
@@ -53,7 +54,7 @@ export function GearConfigForm({ product }: { product: GearConfigProduct }) {
     return () => {
       live = false;
     };
-  }, [asked]);
+  }, [asked, productApi]);
 
   const gears = useMemo(() => configRows(picks, schemas, config), [picks, schemas, config]);
   const missing = unsetRequired(gears);

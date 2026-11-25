@@ -10,9 +10,9 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { PRODUCT_CHANGED_EVENT, productApi } from '../../api/client';
+import { PRODUCT_CHANGED_EVENT } from '../../api/client';
 import type { ProductCheck, ProductCheckRun, ProjectProduct } from '../../api/types';
-import { errText } from '../common';
+import { errText, useProductApi } from '../common';
 
 /** How often a queued check's record is read again, and for how long. */
 export const CHECK_READ_EVERY_MS = 4_000;
@@ -74,6 +74,7 @@ export function useKeptCheck(
   profile: string,
   kept: KeptRevision | null
 ): KeptCheck {
+  const productApi = useProductApi();
   const [following, setFollowing] = useState<string | null>(null);
   const [gaveUp, setGaveUp] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -86,7 +87,7 @@ export function useKeptCheck(
       (r) => setFollowing(r.run_id),
       (e: unknown) => setError(errText(e))
     );
-  }, [projectId, profile]);
+  }, [projectId, profile, productApi]);
   const start = useCallback(() => {
     setError(null);
     setGaveUp(null);
@@ -136,7 +137,7 @@ export function useKeptCheck(
       live = false;
       clearTimeout(timer);
     };
-  }, [watched, projectId, profile]);
+  }, [watched, projectId, profile, productApi]);
 
   return {
     check,

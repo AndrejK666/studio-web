@@ -5,14 +5,14 @@
  */
 
 import { useEffect, useState } from 'react';
-import { productApi } from '../../api/client';
 import { indexCatalogue, type CatalogueIndex } from '../../model/product-configurator';
-import { errText } from '../common';
+import { errText, useProductApi } from '../common';
 
 export type Catalogue = { index: CatalogueIndex } | { error: string } | null;
 
 /** `projectId`: the project on screen, whose own roots are "this project". */
 export function useGearCatalogue(on: boolean, projectId?: string): Catalogue {
+  const productApi = useProductApi();
   const [read, setRead] = useState<Catalogue>(null);
   useEffect(() => {
     if (!on) return;
@@ -24,6 +24,6 @@ export function useGearCatalogue(on: boolean, projectId?: string): Catalogue {
     return () => {
       live = false;
     };
-  }, [on, projectId]);
+  }, [on, projectId, productApi]);
   return read;
 }

@@ -27,7 +27,7 @@ import {
   NativeSelect,
   NativeSelectOption,
 } from '@gears-frontx/ui-kit';
-import { productApi, type ScreenPreview } from '../../../api/client';
+import { type ScreenPreview } from '../../../api/client';
 import { repoPathsOf } from '@constructor-studio/mfe-shared';
 import {
   FRONTX_SHELL_TEMPLATE,
@@ -58,7 +58,7 @@ import {
 } from '../../../model/frontend-constructor';
 import { pictureOf, previewBuild, shortCommit, type PreviewBuild } from '../../../model/screen-previews';
 import { useFrontendTranslations } from '../../../i18n';
-import { errText, StatusChip, useScope, type Tone } from '../../common';
+import { errText, StatusChip, useScope, type Tone, useProductApi } from '../../common';
 import { loadFrontxDefaults, useFrontxDefaults } from './frontxDefaults';
 import common from '../../product.module.css';
 import styles from './FrontendConstructor.module.css';
@@ -104,6 +104,7 @@ export function forgetPictures(): void {
 /** The build whose pictures each of `mfes` shows, by package name: `null`
  *  while reading and for a package no build pictured at its catalogue version. */
 function usePictureBuilds(mfes: readonly Mfe[]): Map<string, PreviewBuild | null> {
+  const productApi = useProductApi();
   const ask = mfes.map((m) => m.name).join(',');
   const [items, setItems] = useState<Map<string, ScreenPreview[]>>(() => new Map());
   useEffect(() => {
@@ -125,7 +126,7 @@ function usePictureBuilds(mfes: readonly Mfe[]): Map<string, PreviewBuild | null
     return () => {
       live = false;
     };
-  }, [ask]);
+  }, [ask, productApi]);
   return useMemo(() => {
     const out = new Map<string, PreviewBuild | null>();
     for (const m of mfes) {
@@ -159,6 +160,7 @@ function ShotDialog({ shot, build, onClose, t }: Shot & { onClose: () => void; t
 }
 
 export function FrontendConstructor() {
+  const productApi = useProductApi();
   const { projectId, orgId } = useScope();
   const { t } = useFrontendTranslations();
   const [data, setData] = useState<Loaded | null>(null);
@@ -196,7 +198,7 @@ export function FrontendConstructor() {
       productApi.listArtifactNodes('repo', projectId, undefined, 50).catch(() => ({ nodes: [] })),
       productApi.catalogSources().catch(() => ({ items: [] })),
       productApi.getProjectGearRepo(projectId).catch(() => ({ nodes: [] })),
-      loadFrontxDefaults(),
+      loadFrontxDefaults(orgId),
     ])
       .then(([components, profiles, product, cfg, repos, sources, gearRepo, defaults]) => {
         if (!alive) return;
@@ -238,7 +240,7 @@ export function FrontendConstructor() {
     return () => {
       alive = false;
     };
-  }, [projectId, loads]);
+  }, [projectId, loads, orgId, productApi]);
 
   /** Add `repo` to the organization's catalogue sources as FrontX (unless it
    *  is there already) and sync them, the way a scheduled sync does: no body,
