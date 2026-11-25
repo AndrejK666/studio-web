@@ -49,9 +49,9 @@ use toolkit::client_hub::ClientHub;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
-pub use super::overview::{GROWTH_ALERT, Row, STUCK_DAYS, Windows, growth, median};
 #[cfg(test)]
 pub use super::overview::windows;
+pub use super::overview::{GROWTH_ALERT, Row, STUCK_DAYS, Windows, growth, median};
 pub use super::status::Kits;
 pub use crate::user_profile::RosterMember;
 
