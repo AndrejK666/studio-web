@@ -293,10 +293,10 @@ async fn without_a_usable_key_the_build_stops_and_the_step_says_why_and_stays_st
 
 // ── the chain goes on ────────────────────────────────────────────────────
 
-#[derive(Default)]
 /// One queued call: kind, payload, dedup key, and whether it was a replace.
 type Queued = (String, Value, Option<String>, bool);
 
+#[derive(Default)]
 struct RecordingQueue(Mutex<Vec<Queued>>);
 
 #[async_trait]
