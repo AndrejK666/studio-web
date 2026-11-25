@@ -879,6 +879,11 @@ gears:
       # `graph` for the gear's own graph types and the index above.
       storage:
         artifacts: "model"
+      # Repository syncs run at once, 1..=8. Each holds its own memory peak:
+      # #563 held it to one after OOM kills (#561); chunked stores and PR
+      # linking in portions have lowered the peak since.
+      ingest:
+        parallel: ${STUDIO_INGEST_PARALLEL:-1}
 
   # ── studio-domain-model (the domain read model) ──
   # Every live domain object and relation as rows, so POST /query runs in

@@ -232,10 +232,11 @@ progress shows how it ended; a failed read is kept on the repository node as
 `ci_error`, beside `ci_runs`), the newest 200 CI artifacts and 200 releases
 (read again every sync: artifacts expire, releases gain files), 50 pages of 100 per API channel, and review threads of at most 200 open pull requests. Nodes and
 edges are flushed 1,000 per call (edges went from 5,000 after a large ingest
-took part in an OOM kill, studio-web#561), and a process runs one ingest at a
-time while other task types proceed. A comment thread beyond the file cap is
-not counted, rather than exempting `.studio/` and reopening the memory hole the
-cap closes.
+took part in an OOM kill, studio-web#561), and a process runs at most
+`ingest.parallel` ingests at once (1..=8, default 1, `STUDIO_INGEST_PARALLEL`;
+one since #563, the compose stand runs three) while other task types
+proceed. A comment thread beyond the file cap is not counted, rather than
+exempting `.studio/` and reopening the memory hole the cap closes.
 
 ## 3. Technical Architecture
 

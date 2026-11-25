@@ -83,6 +83,24 @@ use service::IngestService;
 pub struct ArtifactIngestConfig {
     /// Where each kind of this gear's data is kept (ADR-0066 §8a).
     pub storage: ArtifactStorageConfig,
+    /// How the repository syncs themselves run.
+    pub ingest: IngestRunConfig,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(default)]
+pub struct IngestRunConfig {
+    /// Repository syncs one process runs at once, 1..=8 (clamped). Each
+    /// sync holds its own peak in memory, so more is faster for several
+    /// repositories at the price of a higher peak; one is what #563 settled
+    /// on after the OOM kills of studio-web#561.
+    pub parallel: usize,
+}
+
+impl Default for IngestRunConfig {
+    fn default() -> Self {
+        Self { parallel: 1 }
+    }
 }
 
 #[derive(Debug, Clone, Default, serde::Deserialize)]
@@ -123,6 +141,14 @@ impl Gear for StudioArtifactIngestGear {
         let results = registry.register(gts::type_schemas()).await?;
         RegisterResult::ensure_all_ok(&results)?;
         info!("studio-artifact-ingest: types registered");
+
+        // How many syncs run at once, fixed for the life of the process.
+        let config: ArtifactIngestConfig = ctx.config_or_default()?;
+        let parallel = ingest_task::set_ingest_parallel(config.ingest.parallel);
+        info!(
+            parallel,
+            "studio-artifact-ingest: repository syncs run at once"
+        );
 
         // The index is optional in the same way studio-events' log is: without
         // a `database:` section nothing is lost but speed, so the gear says so

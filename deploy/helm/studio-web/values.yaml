@@ -270,6 +270,11 @@ backend:
   # `slug`, `name`, `repository_url`, `default_version`. Empty is
   # Constructor's own kits; a value that does not read stops the backend.
   kitCatalogue: ""
+  # Repository syncs one backend Pod runs at once (1..=8), as
+  # STUDIO_INGEST_PARALLEL. Each sync adds its own memory peak: one since the
+  # OOM kills of #561 (#563); raise it only with the memory limit.
+  ingest:
+    parallel: 1
   # OpenTelemetry push to the cluster's collector (deploy/observability).
   #
   # The instruments already exist in the binary — the api-gateway gear installs
