@@ -12,7 +12,15 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { Badge, Button, NativeSelect, NativeSelectOption } from '@gears-frontx/ui-kit';
-import { isNotFound, openScreen, runWhenVisible, useScreenAvailability } from '@constructor-studio/mfe-shared';
+import {
+  isNotFound,
+  kitAbsent,
+  openScreen,
+  runWhenVisible,
+  useScreenAvailability,
+  type KitAbsence,
+} from '@constructor-studio/mfe-shared';
+import { KitAbsentState } from '@constructor-studio/mfe-shared/page';
 import type { BuildLog, DeployEnvironment, ProjectBuildConfig } from '../../api/types';
 import {
   buildWorkflowOf,
@@ -80,6 +88,8 @@ export function ProjectBuilds({
   // among the product's builds.
   const [runs, setRuns] = useState<BuildRun[] | null>(null);
   const [runsError, setRunsError] = useState<string | null>(null);
+  // The CI runs are project-git's (studio-artifact-ingest): without that kit there are none to list.
+  const [runsAbsent, setRunsAbsent] = useState<KitAbsence | null>(null);
   const [ciFailures, setCiFailures] = useState<{ repo: string; error: string }[]>([]);
   const [repoPaths, setRepoPaths] = useState<Map<string, string>>(new Map());
 
@@ -109,8 +119,14 @@ export function ProjectBuilds({
         if (!live) return;
         setRuns(buildsOf(page.nodes ?? []));
         setRunsError(null);
+        setRunsAbsent(null);
       })
-      .catch((e: unknown) => live && setRunsError(errText(e)));
+      .catch((e: unknown) => {
+        if (!live) return;
+        const why = kitAbsent(e, { kit: 'project-git' });
+        setRunsAbsent(why);
+        setRunsError(why ? null : errText(e));
+      });
     return () => {
       live = false;
     };
@@ -176,6 +192,7 @@ export function ProjectBuilds({
           setConfig={setConfig}
           runs={runs}
           error={runsError}
+          absent={runsAbsent}
           failures={ciFailures}
           repoPaths={repoPaths}
           builds={ideBuilds}
@@ -194,6 +211,7 @@ function InCi({
   setConfig,
   runs,
   error,
+  absent,
   failures,
   repoPaths,
   builds,
@@ -203,6 +221,8 @@ function InCi({
   setConfig: (c: ProjectBuildConfig) => void;
   runs: BuildRun[] | null;
   error: string | null;
+  /** The CI runs' kit is not here: said instead of the list. */
+  absent: KitAbsence | null;
   failures: { repo: string; error: string }[];
   repoPaths: Map<string, string>;
   /** The product's builds as recorded: a pipeline's names its run. */
@@ -288,6 +308,7 @@ function InCi({
       {failures.map((f) => (
         <ErrorLine key={f.repo}>{t('ci_unreadable', { repo: f.repo, error: f.error })}</ErrorLine>
       ))}
+      {absent && <KitAbsentState absence={absent} compact />}
       {error && <ErrorLine>{error}</ErrorLine>}
       {actionError && <ErrorLine>{actionError}</ErrorLine>}
       {note && (
@@ -295,7 +316,7 @@ function InCi({
           {note}
         </div>
       )}
-      {!error && runs === null && <p className={styles.muted}>{t('ci_loading')}</p>}
+      {!error && !absent && runs === null && <p className={styles.muted}>{t('ci_loading')}</p>}
       {runs && runs.length === 0 && (
         <div data-builds-empty>
           <b>{t('ci_none')}</b> <span className={styles.muted}>{t('ci_none_body')}</span>
