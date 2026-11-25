@@ -20,7 +20,8 @@ import { place, plainThread } from '../../model/findings';
 import { pullsOf } from '../../model/pulls';
 import { useSpecGraphTranslations } from '../../i18n';
 import styles from './SpecGraphScreen.module.css';
-import { refusalText } from '@constructor-studio/mfe-shared';
+import { kitAbsent, refusalText, type KitAbsence } from '@constructor-studio/mfe-shared';
+import { KitAbsentState } from '@constructor-studio/mfe-shared/page';
 
 type Text = ReturnType<typeof useSpecGraphTranslations>['t'];
 
@@ -49,6 +50,8 @@ export const PullsView: React.FC<{
   const [pending, setPending] = useState<Pending | null>(null);
   const [review, setReview] = useState<{ pull: OpenPullRequest; review: Review; cost?: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The open pull requests are Git collaboration's (studio-artifact-ingest): without it there are none to review.
+  const [absent, setAbsent] = useState<KitAbsence | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -59,7 +62,9 @@ export const PullsView: React.FC<{
       .catch((e: unknown) => {
         if (!live) return;
         setPulls([]);
-        setError(message(e));
+        const why = kitAbsent(e, { kit: 'project-git' });
+        if (why) setAbsent(why);
+        else setError(message(e));
       });
     return () => {
       live = false;
@@ -94,6 +99,7 @@ export const PullsView: React.FC<{
   };
 
   if (pulls === null) return <Skeleton className={styles.skeleton} />;
+  if (absent) return <KitAbsentState absence={absent} compact />;
   const { mine, others } = pullsOf(pulls, repository);
   return (
     <>
