@@ -213,7 +213,11 @@ fn with_costs_spend_is_attributed_grows_and_says_who() {
 
     let s = &a.data["spend"];
     assert_eq!(
-        (s["current"].as_f64(), s["previous"].as_f64(), s["own_keys"].as_f64()),
+        (
+            s["current"].as_f64(),
+            s["previous"].as_f64(),
+            s["own_keys"].as_f64()
+        ),
         (Some(40.0), Some(20.0), Some(6.0))
     );
     assert_eq!(
@@ -235,7 +239,10 @@ fn with_costs_spend_is_attributed_grows_and_says_who() {
     // +100%: the need, naming the project that grew.
     assert_eq!(a.needs.len(), 1);
     let need = &a.needs[0];
-    assert_eq!(need.detail.as_ref().unwrap().args["grower"].text.as_deref(), Some("Checkout"));
+    assert_eq!(
+        need.detail.as_ref().unwrap().args["grower"].text.as_deref(),
+        Some("Checkout")
+    );
     assert_eq!(need.action.as_ref().unwrap().route, "/costs");
 
     // What the core's rules read: spend per project, and who spent.

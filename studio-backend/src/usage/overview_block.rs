@@ -383,10 +383,8 @@ pub fn answer(read: &SpendRead, scope: &BlockScope<'_>) -> BlockAnswer {
         needs.push(BlockNeedDto {
             key: "spend".into(),
             tone: "warn".into(),
-            sentence: LineDto::new(english(
-                "Spend {growth} against the same days last month",
-            ))
-            .text("growth", growth_text(total, previous)),
+            sentence: LineDto::new(english("Spend {growth} against the same days last month"))
+                .text("growth", growth_text(total, previous)),
             detail: Some(detail),
             action: Some(LinkDto::to(COSTS_ROUTE, english("Open Costs"))),
             details: None,

@@ -16,10 +16,10 @@ pub(crate) mod field_schema;
 mod frontx_gdl;
 mod history;
 mod memo;
-mod ownership;
-pub mod port;
 /// The Decisions block of an organization's Overview (ADR-0079 §4).
 pub mod overview_block;
+mod ownership;
+pub mod port;
 mod project_components; // a project's components, derived when its repositories sync
 mod project_gears;
 mod quality;

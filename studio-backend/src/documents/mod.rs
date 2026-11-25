@@ -27,6 +27,8 @@ mod mcp;
 mod migrations;
 pub(crate) mod model;
 mod model_table;
+/// The Specs block of an organization's Overview (ADR-0079 §4).
+pub mod overview_block;
 mod parts;
 mod paths;
 pub(crate) mod port;
@@ -40,8 +42,6 @@ mod repo_tests;
 mod rest;
 mod review_guide;
 mod review_store;
-/// The Specs block of an organization's Overview (ADR-0079 §4).
-pub mod overview_block;
 pub mod sdk;
 mod service;
 mod sources_flight;

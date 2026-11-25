@@ -11,7 +11,7 @@ use toolkit::client_hub::ClientHub;
 use toolkit_security::SecurityContext;
 
 use crate::organizations::port::{
-    BlockAnswer, BlockScope, BlockSource, ItemDto, ItemsDto, Level, LineDto, LinkDto,
+    BlockAnswer, BlockScope, BlockSource, OverviewItemDto, ItemsDto, Level, LineDto, LinkDto,
     OverviewBlock, Prepared, TileDto, words,
 };
 
@@ -63,7 +63,7 @@ pub fn answer(scope: &BlockScope<'_>) -> BlockAnswer {
     let specs = sum(scope.projects().map(|r| r.specs));
     let failing = sum(scope.projects().map(|r| r.specs_failing));
     let findings = sum(scope.projects().map(|r| r.open_findings));
-    let rows: Vec<ItemDto> = scope
+    let rows: Vec<OverviewItemDto> = scope
         .projects()
         .filter(|r| r.specs_failing.unwrap_or(0) > 0)
         .map(|r| {
@@ -72,7 +72,7 @@ pub fn answer(scope: &BlockScope<'_>) -> BlockAnswer {
                 Some(ws) => format!("{ws} / {}", r.name),
                 None => r.name.clone(),
             };
-            ItemDto {
+            OverviewItemDto {
                 text: LineDto::new(words(
                     "{place} · {count} failing specs",
                     "{place} · Спецификаций с ошибками: {count}",
@@ -92,9 +92,12 @@ pub fn answer(scope: &BlockScope<'_>) -> BlockAnswer {
         tile: Some(TileDto {
             title: words("Specs, every project", "Спеки всех проектов"),
             value: Some(
-                LineDto::new(words("{failing} of {specs} failing", "{failing} из {specs} не проходят"))
-                    .count("failing", failing.map(f64::from))
-                    .count("specs", specs.map(f64::from)),
+                LineDto::new(words(
+                    "{failing} of {specs} failing",
+                    "{failing} из {specs} не проходят",
+                ))
+                .count("failing", failing.map(f64::from))
+                .count("specs", specs.map(f64::from)),
             ),
             lines: vec![
                 LineDto::new(words(

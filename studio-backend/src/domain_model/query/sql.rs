@@ -362,11 +362,8 @@ impl Sql {
             None => String::new(),
             Some(list) if list.is_empty() => " AND FALSE".to_string(),
             Some(list) => {
-                let list = Value::Array(
-                    list.iter()
-                        .map(|o| Value::String(o.to_string()))
-                        .collect(),
-                );
+                let list =
+                    Value::Array(list.iter().map(|o| Value::String(o.to_string())).collect());
                 let p = self.param(SqlValue::Json(Some(Box::new(list))));
                 format!(" AND ro.owner_id::text IN (SELECT jsonb_array_elements_text({p}::jsonb))")
             }
@@ -728,16 +725,25 @@ mod tests {
     #[test]
     fn a_related_filter_is_an_exists_over_the_edges() {
         let (forwards, n) = related(false, None);
-        assert!(forwards.starts_with("EXISTS (SELECT 1 FROM studio_domain_edges AS re"), "{forwards}");
+        assert!(
+            forwards.starts_with("EXISTS (SELECT 1 FROM studio_domain_edges AS re"),
+            "{forwards}"
+        );
         assert!(forwards.contains("ro.instance_id = re.dst"), "{forwards}");
-        assert!(forwards.contains("re.src = studio_domain_objects.instance_id"), "{forwards}");
+        assert!(
+            forwards.contains("re.src = studio_domain_objects.instance_id"),
+            "{forwards}"
+        );
         assert!(forwards.contains("re.relation IN ($2, '')"), "{forwards}");
         assert!(!forwards.contains("owner_id"), "{forwards}");
         // edge type, relation, types, then the inner filter's one containment value
         assert_eq!(n, 4);
         let (backwards, _) = related(true, None);
         assert!(backwards.contains("ro.instance_id = re.src"), "{backwards}");
-        assert!(backwards.contains("re.dst = studio_domain_objects.instance_id"), "{backwards}");
+        assert!(
+            backwards.contains("re.dst = studio_domain_objects.instance_id"),
+            "{backwards}"
+        );
         // The PDP's owners narrow the related objects, and none reads none.
         let (owned, n) = related(false, Some(vec![uuid::Uuid::nil()]));
         assert!(owned.contains("ro.owner_id::text IN"), "{owned}");

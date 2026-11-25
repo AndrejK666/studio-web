@@ -68,7 +68,8 @@ impl BlockSource for DecisionsBlock {
 
 /// The block, from the registry entries' states.
 pub fn answer(states: &[String]) -> BlockAnswer {
-    let count = |s: &str| u32::try_from(states.iter().filter(|x| *x == s).count()).unwrap_or(u32::MAX);
+    let count =
+        |s: &str| u32::try_from(states.iter().filter(|x| *x == s).count()).unwrap_or(u32::MAX);
     let undecided = count("candidate");
     let mut needs = Vec::new();
     if undecided > 0 {

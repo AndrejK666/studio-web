@@ -50,6 +50,8 @@ use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
 pub use super::overview::{GROWTH_ALERT, Row, STUCK_DAYS, Windows, growth, median};
+#[cfg(test)]
+pub use super::overview::windows;
 pub use super::status::Kits;
 pub use crate::user_profile::RosterMember;
 
@@ -87,7 +89,12 @@ pub fn registered(level: Level) -> Vec<&'static OverviewBlock> {
         .into_iter()
         .filter(|b| b.level == level)
         .collect();
-    out.sort_by(|a, b| a.order.cmp(&b.order).then(a.kit.cmp(b.kit)).then(a.id.cmp(b.id)));
+    out.sort_by(|a, b| {
+        a.order
+            .cmp(&b.order)
+            .then(a.kit.cmp(b.kit))
+            .then(a.id.cmp(b.id))
+    });
     out
 }
 
@@ -105,7 +112,10 @@ pub struct BlockAt {
     pub organization: Uuid,
     /// The periods the overview compares.
     pub windows: Windows,
-    #[allow(dead_code, reason = "part of the block contract; no block reads it yet")]
+    #[allow(
+        dead_code,
+        reason = "part of the block contract; no block reads it yet"
+    )]
     pub now: OffsetDateTime,
     /// Only the signals one project's health reads (`project-status`): no
     /// tile, no needs, and nothing read only for them.
@@ -115,7 +125,10 @@ pub struct BlockAt {
 /// The organization as the core read it, for a block's answer.
 pub struct BlockScope<'a> {
     pub at: &'a BlockAt,
-    #[allow(dead_code, reason = "part of the block contract; no block reads it yet")]
+    #[allow(
+        dead_code,
+        reason = "part of the block contract; no block reads it yet"
+    )]
     pub organization_name: &'a str,
     /// The workspaces' and projects' rows; one project's alone when
     /// [`BlockAt::health_only`].
@@ -240,10 +253,11 @@ pub async fn answer_all(
     ctx: &SecurityContext,
     scope: &BlockScope<'_>,
 ) -> Vec<(&'static OverviewBlock, BlockAnswer)> {
-    let answers = futures_util::future::join_all(blocks.iter().zip(prepared).map(
-        |(b, p)| async move { b.source.answer(hub, ctx, p, scope).await.map(|a| (*b, a)) },
-    ))
-    .await;
+    let answers =
+        futures_util::future::join_all(blocks.iter().zip(prepared).map(|(b, p)| async move {
+            b.source.answer(hub, ctx, p, scope).await.map(|a| (*b, a))
+        }))
+        .await;
     answers.into_iter().flatten().collect()
 }
 
@@ -256,7 +270,10 @@ pub type Words = BTreeMap<String, String>;
 
 /// Words in English and Russian.
 pub fn words(en: &str, ru: &str) -> Words {
-    BTreeMap::from([("en".to_owned(), en.to_owned()), ("ru".to_owned(), ru.to_owned())])
+    BTreeMap::from([
+        ("en".to_owned(), en.to_owned()),
+        ("ru".to_owned(), ru.to_owned()),
+    ])
 }
 
 /// Words in English only.

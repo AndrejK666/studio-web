@@ -1492,13 +1492,28 @@ async fn relation_filters_answer_the_same() {
     for (ty, w) in [
         ("team", json!({"delivers": {"status": {"_eq": "paused"}}})),
         ("team", json!({"delivers": {"status": {"_eq": "active"}}})),
-        ("team", json!({"_not": {"delivers": {"status": {"_eq": "active"}}}})),
-        ("team", json!({"delivers": {"_or": [{"name": {"_eq": "Apollo"}}, {"name": {"_eq": "Gemini"}}]}})),
+        (
+            "team",
+            json!({"_not": {"delivers": {"status": {"_eq": "active"}}}}),
+        ),
+        (
+            "team",
+            json!({"delivers": {"_or": [{"name": {"_eq": "Apollo"}}, {"name": {"_eq": "Gemini"}}]}}),
+        ),
         ("team", json!({"delivers": {"id": {"_in": []}}})),
-        ("team", json!({"name": {"_eq": "Edge"}, "delivers": {"name": {"_contains": "gem"}}})),
+        (
+            "team",
+            json!({"name": {"_eq": "Edge"}, "delivers": {"name": {"_contains": "gem"}}}),
+        ),
         ("project", json!({"~delivers": {"name": {"_eq": "Core"}}})),
-        ("project", json!({"~delivers": {"aliases": {"_contains": "kernel"}}})),
-        ("project", json!({"_or": [{"status": {"_eq": "active"}}, {"~delivers": {"name": {"_eq": "Edge"}}}]})),
+        (
+            "project",
+            json!({"~delivers": {"aliases": {"_contains": "kernel"}}}),
+        ),
+        (
+            "project",
+            json!({"_or": [{"status": {"_eq": "active"}}, {"~delivers": {"name": {"_eq": "Edge"}}}]}),
+        ),
     ] {
         p.same(ty, json!({"where": w, "order_by": order})).await;
     }
@@ -1547,18 +1562,19 @@ async fn a_relation_filter_reads_only_what_the_caller_may_in_sql() {
     )))
     .with_policy(Arc::new(OneProject(org)));
     let (narrowed, ctx) = (&narrowed, &p.ctx);
-    let total = move |name: &'static str| {
-        async move {
-            let out = narrowed
-                .query(
-                    ctx,
-                    &query("team", json!({"where": {"delivers": {"name": {"_eq": name}}}})),
-                )
-                .await
-                .unwrap();
-            assert_eq!(out.source, "read_model");
-            out.rows.total
-        }
+    let total = move |name: &'static str| async move {
+        let out = narrowed
+            .query(
+                ctx,
+                &query(
+                    "team",
+                    json!({"where": {"delivers": {"name": {"_eq": name}}}}),
+                ),
+            )
+            .await
+            .unwrap();
+        assert_eq!(out.source, "read_model");
+        out.rows.total
     };
     assert_eq!(total("apollo").await, 1);
     assert_eq!(total("gemini").await, 0, "a hidden object does not match");
@@ -1615,11 +1631,8 @@ async fn folds_and_buckets_answer_the_same() {
         body
     };
     for bucket in ["day", "week", "month"] {
-        p.same(
-            "project",
-            bucketed(with(json!(["started_at"])), bucket),
-        )
-        .await;
+        p.same("project", bucketed(with(json!(["started_at"])), bucket))
+            .await;
         p.same(
             "project",
             bucketed(with(json!(["status", "started_at"])), bucket),

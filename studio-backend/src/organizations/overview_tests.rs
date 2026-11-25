@@ -429,7 +429,10 @@ fn the_blocks_come_back_in_their_order_and_feed_the_health_and_the_idle() {
     let dto = compose(
         ORG,
         &read(vec![
-            (&MONEY, money(Activity::Seen(BTreeSet::from(["person-ada".to_owned()])))),
+            (
+                &MONEY,
+                money(Activity::Seen(BTreeSet::from(["person-ada".to_owned()]))),
+            ),
             (&WORK, work()),
         ]),
         now,
@@ -446,17 +449,26 @@ fn the_blocks_come_back_in_their_order_and_feed_the_health_and_the_idle() {
 
     // The organization's own needs are the core's: the refused connection.
     assert_eq!(
-        dto.needs.iter().map(|n| n.kind.as_str()).collect::<Vec<_>>(),
+        dto.needs
+            .iter()
+            .map(|n| n.kind.as_str())
+            .collect::<Vec<_>>(),
         ["connection"]
     );
     assert_eq!(dto.needs[0].projects, ["Checkout"]);
 
     // The project's health reads both blocks' signals and its own row.
     let checkout = &dto.workspaces[0].projects[0];
-    assert_eq!((checkout.spend, checkout.previous, checkout.stuck), (Some(40.0), Some(20.0), 2));
+    assert_eq!(
+        (checkout.spend, checkout.previous, checkout.stuck),
+        (Some(40.0), Some(20.0), 2)
+    );
     assert!(checkout.broken);
     let reasons: Vec<&str> = checkout.reasons.iter().map(|r| r.kind.as_str()).collect();
-    assert_eq!(reasons, ["refused", "specs_failing", "stuck", "spend_grows"]);
+    assert_eq!(
+        reasons,
+        ["refused", "specs_failing", "stuck", "spend_grows"]
+    );
     assert_eq!(dto.workspaces[0].spend, Some(40.0));
 
     // Ada spent, Bob is on a pull request: Cid is idle.

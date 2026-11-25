@@ -165,8 +165,14 @@ fn the_tile_counts_the_projects_pull_requests_and_the_queues_are_needs() {
     let details = nobody.details.as_ref().unwrap();
     assert_eq!(details.rows.len(), 1);
     assert_eq!(details.rows[0].text, "#1 Update checkout");
-    assert_eq!(details.rows[0].href.as_deref(), Some("https://github.com/acme/shop/pull/7"));
-    assert_eq!(details.rows[0].note[1].args["repo"].text.as_deref(), Some("acme/shop"));
+    assert_eq!(
+        details.rows[0].href.as_deref(),
+        Some("https://github.com/acme/shop/pull/7")
+    );
+    assert_eq!(
+        details.rows[0].note[1].args["repo"].text.as_deref(),
+        Some("acme/shop")
+    );
     assert_eq!(a.data["pulls_without_reviewers"][0]["id"], "lonely");
 
     // The core's rules: three stuck in the project, and Ada seen at work.

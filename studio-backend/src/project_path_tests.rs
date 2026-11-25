@@ -3,9 +3,9 @@
 use serde_json::json;
 use uuid::Uuid;
 
+use super::DeliveryState as D;
 use super::*;
 use crate::organizations::status::{FindingFacts, ModelFacts, PathFacts, SpecQueues};
-use super::DeliveryState as D;
 
 fn step(id: &'static str, state: D, reason: &str) -> DeliveryStep {
     DeliveryStep {

@@ -178,8 +178,7 @@ pub(super) async fn link(
             match files {
                 Ok(paths) => {
                     edges.extend(paths.iter().filter_map(|path| {
-                        file_id(path.as_str())
-                            .map(|f| gts::modifies_edge(&p.node.instance_id, &f))
+                        file_id(path.as_str()).map(|f| gts::modifies_edge(&p.node.instance_id, &f))
                     }));
                     mark(&mut p.node, p.fingerprint.as_deref());
                     // Written again: it keeps the attachment scope the

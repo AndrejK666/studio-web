@@ -49,9 +49,9 @@ mod migrations;
 mod mirror_identity; // who the sync is to the GitHub mirror (#1094)
 mod model_store;
 mod outputs; // what the builds produced: CI artifacts and releases
-pub mod port;
 /// The Delivery block of an organization's Overview (ADR-0079 §4).
 pub mod overview_block;
+pub mod port;
 mod pr_links; // pull request → file links, resumable across runs
 mod pull_request_waits;
 mod rest;

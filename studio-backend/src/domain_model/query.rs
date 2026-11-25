@@ -677,7 +677,10 @@ struct ResolvedRelation {
 
 impl ResolvedRelation {
     fn node_type_ids(&self, ontology: &Ontology) -> Vec<String> {
-        self.targets.iter().map(|t| ontology.type_id_of(t)).collect()
+        self.targets
+            .iter()
+            .map(|t| ontology.type_id_of(t))
+            .collect()
     }
 }
 
@@ -799,12 +802,7 @@ fn plan_related(
         let mut used = Vec::new();
         fields_of(inner, &mut used);
         for f in &used {
-            check_field(
-                &admitted,
-                &r.target,
-                f,
-                &format!("the `where` on `{name}`"),
-            )?;
+            check_field(&admitted, &r.target, f, &format!("the `where` on `{name}`"))?;
         }
         *hop = Some(RelatedHop {
             node_type_ids: r.node_type_ids(ontology),
@@ -1872,7 +1870,12 @@ async fn run_with(
         let groups = match &agg {
             Some(a) => {
                 let found = mirror
-                    .groups(tenant, &root, sql::group_key(&a.keys), sql::folds(&a.metrics))
+                    .groups(
+                        tenant,
+                        &root,
+                        sql::group_key(&a.keys),
+                        sql::folds(&a.metrics),
+                    )
                     .await?;
                 Some(sorted(
                     found
@@ -2650,7 +2653,12 @@ mod tests {
     #[tokio::test]
     async fn a_relation_filter_names_what_the_model_has() {
         let s = fixture().await;
-        let m = refusal(&s, "team", json!({"where": {"members": {"name": {"_eq": "AK"}}}})).await;
+        let m = refusal(
+            &s,
+            "team",
+            json!({"where": {"members": {"name": {"_eq": "AK"}}}}),
+        )
+        .await;
         assert!(
             m.contains("has no relation `members`") && m.contains("has_members"),
             "{m}"
@@ -2776,7 +2784,9 @@ mod tests {
     #[tokio::test]
     async fn timestamps_group_by_day_week_and_month() {
         let s = versioned().await;
-        let keys = |bucket: &str| aggregate_query(json!({"group_by": ["started_at"], "bucket": {"started_at": bucket}}));
+        let keys = |bucket: &str| {
+            aggregate_query(json!({"group_by": ["started_at"], "bucket": {"started_at": bucket}}))
+        };
         let mut by_month: Vec<(Value, u64)> = s
             .query(&ctx(), &keys("month"))
             .await
@@ -2829,7 +2839,10 @@ mod tests {
         let m = refused(json!({"avg": ["started_at"]})).await;
         assert!(m.contains("numeric"), "{m}");
         let m = refused(json!({"max": ["status"]})).await;
-        assert!(m.contains("numeric or timestamp") && m.contains("started_at"), "{m}");
+        assert!(
+            m.contains("numeric or timestamp") && m.contains("started_at"),
+            "{m}"
+        );
         let m = refused(json!({"group_by": ["version"], "bucket": {"version": "day"}})).await;
         assert!(m.contains("timestamp"), "{m}");
         let m = refused(json!({"group_by": ["status"], "bucket": {"started_at": "day"}})).await;
@@ -2850,12 +2863,27 @@ mod tests {
     fn a_bucket_is_its_first_day_in_utc() {
         let at = |s: &str, b| bucket_of(Some(&json!(s)), b);
         assert_eq!(at("2026-03-04T12:00:00Z", Bucket::Day), json!("2026-03-04"));
-        assert_eq!(at("2026-03-04 23:00:00-05:00", Bucket::Day), json!("2026-03-05"));
-        assert_eq!(at("2026-03-04t01:00:00.123456789+03:00", Bucket::Day), json!("2026-03-03"));
+        assert_eq!(
+            at("2026-03-04 23:00:00-05:00", Bucket::Day),
+            json!("2026-03-05")
+        );
+        assert_eq!(
+            at("2026-03-04t01:00:00.123456789+03:00", Bucket::Day),
+            json!("2026-03-03")
+        );
         assert_eq!(at("2026-03-04", Bucket::Week), json!("2026-03-02"));
         assert_eq!(at("2026-03-01", Bucket::Week), json!("2026-02-23"));
-        assert_eq!(at("2024-02-29T00:00:00Z", Bucket::Month), json!("2024-02-01"));
-        for not in ["2026-02-30", "2026-13-01", "2026-03-04T25:00:00Z", "yesterday", "2026-03-04T10:00:00"] {
+        assert_eq!(
+            at("2024-02-29T00:00:00Z", Bucket::Month),
+            json!("2024-02-01")
+        );
+        for not in [
+            "2026-02-30",
+            "2026-13-01",
+            "2026-03-04T25:00:00Z",
+            "yesterday",
+            "2026-03-04T10:00:00",
+        ] {
             assert_eq!(at(not, Bucket::Day), Value::Null, "{not}");
         }
         assert_eq!(bucket_of(Some(&json!(7)), Bucket::Day), Value::Null);

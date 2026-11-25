@@ -30,7 +30,10 @@ use uuid::Uuid;
 /// One service identity a gear vouches for.
 pub struct ServiceRule {
     /// The gear that registered it, for the logs.
-    #[allow(dead_code, reason = "names the registering gear for readers of the registry")]
+    #[allow(
+        dead_code,
+        reason = "names the registering gear for readers of the registry"
+    )]
     pub gear: &'static str,
     /// The subject the service's token carries, when this deployment
     /// configures one. `None` means the rule names nobody and admits nothing.

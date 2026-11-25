@@ -180,7 +180,12 @@ impl BlockSource for DeliveryBlock {
                 ..BlockAnswer::default()
             });
         }
-        let accounts = accounts(hub, scope.at.organization, pulls.as_deref().unwrap_or_default()).await;
+        let accounts = accounts(
+            hub,
+            scope.at.organization,
+            pulls.as_deref().unwrap_or_default(),
+        )
+        .await;
         Some(answer(pulls.as_deref(), &accounts, scope))
     }
 }
@@ -256,8 +261,11 @@ pub fn answer(
         )
     };
 
-    let mut without_reviewers: Vec<&OpenPull> =
-        stuck_pulls.iter().copied().filter(|p| p.waiting == "nobody").collect();
+    let mut without_reviewers: Vec<&OpenPull> = stuck_pulls
+        .iter()
+        .copied()
+        .filter(|p| p.waiting == "nobody")
+        .collect();
     without_reviewers.sort_by_key(|p| std::cmp::Reverse(idle_days(p)));
     let place = |p: &OpenPull| {
         p.project_id
@@ -308,7 +316,10 @@ pub fn answer(
             BlockNeedDto {
                 key: format!(
                     "queue:{}",
-                    q.person_id.as_deref().or(q.who.as_deref()).unwrap_or("nobody")
+                    q.person_id
+                        .as_deref()
+                        .or(q.who.as_deref())
+                        .unwrap_or("nobody")
                 ),
                 tone: "warn".into(),
                 sentence: LineDto::new(english("{pulls} on {who}"))

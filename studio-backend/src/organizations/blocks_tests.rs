@@ -37,7 +37,10 @@ fn ids(blocks: &[&'static OverviewBlock]) -> Vec<&'static str> {
 #[test]
 fn blocks_come_in_their_order_and_only_where_their_kit_is_installed() {
     assert_eq!(ids(&registered(Level::Project)), ["first", "second"]);
-    assert_eq!(ids(&applicable(Level::Project, &Kits::All)), ["first", "second"]);
+    assert_eq!(
+        ids(&applicable(Level::Project, &Kits::All)),
+        ["first", "second"]
+    );
     let only_b = Kits::Only(vec!["test-kit-b".into()]);
     assert_eq!(ids(&applicable(Level::Project, &only_b)), ["second"]);
     assert!(applicable(Level::Project, &Kits::Only(vec![])).is_empty());
@@ -60,7 +63,10 @@ fn the_kits_own_blocks_are_registered_by_their_gears() {
     );
     // Without the Git kit, its block is not asked.
     let kits = Kits::Only(vec!["org-costs".into(), "components".into()]);
-    assert_eq!(ids(&applicable(Level::Organization, &kits)), ["spend", "decisions"]);
+    assert_eq!(
+        ids(&applicable(Level::Organization, &kits)),
+        ["spend", "decisions"]
+    );
 }
 
 fn seen(people: &[&str]) -> Activity {

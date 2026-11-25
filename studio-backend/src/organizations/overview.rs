@@ -849,10 +849,8 @@ impl Overview {
             let (names, rows) = tokio::join!(names, rows);
             (members, names, rows)
         };
-        let (prepared, (members, names, rows)) = tokio::join!(
-            blocks::prepare_all(&applicable, &self.hub, ctx, &at),
-            tree
-        );
+        let (prepared, (members, names, rows)) =
+            tokio::join!(blocks::prepare_all(&applicable, &self.hub, ctx, &at), tree);
         let places = places_of(org, &name, &rows);
         let runs = async {
             let source = self.hub.get::<dyn RecentRuns>().ok()?;
