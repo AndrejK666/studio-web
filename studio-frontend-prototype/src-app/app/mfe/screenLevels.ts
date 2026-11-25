@@ -75,6 +75,12 @@ export interface LeveledPresentation {
    * behind the screen refuse for themselves.
    */
   audience?: string;
+  /**
+   * An organization tab the sidebar raises to its top list, beside Projects
+   * (the components kit's catalogue): the kit asks for it in its manifest, so
+   * the shell names no kit's screen.
+   */
+  sidebar?: boolean;
 }
 
 /** The audience a platform administrator's screen declares. */

@@ -2,12 +2,6 @@
 
 export { IdentityApiService, IDENTITY_API_BASE_URL } from './IdentityApiService';
 export {
-  CloneStatusApiService,
-  CLONE_STATUS_API_BASE_URL,
-  type SourceCloneStatus,
-  type SourceCloneStatusList,
-} from './CloneStatusApiService';
-export {
   OrganizationsApiService,
   ORGANIZATIONS_API_BASE_URL,
 } from './OrganizationsApiService';

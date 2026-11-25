@@ -1,6 +1,7 @@
 /**
- * The desktops a project is open on (studio-session) and the commands sent to
- * one (studio-theia), for the editor's desktop hand-off (ADR-0027 §5–6).
+ * The desktops a project is open on (studio-session), for the editor's desktop
+ * hand-off (ADR-0027 §5–6). The command sent to one is the ide kit's
+ * (`desktop.openFile`, `src-app/kits/ide/shell.ts`).
  */
 
 import { BaseApiService, RestEndpointProtocol, RestProtocol } from '@gears-frontx/react';
@@ -17,12 +18,4 @@ export class DesktopApiService extends BaseApiService {
     { items: DesktopSession[]; total: number },
     { projectId: string }
   >(({ projectId }) => `/studio-session/v1/desktop-sessions?project_id=${encodeURIComponent(projectId)}&limit=200`);
-
-  /** A command for a desktop the member holds open: it goes out on studio-events. 404 for an ended one. */
-  command(desktopSessionId: string) {
-    return this.protocol(RestEndpointProtocol).mutation<
-      { command_id: string; desktop_session_id: string; command: string },
-      { command: 'open_in_editor'; params: { relativePath: string } }
-    >('POST', `/studio-theia/v1/desktop-sessions/${encodeURIComponent(desktopSessionId)}/commands`);
-  }
 }

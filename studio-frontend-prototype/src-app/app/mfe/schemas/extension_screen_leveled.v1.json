@@ -51,6 +51,10 @@
           "pattern": "^[a-z0-9_-]+$",
           "$comment": "The name of the 'shows' relation on the level's type in the Studio domain model that this tab is (ADR-0066). Absent: the section, else the route's last segment. A relation of that name is this tab rather than a generic one, and the level's hidden_tabs names the tab by it."
         },
+        "sidebar": {
+          "type": "boolean",
+          "$comment": "An organization tab the shell's sidebar raises to its top list, beside Projects, drawn with the manifest's icon and label. The kit that brings the screen asks for it (the components kit's catalogue); the shell names no kit's screen (ADR-0079)."
+        },
         "experimental": {
           "type": "boolean",
           "$comment": "The tab works but its place is not settled: the tabs mark it EXP, as the prototype did. A kit sets it in its own manifest; the shell only draws the mark."

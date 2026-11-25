@@ -31,7 +31,7 @@ export type EditorSessionFailure =
   | { kind: 'unexpected' };
 
 /**
- * A project source whose last clone or fetch failed (`studio-artifact-ingest`'s clone status, #1071): the IDE opens
+ * A project source whose last clone or fetch failed (as the kit filling the shell's `editor.cloneProblems` port reports it, #1071): the IDE opens
  * without it, or not at all, so the status over the editor says which and why while it waits.
  */
 export interface EditorCloneProblem {

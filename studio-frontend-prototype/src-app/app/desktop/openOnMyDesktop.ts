@@ -2,12 +2,13 @@
  * A project's file, opened on the member's own desktop when the project is
  * open there (ADR-0027 §5): the command goes out on studio-events and the
  * desktop opens the file. The device it went to, or `undefined` when there is
- * none (or this Studio has no desktop sessions) and the caller opens it
- * another way.
+ * none (or this Studio has no desktop sessions, or no kit fills
+ * `desktop.openFile`) and the caller opens it another way.
  */
 
 import { apiRegistry } from '@gears-frontx/react';
 import { DesktopApiService } from '@/app/api/DesktopApiService';
+import { shellPort } from '@/app/ports/shellPorts';
 import { myDesktop } from './desktopLink';
 
 export async function openOnMyDesktop(
@@ -15,7 +16,8 @@ export async function openOnMyDesktop(
   path: string,
   me: string | undefined
 ): Promise<string | undefined> {
-  if (!me || !apiRegistry.has(DesktopApiService)) return undefined;
+  const openFile = shellPort('desktop.openFile');
+  if (!me || !openFile || !apiRegistry.has(DesktopApiService)) return undefined;
   const desktops = apiRegistry.getService(DesktopApiService);
   let desktop;
   try {
@@ -25,7 +27,7 @@ export async function openOnMyDesktop(
   }
   if (!desktop) return undefined;
   try {
-    await desktops.command(desktop.id).fetch({ command: 'open_in_editor', params: { relativePath: path } });
+    await openFile(desktop.id, path);
   } catch {
     return undefined;
   }

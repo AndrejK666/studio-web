@@ -31,7 +31,9 @@ import { stubFrame } from '@frontx-test-utils/stubFrame';
 import type { MfeEntryIframe } from '@/app/mfe/MfeHandlerIframe';
 import { APP_CONTEXT_SLICE_KEY } from '@/app/slices/appContextSlice';
 import { APP_SESSION_SLICE_KEY } from '@/app/slices/appSessionSlice';
-import { CloneStatusApiService, StudioSessionApiService, type StudioSessionState } from '@/app/api';
+import { StudioSessionApiService, type StudioSessionState } from '@/app/api';
+import { resetShellPorts, shellPortsContext } from '@/app/ports/shellPorts';
+import { cloneProblems } from '@/kits/project-git/shell';
 import { DARK_THEME_ID } from '@/app/themes/dark';
 import { DEFAULT_THEME_ID } from '@/app/themes/default';
 import { DRACULA_THEME_ID } from '@/app/themes/dracula';
@@ -42,7 +44,11 @@ import reducer, {
   type EditorSessionPhase,
   type EditorSessionState,
 } from '@/app/slices/editorSessionSlice';
-import { EDITOR_FRAME_ENTRY, createEditorSession } from './editorSessionEffects';
+import { createEditorSession, isEditorFrame } from './editorSessionEffects';
+
+/** `space-mfe`'s entry (`src-app/mfe_packages/space-mfe/mfe.json`), the editor's frame. */
+const EDITOR_FRAME_ENTRY =
+  'gts.frontx.mfes.mfe.entry.v1~constructor_studio.mfes.mfe.entry_iframe.v1~constructor_studio.space.mfe.main.v1';
 
 const PROJECT = 'p1';
 const ORG = 'o1';
@@ -57,12 +63,13 @@ const PROFILE = { id: 'u1', displayName: 'Ada Lovelace', email: 'ada@acme.test' 
 const VIEWER = { sub: 'u1', name: 'Ada Lovelace', email: 'ada@acme.test', kind: 'person' };
 const ANSWER_DEADLINE_MS = 2 * 60_000;
 
-const entry = (id: string): MfeEntryIframe => ({
+const EDITOR_URL_PROPERTY = 'gts.frontx.mfes.comm.shared_property.v1~constructor_studio.space.mfe.frame_url.v1~';
+const entry = (id: string, urlProperty = EDITOR_URL_PROPERTY): MfeEntryIframe => ({
   id,
   requiredProperties: [],
   actions: [],
   domainActions: [],
-  urlProperty: 'gts.frontx.mfes.comm.shared_property.v1~constructor_studio.space.mfe.frame_url.v1~',
+  urlProperty,
 });
 
 function refusal(status: number, detail?: string): Error {
@@ -193,8 +200,12 @@ function harness({ profile = PROFILE as typeof PROFILE | null, projectName = 'We
       fetch: () => Promise.resolve({ items: [], total: 0 }),
     })
   );
+  // The project-git kit's port, as its `shell.ts` fills it, over this stub.
+  resetShellPorts();
+  shellPortsContext.fill('project-git', 'editor.cloneProblems', async (projectId) =>
+    cloneProblems(((await cloneStatus({ projectId }).fetch()) as { items: Parameters<typeof cloneProblems>[0] }).items)
+  );
   const services = new Map<unknown, unknown>([
-    [CloneStatusApiService, { cloneStatus }],
     [StudioEventsApiService, events],
     [StudioSessionApiService, sessions],
     [StudioTasksApiService, tasks],
@@ -1244,18 +1255,28 @@ describe('createEditorSession', () => {
       expect(showNotice).toHaveBeenCalledWith({ kind: 'info', text: 'shell:editor_component_unavailable' });
     });
 
-    it("attaches to the entry space-mfe declares", () => {
+    it("attaches to the entry space-mfe declares, by the editor's frame-url property and not by its id", () => {
       const manifest = join(dirname(fileURLToPath(import.meta.url)), '../../mfe_packages/space-mfe/mfe.json');
-      const { entries } = JSON.parse(readFileSync(manifest, 'utf-8')) as { entries: { id: string }[] };
+      const { entries } = JSON.parse(readFileSync(manifest, 'utf-8')) as { entries: { id: string; urlProperty?: string }[] };
 
-      expect(entries.map((declared) => declared.id)).toContain(EDITOR_FRAME_ENTRY);
+      expect(entries.filter(isEditorFrame).map((declared) => declared.id)).toEqual([EDITOR_FRAME_ENTRY]);
+    });
+
+    it('opens without a clone status where no kit fills the port', async () => {
+      const h = harness();
+      resetShellPorts();
+      h.launch.mockResolvedValue(session('running'));
+      h.open();
+      await vi.waitFor(() => expect(h.state().phase).toBe('ready'));
+      expect(h.cloneStatus).not.toHaveBeenCalled();
+      expect(h.state().clones).toEqual([]);
     });
 
     it("attaches to the editor's frame only", () => {
       const h = harness();
       const other = stubFrame(ADDRESS, () => h.ide.answers);
 
-      expect(h.editor.frame(other.frame, entry('gts.frontx.mfes.mfe.entry.v1~acme.fixture.v1'))).toBeUndefined();
+      expect(h.editor.frame(other.frame, entry('gts.frontx.mfes.mfe.entry.v1~acme.fixture.v1', 'gts.frontx.mfes.comm.shared_property.v1~acme.fixture.url.v1~'))).toBeUndefined();
       other.load();
       expect(other.sent()).toEqual([]);
     });

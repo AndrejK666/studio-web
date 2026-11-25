@@ -70,7 +70,7 @@ const orgTabs = [
   ext('org.overview', '/organization/overview', 'Overview', 'organization'),
   ext('org.workspaces', '/organization/workspaces', 'Workspaces', 'organization'),
   ext('org.people', '/people', 'People', 'organization'),
-  ext('org.components', '/components', 'Components', 'organization'),
+  ext('org.components', '/components', 'Components', 'organization', { sidebar: true, icon: 'lucide:package' }),
 ];
 const wsTabs = [ext('ws.projects', '/projects', 'Projects', 'workspace'), ext('ws.attributes', '/model-workspace/attributes', 'Attributes', 'workspace')];
 const projectTabs = [ext('p.overview', '/projects/overview', 'Overview', 'project'), ext('p.specs', '/projects/specs', 'Specs', 'project')];
