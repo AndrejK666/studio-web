@@ -17,6 +17,12 @@ export interface DomainOrderBy {
 
 /** What to read of one type, or of one relation of it under `include`. */
 export interface DomainSelection {
+  /**
+   * Hasura-style: `{status: {_eq: 'active'}}`, `_and` / `_or` / `_not`. A
+   * declared relation in place of a field filters by the objects one hop
+   * away (`{delivers: {status: {_eq: 'active'}}}`, backwards with `~`); on
+   * the root only.
+   */
   where?: Record<string, unknown>;
   order_by?: DomainOrderBy[];
   fields?: string[];
@@ -34,7 +40,39 @@ export interface DomainQueryRequest extends DomainSelection {
   /** The previous page's `next_cursor`: the rows after it (keyset paging). */
   cursor?: string;
   /** Counts of the matches grouped by fields, answered as `groups`. */
-  aggregate?: { group_by: string[] };
+  aggregate?: DomainAggregate;
+}
+
+/** The span a grouped timestamp is cut to: the day, ISO week (from Monday) or month it falls in (UTC). */
+export type DomainBucket = 'day' | 'week' | 'month';
+
+/**
+ * Counts per group of up to three keys (none: every match is one group), with
+ * folds per group: `sum` / `avg` of numeric fields, `min` / `max` of numeric
+ * or timestamp fields. A field of another type is a 400.
+ */
+export interface DomainAggregate {
+  group_by: string[];
+  /** Grouped timestamp fields cut to a bucket: `{created_at: 'month'}`. */
+  bucket?: Record<string, DomainBucket>;
+  sum?: string[];
+  avg?: string[];
+  min?: string[];
+  max?: string[];
+}
+
+/**
+ * One group of an aggregate. A bucketed key is the bucket's first day,
+ * `YYYY-MM-DD`, or `null` where the value is not a timestamp. Each fold maps
+ * its fields to the group's value (`null` where no row holds one).
+ */
+export interface DomainGroup {
+  key: unknown[];
+  count: number;
+  sum?: Record<string, number | null>;
+  avg?: Record<string, number | null>;
+  min?: Record<string, number | string | null>;
+  max?: Record<string, number | string | null>;
 }
 
 /** One object of an answer: `{id, entity, value, relations}`. */
@@ -58,8 +96,8 @@ export interface DomainQueryResult extends DomainRowSet {
   /** `read_model` (Postgres) or `graph`. */
   source?: string;
   next_cursor?: string | null;
-  /** With `aggregate`: the matches counted per group. */
-  groups?: { key: unknown[]; count: number }[] | null;
+  /** With `aggregate`: the matches counted (and folded) per group. */
+  groups?: DomainGroup[] | null;
 }
 
 export type DomainOperation =

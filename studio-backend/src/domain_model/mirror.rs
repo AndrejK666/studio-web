@@ -99,11 +99,13 @@ pub struct RootSelect {
     pub owners: Option<Vec<Uuid>>,
 }
 
-/// One group of an aggregate: the grouping values in order, and how many.
-#[derive(Debug, Clone, PartialEq)]
+/// One group of an aggregate: the grouping values in order, how many, and the
+/// folds asked for (`{"sum": {"field": 12}, "max": {...}}`).
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Group {
     pub key: Vec<Value>,
     pub count: u64,
+    pub folds: serde_json::Map<String, Value>,
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -121,6 +123,7 @@ struct TypeCountRow {
 struct GroupRow {
     key: Value,
     n: i64,
+    folds: Value,
 }
 
 /// The Postgres half: rows in, answers out. Knows nothing about the graph.
@@ -467,13 +470,15 @@ impl DomainMirror {
     }
 
     /// Counts per distinct `key` (a `jsonb_build_array` of the grouped
-    /// fields) over a query's root.
+    /// fields) over a query's root, each with its `folds` (one aggregate
+    /// expression over the group's rows): `(key, count, folds)`.
     pub async fn groups(
         &self,
         tenant: Uuid,
         q: &RootSelect,
         key: Expr,
-    ) -> anyhow::Result<Vec<Group>> {
+        folds: Expr,
+    ) -> anyhow::Result<Vec<(Vec<Value>, u64, Value)>> {
         let conn = self.db.conn()?;
         let rows: Vec<GroupRow> = object::Entity::find()
             .secure()
@@ -486,18 +491,22 @@ impl DomainMirror {
                 s.select_only()
                     .column_as(key, "key")
                     .column_as(Expr::cust("COUNT(*)"), "n")
+                    .column_as(folds, "folds")
                     .group_by(Expr::cust("1"))
                     .into_model::<GroupRow>()
             })
             .await?;
         Ok(rows
             .into_iter()
-            .map(|r| Group {
-                key: match r.key {
-                    Value::Array(items) => items,
-                    other => vec![other],
-                },
-                count: u64::try_from(r.n).unwrap_or(0),
+            .map(|r| {
+                (
+                    match r.key {
+                        Value::Array(items) => items,
+                        other => vec![other],
+                    },
+                    u64::try_from(r.n).unwrap_or(0),
+                    r.folds,
+                )
             })
             .collect())
     }

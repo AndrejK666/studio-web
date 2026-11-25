@@ -179,7 +179,13 @@ fn shape(o: &Outcome) -> Value {
         "items": o.rows.items.iter().map(|r| r.to_json()).collect::<Vec<_>>(),
         "total": o.rows.total,
         "complete": o.rows.complete,
-        "groups": o.groups.as_ref().map(|gs| gs.iter().map(|g| json!({"key": g.key, "count": g.count})).collect::<Vec<_>>()),
+        "groups": o.groups.as_ref().map(|gs| gs.iter().map(|g| {
+            let mut out = json!({"key": g.key, "count": g.count});
+            for (k, v) in &g.folds {
+                out[k] = v.clone();
+            }
+            out
+        }).collect::<Vec<_>>()),
     })
 }
 
@@ -1420,4 +1426,214 @@ fn a_fill_that_keeps_failing_waits_longer_each_time() {
     assert!(fills.claim(tenant));
     fills.release(tenant, false);
     assert!(fills.claim(tenant), "a success clears the count");
+}
+
+// ── Filters on related objects, folds and buckets ─────────────────────────
+
+#[tokio::test]
+async fn relation_filters_answer_the_same() {
+    let p = seeded().await;
+    let order = json!([{"field": "name"}]);
+    for (ty, w) in [
+        ("team", json!({"delivers": {"status": {"_eq": "paused"}}})),
+        ("team", json!({"delivers": {"status": {"_eq": "active"}}})),
+        ("team", json!({"_not": {"delivers": {"status": {"_eq": "active"}}}})),
+        ("team", json!({"delivers": {"_or": [{"name": {"_eq": "Apollo"}}, {"name": {"_eq": "Gemini"}}]}})),
+        ("team", json!({"delivers": {"id": {"_in": []}}})),
+        ("team", json!({"name": {"_eq": "Edge"}, "delivers": {"name": {"_contains": "gem"}}})),
+        ("project", json!({"~delivers": {"name": {"_eq": "Core"}}})),
+        ("project", json!({"~delivers": {"aliases": {"_contains": "kernel"}}})),
+        ("project", json!({"_or": [{"status": {"_eq": "active"}}, {"~delivers": {"name": {"_eq": "Edge"}}}]})),
+    ] {
+        p.same(ty, json!({"where": w, "order_by": order})).await;
+    }
+    let teams = p
+        .same(
+            "team",
+            json!({"where": {"delivers": {"status": {"_eq": "paused"}}}, "order_by": order}),
+        )
+        .await;
+    assert_eq!(names(&teams), ["Core", "Edge"]);
+    let projects = p
+        .same(
+            "project",
+            json!({"where": {"~delivers": {"name": {"_eq": "Core"}}}, "order_by": order}),
+        )
+        .await;
+    assert_eq!(names(&projects), ["Apollo", "Gemini"]);
+
+    // A cursor over a relation filter walks the same pages.
+    let first = p
+        .same(
+            "project",
+            json!({"where": {"~delivers": {"name": {"_eq": "Core"}}}, "order_by": order, "limit": 1}),
+        )
+        .await;
+    assert_eq!(names(&first), ["Apollo"]);
+}
+
+#[tokio::test]
+async fn a_relation_filter_reads_only_what_the_caller_may_in_sql() {
+    let org = Org::new();
+    let (mine, theirs) = (org.mine, org.theirs);
+    let p = Pair::new(org.org).await;
+    p.write(json!([
+        {"op": "upsert", "type": "team", "key": "core", "project_id": mine.to_string(), "value": {"name": "core"}, "as": "core"},
+        {"op": "upsert", "type": "project", "key": "apollo", "project_id": mine.to_string(), "value": {"name": "apollo"}, "as": "a"},
+        {"op": "upsert", "type": "project", "key": "gemini", "project_id": theirs.to_string(), "value": {"name": "gemini"}, "as": "g"},
+        {"op": "link", "relation": "team.delivers", "from": "$core", "to": "$a"},
+        {"op": "link", "relation": "team.delivers", "from": "$core", "to": "$g"},
+    ]))
+    .await;
+    p.fill().await;
+    let narrowed = DomainModelService::new(Arc::new(IndexedDomainStore::new(
+        p.inner.clone(),
+        p.mirror.clone(),
+    )))
+    .with_policy(Arc::new(OneProject(org)));
+    let (narrowed, ctx) = (&narrowed, &p.ctx);
+    let total = move |name: &'static str| {
+        async move {
+            let out = narrowed
+                .query(
+                    ctx,
+                    &query("team", json!({"where": {"delivers": {"name": {"_eq": name}}}})),
+                )
+                .await
+                .unwrap();
+            assert_eq!(out.source, "read_model");
+            out.rows.total
+        }
+    };
+    assert_eq!(total("apollo").await, 1);
+    assert_eq!(total("gemini").await, 0, "a hidden object does not match");
+}
+
+/// Projects with versions (numbers, a decimal, a word, none) and start
+/// times (offsets, a bare date, a word, an impossible day).
+async fn versioned() -> Pair {
+    let p = Pair::new(Uuid::new_v4()).await;
+    p.write(json!([
+        {"op": "upsert", "type": "project", "key": "a", "value": {"name": "a", "status": "active", "version": 3, "started_at": "2026-03-02T10:00:00Z"}},
+        {"op": "upsert", "type": "project", "key": "b", "value": {"name": "b", "status": "active", "version": 5, "started_at": "2026-03-08T23:30:00-02:00"}},
+        {"op": "upsert", "type": "project", "key": "c", "value": {"name": "c", "status": "paused", "version": 1.5, "started_at": "2026-01-31"}},
+        {"op": "upsert", "type": "project", "key": "d", "value": {"name": "d", "status": "active", "version": "seven", "started_at": "not a date"}},
+        {"op": "upsert", "type": "project", "key": "e", "value": {"name": "e", "status": "paused", "version": null, "started_at": "2026-02-30T00:00:00Z"}},
+        {"op": "upsert", "type": "project", "key": "f", "value": {"name": "f", "status": "planned", "version": 0.1, "started_at": "2026-03-04t01:00:00.1234567+03:00"}},
+        {"op": "upsert", "type": "project", "key": "g", "value": {"name": "g", "status": "planned", "version": 0.2}},
+    ]))
+    .await;
+    p.fill().await;
+    p
+}
+
+#[tokio::test]
+async fn folds_and_buckets_answer_the_same() {
+    let p = versioned().await;
+    let all = json!({"sum": ["version"], "avg": ["version"], "min": ["version", "started_at"], "max": ["version", "started_at"]});
+    let with = |group_by: Value| {
+        let mut a = all.clone();
+        a["group_by"] = group_by;
+        json!({"aggregate": a})
+    };
+    let by_status = p.same("project", with(json!(["status"]))).await;
+    assert_eq!(
+        by_status["groups"][0],
+        json!({"key": ["active"], "count": 3,
+            "sum": {"version": 8}, "avg": {"version": 4},
+            "min": {"version": 3, "started_at": "2026-03-02T10:00:00Z"},
+            "max": {"version": 5, "started_at": "not a date"}})
+    );
+    // 0.1 + 0.2 is 0.3 in decimals, which both readers fold in.
+    let planned = by_status["groups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|g| g["key"] == json!(["planned"]))
+        .cloned()
+        .unwrap();
+    assert_eq!(planned["sum"], json!({"version": 0.3}));
+    assert_eq!(planned["avg"], json!({"version": 0.15}));
+
+    let bucketed = |mut body: Value, bucket: &str| {
+        body["aggregate"]["bucket"] = json!({"started_at": bucket});
+        body
+    };
+    for bucket in ["day", "week", "month"] {
+        p.same(
+            "project",
+            bucketed(with(json!(["started_at"])), bucket),
+        )
+        .await;
+        p.same(
+            "project",
+            bucketed(with(json!(["status", "started_at"])), bucket),
+        )
+        .await;
+    }
+    let by_month = p
+        .same(
+            "project",
+            json!({"aggregate": {"group_by": ["started_at"], "bucket": {"started_at": "month"}}}),
+        )
+        .await;
+    let mut keys: Vec<(String, u64)> = by_month["groups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|g| (g["key"][0].to_string(), g["count"].as_u64().unwrap()))
+        .collect();
+    keys.sort();
+    assert_eq!(
+        keys,
+        [
+            ("\"2026-01-01\"".to_string(), 1),
+            ("\"2026-03-01\"".to_string(), 3),
+            ("null".to_string(), 3),
+        ]
+    );
+
+    // No group: the whole match folded at once, and under a filter.
+    p.same("project", with(json!([]))).await;
+    let mut filtered = with(json!([]));
+    filtered["where"] = json!({"status": {"_neq": "paused"}});
+    p.same("project", filtered).await;
+    let mut none = with(json!(["status"]));
+    none["where"] = json!({"status": {"_eq": "archived"}});
+    let none = p.same("project", none).await;
+    assert_eq!(none["groups"], json!([]));
+}
+
+#[tokio::test]
+async fn folds_answer_the_same_without_rows_over_several_scopes() {
+    let p = Pair::new(Uuid::new_v4()).await;
+    let (a, b) = (SCOPE_A.to_string(), SCOPE_B.to_string());
+    p.write(json!([
+        {"op": "upsert", "type": "project", "key": "a1", "project_id": a, "value": {"name": "a1", "status": "active", "version": 2, "created_at": "2026-05-01T00:00:00Z"}},
+        {"op": "upsert", "type": "project", "key": "a2", "project_id": a, "value": {"name": "a2", "status": "active", "version": 4, "created_at": "2026-05-20T00:00:00Z"}},
+        {"op": "upsert", "type": "project", "key": "b1", "project_id": b, "value": {"name": "b1", "status": "paused", "version": 10, "created_at": "2026-06-02T00:00:00Z"}},
+        {"op": "upsert", "type": "project", "key": "c1", "project_id": SCOPE_C.to_string(), "value": {"name": "c1", "status": "active", "version": 100}},
+    ]))
+    .await;
+    p.fill().await;
+    let out = p
+        .same_bulk(json!({
+            "type": "project",
+            "project_ids": [a, b],
+            "limit": 0,
+            "aggregate": {
+                "group_by": ["created_at"], "bucket": {"created_at": "month"},
+                "sum": ["version"], "max": ["created_at"],
+            },
+        }))
+        .await;
+    assert_eq!(out["items"], json!([]));
+    assert_eq!(out["total"], json!(3));
+    assert_eq!(
+        out["groups"],
+        json!([
+            {"key": ["2026-05-01"], "count": 2, "sum": {"version": 6}, "max": {"created_at": "2026-05-20T00:00:00Z"}},
+            {"key": ["2026-06-01"], "count": 1, "sum": {"version": 10}, "max": {"created_at": "2026-06-02T00:00:00Z"}},
+        ])
+    );
 }
