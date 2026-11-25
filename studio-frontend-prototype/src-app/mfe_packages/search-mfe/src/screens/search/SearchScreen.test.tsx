@@ -43,6 +43,7 @@ import {
   STUDIO_ACTION_PLACE_OPEN,
   STUDIO_SHARED_PROPERTY_CONTEXT_ORGANIZATION,
   STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE,
+  STUDIO_SHARED_PROPERTY_SCREENS_AVAILABLE,
 } from '@constructor-studio/mfe-shared';
 import { FRONTX_ACTION_UNMOUNT_EXT, FRONTX_OVERLAY_DOMAIN } from '@gears-frontx/react';
 import { SearchScreen } from './SearchScreen';
@@ -118,6 +119,28 @@ describe('SearchScreen', () => {
     typeIn('portal');
     await waitFor(() => expect(document.querySelector('[data-artifacts-failed]')?.textContent).toBe('artifacts_failed:graph is down'));
     expect(document.querySelector('[data-places-failed]')?.textContent).toBe('places_failed:403');
+  });
+
+  it("leaves the sources out where the artifact graph's kit is not installed, and does not ask it", async () => {
+    properties.set(STUDIO_SHARED_PROPERTY_SCREENS_AVAILABLE, { routes: [], kits: [], types: [] });
+    render(<SearchScreen bridge={bridge} />);
+    typeIn('portal');
+    expect(await screen.findByText('Portal')).toBeTruthy();
+    expect(document.querySelector('[data-artifacts]')).toBeNull();
+    expect(search).not.toHaveBeenCalled();
+  });
+
+  it('leaves the sources out, with no failure, where the graph answers that its kit is absent', async () => {
+    search.mockRejectedValue(
+      Object.assign(new Error('Request failed with status code 400'), {
+        response: { status: 400, data: { context: { violations: [{ type: 'KIT_NOT_INSTALLED', subject: 'project-git' }] } } },
+      })
+    );
+    render(<SearchScreen bridge={bridge} />);
+    typeIn('portal');
+    await waitFor(() => expect(search).toHaveBeenCalled());
+    await waitFor(() => expect(document.querySelector('[data-artifacts]')).toBeNull());
+    expect(document.querySelector('[data-artifacts-failed]')).toBeNull();
   });
 
   it('says so when a workspace’s projects could not be read, instead of passing them over', async () => {

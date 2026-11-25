@@ -239,8 +239,11 @@ export function PersonPanel({
               ))}
             </ul>
           )}
+          {/* Insight is another kit's: where it is absent the panel has no such part. */}
+          {activity.insight.state !== 'absent' && (
           <h4 title={t('insight_about')}>{t('insight_title', { days: INSIGHT_DAYS })}</h4>
-          {handles.length === 0 ? (
+          )}
+          {activity.insight.state === 'absent' ? null : handles.length === 0 ? (
             <div className={styles.empty}>
               <strong>{t('no_handle_title')}</strong>
               <span className={styles.muted}>

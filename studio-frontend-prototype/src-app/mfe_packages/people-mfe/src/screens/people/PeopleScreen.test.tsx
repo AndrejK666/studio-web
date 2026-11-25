@@ -6,7 +6,8 @@ import { stubResizeObserver } from '@frontx-test-utils/stubResizeObserver';
 // The kit's DataGrid measures its header.
 stubResizeObserver();
 
-const { service, org, calls, opened } = vi.hoisted(() => ({
+const { service, org, calls, opened, gitHere } = vi.hoisted(() => ({
+  gitHere: { value: true },
   service: {} as Record<string, unknown>,
   org: { value: { id: 'o1', name: 'Acme' } as { id: string; name: string } | null },
   calls: [] as { what: string; arg?: unknown; body?: unknown }[],
@@ -19,6 +20,8 @@ vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
   OrganizationProvider: ({ children }: { children: React.ReactNode }) => children,
   useHostChrome: () => ({ containerRef: { current: null }, dataTheme: 'light', language: 'en' }),
   openProjectTeam: (_bridge: unknown, target: unknown) => opened.push(target),
+  // Whether project-git's pull requests are here: unknown (every source read) unless a test says.
+  useScreenAvailability: () => ({ route: () => true, kit: () => true, type: () => gitHere.value }),
 }));
 vi.mock('@gears-frontx/react', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@gears-frontx/react')>()),
@@ -112,6 +115,7 @@ const rowOf = (id: string) => document.querySelector(`[data-person="${id}"]`)?.c
 beforeEach(() => {
   calls.length = 0;
   opened.length = 0;
+  gitHere.value = true;
   org.value = { id: 'o1', name: 'Acme' };
   try {
     sessionStorage.clear();
@@ -244,6 +248,39 @@ describe('Organization › People', () => {
     });
     expect(cell.textContent).toBe('Edi');
     expect(document.querySelector('[data-matrix-cell="u1:p1"]')?.textContent).toBe('');
+  });
+
+  it("reads no pull request or feed where project-git's type is not installed", async () => {
+    gitHere.value = false;
+    render(<PeopleScreen bridge={bridge} />);
+    expect(await screen.findByRole('button', { name: 'Ann' })).toBeTruthy();
+    await waitFor(() => expect(calls.some((c) => c.what === 'presenceOnline')).toBe(true));
+    expect(calls.filter((c) => c.what === 'openPullRequests' || c.what === 'activityFeed')).toEqual([]);
+  });
+
+  it('counts an absent artifact graph or Insight as nothing to show, not a source lost', async () => {
+    const absent = Object.assign(new Error('Request failed with status code 404'), { response: { status: 404, data: '' } });
+    serve({
+      openPullRequests: fetching('openPullRequests', absent),
+      activityFeed: fetching('activityFeed', absent),
+      insightQuery: fetching('insightQuery', absent),
+      // Ann has a git account of her own, so Insight is asked about her.
+      memberIdentities: ({ userId }: { userId: string }) => ({
+        fetch: () =>
+          Promise.resolve({
+            user_id: userId,
+            logins: [],
+            aliases: userId === 'u1' ? [{ kind: 'github', external_id: 'ann-gh', confidence: 'confirmed' }] : [],
+          }),
+      }),
+    });
+    render(<PeopleScreen bridge={bridge} />);
+    expect(await screen.findByRole('button', { name: 'Ann' })).toBeTruthy();
+    await waitFor(() => expect(calls.some((c) => c.what === 'insightQuery')).toBe(true));
+    fireEvent.click(screen.getByRole('button', { name: 'Ann' }));
+    await waitFor(() => expect(screen.queryByText(/insight_loading/)).toBeNull());
+    expect(screen.queryByText(/missing_pulls|missing_feeds/)).toBeNull();
+    expect(screen.queryByText(/insight_title|insight_failed/)).toBeNull();
   });
 
   it('opens a person in a panel, without an address for a non-administrator', async () => {

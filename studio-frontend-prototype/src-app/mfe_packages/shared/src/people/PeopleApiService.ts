@@ -10,12 +10,9 @@ import { fetchAllPages } from '../data/pages';
 import type { RoleDef } from './access';
 import { readColleagues, readOrgMembers } from './members';
 import type {
-  ActivityEvent,
   Colleague,
   DesktopSession,
-  InsightQueryResult,
   MemberIdentities,
-  OpenPullRequest,
   OrgInvitation,
   OrgMember,
   PresenceEntry,
@@ -86,17 +83,12 @@ export class PeopleApiService extends BaseApiService {
     default_roles: RoleDef[];
   }>('/studio-organizations/v1/access-catalogue');
 
-  /* ── where somebody works ── */
-
-  readonly openPullRequests = this.protocol(RestEndpointProtocol).queryWith<
-    { items: OpenPullRequest[]; total?: number },
-    { projectId: string }
-  >(({ projectId }) => `/studio-artifact-ingest/v1/open-pull-requests?${q({ project_id: projectId })}`);
-
-  readonly activityFeed = this.protocol(RestEndpointProtocol).queryWith<
-    { items: ActivityEvent[]; total?: number },
-    { projectId: string }
-  >(({ projectId }) => `/studio-artifact-ingest/v1/activity?${q({ project_id: projectId })}`);
+  /*
+   * ── where somebody works ──
+   * The desktops (studio-session) and presence are the core's. The open pull
+   * requests, the activity feed and Insight are other kits' gears: people-mfe
+   * reads them itself (`WorkSignalsApiService`), optionally (ADR-0079).
+   */
 
   readonly desktopSessionsPage = this.protocol(RestEndpointProtocol).queryWith<
     { items?: DesktopSession[]; total?: number },
@@ -117,10 +109,5 @@ export class PeopleApiService extends BaseApiService {
 
   readonly presenceOnline = this.protocol(RestEndpointProtocol).query<{ items: PresenceEntry[] }>(
     '/studio-presence/v1/online'
-  );
-
-  readonly insightQuery = this.protocol(RestEndpointProtocol).mutation<InsightQueryResult, { sql: string }>(
-    'POST',
-    '/studio-insight/v1/query'
   );
 }
