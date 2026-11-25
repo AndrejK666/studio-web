@@ -90,6 +90,7 @@ later ADR that retires or amends an earlier one says so under its title.
 | [0076](0076-the-gears-matcher-runs-as-a-python-service-beside-the-backend.md) | The gears-matcher runs as a Python service beside the backend, built and deployed with it | proposed | 2026-11-10 |
 | [0077](0077-a-kit-gear-runs-beside-studio-and-joins-it-through-the-directory.md) | A kit's gear runs beside Studio and joins it through the directory; an organization's kit code runs as its own service | proposed | 2026-11-23 |
 | [0078](0078-gears-are-published-packages-and-a-platform-release-is-a-bom-version.md) | Gears are published packages; a platform release is a BOM version | proposed | 2026-11-23 |
+| [0079](0079-core-knows-no-kit-kits-contribute-through-core-ports.md) | The core knows no kit, and kits contribute to it through the core's ports | proposed | 2026-11-25 |
 
 ADR-0017 is not on `main`. It is "We own the settings gear for now", written on
 the unmerged branch `AndrejK666/settings-follow-the-person`, and ADR-0018 cites
