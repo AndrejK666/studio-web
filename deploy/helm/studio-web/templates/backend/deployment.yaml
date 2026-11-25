@@ -310,6 +310,10 @@ spec:
             - name: STUDIO_NODE_NAME
               valueFrom: { fieldRef: { fieldPath: spec.nodeName } }
             {{- end }}
+            # Repository syncs at once; config/k8s.yaml expands it into the
+            # artifact-ingest gear's `ingest.parallel`.
+            - name: STUDIO_INGEST_PARALLEL
+              value: {{ .Values.backend.ingest.parallel | default 1 | quote }}
             # OpenTelemetry switches. The backend config expands these textually
             # into its `opentelemetry` block before parsing the YAML, so "true"
             # here becomes a real boolean there — which is why they are plain

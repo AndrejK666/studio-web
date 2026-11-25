@@ -237,6 +237,9 @@ services:
     restart: unless-stopped
     environment:
       STUDIO_PG_PASSWORD: ${STUDIO_PG_PASSWORD:-studio}
+      # Repository syncs at once (1..=8). The stand has the memory for three;
+      # each sync adds its own peak (#561/#563).
+      STUDIO_INGEST_PARALLEL: ${STUDIO_INGEST_PARALLEL:-3}
       # Ask AI / mini-chat's provider key. Empty is a valid state: the feature
       # stays off and says so. The IDE's agents and chat take no key from the
       # environment: each person's own (profile or AI connection) is used.

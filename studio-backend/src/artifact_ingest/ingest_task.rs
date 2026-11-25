@@ -52,14 +52,48 @@ use super::service::IngestService;
 /// Task type. A wire contract: stored on every queued run.
 pub const TASK_TYPE: &str = "artifact.ingest";
 
-/// One ingest at a time in this process.
+/// How many ingests this process runs at once: `ingest.parallel` in the
+/// gear's config, set once at init ([`set_ingest_parallel`]).
 ///
 /// The task queue runs eight handlers at once, and runs for different
-/// repositories do not share a partition, so two large repositories could
-/// ingest side by side and peak together -- the shape of the OOM kills on
-/// studio-dev (studio-web#561). A second ingest waits here instead. Other task
-/// types are not held up: the wait occupies one worker, and there are eight.
-static INGEST_SLOT: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+/// repositories do not share a partition, so large repositories could ingest
+/// side by side and peak together -- the shape of the OOM kills on studio-dev
+/// (studio-web#561), after which #563 held it to one. Storing is chunked and
+/// pull request linking runs in portions since, so an ingest peaks lower and
+/// a deployment with the memory may run more. An ingest past the limit waits
+/// here. Other task types are not held up: the wait occupies one worker, and
+/// there are eight. Unset (tests, a gear that never ran init) is one.
+static INGEST_SLOTS: std::sync::OnceLock<Arc<tokio::sync::Semaphore>> = std::sync::OnceLock::new();
+
+/// The most ingests one process runs at once: the queue's handler count.
+/// More would only queue behind the handlers anyway.
+const MAX_INGEST_PARALLEL: usize = 8;
+
+/// The ingest slots for `parallel` from config, clamped to
+/// `1..=MAX_INGEST_PARALLEL`: zero would stall every sync, and more than the
+/// queue's handlers buys nothing.
+fn ingest_slots_for(parallel: usize) -> tokio::sync::Semaphore {
+    tokio::sync::Semaphore::new(parallel.clamp(1, MAX_INGEST_PARALLEL))
+}
+
+/// Size the ingest slots from config; returns how many this process runs.
+/// The first call wins: the gear inits once per process, and a semaphore
+/// already handed out must not change under the runs holding it.
+pub(super) fn set_ingest_parallel(parallel: usize) -> usize {
+    let slots = ingest_slots_for(parallel);
+    let n = slots.available_permits();
+    if INGEST_SLOTS.set(Arc::new(slots)).is_err() {
+        tracing::warn!(
+            parallel = n,
+            "studio-artifact-ingest: ingest slots were already sized; keeping them"
+        );
+    }
+    n
+}
+
+fn ingest_slots() -> &'static Arc<tokio::sync::Semaphore> {
+    INGEST_SLOTS.get_or_init(|| Arc::new(tokio::sync::Semaphore::new(1)))
+}
 
 /// How long one attempt works before it stops to store what it has.
 ///
@@ -68,7 +102,8 @@ static INGEST_SLOT: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1
 /// it had not stored is lost. Twelve minutes leaves the rest for the writes
 /// that close a sync -- the relations, the repository's record -- which a
 /// large repository needs a minute or two for. Counted from when the attempt
-/// was handed over, because waiting for [`INGEST_SLOT`] spends the lease too.
+/// was handed over, because waiting for an ingest slot ([`INGEST_SLOTS`])
+/// spends the lease too.
 const ATTEMPT_BUDGET: Duration = Duration::from_secs(12 * 60);
 
 /// Attempts a run gets. More than the queue's default five: an attempt that
@@ -249,12 +284,14 @@ impl TaskHandler for IngestTask {
         let (progress, drain) = ctx.progress_bridge();
         // Held until the sync returns. A closed semaphore cannot happen -- it is
         // a static nobody closes -- so an error just runs unguarded. A run that
-        // has to wait says so, rather than sitting at "queued" looking stuck.
-        let _slot = match INGEST_SLOT.try_acquire() {
+        // has to wait (every slot taken) says so, rather than sitting at
+        // "queued" looking stuck.
+        let slots = ingest_slots();
+        let _slot = match slots.try_acquire() {
             Ok(slot) => Some(slot),
             Err(_) => {
                 progress.set("waiting for another repository's sync to finish…");
-                INGEST_SLOT.acquire().await.ok()
+                slots.acquire().await.ok()
             }
         };
         let platform_token = if platform_base_url.is_some() {
@@ -414,6 +451,29 @@ fn permanent_token_error(error: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ingest_slots_follow_config_within_bounds() {
+        assert_eq!(ingest_slots_for(1).available_permits(), 1);
+        assert_eq!(ingest_slots_for(3).available_permits(), 3);
+        assert_eq!(ingest_slots_for(8).available_permits(), 8);
+        // Zero would stall every sync; past the queue's handlers buys nothing.
+        assert_eq!(ingest_slots_for(0).available_permits(), 1);
+        assert_eq!(
+            ingest_slots_for(64).available_permits(),
+            MAX_INGEST_PARALLEL
+        );
+    }
+
+    #[test]
+    fn ingest_parallel_defaults_to_one() {
+        let config: super::super::ArtifactIngestConfig =
+            serde_json::from_value(serde_json::json!({})).unwrap();
+        assert_eq!(config.ingest.parallel, 1);
+        let config: super::super::ArtifactIngestConfig =
+            serde_json::from_value(serde_json::json!({ "ingest": { "parallel": 3 } })).unwrap();
+        assert_eq!(config.ingest.parallel, 3);
+    }
 
     #[test]
     fn a_payload_round_trips_through_the_queue() {
