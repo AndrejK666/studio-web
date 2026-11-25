@@ -29,6 +29,18 @@ inventory::submit! {
         tools: mcp::tools,
     }
 }
+// The service's own identity in the PDP (ADR-0079 access-rules port): it
+// indexes a project's documents in the background, as itself, so its
+// client-credentials token reaches graph-storage in a project's tenant
+// (`?tenant=`) where the Spec graph kit applies, and nothing else.
+inventory::submit! {
+    crate::studio_authz_plugin::ServiceRule {
+        gear: "studio-spec-graph",
+        subject: config::service_subject,
+        resource_types: &config::GRAPH_RESOURCES,
+        kit: "spec-graph",
+    }
+}
 mod rest;
 
 use std::sync::{Arc, OnceLock};
@@ -53,6 +65,18 @@ pub struct SpecGraphGear {
 impl Gear for SpecGraphGear {
     async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
         let cfg: SpecGraphConfig = ctx.config_or_default()?;
+        match cfg.resolve_service_subject() {
+            Ok(Some(subject)) => {
+                config::set_service_subject(subject);
+                info!(%subject, "studio-spec-graph: the service's own identity is configured");
+            }
+            Ok(None) => {}
+            Err(error) => warn!(
+                %error,
+                "studio-spec-graph: STUDIO_SPEC_GRAPH_SUBJECT is not a subject id; \
+                 the service's own token reaches nothing"
+            ),
+        }
         let (url, secret, git) = (
             cfg.resolve_base_url(),
             cfg.resolve_secret(),

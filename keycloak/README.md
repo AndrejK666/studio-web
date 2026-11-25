@@ -42,6 +42,26 @@ into the image. A deployed realm must be generated independently per environment
 - generate independent confidential-client secrets;
 - store the complete realm JSON in an environment-local Kubernetes Secret.
 
+## Service clients
+
+Confidential clients with a service account only (client credentials, no
+roles, no browser flows). Their token's `tenant_id` is the platform root,
+which reaches nothing by itself: what each may do is a PDP rule.
+
+| Client | Who | What the PDP lets it do |
+|---|---|---|
+| `studio-service` | a shared IDE session, on no one person's behalf (ADR-0030) | its own subject, `backend.serviceSubject` |
+| `spec-graph` | the spec-graph service beside Studio, indexing in the background | graph-storage in a project's tenant (`?tenant=`) where the Spec graph kit applies; subject in `backend.specGraph.serviceSubject` |
+
+The realm files fix each service account's id, which Keycloak honours only
+when it creates the realm. On a realm that already exists, import the client
+by hand (Partial import, Clients, skip existing), then read its service
+account's id and give it to the chart:
+
+```
+GET /auth/admin/realms/studio/users?username=service-account-spec-graph&exact=true
+```
+
 ## Social self-registration — app dependency
 Brokered users are mapped to a non-root **sandbox** tenant (`…0002`), never root.
 End-to-end self-signup still needs the app to JIT-provision a real per-user tenant;

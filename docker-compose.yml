@@ -267,6 +267,8 @@ services:
       STUDIO_SPEC_GRAPH_URL: ${STUDIO_SPEC_GRAPH_URL:-}
       STUDIO_SPEC_GRAPH_SECRET: ${STUDIO_SPEC_GRAPH_SECRET:-}
       STUDIO_SPEC_GRAPH_GIT_URL: ${STUDIO_SPEC_GRAPH_GIT_URL:-}
+      # The realm file fixes the spec-graph client's service account id.
+      STUDIO_SPEC_GRAPH_SUBJECT: ${STUDIO_SPEC_GRAPH_SUBJECT:-00000000-0000-4000-8000-000005ec9a4f}
       # Encryption key for credstore secret VALUES at rest (issue #66, base64,
       # 32 bytes). Without it the backend falls back to the in-memory value
       # store and every secret typed into the portal — source PATs, connector
