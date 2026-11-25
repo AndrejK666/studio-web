@@ -81,7 +81,7 @@ pub mod drivers {
     #[allow(unused_imports)]
     pub use super::super::driver::{FieldKind, FormField, Holder};
     pub use super::super::plugin::register_driver;
-    pub use super::super::url_guard::HostRule;
+    pub(crate) use super::super::url_guard::HostRule;
 
     /// A driver instance id a kit's plugin gear registers its driver under.
     /// studio-connector resolves every submitted slot beside its own
