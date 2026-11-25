@@ -271,7 +271,8 @@ mod tests {
         let err = key_only()
             .access_token("an-old-refresh-token")
             .await
-            .unwrap_err()
+            .err()
+            .expect("a refresh token without a client is refused")
             .to_string();
         assert!(err.contains("paste a Research access key"), "{err}");
     }
