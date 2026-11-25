@@ -25,6 +25,23 @@ spec:
       imagePullSecrets: {{- toYaml . | nindent 8 }}
       {{- end }}
       securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if .Values.persistence.claimOwner }}
+      # A new Cinder claim mounts root:root and ignores fsGroup: hand /data to the service's
+      # user before it starts (the backend's claim-owner, the same way).
+      initContainers:
+        - name: claim-owner
+          image: "{{ .Values.image.repository }}:{{ $tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["chown", "{{ .Values.podSecurityContext.runAsUser }}:{{ .Values.podSecurityContext.runAsGroup }}", "/data"]
+          securityContext:
+            runAsNonRoot: false
+            runAsUser: 0
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"], add: ["CHOWN"] }
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      {{- end }}
       containers:
         - name: spec-graph
           image: "{{ .Values.image.repository }}:{{ $tag }}"

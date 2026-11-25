@@ -1,0 +1,11 @@
+# Test (namespace studio-test), beside Studio's release `studio`:
+#
+#   helm upgrade --install spec-graph deploy/helm/spec-graph -n studio-test \
+#     -f deploy/helm/spec-graph/values-test.yaml
+#
+# Before it: the Secret `studio-spec-graph` (values.yaml) and the Keycloak client `spec-graph`.
+image:
+  tag: "0.1.0"
+studio:
+  gatewayUrl: http://studio-studio-web-backend/cf
+  tokenUrl: https://studio-test.cfabric.org/auth/realms/studio/protocol/openid-connect/token

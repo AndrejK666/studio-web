@@ -50,6 +50,9 @@ persistence:
   size: 10Gi
   storageClass: ""         # empty leaves it to the cluster default
   existingClaim: ""
+  # A root init container chowns /data to runAsUser:runAsGroup before the service starts:
+  # a fresh Cinder claim is root:root and ignores fsGroup. false where the volume honours fsGroup.
+  claimOwner: true
 
 resources:
   requests: { cpu: 100m, memory: 512Mi }
