@@ -11,3 +11,62 @@
 # Lines stay after they are accepted: this file is the history of what was
 # broken and why, and it only grows. Prefer G1 — add beside, deprecate, remove
 # later — to a line here.
+
+# 2026-11-25: Organization Overview is drawn from the kits' blocks (ADR-0079): the per-kit fields of GET /studio-organizations/v1/overview move into blocks. Only the portal read them and it reads blocks in the same change. Agreed by Andrej Kuchma.
+response	GET /studio-organizations/v1/overview	costs	String	always
+response	GET /studio-organizations/v1/overview	decisions	{}	optional
+response	GET /studio-organizations/v1/overview	decisions.candidates	u32	optional
+response	GET /studio-organizations/v1/overview	decisions.published	u32	optional
+response	GET /studio-organizations/v1/overview	decisions.registered	u32	optional
+response	GET /studio-organizations/v1/overview	decisions.undecided	u32	optional
+response	GET /studio-organizations/v1/overview	delivery	{}	always
+response	GET /studio-organizations/v1/overview	delivery.median_wait_days	f64	optional
+response	GET /studio-organizations/v1/overview	delivery.merged	u32	optional
+response	GET /studio-organizations/v1/overview	delivery.open	u32	optional
+response	GET /studio-organizations/v1/overview	delivery.window_days	u32	always
+response	GET /studio-organizations/v1/overview	money	Vec<{}>	optional
+response	GET /studio-organizations/v1/overview	money.group_by	String	optional
+response	GET /studio-organizations/v1/overview	money.include_personal	bool	optional
+response	GET /studio-organizations/v1/overview	money.rows	Vec<{}>	optional
+response	GET /studio-organizations/v1/overview	money.rows.cost	f64	optional
+response	GET /studio-organizations/v1/overview	money.rows.key	String	optional
+response	GET /studio-organizations/v1/overview	money.rows.label	String	optional
+response	GET /studio-organizations/v1/overview	money.rows.previous	f64	optional
+response	GET /studio-organizations/v1/overview	money.rows.unpriced	bool	optional
+response	GET /studio-organizations/v1/overview	needs.components	u32	optional
+response	GET /studio-organizations/v1/overview	needs.current	f64	optional
+response	GET /studio-organizations/v1/overview	needs.forecast	f64	optional
+response	GET /studio-organizations/v1/overview	needs.grower	String	optional
+response	GET /studio-organizations/v1/overview	needs.kit	String	optional
+response	GET /studio-organizations/v1/overview	needs.people	u32	optional
+response	GET /studio-organizations/v1/overview	needs.previous	f64	optional
+response	GET /studio-organizations/v1/overview	needs.pulls	u32	optional
+response	GET /studio-organizations/v1/overview	people.per_person	f64	optional
+response	GET /studio-organizations/v1/overview	people.with_spend	u32	optional
+response	GET /studio-organizations/v1/overview	pulls_without_reviewers	Vec<{}>	optional
+response	GET /studio-organizations/v1/overview	pulls_without_reviewers.id	String	optional
+response	GET /studio-organizations/v1/overview	pulls_without_reviewers.number	i64	optional
+response	GET /studio-organizations/v1/overview	pulls_without_reviewers.project	String	optional
+response	GET /studio-organizations/v1/overview	pulls_without_reviewers.quiet_days	u32	optional
+response	GET /studio-organizations/v1/overview	pulls_without_reviewers.title	String	optional
+response	GET /studio-organizations/v1/overview	pulls_without_reviewers.url	String	optional
+response	GET /studio-organizations/v1/overview	specs	{}	always
+response	GET /studio-organizations/v1/overview	specs.failing	u32	optional
+response	GET /studio-organizations/v1/overview	specs.open_findings	u32	optional
+response	GET /studio-organizations/v1/overview	specs.specs	u32	optional
+response	GET /studio-organizations/v1/overview	spend	{}	optional
+response	GET /studio-organizations/v1/overview	spend.attributed	f64	optional
+response	GET /studio-organizations/v1/overview	spend.currency	String	optional
+response	GET /studio-organizations/v1/overview	spend.current	f64	optional
+response	GET /studio-organizations/v1/overview	spend.forecast	f64	optional
+response	GET /studio-organizations/v1/overview	spend.has_prices	bool	optional
+response	GET /studio-organizations/v1/overview	spend.own_keys	f64	optional
+response	GET /studio-organizations/v1/overview	spend.previous	f64	optional
+response	GET /studio-organizations/v1/overview	spend.sessions	f64	optional
+response	GET /studio-organizations/v1/overview	spend.unattributed	f64	optional
+response	GET /studio-organizations/v1/overview	spend.unpriced	Vec<String>	optional
+response	GET /studio-organizations/v1/overview	waiting_on	Vec<{}>	optional
+response	GET /studio-organizations/v1/overview	waiting_on.count	u32	optional
+response	GET /studio-organizations/v1/overview	waiting_on.oldest_days	u32	optional
+response	GET /studio-organizations/v1/overview	waiting_on.person_id	String	optional
+response	GET /studio-organizations/v1/overview	waiting_on.who	String	optional
