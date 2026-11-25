@@ -1,0 +1,40 @@
+# Core-side modules that still name a kit's gear (ADR-0079).
+#
+# One `from -> to` per line: a top-level module under src/ that is not a kit
+# gear, and the kit gear folder it names as `crate::<to>::…` outside tests and
+# comments. `assembly/core_kit_tests.rs` fails on a pair that is not listed
+# here, and on a listed pair the code no longer has.
+#
+# This list only shrinks. Do not add a line: contribute through a core port
+# instead (MCP tools, Overview blocks, access rules, connector drivers,
+# background work, cost metering). When you remove a reference, remove its line.
+catalog_graph -> artifact_ingest
+connectors -> llm_proxy
+derived_view -> artifact_ingest
+kit_registry -> artifact_ingest
+kit_registry -> components_catalog
+kit_registry -> studio_theia
+mcp -> artifact_ingest
+mcp -> documents
+mcp -> environments
+mcp -> product
+mcp -> spec_graph
+mcp -> spec_mapping
+mcp -> spec_quality
+notify -> studio_theia
+organizations -> artifact_ingest
+organizations -> components_catalog
+organizations -> documents
+organizations -> environments
+organizations -> insight
+organizations -> product
+organizations -> usage
+project_path -> environments
+project_sources -> git_proxy
+studio_authz_plugin -> artifact_ingest
+studio_authz_plugin -> environments
+studio_authz_plugin -> product
+studio_authz_plugin -> usage
+studio_session -> artifact_ingest
+studio_session -> git_proxy
+studio_session -> usage

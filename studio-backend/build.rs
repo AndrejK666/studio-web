@@ -69,8 +69,11 @@ fn main() {
 
     let src = Path::new(&manifest_dir).join("src");
     println!("cargo::rerun-if-changed={}", src.display());
-    fs::write(Path::new(&out_dir).join("gear_uses.rs"), gear_uses(&src))
-        .expect("write gear_uses.rs");
+    fs::write(
+        Path::new(&out_dir).join("gear_uses.rs"),
+        gear_uses(&src) + &module_refs(&src),
+    )
+    .expect("write gear_uses.rs");
 }
 
 // ── Which Studio gear uses which, and how ─────────────────────────────────
@@ -186,13 +189,7 @@ fn gear_uses(src: &Path) -> String {
             let Ok(text) = fs::read_to_string(&file) else {
                 continue;
             };
-            let code: String = text
-                .lines()
-                .take_while(|l| !l.trim_start().starts_with("#[cfg(test)]"))
-                .filter(|l| !l.trim_start().starts_with("//"))
-                .collect::<Vec<_>>()
-                .join("\n");
-            for (to, seg) in crate_paths(&code) {
+            for (to, seg) in crate_paths(&non_test_code(&text)) {
                 if to == *from || !is_gear(&to) {
                     continue;
                 }
@@ -227,6 +224,86 @@ fn gear_uses(src: &Path) -> String {
     }
     out.push_str("];\n");
     out
+}
+
+// ── Which top-level module names which ─────────────────────────────────────
+//
+// The same reading as `gear_uses`, for every module under `src/` (a directory
+// or a root file), gear or not: what the core-to-kit ratchet test in
+// `assembly` holds against its allowlist (ADR-0079).
+
+/// Every top-level module under `src/` with the files that make it: a
+/// directory's `.rs` files, or the root file itself. Test files, `lib` and
+/// `main` are not modules of their own.
+fn top_level_modules(src: &Path) -> Vec<(String, Vec<std::path::PathBuf>)> {
+    let mut out = Vec::new();
+    let Ok(entries) = fs::read_dir(src) else {
+        return out;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()).map(str::to_owned) else {
+            continue;
+        };
+        if path.is_dir() {
+            let mut files = Vec::new();
+            rust_files(&path, &mut files);
+            if !files.is_empty() {
+                out.push((name, files));
+            }
+        } else if let Some(stem) = name.strip_suffix(".rs") {
+            if stem.ends_with("tests") || stem.ends_with("_test") || stem == "lib" || stem == "main"
+            {
+                continue;
+            }
+            out.push((stem.to_owned(), vec![path]));
+        }
+    }
+    out.sort();
+    out
+}
+
+fn module_refs(src: &Path) -> String {
+    use std::collections::BTreeSet;
+    let modules = top_level_modules(src);
+    let names: BTreeSet<&str> = modules.iter().map(|(m, _)| m.as_str()).collect();
+    let mut refs: BTreeSet<(String, String)> = BTreeSet::new();
+    for (from, files) in &modules {
+        for file in files {
+            let name = file.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if name.ends_with("tests.rs") || name.ends_with("_test.rs") {
+                continue;
+            }
+            let Ok(text) = fs::read_to_string(file) else {
+                continue;
+            };
+            for (to, _) in crate_paths(&non_test_code(&text)) {
+                if to != *from && names.contains(to.as_str()) {
+                    refs.insert((from.clone(), to));
+                }
+            }
+        }
+    }
+    let mut out = String::from(
+        "\n/// `(from, to)`: a top-level module under `src/` that names another as\n\
+         /// `crate::<to>::…` outside test code and comments (see `build.rs`).\n\
+         #[cfg(test)]\n\
+         pub const MODULE_REFS: &[(&str, &str)] = &[\n",
+    );
+    for (from, to) in &refs {
+        let _ = writeln!(out, "    ({from:?}, {to:?}),");
+    }
+    out.push_str("];\n");
+    out
+}
+
+/// A file's code before its first `#[cfg(test)]`, without comment lines.
+fn non_test_code(text: &str) -> String {
+    text.lines()
+        .take_while(|l| !l.trim_start().starts_with("#[cfg(test)]"))
+        .filter(|l| !l.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// The first paragraph under `### 1.1 …` (every gear design calls it

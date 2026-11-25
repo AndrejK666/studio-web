@@ -131,3 +131,6 @@ impl RestApiCapability for AssemblyGear {
 #[cfg(test)]
 #[path = "product_tests.rs"]
 mod product_tests;
+
+#[cfg(test)]
+mod core_kit_tests;
