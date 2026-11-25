@@ -8,7 +8,12 @@ import {
   VisuallyHidden,
   type DataGridTableColumn,
 } from '@gears-frontx/ui-kit';
-import { supportsPullRequests, type ShareMode } from '../../../../model/projectSources';
+import {
+  repositoryHost,
+  sourceWebUrls,
+  supportsPullRequests,
+  type ShareMode,
+} from '../../../../model/projectSources';
 import type { ShareSave } from '../../../../slices/sourceShareSlice';
 import type { Refusal, ScreenText } from '@constructor-studio/mfe-shared';
 import { useProjectText, useSourcesText } from '../../../../i18n';
@@ -33,13 +38,37 @@ export interface SourceColumnDeps {
   shareSaves?: Readonly<Record<string, ShareSave>>;
 }
 
+/** A link to the provider's site: a new tab, and no click reaching the row beneath. */
+const ExternalTextLink: React.FC<{ href: string; label: string; children: React.ReactNode }> = ({
+  href,
+  label,
+  children,
+}) => (
+  <a
+    className={styles.sourceLink}
+    href={href}
+    target="_blank"
+    rel="noopener noreferrer"
+    aria-label={label}
+    title={label}
+    onClick={(event) => event.stopPropagation()}
+  >
+    {children}
+  </a>
+);
+
+ExternalTextLink.displayName = 'ExternalTextLink';
+
 const SourceCell: React.FC<{ row: SourceRow; actions: SourceRowActions }> = ({
   row,
   actions,
 }) => {
+  const t = useSourcesText();
   const Icon = (row.provider && PROVIDER_ICONS[row.provider]) || Cloud;
   const provider = row.provider === null ? null : actions.providerName(row.provider);
   const path = row.branch ? `${row.fullPath} · ${row.branch}` : row.fullPath;
+  const urls = sourceWebUrls(row);
+  const site = provider ?? (urls && repositoryHost(urls.repository)) ?? '';
   return (
     <div className={styles.source}>
       <span
@@ -54,9 +83,39 @@ const SourceCell: React.FC<{ row: SourceRow; actions: SourceRowActions }> = ({
         <span className={styles.sourceName} title={row.name}>
           {row.name}
         </span>
-        <span className={styles.sourcePath} title={path}>
-          {path}
-        </span>
+        {urls === null ? (
+          <span className={styles.sourcePath} title={path}>
+            {path}
+          </span>
+        ) : (
+          <span className={styles.sourcePath} title={path}>
+            <ExternalTextLink
+              href={urls.repository}
+              label={t('open_repository', { path: row.fullPath, provider: site })}
+            >
+              {row.fullPath}
+            </ExternalTextLink>
+            {row.branch && (
+              <>
+                {' · '}
+                {urls.branch === null ? (
+                  row.branch
+                ) : (
+                  <ExternalTextLink
+                    href={urls.branch}
+                    label={t('open_branch', {
+                      branch: row.branch,
+                      path: row.fullPath,
+                      provider: site,
+                    })}
+                  >
+                    {row.branch}
+                  </ExternalTextLink>
+                )}
+              </>
+            )}
+          </span>
+        )}
       </span>
     </div>
   );

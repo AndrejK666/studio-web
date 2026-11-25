@@ -10,6 +10,7 @@ export function sourceRow(overrides: Partial<SourceRow> = {}): SourceRow {
     name: 'api',
     fullPath: 'acme/api',
     cloneUrl: 'https://github.com/acme/api.git',
+    baseUrl: null,
     branch: 'main',
     shareMode: 'branch',
     nodeId: 'n-api',

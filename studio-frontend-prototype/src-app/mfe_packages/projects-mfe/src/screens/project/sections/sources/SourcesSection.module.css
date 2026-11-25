@@ -157,3 +157,15 @@ button.specsLink {
   display: flex;
   justify-content: flex-end;
 }
+
+/* The repository and its branch open on the provider's site. */
+.sourceLink {
+  color: inherit;
+  text-decoration: none;
+}
+
+.sourceLink:hover,
+.sourceLink:focus-visible {
+  color: var(--foreground);
+  text-decoration: underline;
+}

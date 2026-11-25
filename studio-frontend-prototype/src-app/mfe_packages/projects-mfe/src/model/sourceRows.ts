@@ -93,6 +93,8 @@ export interface SourceRow {
   name: string;
   fullPath: string;
   cloneUrl: string;
+  /** The connection's base URL (may be an API one); `null` when the connection is unknown or names none. */
+  baseUrl: string | null;
   branch: string | null;
   /** How "Share with the team" in the IDE lands edits here; `branch` when the config says nothing. */
   shareMode: 'branch' | 'pull_request';
@@ -285,6 +287,7 @@ export function buildSourceRows(answers: SourcesAnswers): SourcesTableRow[] {
       name: nameOf(source.full_path),
       fullPath: source.full_path,
       cloneUrl: source.clone_url,
+      baseUrl: connection?.base_url || null,
       branch: source.branch ?? null,
       // @cpt-end:cpt-studiofrontend-algo-project-sources-rows:p2:inst-5
       shareMode: source.share_mode === 'pull_request' ? 'pull_request' : 'branch',
