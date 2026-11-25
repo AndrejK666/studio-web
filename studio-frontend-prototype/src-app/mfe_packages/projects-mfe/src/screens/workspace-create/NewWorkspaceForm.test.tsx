@@ -1,6 +1,6 @@
 import { withOwnQueryCache } from '@frontx-test-utils/withOwnQueryCache';
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   FrontXProvider,
   eventBus,
@@ -124,6 +124,14 @@ async function mountForm(executeActionsChain?: ReturnType<typeof vi.fn>) {
     },
   };
 }
+
+// The cold import of the whole MFE, paid here and not inside the first test: on a
+// loaded run it took over 30 s, timing that test out and leaving its late render
+// behind for the next ones. (Not a static import: the mocks above use StubService.)
+beforeAll(async () => {
+  await import('../../init');
+  await import('./NewWorkspaceForm');
+}, 120_000);
 
 beforeEach(() => {
   org.current = { id: 'org-1', name: 'Fabric' };

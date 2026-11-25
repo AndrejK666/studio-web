@@ -506,13 +506,17 @@ describe('createEditorSession', () => {
 
       h.open();
       await vi.waitFor(() => expect(h.stream.onComplete).not.toBeNull());
+      // The run is read until the stream mentions it (it may be filed under another tenant's stream)...
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(read).toHaveBeenCalledTimes(2);
+      h.stream.onEvent?.(taskEvent(1, 'task.running'));
       await vi.advanceTimersByTimeAsync(10_000);
-      // While the stream answers, nothing is polled.
-      expect(read).toHaveBeenCalledTimes(1);
+      // ...and while the stream answers, nothing more is polled.
+      expect(read).toHaveBeenCalledTimes(2);
 
       h.stream.onComplete?.();
       await vi.advanceTimersByTimeAsync(4_000);
-      expect(read).toHaveBeenCalledTimes(3);
+      expect(read).toHaveBeenCalledTimes(4);
       expect(read).toHaveBeenLastCalledWith({ staleTime: 0 });
 
       await vi.advanceTimersByTimeAsync(10 * 60_000);

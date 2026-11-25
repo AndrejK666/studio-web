@@ -8,6 +8,10 @@ import {
   mfeContextValue,
 } from '@frontx-test-utils/createMfeBridgeFixture.ts';
 import type { ConnectionDto, ProjectConfig, RemoteRepoDto } from '@constructor-studio/mfe-shared';
+// Static, not inside the first test: the cold import of the whole MFE is paid at
+// collection, where no test timeout applies (it took over 30 s on a loaded run).
+import { mfeApp } from '../../init';
+import { SourcesConnectDialog } from './SourcesConnectDialog';
 
 const PROJECT = 'p-1';
 
@@ -98,8 +102,6 @@ const repo = (full_path: string, default_branch: string | null = null): RemoteRe
 });
 
 async function mountDialog() {
-  const { mfeApp } = await import('../../init');
-  const { SourcesConnectDialog } = await import('./SourcesConnectDialog');
   const { bridge } = createMfeBridgeFixture({ domainId: 'overlay', instanceId: 'inst' });
   render(
     <FrontXProvider app={mfeApp} mfeBridge={mfeContextValue(bridge)}>

@@ -7,6 +7,10 @@ import {
   createMfeBridgeFixture,
   mfeContextValue,
 } from '@frontx-test-utils/createMfeBridgeFixture.ts';
+// Static, not inside the first test: the cold import of the whole MFE is paid at
+// collection, where no test timeout applies (it took over 30 s on a loaded run).
+import { mfeApp } from '../../init';
+import { NewProjectWizard } from './NewProjectWizard';
 
 /** The wizard's frame around its steps: the first-load skeleton and the failure. */
 
@@ -43,8 +47,6 @@ vi.mock('../../shared/useCurrentUser', () => ({
 vi.mock('./steps/DetailsStep', () => ({ DetailsStep: () => <p>details step</p> }));
 
 async function mountWizard() {
-  const { mfeApp } = await import('../../init');
-  const { NewProjectWizard } = await import('./NewProjectWizard');
   const { bridge } = createMfeBridgeFixture({ domainId: 'overlay', instanceId: 'inst' });
 
   const tree = () => (
