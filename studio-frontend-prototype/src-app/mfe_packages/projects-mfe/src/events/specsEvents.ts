@@ -1,9 +1,13 @@
-/** The Specs list's events: a type decision asked for and refused, a check asked for, and the list changed. */
+/**
+ * The Specs list's events: a type decision asked for and refused, a bulk
+ * confirmation asked for and settled, a check asked for, and the list changed.
+ */
 
 import '@gears-frontx/react';
 import type { Refusal } from '@constructor-studio/mfe-shared';
 import type { DecideBindingDto } from '../api/documentTypes';
 import type { SpecsCheckTarget } from '../model/specsCheck';
+import type { ConfirmOutcome, ConfirmTarget } from '../model/specsConfirm';
 
 export interface TypeDecisionRequest {
   projectId: string;
@@ -12,6 +16,13 @@ export interface TypeDecisionRequest {
   /** The document's name, for the toast if the decision is refused. */
   name: string;
   decision: DecideBindingDto;
+}
+
+/** Bulk *Confirm*: accept the proposed type of each target in one call. */
+export interface TypesConfirmRequest {
+  projectId: string;
+  workspaceId: string;
+  targets: ConfirmTarget[];
 }
 
 /** Check (#691): two Spec Quality runs over these specs. */
@@ -27,6 +38,9 @@ declare module '@gears-frontx/react' {
   interface EventPayloadMap {
     'mfe/projects/type-decision-requested': TypeDecisionRequest;
     'mfe/projects/type-decision-refused': { projectId: string; name: string; refusal: Refusal };
+    'mfe/projects/types-confirm-requested': TypesConfirmRequest;
+    /** A bulk confirmation settled: the toast says how it went. */
+    'mfe/projects/types-confirmed': { projectId: string; outcome: ConfirmOutcome };
     'mfe/projects/specs-check-requested': SpecsCheckRequest;
     /** `spec-rows` changed (a type decision, a check, an upload): the list is read again. */
     'mfe/projects/specs-changed': { projectId: string };

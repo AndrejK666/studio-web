@@ -147,6 +147,15 @@ proposal, `set` a type outright, `reject` (this file is not a document), or
 caller may claim, and it lands as a proposal rather than a decision. Pass
 `content` to re-check conformance against the new type in the same call.
 
+`POST …/projects/{project_id}/document-bindings/confirm` is `confirm` for many
+bindings at once — the Specs list's *Confirm proposed types*. It takes
+`binding_ids` (at most 1000), confirms each one whose type is still a
+proposal (`detected`), and answers `{confirmed, skipped: [{id, reason}]}`: a
+binding already settled or with nothing proposed is `not_proposed`, another
+project's is `other_project`, an unknown id is `not_found`. A skip never fails
+the call. Conformance is not re-checked — confirming keeps the type the last
+verdict was judged against.
+
 ## When it happens
 
 A sync classifies the prose it reads, as it reads it. That is the only moment

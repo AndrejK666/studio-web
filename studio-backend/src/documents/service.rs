@@ -2189,6 +2189,50 @@ pub struct BindingDecision {
     pub content: Option<String>,
 }
 
+/// Why a bulk confirmation left a binding as it was.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfirmSkip {
+    /// No binding with that id in the workspace.
+    NotFound,
+    /// The binding belongs to another project of the workspace.
+    OtherProject,
+    /// Nothing waits to be confirmed: the type is settled already, or there
+    /// is no proposed type at all.
+    NotProposed,
+}
+
+impl ConfirmSkip {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ConfirmSkip::NotFound => "not_found",
+            ConfirmSkip::OtherProject => "other_project",
+            ConfirmSkip::NotProposed => "not_proposed",
+        }
+    }
+}
+
+/// What [`DocumentsService::confirm_proposed_types`] did with each id.
+#[derive(Debug, Default)]
+pub struct ConfirmedTypes {
+    /// The bindings now `confirmed`, in the order they were named.
+    pub confirmed: Vec<DocumentBinding>,
+    /// The ones left as they were, and why.
+    pub skipped: Vec<(Uuid, ConfirmSkip)>,
+}
+
+/// Whether a project may confirm this binding's proposal: it is the
+/// project's own or the workspace's, and a classifier's proposal still waits
+/// for a person (`detected` with a type).
+fn confirm_skip(row: &document_binding::Model, project_id: Uuid) -> Option<ConfirmSkip> {
+    if row.project_id.is_some_and(|owner| owner != project_id) {
+        return Some(ConfirmSkip::OtherProject);
+    }
+    if row.type_key.is_none() || row.state != BindingState::Detected.as_str() {
+        return Some(ConfirmSkip::NotProposed);
+    }
+    None
+}
+
 impl DocumentsService {
     /// The text of the bindings a caller named, read from the checkouts a sync
     /// left on disk.
@@ -4589,6 +4633,55 @@ impl DocumentsService {
         self.data.upsert_binding(ctx, row.clone()).await?;
         self.sources_changed(workspace_id);
         binding_from_row(row)
+    }
+
+    /// Accept the proposed type of every binding named, as
+    /// [`Self::decide_binding`]'s `confirm` does one at a time — but only a
+    /// proposal: a binding whose type is settled, or that has none, is
+    /// skipped rather than refused, so one stale row does not cost the rest.
+    ///
+    /// `project_id` is the project the caller is confirming for: its own
+    /// bindings and the workspace's it inherits qualify, another project's do
+    /// not. The caller has authorized both tenants. The confirmed rows are
+    /// written together, and conformance is left as it was: confirming keeps
+    /// the type the last verdict was computed against.
+    pub async fn confirm_proposed_types(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Uuid,
+        project_id: Uuid,
+        ids: &[Uuid],
+    ) -> Result<ConfirmedTypes> {
+        let mut outcome = ConfirmedTypes::default();
+        let mut rows = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        let now = OffsetDateTime::now_utc();
+        for &id in ids {
+            if !seen.insert(id) {
+                continue;
+            }
+            let Some(mut row) = self.data.get_binding(ctx, workspace_id, id).await? else {
+                outcome.skipped.push((id, ConfirmSkip::NotFound));
+                continue;
+            };
+            if let Some(skip) = confirm_skip(&row, project_id) {
+                outcome.skipped.push((id, skip));
+                continue;
+            }
+            row.state = BindingState::Confirmed.as_str().to_string();
+            row.updated_at = now;
+            rows.push(row);
+        }
+        if rows.is_empty() {
+            return Ok(outcome);
+        }
+        self.data.upsert_bindings(ctx, &rows).await?;
+        self.sources_changed(workspace_id);
+        outcome.confirmed = rows
+            .into_iter()
+            .map(binding_from_row)
+            .collect::<Result<_>>()?;
+        Ok(outcome)
     }
 
     pub async fn delete_binding(

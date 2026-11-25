@@ -23,6 +23,7 @@ import { CHECK_CONFIRM_ABOVE, checkTargets } from '../../../../model/specsCheck'
 import { SPECS_CHECK_SLICE_KEY, checkRunning } from '../../../../slices/specsCheckSlice';
 import { requestSpecsCheck } from '../../../../actions/specsCheckActions';
 import { UploadDocumentsButton } from '../../upload/UploadDocumentsButton';
+import { ConfirmTypesActions } from './ConfirmTypesActions';
 
 interface SpecsActionsProps {
   projectId: string;
@@ -63,6 +64,7 @@ export const SpecsActions: React.FC<SpecsActionsProps> = ({ projectId, projectNa
   return (
     <>
       {upload}
+      <ConfirmTypesActions projectId={projectId} workspaceId={workspace.id} />
       <span ref={findThemedRoot}>
         {disabledBy ? (
           <Tooltip>

@@ -84,7 +84,7 @@ const NOT_SPEC = specRowDto({ id: 'b-notes', name: 'notes.md', type_key: null, s
 function given(search = '', filter = 'all', documentType: string | null = null) {
   state.current = {
     'projects/specsFilter': { search, filter, documentType },
-    'projects/typeDecision': { pending: [] },
+    'projects/typeDecision': { pending: [], proposed: null },
   };
 }
 
@@ -244,6 +244,15 @@ describe('the Specs section', () => {
 
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'api.md' } });
     expect(lastPayload('setSpecsSearch')).toBe('api.md');
+  });
+
+  it('hands the bulk Confirm every proposed type of the project, whatever the search shows', async () => {
+    given('acme/api');
+    specRows.mockResolvedValue(answer([PRD, API, ADR]));
+    renderSection();
+    await screen.findByText('api.md');
+    await waitFor(() => expect(shownIds()).toEqual(['b-api']));
+    expect(lastPayload('proposedTypes')).toEqual([{ id: 'b-adr', name: 'adr.md', typeName: 'adr' }]);
   });
 
   it('narrows the rows, and Check, with Filter specs, and writes the choice back', async () => {

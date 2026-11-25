@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { closeProject, openProject } from './navSlice';
-import reducer, { decisionSettled, decisionStarted } from './typeDecisionSlice';
+import reducer, { decisionSettled, decisionStarted, proposedTypes } from './typeDecisionSlice';
 
 describe('type decisions in flight', () => {
   it('holds each binding once while its decision is sent, and lets it go when it settles', () => {
@@ -15,5 +15,21 @@ describe('type decisions in flight', () => {
     const state = reducer(undefined, decisionStarted('b-1'));
     expect(reducer(state, openProject('p-2')).pending).toEqual([]);
     expect(reducer(state, closeProject()).pending).toEqual([]);
+  });
+});
+
+describe('the proposed types to confirm', () => {
+  const PROPOSED = [{ id: 'b-1', name: 'design.md', typeName: 'Design Document' }];
+
+  it('are what the list wrote last, and none before its first load', () => {
+    expect(reducer(undefined, { type: 'init' }).proposed).toBeNull();
+    const state = reducer(undefined, proposedTypes(PROPOSED));
+    expect(state.proposed).toEqual(PROPOSED);
+    expect(reducer(state, proposedTypes(null)).proposed).toBeNull();
+  });
+
+  it('are forgotten with the project', () => {
+    const state = reducer(undefined, proposedTypes(PROPOSED));
+    expect(reducer(state, openProject('p-2')).proposed).toBeNull();
   });
 });

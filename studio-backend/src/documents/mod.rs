@@ -16,6 +16,8 @@
 mod approvals;
 mod brief;
 mod classify;
+#[cfg(test)]
+mod confirm_types_tests;
 mod data;
 #[cfg(test)]
 mod data_tests;

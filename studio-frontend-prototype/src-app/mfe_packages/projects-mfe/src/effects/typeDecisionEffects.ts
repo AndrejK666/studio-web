@@ -1,4 +1,4 @@
-/** Sends a person's decision on a repository file's type (#690). */
+/** Sends a person's decision on a repository file's type (#690), or on many at once. */
 
 import {
   apiRegistry,
@@ -10,6 +10,7 @@ import {
 import { refusalFrom } from '@constructor-studio/mfe-shared';
 import { DocumentsApiService } from '../api/DocumentsApiService';
 import { decisionSettled, decisionStarted } from '../slices/typeDecisionSlice';
+import { confirmOutcome } from '../model/specsConfirm';
 import '../events/specsEvents';
 
 export function initTypeDecisionEffects(dispatch: AppDispatch, app: FrontXApp): void {
@@ -35,5 +36,36 @@ export function initTypeDecisionEffects(dispatch: AppDispatch, app: FrontXApp): 
         }
       )
       .finally(() => dispatch(decisionSettled(bindingId)));
+  });
+
+  // Bulk *Confirm*: one call for every target, each row pending until it settles.
+  eventBus.on('mfe/projects/types-confirm-requested', (request) => {
+    const { projectId, workspaceId, targets } = request;
+    if (targets.length === 0) return;
+    const documents = apiRegistry.getService(DocumentsApiService);
+    targets.forEach((target) => dispatch(decisionStarted(target.id)));
+    void documents
+      .confirmTypes({ workspaceId, projectId })
+      .fetch({ binding_ids: targets.map((target) => target.id) })
+      .then(
+        (result) => {
+          eventBus.emit('mfe/projects/types-confirmed', {
+            projectId,
+            outcome: confirmOutcome(targets, result),
+          });
+          if (result.confirmed.length === 0) return;
+          // Confirmed documents change the Sources section's Specs counts, and the
+          // list: their types settle and the domain model reads them.
+          void invalidateQueryCacheForApp(app, documents.specsPerSource({ scope: projectId }));
+          eventBus.emit('mfe/projects/specs-changed', { projectId });
+        },
+        (error: unknown) => {
+          eventBus.emit('mfe/projects/types-confirmed', {
+            projectId,
+            outcome: { kind: 'refused', refusal: refusalFrom(error, 'confirm_refused') },
+          });
+        }
+      )
+      .finally(() => targets.forEach((target) => dispatch(decisionSettled(target.id))));
   });
 }

@@ -324,6 +324,7 @@ before that are swept by each repository sync of the project.
 | `POST` | `/workspaces/{workspace_id}/document-bindings/classify`, `/workspaces/{workspace_id}/projects/{project_id}/document-bindings/classify` | Classify the files given in the body | unstable |
 | `GET` | `/workspaces/{workspace_id}/document-bindings`, `/workspaces/{workspace_id}/projects/{project_id}/document-bindings` | List bindings | unstable |
 | `PUT` `DELETE` | `/workspaces/{workspace_id}/document-bindings/{id}` | Confirm, correct, reject or reset; forget | unstable |
+| `POST` | `/workspaces/{workspace_id}/projects/{project_id}/document-bindings/confirm` | Confirm many proposed types at once; skips the rest, saying why | unstable |
 | `GET` | `/document-bindings/{id}/text?project_id=` | A bound file's text, from the checkout | unstable |
 | `POST` | `/workspaces/{workspace_id}/projects/{project_id}/quality/{detector}` | Queue a detector over named bindings, documents and inline texts | unstable |
 | `GET` | `/spec-rows`, `/spec-pipeline`, `/specs-per-source` | The folded spec views | unstable |

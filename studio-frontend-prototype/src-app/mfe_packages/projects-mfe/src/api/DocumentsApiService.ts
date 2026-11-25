@@ -13,6 +13,8 @@ import { BaseApiService, RestEndpointProtocol, RestProtocol } from '@gears-front
 import type {
   AnalyzeBindingsRequest,
   AnalyzeEnqueuedDto,
+  ConfirmTypesDto,
+  ConfirmTypesResultDto,
   CreateDocumentDto,
   DecideBindingDto,
   DocumentBindingDto,
@@ -116,6 +118,17 @@ export class DocumentsApiService extends BaseApiService {
     return this.protocol(RestEndpointProtocol).mutation<DocumentBindingDto, DecideBindingDto>(
       'PUT',
       `/workspaces/${workspaceId}/document-bindings/${bindingId}`
+    );
+  }
+
+  /**
+   * Confirms the proposed type of each named binding of a project at once. A
+   * binding with nothing to confirm is skipped and named, never refused.
+   */
+  confirmTypes({ workspaceId, projectId }: ProjectParams) {
+    return this.protocol(RestEndpointProtocol).mutation<ConfirmTypesResultDto, ConfirmTypesDto>(
+      'POST',
+      `/workspaces/${workspaceId}/projects/${projectId}/document-bindings/confirm`
     );
   }
 
