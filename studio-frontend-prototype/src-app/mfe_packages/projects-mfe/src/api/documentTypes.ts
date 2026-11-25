@@ -155,6 +155,11 @@ export interface SpecRowDto {
   /** The type's confidence: meaningful while `detected`, `1.0` for `manual`. */
   confidence: number | null;
   /**
+   * The project's spec pipeline confirmed the type, its proposal having scored
+   * at or over the project's threshold. Absent from a server before it.
+   */
+  auto_confirmed?: boolean;
+  /**
    * RFC 3339 time of the newest verdict from ANY detector, `bloat` and
    * `traceability` included. Null with `findings > 0` means checked before
    * verdicts were dated: read `findings` first.
@@ -205,4 +210,35 @@ export interface SpecsPerSourceListDto {
   total: number;
   /** False: every count is missing rather than zero, rendered `—`. */
   files_known: boolean;
+}
+
+/** One step of a project's automatic spec pipeline (`GET /spec-pipeline`). */
+export interface SpecPipelineStepDto {
+  step: 'specs' | 'domain_model' | 'mapping' | 'product' | string;
+  state: 'done' | 'unchanged' | 'running' | 'waiting' | 'stopped' | 'off' | string;
+  summary: string | null;
+  /** Why it waits or stopped. */
+  reason: string | null;
+  at: string | null;
+  /** The gear match id of the `product` step. */
+  link: string | null;
+}
+
+/** A project's automatic spec pipeline: its settings and how each step last went. */
+export interface SpecPipelineDto {
+  project_id: string;
+  enabled: boolean;
+  auto_confirm_threshold: number;
+  /** `computing`, `ready`, `failed`; null before the first run. */
+  status: string | null;
+  computed_at: string | null;
+  requested_at: string | null;
+  error: string | null;
+  steps: SpecPipelineStepDto[];
+}
+
+export interface SpecPipelineSettingsRequest {
+  project_id: string;
+  enabled?: boolean;
+  auto_confirm_threshold?: number;
 }

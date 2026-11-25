@@ -41,6 +41,8 @@ vi.mock('../../../../i18n', () => {
   return { useSpecsSectionTranslations: () => translations, useSpecsText: () => t, useProjectText: () => t };
 });
 vi.mock('./useTypeDecisionRefusals', () => ({ useTypeDecisionRefusals: () => undefined }));
+// The pipeline strip reads its own route; SpecPipeline.test.tsx covers it.
+vi.mock('./SpecPipeline', () => ({ SpecPipeline: () => null }));
 vi.mock('../../../../actions/artifactActions', () => ({ requestOpenSpec }));
 vi.mock('../../../../actions/sourcesConnectActions', () => ({ openSourcesConnect }));
 vi.mock('../../upload/UploadPanel', () => ({ UploadPanel: () => null }));

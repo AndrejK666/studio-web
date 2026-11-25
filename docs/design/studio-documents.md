@@ -835,6 +835,43 @@ reach the editor. [`docs/project-domain-model.md`](../project-domain-model.md) i
 planned domain model read from a project's documents and the disagreements
 found in it.
 
+### The automatic spec pipeline
+
+After every repository sync a project's specs go on without anybody pressing a
+button (`documents/pipeline.rs`). It is a derived view (`crate::derived_view`):
+`RecomputeOnSync` queues one `documents.spec-pipeline` run per project after
+each sync, joined when one is waiting, and the steps are kept as its rows
+(`spec-pipeline-step`, `spec-pipeline-view`, claimed by the Specs kit). Each
+step runs only when the one before it passed, and once per input digest:
+
+1. **Specs.** The sync classified the files, confirmed the proposals at or over
+   the project's threshold (`confirmed_by: auto`) and queued every Spec Quality
+   detector (`purpose`, `leak`, `bloat`, `traceability`) on the typed documents
+   that are new, changed or never analysed. The run sweeps the proposals an
+   older sync left below a threshold since lowered. No bound document: the
+   chain waits for a person.
+2. **Domain model.** When the digest of the bound documents at their revisions
+   changed, a build of the project domain model starts on the **organization's
+   AI connection**: the run's worker acting in the organization has no profile
+   key, so the key resolution (`llm_proxy/keys.rs`) reaches the workspace's or
+   the organization's connection and the organization's budget pays. The build
+   runs spawned, as a person's does, and asks for the pipeline again when it
+   ends; that run records `done`, or `stopped` with the reason (no usable
+   connection, most often). A stopped step stays stopped for the same input
+   until a person presses Run (`POST /spec-pipeline/runs`).
+3. **Mapping.** The capabilities the bound documents declare and imply, which
+   `studio-spec-mapping` reads its plan from, recorded with their digest.
+4. **Product.** A gear match of the project's specifications through
+   `product::port::ProductProposals`, keyed by the digest of the two steps
+   before it, so the same input never matches twice. The matcher service's own
+   model configuration pays for it. Nothing in the product changes; a member
+   adds a proposed gear.
+
+`GET /spec-pipeline?project_id=` answers the settings and the steps (state,
+summary, reason, when); `PUT /spec-pipeline/settings` changes `enabled` and
+`auto_confirm_threshold` in `project.config` `spec_pipeline`. Off, nothing is
+confirmed automatically and every step reads `off`.
+
 ## 5. Traceability
 
 - **PRD**: [Constructor Studio](../prd/constructor-studio.md)

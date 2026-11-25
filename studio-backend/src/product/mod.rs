@@ -268,6 +268,17 @@ impl RestApiCapability for StudioProductGear {
             ))
                 as Arc<dyn port::ProjectRepositories>);
 
+        // The last step of a project's spec pipeline: a gear match of its
+        // specifications (studio-documents, `documents::pipeline`).
+        if let Some(matches) = self.matches.get() {
+            ctx.client_hub()
+                .register::<dyn port::ProductProposals>(Arc::new(port::Proposals::new(
+                    Arc::clone(&service),
+                    Arc::clone(matches),
+                ))
+                    as Arc<dyn port::ProductProposals>);
+        }
+
         let gearbox = port::engine(&ctx.client_hub());
         let router = rest::register_routes(router, openapi, service, ctx.client_hub(), gearbox);
         let router = match self.matches.get() {

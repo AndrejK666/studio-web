@@ -460,6 +460,7 @@ pub(super) fn binding(
         requirements: "[]".to_string(),
         inferred_capabilities: "[]".to_string(),
         content_sha: "sha".to_string(),
+        confirmed_by: None,
         created_at: now,
         updated_at: now,
     }

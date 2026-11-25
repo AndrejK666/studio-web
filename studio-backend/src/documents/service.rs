@@ -223,9 +223,12 @@ impl DocumentsService {
             (quality::Detector::Purpose, changed.clone()),
             (quality::Detector::Leak, changed),
         ];
-        // Duplication needs something to be duplicated against.
+        // Duplication needs something to be duplicated against, and a
+        // reference somewhere to point: both judge the typed documents as a
+        // set, so every detector Spec Quality has runs on a sync.
         if typed.len() >= 2 {
-            runs.push((quality::Detector::Bloat, typed));
+            runs.push((quality::Detector::Bloat, typed.clone()));
+            runs.push((quality::Detector::Traceability, typed));
         }
 
         let mut queued = 0usize;
@@ -1453,6 +1456,85 @@ impl DocumentsService {
             .list_bindings(ctx, workspace_id, binding_scope(project_id), 0, None)
             .await?;
         rows.into_iter().map(binding_from_row).collect()
+    }
+
+    /// The project's spec pipeline settings (`project.config`
+    /// `spec_pipeline`), read as `ctx`. The defaults when the project has no
+    /// config, or it cannot be read: a pipeline that cannot read its switch
+    /// must not stop the sync that asked.
+    pub async fn pipeline_settings(
+        &self,
+        ctx: &SecurityContext,
+        project_id: Uuid,
+    ) -> super::pipeline::PipelineSettings {
+        match crate::project_sources::read_config(self.account_management.as_ref(), ctx, project_id)
+            .await
+        {
+            Some(config) => super::pipeline::PipelineSettings::from_config(&config),
+            None => super::pipeline::PipelineSettings::default(),
+        }
+    }
+
+    /// Change the project's spec pipeline settings, as `ctx` (who must be
+    /// allowed to write the project's config), and answer them as they now are.
+    pub async fn put_pipeline_settings(
+        &self,
+        ctx: &SecurityContext,
+        project_id: Uuid,
+        enabled: Option<bool>,
+        threshold: Option<f32>,
+    ) -> Result<super::pipeline::PipelineSettings> {
+        crate::project_sources::update_config(
+            self.account_management.as_ref(),
+            ctx,
+            project_id,
+            |config| super::pipeline::PipelineSettings::write(config, enabled, threshold),
+        )
+        .await?;
+        Ok(self.pipeline_settings(ctx, project_id).await)
+    }
+
+    /// Confirm every proposal of the project's own bindings that scores at or
+    /// over the threshold of `settings`, marking each as the pipeline's. For
+    /// the proposals a sync made before the setting was on, or before the
+    /// threshold was lowered; a sync confirms its own as it classifies.
+    /// Answers how many it confirmed.
+    pub async fn auto_confirm_proposals(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Uuid,
+        project_id: Option<Uuid>,
+        settings: &super::pipeline::PipelineSettings,
+    ) -> Result<usize> {
+        let (rows, _) = self
+            .data
+            .list_bindings(ctx, workspace_id, binding_scope(project_id), 0, None)
+            .await?;
+        let now = OffsetDateTime::now_utc();
+        let confirmed: Vec<document_binding::Model> = rows
+            .into_iter()
+            // Its own rows only: a workspace binding a project inherits is
+            // not the project's to confirm.
+            .filter(|row| row.project_id == project_id && row.type_key.is_some())
+            .filter_map(|mut row| {
+                let state = BindingState::parse(&row.state)?;
+                let (state, by) =
+                    super::pipeline::auto_settle(state, row.confidence, Some(settings));
+                if state != BindingState::Confirmed || by.is_none() {
+                    return None;
+                }
+                row.state = state.as_str().to_string();
+                row.confirmed_by = by;
+                row.updated_at = now;
+                Some(row)
+            })
+            .collect();
+        if confirmed.is_empty() {
+            return Ok(0);
+        }
+        self.data.upsert_bindings(ctx, &confirmed).await?;
+        self.sources_changed(workspace_id);
+        Ok(confirmed.len())
     }
 
     /// Every binding under a workspace -- its own and all of its projects'.
@@ -3867,10 +3949,18 @@ fn ruled_by_person(prior: &document_binding::Model) -> bool {
     let source = prior.source.as_deref().and_then(DetectionSource::parse);
     match BindingState::parse(&prior.state) {
         Some(BindingState::Manual) => true,
-        Some(BindingState::Confirmed) => source != Some(DetectionSource::FrontMatter),
+        Some(BindingState::Confirmed) => {
+            source != Some(DetectionSource::FrontMatter) && !auto_confirmed(prior)
+        }
         Some(BindingState::NotADocument) => source != Some(DetectionSource::Heuristic),
         _ => false,
     }
+}
+
+/// Whether the project's spec pipeline, not a person, confirmed this binding.
+fn auto_confirmed(prior: &document_binding::Model) -> bool {
+    prior.state == BindingState::Confirmed.as_str()
+        && prior.confirmed_by.as_deref() == Some(super::pipeline::CONFIRMED_BY_AUTO)
 }
 
 /// Stable digest of a document's content.
@@ -4241,6 +4331,8 @@ fn binding_from_row(row: document_binding::Model) -> Result<DocumentBinding> {
         requirements: serde_json::from_str(&row.requirements).unwrap_or_default(),
         inferred_capabilities: serde_json::from_str(&row.inferred_capabilities).unwrap_or_default(),
         content_sha: row.content_sha,
+        auto_confirmed: row.state == BindingState::Confirmed.as_str()
+            && row.confirmed_by.as_deref() == Some(super::pipeline::CONFIRMED_BY_AUTO),
         created_at: rfc3339(row.created_at),
         updated_at: rfc3339(row.updated_at),
     })
@@ -4265,6 +4357,14 @@ impl DocumentsService {
         // The vocabulary a file's functional requirements are read against
         // when its front matter declares no capability.
         let vocabulary = self.list_capabilities(ctx, workspace_id).await?;
+        // The project's spec pipeline: whether, and from what confidence, a
+        // proposed type is confirmed without a person (`super::pipeline`).
+        // Only a project has the setting; a workspace-level scan proposes as
+        // it always did.
+        let settings = match project_id {
+            Some(project) => Some(self.pipeline_settings(ctx, project).await),
+            None => None,
+        };
         // Every binding in scope, not a page of them: the run has to know
         // whether each file was already ruled on, and a page would silently
         // re-guess the rest.
@@ -4325,7 +4425,11 @@ impl DocumentsService {
             let document_path = is_prose_path(&file.path);
             let keep = prior
                 .and_then(keep_existing_verdict)
-                .filter(|_| document_path || prior.is_some_and(ruled_by_person));
+                .filter(|_| document_path || prior.is_some_and(ruled_by_person))
+                // A type the pipeline confirmed stands for the text it was
+                // confirmed on. Text that changed is classified again, and
+                // confirmed again only if it still scores high enough.
+                .filter(|_| !prior.is_some_and(|p| auto_confirmed(p) && p.content_sha != sha));
             if keep.is_some() {
                 kept += 1;
             }
@@ -4375,6 +4479,7 @@ impl DocumentsService {
                         content_sha: prior
                             .map(|p| p.content_sha.clone())
                             .unwrap_or_else(|| sha.clone()),
+                        confirmed_by: prior.and_then(|p| p.confirmed_by.clone()),
                         created_at: prior.map(|p| p.created_at).unwrap_or(now),
                         updated_at: now,
                     });
@@ -4401,6 +4506,7 @@ impl DocumentsService {
                     requirements: "[]".to_string(),
                     inferred_capabilities: "[]".to_string(),
                     content_sha: sha,
+                    confirmed_by: None,
                     created_at: prior.map(|p| p.created_at).unwrap_or(now),
                     updated_at: now,
                 });
@@ -4438,6 +4544,15 @@ impl DocumentsService {
             // The declaration is the author's ruling; the template check is
             // the evidence it holds. Either one missing, it stays a proposal.
             let state = settle(state, source, report.as_ref().map(|r| r.conforms));
+            // A proposal the project trusts enough is confirmed now, and the
+            // binding says it was the pipeline, not a person, that did.
+            let (state, confirmed_by) = if state == BindingState::Detected {
+                super::pipeline::auto_settle(state, confidence, settings.as_ref())
+            } else if keep.is_some() {
+                (state, prior.and_then(|p| p.confirmed_by.clone()))
+            } else {
+                (state, None)
+            };
             let capabilities = super::intake::declared_capabilities(&file.content);
             let requirements = reading::declared_requirements(&file.content);
             let inferred = inferred_for(&file.content, &vocabulary);
@@ -4483,6 +4598,7 @@ impl DocumentsService {
                 requirements: serde_json::to_string(&requirements)?,
                 inferred_capabilities: serde_json::to_string(&inferred)?,
                 content_sha: sha,
+                confirmed_by,
                 created_at: prior.map(|p| p.created_at).unwrap_or(now),
                 updated_at: now,
             });
@@ -4574,12 +4690,15 @@ impl DocumentsService {
             .context("no such document binding")?;
         let types = self.list_types(ctx, workspace_id).await?;
 
+        // Whatever a person decides, the pipeline's confirmation is over.
+        row.confirmed_by = None;
         match decision.action {
             BindingAction::Confirm => {
                 if row.type_key.is_none() {
                     bail!("nothing to confirm: this binding has no proposed type");
                 }
                 row.state = BindingState::Confirmed.as_str().to_string();
+                row.confirmed_by = Some(super::pipeline::CONFIRMED_BY_PERSON.to_owned());
             }
             BindingAction::Set { type_key } => {
                 if !types.iter().any(|t| t.key == type_key) {
@@ -5667,6 +5786,7 @@ mod tests {
             requirements: Vec::new(),
             inferred_capabilities: Vec::new(),
             content_sha: String::new(),
+            auto_confirmed: false,
             created_at: String::new(),
             updated_at: String::new(),
         }
@@ -5901,6 +6021,7 @@ mod reclassification_tests {
             requirements: "[]".to_string(),
             inferred_capabilities: "[]".to_string(),
             content_sha: "sha".into(),
+            confirmed_by: None,
             created_at: now,
             updated_at: now,
         }
@@ -6131,6 +6252,7 @@ mod adoption_tests {
             requirements: "[]".into(),
             inferred_capabilities: "[]".into(),
             content_sha: "sha".into(),
+            confirmed_by: None,
             created_at: now,
             updated_at: now,
         }

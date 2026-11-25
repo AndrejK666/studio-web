@@ -79,13 +79,28 @@ answer. Scoring is derived from each type's own definition — key, name,
 sections, rules — never from a hard-coded table of filenames, so a
 workspace-defined type is detected on exactly the same terms as a built-in one.
 
+## Confirmed without a person
+
+A project's **automatic pipeline** (on by default, Specs › Automatic pipeline,
+kept in `project.config` as `spec_pipeline: { enabled, auto_confirm_threshold }`)
+confirms a proposed type that scored at or over the project's threshold (0.8
+unless changed; 1.0 confirms nothing) as the sync classifies it. The binding
+records who confirmed it: `confirmed_by: auto` for the pipeline, `person` for a
+person (`m0031`); the Specs list shows "confirmed automatically", and a person
+can still change it. A type the pipeline confirmed stands for the text it was
+confirmed on: when the file changes it is classified again, and confirmed again
+only if it still scores high enough. A workspace-level scan has no project
+setting and only proposes. What the pipeline does after the types is in
+[`design/studio-documents.md`](design/studio-documents.md) §4.
+
 ## What a re-scan may overwrite
 
 A classification run leaves a binding alone for two different reasons:
 
 - **a person ruled on it** (`confirmed`, `manual`, `not_a_document`) — re-guessing
   would overwrite a decision, which is the one thing a background pass must
-  never do;
+  never do. A type the pipeline confirmed (`confirmed_by: auto`) is kept the
+  same way while the file says what it said;
 - **Spec Quality answered it** — that verdict cost an LLM round-trip, and
   offline scoring already had its turn on that file and did not settle it.
   Discarding the expensive answer to re-run the cheap one that failed is

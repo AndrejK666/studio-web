@@ -22,6 +22,8 @@ import type {
   DocumentListDto,
   DocumentTypeListDto,
   QualityDetector,
+  SpecPipelineDto,
+  SpecPipelineSettingsRequest,
   SpecRowListDto,
   SpecsPerSourceListDto,
   StageListDto,
@@ -92,6 +94,28 @@ export class DocumentsApiService extends BaseApiService {
     SpecRowListDto,
     { projectId: string }
   >(({ projectId }) => `/spec-rows?${new URLSearchParams({ project_id: projectId })}`);
+
+  /** The project's automatic spec pipeline: settings and steps. */
+  readonly specPipeline = this.protocol(RestEndpointProtocol).queryWith<
+    SpecPipelineDto,
+    { projectId: string }
+  >(({ projectId }) => `/spec-pipeline?${new URLSearchParams({ project_id: projectId })}`);
+
+  /** Run the pipeline now; the steps that stopped run again. */
+  runSpecPipeline() {
+    return this.protocol(RestEndpointProtocol).mutation<{ run_id: string }, { project_id: string }>(
+      'POST',
+      '/spec-pipeline/runs'
+    );
+  }
+
+  /** Turn the pipeline on or off, or change its auto-confirm threshold. */
+  putSpecPipelineSettings() {
+    return this.protocol(RestEndpointProtocol).mutation<SpecPipelineDto, SpecPipelineSettingsRequest>(
+      'PUT',
+      '/spec-pipeline/settings'
+    );
+  }
 
   /** Specs per repository of a workspace or project, keyed by repo node id. */
   readonly specsPerSource = this.protocol(RestEndpointProtocol).queryWith<
