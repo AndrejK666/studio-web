@@ -1013,7 +1013,8 @@ pub fn readdress_text(text: &str, names: &BTreeSet<String>, namespace: &str) -> 
         out.push_str(before);
         let end = after
             .find(|c: char| {
-                c.is_whitespace() || matches!(c, '/' | '?' | '#' | ';' | '"' | '\'' | ')' | '>' | ',')
+                c.is_whitespace()
+                    || matches!(c, '/' | '?' | '#' | ';' | '"' | '\'' | ')' | '>' | ',')
             })
             .unwrap_or(after.len());
         let (authority, tail) = after.split_at(end);
