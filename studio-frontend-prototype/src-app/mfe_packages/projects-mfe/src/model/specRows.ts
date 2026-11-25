@@ -22,6 +22,8 @@ export interface SpecType {
   proposed: boolean;
   /** 0..1, only on a proposed type that came with one. */
   confidence: number | null;
+  /** Confirmed by the project's spec pipeline, not a person. */
+  auto: boolean;
 }
 
 export type SpecReview =
@@ -110,6 +112,7 @@ export function buildSpecRows(
           name: names.get(row.type_key) ?? row.type_key,
           proposed,
           confidence: proposed ? row.confidence : null,
+          auto: row.state === 'confirmed' && row.auto_confirmed === true,
         }
       : null;
     const typeEditable = row.origin === 'repository' && !row.id.startsWith('candidate:');

@@ -63,6 +63,12 @@ export const TypeCell: React.FC<TypeCellProps> = ({
           {type.confidence !== null && ` ${formatPercent(type.confidence)}`}
         </span>
       )}
+      {type.auto && (
+        <span className={styles.muted} title={t('type_auto_title')} data-type-auto="">
+          {' · '}
+          {t('type_auto')}
+        </span>
+      )}
     </>
   );
   if (!row.typeEditable) return <span className={styles.type}>{label}</span>;

@@ -5,6 +5,7 @@ import { useProjectText, useSpecsSectionTranslations, useSpecsText } from '../..
 import { PlaceholderSection, PlaceholderSkeleton } from '../PlaceholderSection';
 import { useTypeDecisionRefusals } from './useTypeDecisionRefusals';
 import { SpecsTable } from './SpecsTable';
+import { SpecPipeline } from './SpecPipeline';
 
 export const SpecsSection: React.FC<{ projectId: string; projectName: string }> = ({
   projectId,
@@ -25,7 +26,10 @@ export const SpecsSection: React.FC<{ projectId: string; projectName: string }> 
     return <PlaceholderSection title={projectText('section_specs')} note={t('no_workspace')} />;
   }
   return (
-    <SpecsTable
+    <>
+      {/* What happens after a sync without anybody pressing a button. */}
+      <SpecPipeline projectId={projectId} />
+      <SpecsTable
       // The grid keeps `load` in a ref, so another project or workspace needs another grid.
       key={`${projectId}/${workspace.id}/${attempt}`}
       projectId={projectId}
@@ -33,6 +37,7 @@ export const SpecsSection: React.FC<{ projectId: string; projectName: string }> 
       workspaceId={workspace.id}
       onRetry={() => setAttempt((count) => count + 1)}
     />
+    </>
   );
 };
 

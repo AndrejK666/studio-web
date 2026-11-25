@@ -67,6 +67,18 @@ describe('the Type cell', () => {
     expect(screen.getByRole('button').textContent).toContain('PRD · type_proposed 72%');
   });
 
+  it('says when the spec pipeline confirmed the type, and still offers the menu', () => {
+    renderCell({ state: 'confirmed', confidence: 0.91, auto_confirmed: true });
+    const button = screen.getByRole('button', { name: /type_change prd\.md/ });
+    expect(button.textContent).toContain('PRD · type_auto');
+    expect(button.textContent).not.toContain('type_proposed');
+  });
+
+  it('says nothing of the pipeline for a type a person confirmed', () => {
+    renderCell({ state: 'confirmed', auto_confirmed: false });
+    expect(screen.getByRole('button').textContent).not.toContain('type_auto');
+  });
+
   it('asks to set a type when a binding has none', () => {
     renderCell({ type_key: null, state: 'unknown' });
     expect(screen.getByRole('button').textContent).toContain('type_set');

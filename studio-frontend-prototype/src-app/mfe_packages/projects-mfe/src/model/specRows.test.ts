@@ -95,6 +95,14 @@ describe('Type', () => {
       confidence: null,
     });
   });
+
+  it('says the spec pipeline confirmed it only while it is confirmed', () => {
+    expect(one(dto({ state: 'confirmed', auto_confirmed: true })).type?.auto).toBe(true);
+    expect(one(dto({ state: 'confirmed', auto_confirmed: false })).type?.auto).toBe(false);
+    // A server before the pipeline says nothing: a person's confirmation.
+    expect(one(dto({ state: 'confirmed' })).type?.auto).toBe(false);
+    expect(one(dto({ state: 'detected', auto_confirmed: true })).type?.auto).toBe(false);
+  });
 });
 
 describe('Source and opening', () => {
