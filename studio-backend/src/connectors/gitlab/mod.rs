@@ -25,6 +25,7 @@ mod mock;
 mod tests;
 
 use async_trait::async_trait;
+use futures_util::{StreamExt, TryStreamExt, stream};
 
 use super::driver::{
     CommitStatus, ConnectionAuth, ConnectorCategory, ConnectorDriver, Contributor, CreatedIssue,
@@ -34,7 +35,7 @@ use super::driver::{
     RemoteWorkflowJob, RemoteWorkflowRun, RepoTree, RepoTreeEntry, WrittenFile,
 };
 use super::references::ReferenceSyntax;
-use client::{Api, Family, Retry, encode, is_item_refusal};
+use client::{Api, Family, Gate, Retry, encode, is_item_refusal};
 use model::{
     Approvals, Branch, Changes, Commit, Diff, Discussion, Issue, MergeRequest, Note, Project, Tag,
     TreeItem, User, noreply_username,
@@ -52,9 +53,18 @@ const JOB_PAGES: u32 = 5;
 /// Pages of the repository listing walked to fill one `limit`.
 const MAX_REPO_PAGES: u32 = 20;
 
+/// Reads about single merge requests (their files, their discussions) kept
+/// in flight at once. A large project has thousands of merge requests and
+/// one round trip each; strictly one after another, 2,356 of them did not
+/// fit in a sync's fifteen minutes. Six stays well inside GitLab.com's
+/// per-user limits (2,000 requests a minute for the API), and a throttle any
+/// of them meets holds all of them ([`client::Gate`]).
+const ITEM_READS: usize = 6;
+
 pub struct GitLabDriver {
     http: reqwest::Client,
     retry: Retry,
+    gate: Gate,
 }
 
 impl GitLabDriver {
@@ -62,6 +72,7 @@ impl GitLabDriver {
         Self {
             http,
             retry: Retry::default(),
+            gate: Gate::default(),
         }
     }
 
@@ -69,11 +80,15 @@ impl GitLabDriver {
     /// not seconds.
     #[cfg(test)]
     pub(crate) fn with_retry(http: reqwest::Client, retry: Retry) -> Self {
-        Self { http, retry }
+        Self {
+            http,
+            retry,
+            gate: Gate::default(),
+        }
     }
 
     fn api<'a>(&'a self, auth: &'a ConnectionAuth) -> Api<'a> {
-        Api::new(&self.http, &self.retry, auth)
+        Api::new(&self.http, &self.retry, &self.gate, auth)
     }
 
     /// The ref to read at: the caller's, or the project's default branch.
@@ -154,6 +169,10 @@ impl ConnectorDriver for GitLabDriver {
 
     fn credential_hint(&self) -> &'static str {
         "glpat-…"
+    }
+
+    fn item_read_concurrency(&self) -> usize {
+        ITEM_READS
     }
 
     async fn test(&self, auth: &ConnectionAuth) -> anyhow::Result<DriverIdentity> {
@@ -820,15 +839,18 @@ impl ConnectorDriver for GitLabDriver {
         // `requested_reviewers` is who still owes it. For an open merge
         // request with reviewers that takes its discussions (one walk each);
         // a closed one is nobody's queue, so it keeps the list as GitLab has it.
+        //
+        // Several merge requests' discussions are read at once; `buffered`
+        // answers in the listing's order whichever read finishes first.
         let api = self.api(auth);
         let mrs = self
             .merge_requests(&api, repo_full_path, "all", since, page, per_page)
             .await?;
-        let mut out = Vec::with_capacity(mrs.len());
-        for mr in mrs {
+        let api = &api;
+        let out = stream::iter(mrs.into_iter().map(|mr| async move {
             let reviewers = mr.reviewer_logins();
             let requested = if mr.is_open() && !reviewers.is_empty() {
-                match self.review_state(&api, repo_full_path, &mr, false).await {
+                match self.review_state(api, repo_full_path, &mr, false).await {
                     Ok(state) => state.owed,
                     Err(e) => {
                         tracing::warn!(
@@ -843,8 +865,11 @@ impl ConnectorDriver for GitLabDriver {
             } else {
                 reviewers
             };
-            out.push(mr.into_remote(requested));
-        }
+            mr.into_remote(requested)
+        }))
+        .buffered(ITEM_READS)
+        .collect::<Vec<_>>()
+        .await;
         Ok(out)
     }
 
@@ -857,26 +882,32 @@ impl ConnectorDriver for GitLabDriver {
         // GitLab's REST carries resolution on each note of a discussion, so
         // GitLab can say what GitHub's REST cannot. The open merge requests,
         // most recently updated first, up to `max_pulls`.
+        // Each one's discussions and approvals are read `ITEM_READS` at a
+        // time, answered in the listing's order.
         let api = self.api(auth);
+        let api = &api;
         let want = max_pulls.max(1) as usize;
-        let mut out = Vec::new();
+        let mut out: Vec<PullRequestThreads> = Vec::new();
         for page in 1..=want.div_ceil(100) as u32 {
             let mrs = self
-                .merge_requests(&api, repo_full_path, "opened", None, page, 100)
+                .merge_requests(api, repo_full_path, "opened", None, page, 100)
                 .await?;
             let full = mrs.len() == 100;
-            for mr in mrs {
-                if out.len() >= want {
-                    break;
-                }
-                let state = self.review_state(&api, repo_full_path, &mr, true).await?;
-                out.push(PullRequestThreads {
-                    number: mr.iid,
-                    open: state.open_threads,
-                    total: state.total_threads,
-                    reviews: state.reviews,
-                });
-            }
+            let room = want.saturating_sub(out.len());
+            let read: Vec<PullRequestThreads> =
+                stream::iter(mrs.into_iter().take(room).map(|mr| async move {
+                    let state = self.review_state(api, repo_full_path, &mr, true).await?;
+                    Ok::<_, anyhow::Error>(PullRequestThreads {
+                        number: mr.iid,
+                        open: state.open_threads,
+                        total: state.total_threads,
+                        reviews: state.reviews,
+                    })
+                }))
+                .buffered(ITEM_READS)
+                .try_collect()
+                .await?;
+            out.extend(read);
             if !full || out.len() >= want {
                 break;
             }

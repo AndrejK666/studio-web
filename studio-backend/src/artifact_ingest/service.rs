@@ -219,6 +219,30 @@ fn in_attachment(
     }
 }
 
+/// The attachment scope a sync stamps on every node it writes
+/// (`store_node_batch`), and on a node it writes again (`pr_links`).
+pub(super) fn stamp_scope(
+    value: &mut serde_json::Value,
+    workspace_id: Option<&str>,
+    project_id: Option<&str>,
+) {
+    let Some(obj) = value.as_object_mut() else {
+        return;
+    };
+    if let Some(ws) = workspace_id {
+        obj.insert(
+            "workspace_id".to_string(),
+            serde_json::Value::String(ws.to_string()),
+        );
+    }
+    if let Some(pr) = project_id {
+        obj.insert(
+            "project_id".to_string(),
+            serde_json::Value::String(pr.to_string()),
+        );
+    }
+}
+
 /// What a sync has counted.
 ///
 /// Reported live through the progress bridge as the sync runs, and again as the
@@ -262,15 +286,39 @@ pub struct SyncSummary {
     /// forgets nothing. Like the thread counts, only on the final result.
     #[serde(default)]
     pub pruned: usize,
+    /// Pull requests whose changed files are linked to them (`modifies`) at
+    /// their current head, by this sync or an earlier one, of
+    /// `links_total` it listed ([`super::pr_links`]). Present while the
+    /// linking runs and on the final result.
+    #[serde(default)]
+    pub links_done: usize,
+    #[serde(default)]
+    pub links_total: usize,
+    /// Pull requests this sync ran out of time to link. Not zero means the
+    /// sync is partial: the run hands on to its next attempt, which goes on
+    /// from where this one stopped.
+    #[serde(default)]
+    pub links_left: usize,
 }
 
 impl SyncSummary {
-    /// This value as a progress detail. Infallible in practice — six integers
-    /// always serialize — and an empty document rather than a panic if not.
-    fn as_detail(self) -> serde_json::Value {
+    /// This value as a progress detail. Infallible in practice — a handful
+    /// of integers always serialize — and an empty document rather than a
+    /// panic if not.
+    pub(super) fn as_detail(self) -> serde_json::Value {
         serde_json::to_value(self).unwrap_or_else(|_| serde_json::json!({}))
     }
+
+    /// Whether the sync stopped with pull requests still to link.
+    pub fn is_partial(&self) -> bool {
+        self.links_left > 0
+    }
 }
+
+/// How long a sync may spend linking pull requests to their files before it
+/// stops for this run, short of its deadline: what comes after (comments,
+/// commits, CI runs, storing the relations) needs the rest.
+const LINK_TAIL: std::time::Duration = std::time::Duration::from_secs(4 * 60);
 
 /// Put `repository` (the repository node's `full_path`) on each hit whose
 /// `repo` names one of `repos`.
@@ -692,6 +740,7 @@ impl IngestService {
 
     /// Pull issues + PRs + files for one repository and upsert them into the
     /// graph, reporting each phase (and the counts so far) to `progress`.
+    /// No deadline: everything is linked before it returns.
     #[allow(clippy::too_many_arguments)]
     pub async fn run_sync(
         &self,
@@ -708,6 +757,48 @@ impl IngestService {
         repo_dir: Option<&str>,
         progress: &SyncReporter,
     ) -> anyhow::Result<SyncSummary> {
+        self.run_sync_until(
+            None,
+            ctx,
+            provider,
+            base_url,
+            connector_id,
+            repo_full_path,
+            since,
+            token,
+            platform_token,
+            workspace_id,
+            project_id,
+            repo_dir,
+            progress,
+        )
+        .await
+    }
+
+    /// [`Self::run_sync`] that keeps to `deadline`: the pull request → file
+    /// links stop [`LINK_TAIL`] before it and the comments at it, so the
+    /// writes that close the sync still fit in the run's lease. What the
+    /// links did not reach is `links_left` on the answer, and the next sync
+    /// -- the run's next attempt -- goes on from there ([`super::pr_links`]).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn run_sync_until(
+        &self,
+        deadline: Option<std::time::Instant>,
+        ctx: &SecurityContext,
+        provider: &str,
+        base_url: Option<&str>,
+        connector_id: &str,
+        repo_full_path: &str,
+        since: Option<&str>,
+        token: &str,
+        platform_token: Option<&str>,
+        workspace_id: Option<&str>,
+        project_id: Option<&str>,
+        repo_dir: Option<&str>,
+        progress: &SyncReporter,
+    ) -> anyhow::Result<SyncSummary> {
+        let past =
+            |at: Option<std::time::Instant>| at.is_some_and(|at| std::time::Instant::now() >= at);
         let driver = self
             .drivers
             .get(provider)
@@ -752,11 +843,14 @@ impl IngestService {
 
         let mut nodes: Vec<GtsNode> = Vec::new();
         // Relations between the nodes, and the author nodes they reference.
-        // `pr_refs` and `file_paths` are collected so PR→file (`modifies`) edges
-        // can be built once both PRs and the file set are known.
+        // `links_pending` and `file_paths` are collected so PR→file
+        // (`modifies`) edges can be built once both PRs and the file set are
+        // known: the pull requests not linked at their current head yet, and
+        // how many of those listed already are (`pr_links`).
         let mut edges: Vec<GtsEdge> = Vec::new();
         let mut users: HashMap<String, GtsNode> = HashMap::new();
-        let mut pr_refs: Vec<(i64, String)> = Vec::new();
+        let mut links_pending: Vec<super::pr_links::Pending> = Vec::new();
+        let mut links_carried = 0usize;
         let mut file_paths: HashSet<String> = HashSet::new();
         // issue/PR number → its node instance id, so a comment (which only knows
         // the number it is on) can be linked to the right artifact node.
@@ -913,6 +1007,22 @@ impl IngestService {
             .map(|t| (t.number, t))
             .collect();
 
+        // Which pull requests an earlier sync linked to their files, and at
+        // which head: those are not asked about again while the head stays
+        // (`pr_links`). Unreadable reads as none linked -- the slow way,
+        // never the wrong one.
+        let link_marks = match self.graph.list(ctx, Some(gts::PULL_REQUEST_TYPE)).await {
+            Ok(stored) => super::pr_links::stored_marks(&stored, &repo_id),
+            Err(e) => {
+                tracing::warn!(
+                    repo = repo_full_path,
+                    error = %e,
+                    "studio-artifact-ingest: could not read which pull requests are linked; linking them all again"
+                );
+                HashMap::new()
+            }
+        };
+
         progress.set("pulling pull requests…");
         let mut pull_requests = 0usize;
         for page in 1..=MAX_PAGES {
@@ -957,7 +1067,8 @@ impl IngestService {
                             && m.target.kind != RefKind::Issue)
                     })
                     .collect();
-                let node = gts::pull_request_node(
+                let head = super::pr_links::fingerprint(&p);
+                let mut node = gts::pull_request_node(
                     source_scope,
                     &repo_id,
                     connector_id,
@@ -967,6 +1078,22 @@ impl IngestService {
                     &links,
                 );
                 let pr_id = node.instance_id.clone();
+                // Linked at this head already: the mark goes on, and nobody
+                // asks for its files. Otherwise the node is written unmarked
+                // now and marked once its links are stored.
+                let carried = head
+                    .as_deref()
+                    .filter(|h| link_marks.get(&pr_id).map(String::as_str) == Some(*h));
+                super::pr_links::mark(&mut node, carried);
+                if carried.is_some() {
+                    links_carried += 1;
+                } else {
+                    links_pending.push(super::pr_links::Pending {
+                        number,
+                        node: node.clone(),
+                        fingerprint: head.clone(),
+                    });
+                }
                 for m in links {
                     let rel = match m.relation {
                         Relation::Closes => gts::REL_CLOSES,
@@ -994,8 +1121,7 @@ impl IngestService {
                     }
                 }
                 by_number.insert(number, pr_id.clone());
-                pr_by_number.insert(number, pr_id.clone());
-                pr_refs.push((number, pr_id));
+                pr_by_number.insert(number, pr_id);
                 nodes.push(node);
             }
             self.flush_and_report(
@@ -1459,45 +1585,96 @@ impl IngestService {
             ),
         }
 
-        // PR → file (`modifies`): one API call per PR, best-effort, and only for
-        // files we actually ingested so every edge endpoint exists in the graph.
-        if !pr_refs.is_empty() && !file_paths.is_empty() {
-            progress.set("linking pull requests to files…");
-            for (number, pr_id) in &pr_refs {
-                match driver
-                    .pull_request_files(&auth, repo_full_path, *number)
-                    .await
-                {
-                    Ok(paths) => {
-                        for path in paths {
-                            if file_paths.contains(&path) {
-                                let file_id = gts::file_instance_id(
-                                    source_scope,
-                                    connector_id,
-                                    repo_full_path,
-                                    &path,
-                                );
-                                edges.push(gts::modifies_edge(pr_id, &file_id));
-                            }
-                        }
+        // PR → file (`modifies`): one API call per PR not yet linked at its
+        // head, several in flight, best-effort, and only for files we
+        // actually ingested so every edge endpoint exists in the graph. Each
+        // portion is stored as it is read, and the pass stops `LINK_TAIL`
+        // short of the deadline: what it leaves, the next sync links
+        // (`pr_links`).
+        let mut links = super::pr_links::Tally {
+            total: links_carried + links_pending.len(),
+            linked: links_carried,
+            ..Default::default()
+        };
+        if !links_pending.is_empty() && !file_paths.is_empty() {
+            let noun = if provider == "gitlab" {
+                "merge requests"
+            } else {
+                "pull requests"
+            };
+            let stored = flushed;
+            let report = |t: &super::pr_links::Tally| {
+                progress.set_with(
+                    format!(
+                        "linking {noun} to files: {} of {} linked…",
+                        t.linked, t.total
+                    ),
+                    SyncSummary {
+                        issues,
+                        pull_requests,
+                        files,
+                        stored,
+                        links_done: t.linked,
+                        links_total: t.total,
+                        links_left: t.left,
+                        ..Default::default()
                     }
-                    Err(e) => {
-                        tracing::warn!(
-                            error = %e,
-                            repo = repo_full_path,
-                            pr = number,
-                            "studio-artifact-ingest: PR file listing failed — skipping its links"
-                        );
-                    }
-                }
-            }
+                    .as_detail(),
+                );
+            };
+            report(&links);
+            let file_id = |path: &str| {
+                file_paths.contains(path).then(|| {
+                    gts::file_instance_id(source_scope, connector_id, repo_full_path, path)
+                })
+            };
+            let linking = super::pr_links::Linking {
+                graph: self.graph.as_ref(),
+                ctx,
+                driver: driver.as_ref(),
+                auth: &auth,
+                repo_full_path,
+                workspace_id,
+                project_id,
+                deadline: deadline.map(|d| d.checked_sub(LINK_TAIL).unwrap_or(d)),
+            };
+            super::pr_links::link(
+                &linking,
+                std::mem::take(&mut links_pending),
+                &file_id,
+                &mut links,
+                &report,
+            )
+            .await;
+            info!(
+                repo = repo_full_path,
+                linked = links.linked,
+                total = links.total,
+                left = links.left,
+                failed = links.failed,
+                "studio-artifact-ingest: pull requests linked to their files"
+            );
         }
+        // Without files to link to (the listing failed) nothing is asked and
+        // nothing is left for later: that is not a deadline.
 
         // Comments on issues and PRs. Best-effort and paged; each links to the
         // issue/PR node by number (`comment_on`) and to its author.
         progress.set("pulling comments…");
         let mut comments = 0usize;
         for page in 1..=MAX_PAGES {
+            // A page of GitLab comments is a call per merge request and
+            // issue on it. Past the deadline the rest waits for the next
+            // sync, which reads comments again anyway: the run must still
+            // have time to store what it has.
+            if past(deadline) {
+                tracing::warn!(
+                    repo = repo_full_path,
+                    comments,
+                    "studio-artifact-ingest: out of time — remaining comments left for the next sync"
+                );
+                break;
+            }
             let batch = match driver
                 .list_comments(&auth, repo_full_path, since, page, PER_PAGE)
                 .await
@@ -2024,6 +2201,9 @@ impl IngestService {
             open_document_threads,
             stored: total_nodes,
             pruned,
+            links_done: links.linked,
+            links_total: links.total,
+            links_left: links.left,
         })
     }
 
@@ -2835,20 +3015,7 @@ impl IngestService {
         }
         if workspace_id.is_some() || project_id.is_some() {
             for n in batch.iter_mut() {
-                if let Some(obj) = n.value.as_object_mut() {
-                    if let Some(ws) = workspace_id {
-                        obj.insert(
-                            "workspace_id".to_string(),
-                            serde_json::Value::String(ws.to_string()),
-                        );
-                    }
-                    if let Some(pr) = project_id {
-                        obj.insert(
-                            "project_id".to_string(),
-                            serde_json::Value::String(pr.to_string()),
-                        );
-                    }
-                }
+                stamp_scope(&mut n.value, workspace_id, project_id);
             }
         }
         for chunk in batch.chunks(NODE_CHUNK) {
@@ -2905,7 +3072,9 @@ impl IngestService {
                 open_review_threads: None,
                 open_document_threads: None,
                 stored: *flushed,
-                pruned: 0,
+                // The link counts tick in their own phase (`pr_links`); the
+                // final result carries them.
+                ..Default::default()
             }
             .as_detail(),
         );
@@ -5984,3 +6153,7 @@ mod project_checkout_tests {
 #[cfg(test)]
 #[path = "org_scope_tests.rs"]
 mod org_scope_tests;
+
+#[cfg(test)]
+#[path = "pr_links_tests.rs"]
+mod pr_links_tests;

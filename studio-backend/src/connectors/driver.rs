@@ -1079,6 +1079,18 @@ pub trait ConnectorDriver: Send + Sync + 'static {
         Ok(Vec::new())
     }
 
+    /// How many reads about single items of one repository -- one pull
+    /// request's files, above -- a sync may keep in flight at once.
+    ///
+    /// One by default, which keeps a provider that asks for serial requests
+    /// (GitHub's secondary rate limits punish concurrency) as it was. A
+    /// driver that waits out a throttle for all of its requests together can
+    /// say more: a repository with thousands of pull requests is thousands of
+    /// round trips, and one after another they do not fit in a sync.
+    fn item_read_concurrency(&self) -> usize {
+        1
+    }
+
     /// Comments on issues and pull requests in one repository. `since` (RFC
     /// 3339) narrows to comments updated at or after that instant; `page` is
     /// 1-based and `per_page` caps one page. Defaulted to empty (not an error)

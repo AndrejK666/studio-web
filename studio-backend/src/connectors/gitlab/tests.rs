@@ -1524,3 +1524,157 @@ async fn an_artifact_on_object_storage_is_its_signed_link_and_one_served_locally
             .all(|c| c.token.as_deref() == Some("glpat-test"))
     );
 }
+
+/* ── Reads several at a time: one throttle, the listing's order ── */
+
+/// A driver whose throttle waits are long enough to measure.
+fn patient_driver() -> super::GitLabDriver {
+    super::GitLabDriver::with_retry(
+        reqwest::Client::new(),
+        super::client::Retry {
+            attempts: 3,
+            backoff: std::time::Duration::from_millis(5),
+            max_wait: std::time::Duration::from_millis(200),
+        },
+    )
+}
+
+#[tokio::test]
+async fn a_throttle_one_read_meets_holds_the_reads_beside_it() {
+    let mock = Mock::builder()
+        .get(
+            &format!("{PROJECT}/merge_requests/1/diffs"),
+            Reply::status(429).header("retry-after", "5"),
+        )
+        .then(Reply::json(json!([{ "new_path": "a.rs" }])))
+        .get(
+            &format!("{PROJECT}/merge_requests/2/diffs"),
+            Reply::json(json!([{ "new_path": "b.rs" }])),
+        )
+        .start()
+        .await;
+    let driver = patient_driver();
+    let auth = mock.auth();
+    let started = std::time::Instant::now();
+    let (first, (second, second_done)) = tokio::join!(
+        driver.pull_request_files(&auth, "acme/platform/app", 1),
+        async {
+            // Sent once the first one has been told to wait.
+            tokio::time::sleep(std::time::Duration::from_millis(40)).await;
+            let files = driver
+                .pull_request_files(&auth, "acme/platform/app", 2)
+                .await;
+            (files, started.elapsed())
+        }
+    );
+    assert_eq!(first.unwrap(), vec!["a.rs".to_string()]);
+    assert_eq!(second.unwrap(), vec!["b.rs".to_string()]);
+    // The second read was never throttled itself, but it waited out the
+    // first one's 429 (capped at 200 ms here) instead of racing into it.
+    assert!(
+        second_done >= std::time::Duration::from_millis(150),
+        "{second_done:?}"
+    );
+    assert_eq!(
+        mock.calls(&format!("{PROJECT}/merge_requests/2/diffs"))
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn a_spent_rate_limit_budget_holds_the_next_request_until_it_resets() {
+    let reset = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 30;
+    let mock = Mock::builder()
+        .get(
+            &format!("{PROJECT}/merge_requests/1/diffs"),
+            Reply::json(json!([{ "new_path": "a.rs" }]))
+                .header("ratelimit-remaining", "0")
+                .header("ratelimit-reset", &reset.to_string()),
+        )
+        .get(
+            &format!("{PROJECT}/merge_requests/2/diffs"),
+            Reply::json(json!([{ "new_path": "b.rs" }])),
+        )
+        .start()
+        .await;
+    let driver = patient_driver();
+    let auth = mock.auth();
+    // The first answer is good: it is not retried, only the next one waits.
+    assert_eq!(
+        driver
+            .pull_request_files(&auth, "acme/platform/app", 1)
+            .await
+            .unwrap(),
+        vec!["a.rs".to_string()]
+    );
+    let started = std::time::Instant::now();
+    assert_eq!(
+        driver
+            .pull_request_files(&auth, "acme/platform/app", 2)
+            .await
+            .unwrap(),
+        vec!["b.rs".to_string()]
+    );
+    assert!(
+        started.elapsed() >= std::time::Duration::from_millis(150),
+        "{:?}",
+        started.elapsed()
+    );
+    assert_eq!(
+        mock.calls(&format!("{PROJECT}/merge_requests/1/diffs"))
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn merge_requests_read_several_at_once_keep_the_listing_order() {
+    // More open merge requests with reviewers than are read at once, so the
+    // discussions go out in overlapping waves.
+    let iids: Vec<i64> = (1..=15).collect();
+    let listing: Vec<serde_json::Value> = iids
+        .iter()
+        .map(|&iid| {
+            mr(
+                1000 + iid,
+                iid,
+                json!({ "reviewers": [{ "username": format!("rev{iid}") }] }),
+            )
+        })
+        .collect();
+    let mut builder = Mock::builder().get_q(
+        &format!("{PROJECT}/merge_requests"),
+        "state=all",
+        Reply::json(json!(listing)),
+    );
+    for iid in &iids {
+        builder = builder.get(
+            &format!("{PROJECT}/merge_requests/{iid}/discussions"),
+            Reply::json(json!([])),
+        );
+    }
+    let mock = builder.start().await;
+    let prs = mock
+        .driver()
+        .list_pull_requests(&mock.auth(), "acme/platform/app", None, 1, 100)
+        .await
+        .unwrap();
+    assert_eq!(prs.iter().map(|p| p.number).collect::<Vec<_>>(), iids);
+    for p in &prs {
+        // Nobody has said anything: each still owes their own review, and
+        // no answer ended up on another merge request.
+        assert_eq!(p.requested_reviewers, vec![format!("rev{}", p.number)]);
+    }
+    assert_eq!(
+        mock.seen()
+            .iter()
+            .filter(|s| s.path.ends_with("/discussions"))
+            .count(),
+        iids.len()
+    );
+}
