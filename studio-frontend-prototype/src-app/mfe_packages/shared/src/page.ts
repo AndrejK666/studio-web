@@ -7,3 +7,4 @@
 
 export { ProjectPage, type ProjectPageProps } from './page/ProjectPage';
 export { PageEmpty, PageError, PageLoading, type PageEmptyProps } from './page/PageStates';
+export { KitAbsentState, KITS_ROUTE, kitDisplayName, type KitAbsentStateProps } from './page/KitAbsentState';
