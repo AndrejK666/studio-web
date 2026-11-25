@@ -22,6 +22,14 @@
 //! One exception: the GitHub mirror's resources (`github_mirror.*`) belong to
 //! the artifact sync's service identity alone and are refused to every person
 //! (#1094); the sync itself still gets only the tenant clamp.
+//!
+//! A request about a tenant the PEP names (`context_tenant_id`; graph-storage
+//! does it for `?tenant=`) is answered for that tenant alone, and only when
+//! the caller reaches it: the target, or a tenant above it, is one of their
+//! organizations, or their home when that is not a root. Before this, the
+//! named target was taken as the caller's own tenant, so any token reached any
+//! tenant's graph by naming it. A service a gear vouches for (`rules`, the
+//! ADR-0079 access-rules port) is answered by its rule alone.
 //! The metadata read is itself PEP-gated, so a recursion guard short-circuits
 //! authorizing reads of AM tenant-metadata to the tenant clamp.
 //!
@@ -52,6 +60,9 @@ use toolkit_security::pep_properties;
 use tracing::{info, warn};
 use types_registry_sdk::GtsId;
 use uuid::Uuid;
+
+mod rules;
+pub use rules::ServiceRule;
 
 pub(crate) const INSTANCE_ID: &str = "cf.studio.authz_resolver.plugin.v1";
 /// AM tenant-metadata type holding the org access config (portal writes it).
@@ -248,7 +259,23 @@ pub struct Service {
     cache: Mutex<MembershipCache>,
     /// Organization access configs the role path read, by organization.
     configs: Mutex<HashMap<Uuid, CachedConfig>>,
+    /// Each tenant's parent, as account-management answered it. A tenant does
+    /// not move, so an answer is kept; a failed read is not.
+    parents: Mutex<HashMap<Uuid, Option<Uuid>>>,
+    /// Whether a service rule's kit applies where a target tenant is, by
+    /// (tenant, kit). Short-lived: an uninstall stops the service within it.
+    kits: crate::ttl_cache::TtlCache<(Uuid, &'static str), Option<bool>>,
 }
+
+/// How long a kit's presence in a tenant is reused for a service rule.
+const KIT_PRESENCE_TTL: Duration = Duration::from_secs(30);
+
+/// How many tenants up a target is followed looking for one the caller
+/// reaches: a project sits under a workspace, an organization and the root.
+const MAX_TENANT_DEPTH: usize = 8;
+
+/// More parents than this and the map starts over.
+const MAX_PARENTS_KEPT: usize = 10_000;
 
 /// How long an organization's access config is reused by the role path.
 ///
@@ -293,7 +320,140 @@ impl Service {
             organizations: OnceLock::new(),
             cache: Mutex::new(HashMap::new()),
             configs: Mutex::new(HashMap::new()),
+            parents: Mutex::new(HashMap::new()),
+            kits: crate::ttl_cache::TtlCache::new(KIT_PRESENCE_TTL, 1024),
         }
+    }
+
+    /// The tenants the clamp admits for this request. A request that names a
+    /// target tenant other than the caller's home (`?tenant=` on
+    /// graph-storage) is about that tenant alone; [`Self::evaluate`] has
+    /// already checked the caller reaches it.
+    async fn clamp_tenants(&self, request: &EvaluationRequest, tid: Uuid) -> Vec<Uuid> {
+        if foreign_target(request).is_some() {
+            return vec![tid];
+        }
+        self.reachable_tenants(request, tid).await
+    }
+
+    /// Does the caller reach `target`: is it, or one of the tenants above it,
+    /// the caller's home or an organization they are a member of?
+    ///
+    /// This is the platform's own visibility rule, the one account-management
+    /// answers `get_tenant` by (a tenant sees its subtree). Before it, the
+    /// target a request named was taken as the caller's tenant, so any token
+    /// reached any tenant's graph by naming it.
+    async fn reaches_target(&self, request: &EvaluationRequest, target: Uuid) -> bool {
+        let Some(home) = home_tenant(request) else {
+            return false;
+        };
+        let mut reach: Vec<Uuid> = self.memberships(request).await.to_vec();
+        // The home counts unless it is a root (no parent, or unreadable): every
+        // service account's token names the platform root, whose subtree is
+        // every tenant. A platform administrator reaches through their
+        // membership of the root instead; a service through a rule (`rules`),
+        // or not at all.
+        if !reach.contains(&home) && self.parent_of(request, home).await.is_some() {
+            reach.push(home);
+        }
+        target_reached(target, &reach, |t| self.parent_of(request, t)).await
+    }
+
+    /// `tenant`'s parent; `None` for the root, or when it cannot be read.
+    ///
+    /// Read as a service scoped to that tenant: the read is about the tree,
+    /// not about what the caller may see, and the caller is not yet known to
+    /// reach it.
+    async fn parent_of(&self, request: &EvaluationRequest, tenant: Uuid) -> Option<Uuid> {
+        if let Ok(parents) = self.parents.lock()
+            && let Some(parent) = parents.get(&tenant)
+        {
+            return *parent;
+        }
+        let ctx = SecurityContext::builder()
+            .subject_id(request.subject.id)
+            .subject_type("service")
+            .subject_tenant_id(tenant)
+            .token_scopes(vec!["*".to_owned()])
+            .build()
+            .ok()?;
+        match self.am.get_tenant(&ctx, tenant).await {
+            Ok(info) => {
+                let parent = info.parent_id.map(|p| p.0);
+                if let Ok(mut parents) = self.parents.lock() {
+                    if parents.len() >= MAX_PARENTS_KEPT {
+                        parents.clear();
+                    }
+                    parents.insert(tenant, parent);
+                }
+                parent
+            }
+            Err(error) => {
+                warn!(%tenant, %error, "studio-authz: cannot read a tenant's parent");
+                None
+            }
+        }
+    }
+
+    /// A service rule's answer: the target alone, where the rule's kit
+    /// applies; nothing anywhere else.
+    async fn decide_service_rule(
+        &self,
+        request: &EvaluationRequest,
+        rule: &'static rules::ServiceRule,
+    ) -> EvaluationResponse {
+        let target = foreign_target(request);
+        let rules::RuleDecision::IfKit { target } = rules::decide(rule, request, target) else {
+            info!(
+                gear = rule.gear,
+                resource_type = %request.resource.resource_type,
+                action = %request.action.name,
+                "studio-authz: refused a service outside its rule (resource, or no target tenant)"
+            );
+            return deny();
+        };
+        if self.kit_applies(target, rule.kit).await {
+            tenant_clamp(request, &[target])
+        } else {
+            info!(
+                gear = rule.gear,
+                %target,
+                kit = rule.kit,
+                "studio-authz: refused a service where its kit does not apply"
+            );
+            deny()
+        }
+    }
+
+    /// Whether `kit` applies where `tenant` is, as studio-kits reads it.
+    /// Unreadable is a refusal, retried by the next request.
+    async fn kit_applies(&self, tenant: Uuid, kit: &'static str) -> bool {
+        let hub = Arc::clone(&self.hub);
+        self.kits
+            .get_or_compute(
+                (tenant, kit),
+                0,
+                || async move {
+                    let presence = hub.get::<dyn crate::kit_registry::port::KitPresence>().ok()?;
+                    let ctx = SecurityContext::builder()
+                        .subject_id(Uuid::nil())
+                        .subject_type("service")
+                        .subject_tenant_id(tenant)
+                        .token_scopes(vec!["*".to_owned()])
+                        .build()
+                        .ok()?;
+                    match presence.applies(&ctx, tenant, kit).await {
+                        Ok(applies) => Some(applies),
+                        Err(error) => {
+                            warn!(%tenant, kit, %error, "studio-authz: cannot read a kit's presence");
+                            None
+                        }
+                    }
+                },
+                Option::is_some,
+            )
+            .await
+            .unwrap_or(false)
     }
 
     /// The reader, looked up once.
@@ -332,14 +492,20 @@ impl Service {
     /// depend on it are gone (ADR-0018 §3).
     async fn reachable_tenants(&self, request: &EvaluationRequest, tid: Uuid) -> Vec<Uuid> {
         let mut tids = vec![tid];
+        extend_unique(&mut tids, &self.memberships(request).await);
+        tids
+    }
+
+    /// The organizations the caller is a member of; none when `studio-user`
+    /// is not here or the read fails.
+    async fn memberships(&self, request: &EvaluationRequest) -> Arc<Vec<Uuid>> {
         let Some(reader) = self.organization_reader() else {
-            return tids;
+            return Arc::default();
         };
         let subject = request.subject.id;
         let generation = reader.membership_generation();
         if let Some(cached) = self.cached(subject, generation) {
-            extend_unique(&mut tids, &cached);
-            return tids;
+            return cached;
         }
         match reader.organizations_of(&subject.to_string()).await {
             Ok(orgs) => {
@@ -354,16 +520,16 @@ impl Service {
                         },
                     );
                 }
-                extend_unique(&mut tids, &orgs);
+                orgs
             }
             Err(error) => {
                 // Not fatal, and not a denial: the caller keeps the reach they
                 // had before memberships were consulted. Failing closed here
                 // would make a database hiccup look like a revoked membership.
                 warn!(%subject, "studio-authz: cannot read memberships: {error:#}");
+                Arc::default()
             }
         }
-        tids
     }
 
     /// A cached answer is good while it is young *and* nothing has changed
@@ -471,7 +637,7 @@ impl Service {
         if let Some(reader) = self.organization_reader()
             && reader.is_platform_admin(&subject).await.unwrap_or(false)
         {
-            let tids = self.reachable_tenants(request, tid).await;
+            let tids = self.clamp_tenants(request, tid).await;
             return tenant_clamp(request, &tids);
         }
 
@@ -500,7 +666,7 @@ impl Service {
 
         if allowed {
             ACCESS_CONFIG_GENERATION.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
-            let tids = self.reachable_tenants(request, tid).await;
+            let tids = self.clamp_tenants(request, tid).await;
             tenant_clamp(request, &tids)
         } else {
             warn!(
@@ -969,10 +1135,27 @@ impl AuthZResolverPluginClient for Service {
         &self,
         request: EvaluationRequest,
     ) -> Result<EvaluationResponse, AuthZResolverError> {
+        // A service a gear vouches for answers by its rule and nothing else:
+        // its token's tenant is the root, whose subtree is everything.
+        if let Some(rule) = rules::rule_for(&request) {
+            return Ok(self.decide_service_rule(&request, rule).await);
+        }
+        // A target tenant the caller named is theirs only if they reach it.
+        if let Some(target) = foreign_target(&request)
+            && !self.reaches_target(&request, target).await
+        {
+            info!(
+                subject = %request.subject.id,
+                %target,
+                resource_type = %request.resource.resource_type,
+                "studio-authz: refused a request about a tenant the caller does not reach"
+            );
+            return Ok(deny());
+        }
         let (tid, privilege) = match Plan::for_request(&request) {
             Plan::Deny => return Ok(deny()),
             Plan::Clamp(tid) => {
-                let tids = self.reachable_tenants(&request, tid).await;
+                let tids = self.clamp_tenants(&request, tid).await;
                 return Ok(tenant_clamp(&request, &tids));
             }
             Plan::AccessConfigWrite { tid, organization } => {
@@ -990,7 +1173,7 @@ impl AuthZResolverPluginClient for Service {
                 };
                 return Ok(match decide_mirror(&request, sync) {
                     MirrorDecision::Clamp => {
-                        let tids = self.reachable_tenants(&request, tid).await;
+                        let tids = self.clamp_tenants(&request, tid).await;
                         tenant_clamp(&request, &tids)
                     }
                     MirrorDecision::Deny => {
@@ -1019,7 +1202,7 @@ impl AuthZResolverPluginClient for Service {
 
         let project_scopes = match decide(&subjects, &read, &subject_teams, privilege) {
             RoleDecision::Clamp => {
-                let tids = self.reachable_tenants(&request, tid).await;
+                let tids = self.clamp_tenants(&request, tid).await;
                 return Ok(tenant_clamp(&request, &tids));
             }
             RoleDecision::Tenant => return Ok(tenant_clamp(&request, &[tid])),
@@ -1065,6 +1248,45 @@ impl AuthZResolverPluginClient for Service {
 }
 
 /* ── Helpers ── */
+
+/// The caller's home tenant: the one their token names
+/// (`subject.properties["tenant_id"]`, put there by every PEP).
+fn home_tenant(request: &EvaluationRequest) -> Option<Uuid> {
+    request
+        .subject
+        .properties
+        .get("tenant_id")
+        .and_then(|v| v.as_str())
+        .and_then(|s| Uuid::parse_str(s).ok())
+}
+
+/// The tenant a request is about when the PEP named one that is not the
+/// caller's home (`AccessRequest::context_tenant_id`; graph-storage does it
+/// for `?tenant=`). `None` for the ordinary request, about the caller's own.
+fn foreign_target(request: &EvaluationRequest) -> Option<Uuid> {
+    let target = request.context.tenant_context.as_ref()?.root_id?;
+    (home_tenant(request) != Some(target)).then_some(target)
+}
+
+/// Is `target`, or a tenant above it, one of `reach`? `parent_of` walks up;
+/// a tenant it cannot place ends the walk, and the answer is no.
+async fn target_reached<F, Fut>(target: Uuid, reach: &[Uuid], parent_of: F) -> bool
+where
+    F: Fn(Uuid) -> Fut,
+    Fut: std::future::Future<Output = Option<Uuid>>,
+{
+    let mut tenant = target;
+    for _ in 0..MAX_TENANT_DEPTH {
+        if reach.contains(&tenant) {
+            return true;
+        }
+        match parent_of(tenant).await {
+            Some(parent) if parent != tenant => tenant = parent,
+            _ => return false,
+        }
+    }
+    false
+}
 
 /// The tenant-isolation constraint set: owner-tenant is `tid`, plus the
 /// hierarchy subtree branches when the caller supports them. Returned as a bare
@@ -1188,7 +1410,7 @@ mod tests {
     const TENANT: Uuid = Uuid::from_u128(0x7e1a);
     const SUBJECT: Uuid = Uuid::from_u128(0x5ab1);
 
-    fn request(resource_type: &str) -> EvaluationRequest {
+    pub(super) fn request(resource_type: &str) -> EvaluationRequest {
         EvaluationRequest {
             subject: Subject {
                 id: SUBJECT,
@@ -2046,5 +2268,112 @@ mod selection_tests {
                 "{name}: the static clamp competes with the Studio PDP"
             );
         }
+    }
+}
+
+/// A target tenant the request names (`?tenant=`), and service rules.
+#[cfg(test)]
+mod target_tests {
+    use authz_resolver_sdk::{EvaluationRequest, TenantContext};
+    use uuid::Uuid;
+
+    use super::tests::request;
+    use super::*;
+
+    /* ── A target tenant the request names (`?tenant=`) ── */
+
+    const HOME: Uuid = Uuid::from_u128(0x40e);
+    const ORG: Uuid = Uuid::from_u128(0x0e6);
+    const WORKSPACE: Uuid = Uuid::from_u128(0x3e5);
+    const PROJECT: Uuid = Uuid::from_u128(0x9e0);
+    const ROOT: Uuid = Uuid::from_u128(1);
+
+    fn with_home(mut r: EvaluationRequest, home: Uuid, target: Option<Uuid>) -> EvaluationRequest {
+        r.subject
+            .properties
+            .insert("tenant_id".into(), serde_json::json!(home.to_string()));
+        r.context.tenant_context = target.map(|t| TenantContext {
+            root_id: Some(t),
+            ..TenantContext::default()
+        });
+        r
+    }
+
+    /// root ← org ← workspace ← project; HOME hangs off the root on its own.
+    async fn parent(t: Uuid) -> Option<Uuid> {
+        match t {
+            t if t == PROJECT => Some(WORKSPACE),
+            t if t == WORKSPACE => Some(ORG),
+            t if t == ORG || t == HOME => Some(ROOT),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn a_target_is_foreign_only_when_it_is_not_the_callers_home() {
+        let node = "gts.cf.core.graph.node.v1~";
+        assert_eq!(foreign_target(&with_home(request(node), HOME, None)), None);
+        assert_eq!(
+            foreign_target(&with_home(request(node), HOME, Some(HOME))),
+            None
+        );
+        assert_eq!(
+            foreign_target(&with_home(request(node), HOME, Some(PROJECT))),
+            Some(PROJECT)
+        );
+    }
+
+    /// The hole this closes: a token reached any tenant's graph by naming it.
+    /// A member of the organization reaches its projects; nobody else does.
+    #[tokio::test]
+    async fn a_target_is_reached_only_through_a_tenant_above_it() {
+        assert!(target_reached(PROJECT, &[HOME, ORG], parent).await);
+        assert!(target_reached(ORG, &[HOME, ORG], parent).await);
+        assert!(!target_reached(PROJECT, &[HOME], parent).await);
+        // A home under the root does not reach its siblings.
+        assert!(!target_reached(ORG, &[HOME], parent).await);
+        // A tenant nobody can place is not reached.
+        assert!(!target_reached(Uuid::from_u128(0xdead), &[HOME], parent).await);
+        // The root's subtree is everything, as account-management says.
+        assert!(target_reached(PROJECT, &[ROOT], parent).await);
+    }
+
+    #[tokio::test]
+    async fn a_cycle_in_the_tree_ends_in_no() {
+        let looped = |t: Uuid| async move { Some(if t == ORG { PROJECT } else { ORG }) };
+        assert!(!target_reached(PROJECT, &[HOME], looped).await);
+    }
+
+    /* ── Service rules (ADR-0079 access-rules port) ── */
+
+    const SERVICE: Uuid = Uuid::from_u128(0x5e6a);
+
+    static RULE: rules::ServiceRule = rules::ServiceRule {
+        gear: "test",
+        subject: || Some(SERVICE),
+        resource_types: &["gts.cf.core.graph.node.v1~"],
+        kit: "test-kit",
+    };
+
+    #[test]
+    fn a_service_rule_admits_its_resources_in_a_named_target_only() {
+        let node = "gts.cf.core.graph.node.v1~";
+        let r = with_home(request(node), ROOT, Some(PROJECT));
+        assert_eq!(
+            rules::decide(&RULE, &r, foreign_target(&r)),
+            rules::RuleDecision::IfKit { target: PROJECT }
+        );
+        // Its home is the root: without a target it has nothing to do.
+        let r = with_home(request(node), ROOT, None);
+        assert_eq!(
+            rules::decide(&RULE, &r, foreign_target(&r)),
+            rules::RuleDecision::Deny
+        );
+        // Anything the rule does not list, AM tenants included, is refused.
+        let r = with_home(request("gts.cf.core.am.tenant.v1~"), ROOT, Some(PROJECT));
+        assert_eq!(
+            rules::decide(&RULE, &r, foreign_target(&r)),
+            rules::RuleDecision::Deny
+        );
     }
 }

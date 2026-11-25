@@ -81,6 +81,24 @@
           "service"
         ]
       }
+    },
+    {
+      "id": "00000000-0000-4000-8000-000005ec9a4f",
+      "username": "service-account-spec-graph",
+      "enabled": true,
+      "serviceAccountClientId": "spec-graph",
+      "firstName": "Spec",
+      "lastName": "graph",
+      "email": "spec-graph@constructor.tech",
+      "emailVerified": true,
+      "attributes": {
+        "tenant_id": [
+          "00000000-0000-0000-0000-000000000001"
+        ],
+        "user_type": [
+          "service"
+        ]
+      }
     }
   ],
   "clients": [
@@ -257,6 +275,33 @@
       "clientId": "studio-service",
       "name": "Constructor Studio (service)",
       "description": "What a shared IDE session does on no one person's behalf (ADR-0030): its STUDIO_ACTOR_ID and neutral git author. Service account only, no roles, no browser flows; its user has a fixed id. the backend knows.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": true,
+      "protocolMappers": [
+        {
+          "name": "tenant-id-hardcoded",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-hardcoded-claim-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "tenant_id",
+            "claim.value": "00000000-0000-0000-0000-000000000001",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "spec-graph",
+      "name": "Spec graph (service)",
+      "description": "The spec-graph service beside Studio, indexing projects' documents into graph-storage as itself. Service account only. The PDP admits it to a project's graph where the Spec graph kit applies (backend.specGraph.serviceSubject).",
       "enabled": true,
       "protocol": "openid-connect",
       "publicClient": false,

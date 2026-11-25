@@ -124,6 +124,12 @@ backend:
   specGraph:
     url: ""
     gitUrl: ""
+    # The subject of the service's own Keycloak client `spec-graph` (client
+    # credentials): its service account's id. The PDP lets that subject reach
+    # graph-storage in a project's tenant (?tenant=) where the Spec graph kit
+    # applies, and nothing else. Empty: the service's own token reaches nothing.
+    #   GET /auth/admin/realms/studio/users?username=service-account-spec-graph&exact=true
+    serviceSubject: ""
   # WHO ADMINISTERS THIS INSTALLATION, as Keycloak subject ids, comma-separated.
   #
   # A platform administrator is a membership of the platform root and nothing
