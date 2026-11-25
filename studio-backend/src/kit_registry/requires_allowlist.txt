@@ -12,18 +12,11 @@
 components -> project-product  # the catalogue shows where a component is used; product -> components is the dependency, this one would close a cycle
 components -> project-specs  # capabilities and glossary only enrich component suggestions; move to /query
 components -> spec-mapping  # spec-mapping is organization-removable (ADR-0074); the plan only enriches suggestions
-delivery -> project-git  # seeded
 gears-matcher -> spec-mapping  # spec-mapping is organization-removable (ADR-0074); the matcher works without its plan
 project-domain-model -> project-git  # claims `finding`, a type stored in artifact-ingest's graph; a store, not a screen dependency; moves to the model
 project-domain-model -> spec-mapping  # spec-mapping is organization-removable (ADR-0074); capabilities and findings degrade without it
 project-lifecycle -> project-specs  # its types (lifecycle-stage, delivery-scope…) are stored by the documents gear; a store, not a dependency on Specs; moves to the model
-project-product -> components  # seeded
 project-product -> delivery  # infra plans only enrich the product's infra view; gears-project requires both
-project-product -> project-git  # seeded
-project-product -> project-specs  # seeded
 project-product -> spec-mapping  # spec-mapping is organization-removable (ADR-0074); the product reads its plan only for the spec_mapping strategy
-project-tests -> project-git  # seeded
-project-tests -> project-specs  # seeded
 project-tests -> spec-mapping  # spec-mapping is organization-removable (ADR-0074); conformance only enriches the tests view
-spec-graph -> project-git  # seeded
 spec-mapping -> project-git  # claims `mapping-decision`, a type stored in artifact-ingest's graph; a store, not a screen dependency; moves to the model

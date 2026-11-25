@@ -9,6 +9,9 @@
     "organization",
     "project"
   ],
+  "requires": [
+    "project-git"
+  ],
   "model": {
     "properties": [
       {

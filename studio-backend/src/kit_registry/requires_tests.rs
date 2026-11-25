@@ -93,41 +93,42 @@ fn installer() -> KitInstaller {
 }
 
 #[test]
-fn the_built_in_kits_declare_the_adr_s_two_requirements() {
-    let requires: Vec<(String, Vec<String>)> = builtin_manifests()
+fn the_built_in_kits_declare_what_they_require() {
+    let requires: std::collections::BTreeMap<String, Vec<String>> = builtin_manifests()
         .into_iter()
         .filter(|m| !m.requires.is_empty())
         .map(|m| (m.slug, m.requires))
         .collect();
-    assert_eq!(
-        requires,
-        [
-            (
-                "project-domain-model".to_owned(),
-                vec!["project-specs".to_owned()]
-            ),
-            // A Gears project composes a product and ships it.
-            (
-                "gears-project".to_owned(),
-                vec!["project-product".to_owned(), DELIVERY.to_owned()]
-            ),
-            (RESEARCH.to_owned(), vec![DELIVERY.to_owned()]),
-            // ADR-0072: the matcher's proposals go into the product.
-            (
-                "gears-matcher".to_owned(),
-                vec!["project-product".to_owned()]
-            ),
-            // The spec graph extends Project model: its decisions are Project
-            // model's, and it reads the same documents.
-            (
-                "spec-graph".to_owned(),
-                vec!["project-domain-model".to_owned()]
-            ),
-        ]
-    );
+    let s = |v: &[&str]| v.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+    let expected: std::collections::BTreeMap<String, Vec<String>> = [
+        // Builds, images and releases are artifact-ingest's, project-git's gear.
+        (DELIVERY, s(&["project-git"])),
+        (RESEARCH, s(&[DELIVERY])),
+        // ADR-0072: the matcher's proposals go into the product.
+        ("gears-matcher", s(&["project-product"])),
+        // A Gears project composes a product and ships it.
+        ("gears-project", s(&["project-product", DELIVERY])),
+        ("project-domain-model", s(&["project-specs"])),
+        // A product is made of components, read from its repositories and
+        // described by its specifications.
+        (
+            "project-product",
+            s(&["components", "project-git", "project-specs"]),
+        ),
+        // Test runs and pull requests are ingested from the project's
+        // repositories; a pull request's checks are the specifications'.
+        ("project-tests", s(&["project-git", "project-specs"])),
+        // The spec graph extends Project model: its decisions are Project
+        // model's, and it reads the same documents and pull requests.
+        ("spec-graph", s(&["project-domain-model", "project-git"])),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_owned(), v))
+    .collect();
+    assert_eq!(requires, expected);
     // Every required kit is one of the library's built-in kits.
     let slugs: Vec<String> = builtin_catalogue().into_iter().map(|k| k.slug).collect();
-    for (_, r) in &requires {
+    for r in requires.values() {
         assert!(r.iter().all(|s| slugs.contains(s)), "{r:?}");
     }
 }

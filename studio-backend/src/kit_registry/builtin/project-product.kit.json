@@ -8,6 +8,11 @@
   "levels": [
     "project"
   ],
+  "requires": [
+    "components",
+    "project-git",
+    "project-specs"
+  ],
   "model": {
     "properties": [
       {
