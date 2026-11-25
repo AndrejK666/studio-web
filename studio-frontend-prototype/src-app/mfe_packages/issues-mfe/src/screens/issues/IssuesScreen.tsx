@@ -25,15 +25,17 @@ import {
 } from '@gears-frontx/react';
 import { Badge, Button } from '@gears-frontx/ui-kit';
 import {
+  kitAbsent,
   sendToHost,
   STUDIO_ACTION_ARTIFACT_OPEN,
   STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT,
   STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE,
   useOrganization,
   usePollWhileVisible,
+  type KitAbsence,
 } from '@constructor-studio/mfe-shared';
 import { GridFailed } from '@constructor-studio/mfe-shared/grid';
-import { PageEmpty, PageLoading, ProjectPage } from '@constructor-studio/mfe-shared/page';
+import { KitAbsentState, PageEmpty, PageLoading, ProjectPage } from '@constructor-studio/mfe-shared/page';
 import { IssuesApiService } from '../../api/IssuesApiService';
 import type {
   DocQualityRow,
@@ -136,6 +138,9 @@ function ProjectIssues({
   const api = useMemo(() => apiRegistry.getService(IssuesApiService), []);
   const [read, setRead] = useState<Read | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The queue is the domain-model kit's (studio-documents): a gear that refuses it
+  // with KIT_NOT_INSTALLED says the kit is not here, which is no failure.
+  const [absent, setAbsent] = useState<KitAbsence | null>(null);
   /** Entities saved this visit: their rows stay hidden until a build reads them. */
   const [saved, setSaved] = useState<SavedEdit[]>([]);
   const [estimate, setEstimate] = useState<SpecModelBuildEstimate | null>(null);
@@ -156,8 +161,11 @@ function ProjectIssues({
       setSaved((s) => pruneSaved(s, model.build));
       setNow(Date.now());
       setError(null);
+      setAbsent(null);
     } catch (e) {
-      setError(message(e));
+      const why = kitAbsent(e);
+      setAbsent(why);
+      setError(why ? null : message(e));
     }
   }, [api, projectId]);
 
@@ -327,7 +335,8 @@ function ProjectIssues({
           // Nothing read yet: the list's own failure, with a retry.
           <GridFailed message={error} retry={t('retry')} onRetry={() => void load()} />
         ))}
-      {!read && !error && <PageLoading label={t('loading')} />}
+      {absent && !read && <KitAbsentState absence={absent} />}
+      {!read && !error && !absent && <PageLoading label={t('loading')} />}
       {note && (
         <p className={styles.hint} data-no-documentation data-unread={model?.unread_documents ?? 0}>
           {note}
