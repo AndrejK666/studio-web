@@ -301,7 +301,7 @@
     {
       "clientId": "spec-graph",
       "name": "Spec graph (service)",
-      "description": "The spec-graph service beside Studio, indexing a project's documents into graph-storage on no one person's behalf. Service account only, no roles, no browser flows. The PDP lets its subject (backend.specGraph.serviceSubject) reach graph-storage in a project's tenant where the Spec graph kit applies, and nothing else.",
+      "description": "The spec-graph service beside Studio, indexing projects' documents into graph-storage as itself. Service account only. The PDP admits it to a project's graph where the Spec graph kit applies (backend.specGraph.serviceSubject).",
       "enabled": true,
       "protocol": "openid-connect",
       "publicClient": false,
