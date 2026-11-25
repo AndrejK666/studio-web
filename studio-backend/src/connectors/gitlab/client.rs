@@ -9,6 +9,11 @@
 //! - **Throttles.** A 429 carries `Retry-After` in seconds; it is honoured up
 //!   to [`Retry::max_wait`]. A 5xx or a dropped connection backs off
 //!   exponentially. Both give up after [`Retry::attempts`] retries.
+//! - **One throttle for every request in flight.** The sync reads merge
+//!   requests' files several at a time, so a 429 on one read, or a reply that
+//!   says the budget is spent (`RateLimit-Remaining: 0` with
+//!   `RateLimit-Reset`), holds the others too ([`Gate`]) instead of letting
+//!   each find the limit on its own.
 //! - **Pages.** GitLab answers `Link: <…>; rel="next"` for offset and keyset
 //!   pagination alike, so one walker serves both. The link is followed only
 //!   on the installation's own origin: a reply must not be able to send the
@@ -20,8 +25,10 @@
 //! - **GraphQL** answers 200 with an `errors` array, so the status alone never
 //!   says a query worked.
 
+use std::collections::HashMap;
 use std::fmt;
-use std::time::Duration;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use reqwest::header::HeaderMap;
 use reqwest::{Method, StatusCode};
@@ -187,6 +194,43 @@ impl Default for Retry {
     }
 }
 
+/// When each installation may be asked again: shared by every request the
+/// driver has in flight, so a throttle one of them met holds the rest.
+///
+/// Keyed by the installation root rather than by token: GitLab limits per
+/// user and per address, and two connections to one installation from the
+/// same server share the address. A wait is never longer than
+/// [`Retry::max_wait`], the same bound a single request keeps to.
+#[derive(Debug, Default)]
+pub(super) struct Gate {
+    not_before: Mutex<HashMap<String, Instant>>,
+}
+
+impl Gate {
+    /// How long a request to `root` must still wait, if at all.
+    pub fn wait(&self, root: &str) -> Option<Duration> {
+        let now = Instant::now();
+        self.not_before
+            .lock()
+            .ok()?
+            .get(root)
+            .and_then(|at| at.checked_duration_since(now))
+            .filter(|d| !d.is_zero())
+    }
+
+    /// Hold every request to `root` for `wait` from now -- or longer, when an
+    /// earlier hold already reaches further.
+    pub fn hold(&self, root: &str, wait: Duration) {
+        let until = Instant::now() + wait;
+        if let Ok(mut map) = self.not_before.lock() {
+            let at = map.entry(root.to_owned()).or_insert(until);
+            if *at < until {
+                *at = until;
+            }
+        }
+    }
+}
+
 /// The installation root a connection's address names. Tolerates an address
 /// typed with the API suffix (`https://gitlab.example/api/v4`), which is what
 /// people copy out of GitLab's own docs.
@@ -202,6 +246,7 @@ pub(super) fn instance_root(base_url: &str) -> &str {
 pub(super) struct Api<'a> {
     http: &'a reqwest::Client,
     retry: &'a Retry,
+    gate: &'a Gate,
     root: String,
     token: &'a str,
 }
@@ -213,10 +258,16 @@ pub(super) struct Page<T> {
 }
 
 impl<'a> Api<'a> {
-    pub fn new(http: &'a reqwest::Client, retry: &'a Retry, auth: &'a ConnectionAuth) -> Self {
+    pub fn new(
+        http: &'a reqwest::Client,
+        retry: &'a Retry,
+        gate: &'a Gate,
+        auth: &'a ConnectionAuth,
+    ) -> Self {
         Self {
             http,
             retry,
+            gate,
             root: instance_root(&auth.base_url).to_owned(),
             token: auth.token.trim(),
         }
@@ -269,6 +320,10 @@ impl<'a> Api<'a> {
             || (method == Method::POST && url.ends_with("/api/graphql"));
         let mut attempt = 0u32;
         loop {
+            // A throttle another request met: wait it out before asking.
+            if let Some(wait) = self.gate.wait(&self.root) {
+                tokio::time::sleep(wait.min(self.retry.max_wait)).await;
+            }
             let mut rb = http
                 .request(method.clone(), url)
                 .header("Accept", "application/json")
@@ -297,14 +352,22 @@ impl<'a> Api<'a> {
                 }
                 Ok(res) => {
                     let status = res.status();
-                    let transient = status == StatusCode::TOO_MANY_REQUESTS
+                    let throttled = status == StatusCode::TOO_MANY_REQUESTS;
+                    let transient = throttled
                         || (idempotent && matches!(status.as_u16(), 500 | 502 | 503 | 504));
-                    if !transient || attempt >= self.retry.attempts {
-                        return Ok(res);
-                    }
                     let wait = retry_after(res.headers())
                         .unwrap_or(backoff)
                         .min(self.retry.max_wait);
+                    if throttled {
+                        self.gate.hold(&self.root, wait);
+                    } else if let Some(reset) = budget_spent(res.headers()) {
+                        // Answered, but the next request would be refused:
+                        // hold them all until the window turns over.
+                        self.gate.hold(&self.root, reset.min(self.retry.max_wait));
+                    }
+                    if !transient || attempt >= self.retry.attempts {
+                        return Ok(res);
+                    }
                     tracing::debug!(%status, url, attempt, ?wait, "gitlab: throttled or failing, waiting");
                     tokio::time::sleep(wait).await;
                 }
@@ -532,6 +595,30 @@ fn retry_after(headers: &HeaderMap) -> Option<Duration> {
         .map(Duration::from_secs)
 }
 
+/// How long until GitLab's rate-limit window turns over, when a reply says
+/// the budget in it is spent: `RateLimit-Remaining: 0` and `RateLimit-Reset`
+/// as a Unix time in seconds. `None` while requests remain, or when the
+/// installation does not send the headers (rate limits off).
+fn budget_spent(headers: &HeaderMap) -> Option<Duration> {
+    let header = |name: &str| {
+        headers
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.trim().parse::<u64>().ok())
+    };
+    if header("ratelimit-remaining")? > 0 {
+        return None;
+    }
+    let reset = header("ratelimit-reset")?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    // A reset already past still holds for a moment: the reply said there
+    // is nothing left, and the clocks of two machines are not one clock.
+    Some(Duration::from_secs(reset.saturating_sub(now).max(1)))
+}
+
 /// The `rel="next"` target of a `Link` header.
 pub(super) fn next_link(headers: &HeaderMap) -> Option<String> {
     headers
@@ -615,6 +702,36 @@ mod tests {
             "https://g.example/gitlab"
         );
         assert_eq!(instance_root("https://gitlab.com"), "https://gitlab.com");
+    }
+
+    #[test]
+    fn a_hold_reaches_as_far_as_the_longest_one_and_only_its_installation() {
+        let gate = Gate::default();
+        assert_eq!(gate.wait("https://g.example"), None);
+        gate.hold("https://g.example", Duration::from_secs(30));
+        gate.hold("https://g.example", Duration::from_secs(1));
+        let left = gate.wait("https://g.example").expect("held");
+        assert!(left > Duration::from_secs(20), "{left:?}");
+        assert_eq!(gate.wait("https://other.example"), None);
+    }
+
+    #[test]
+    fn a_spent_budget_waits_for_its_reset_and_one_with_requests_left_does_not() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let mut h = HeaderMap::new();
+        h.insert("ratelimit-remaining", HeaderValue::from_static("0"));
+        h.insert(
+            "ratelimit-reset",
+            HeaderValue::from_str(&(now + 20).to_string()).unwrap(),
+        );
+        let wait = budget_spent(&h).expect("spent");
+        assert!(wait >= Duration::from_secs(18) && wait <= Duration::from_secs(20));
+        h.insert("ratelimit-remaining", HeaderValue::from_static("7"));
+        assert_eq!(budget_spent(&h), None);
+        assert_eq!(budget_spent(&HeaderMap::new()), None);
     }
 
     #[test]
