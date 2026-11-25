@@ -1,0 +1,22 @@
+# Kits that read or claim another kit's gear without requiring that kit
+# (ADR-0071 §5, ADR-0079 §5).
+#
+# One `kit -> other-kit  # reason` per line. `requires_reads_tests.rs` fails
+# on an undeclared pair that is not listed here, and on a listed pair that is
+# declared or no longer read, so this list only shrinks.
+#
+# Do not add a line for a real dependency: add the kit to `requires`. A line
+# stays where a `requires` would be wrong today (a cycle, a kit an
+# organization may remove, a read that only enriches), until the read moves
+# to the model's `/query` (ADR-0079). When you remove a read, remove its line.
+components -> project-product  # the catalogue shows where a component is used; product -> components is the dependency, this one would close a cycle
+components -> project-specs  # capabilities and glossary only enrich component suggestions; move to /query
+components -> spec-mapping  # spec-mapping is organization-removable (ADR-0074); the plan only enriches suggestions
+gears-matcher -> spec-mapping  # spec-mapping is organization-removable (ADR-0074); the matcher works without its plan
+project-domain-model -> project-git  # claims `finding`, a type stored in artifact-ingest's graph; a store, not a screen dependency; moves to the model
+project-domain-model -> spec-mapping  # spec-mapping is organization-removable (ADR-0074); capabilities and findings degrade without it
+project-lifecycle -> project-specs  # its types (lifecycle-stage, delivery-scope…) are stored by the documents gear; a store, not a dependency on Specs; moves to the model
+project-product -> delivery  # infra plans only enrich the product's infra view; gears-project requires both
+project-product -> spec-mapping  # spec-mapping is organization-removable (ADR-0074); the product reads its plan only for the spec_mapping strategy
+project-tests -> spec-mapping  # spec-mapping is organization-removable (ADR-0074); conformance only enriches the tests view
+spec-mapping -> project-git  # claims `mapping-decision`, a type stored in artifact-ingest's graph; a store, not a screen dependency; moves to the model

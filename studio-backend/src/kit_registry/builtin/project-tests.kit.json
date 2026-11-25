@@ -8,6 +8,10 @@
   "levels": [
     "project"
   ],
+  "requires": [
+    "project-git",
+    "project-specs"
+  ],
   "model": {
     "types": [
       {

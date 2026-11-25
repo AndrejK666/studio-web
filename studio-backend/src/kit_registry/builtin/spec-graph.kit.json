@@ -10,7 +10,8 @@
     "project"
   ],
   "requires": [
-    "project-domain-model"
+    "project-domain-model",
+    "project-git"
   ],
   "mcp_tools": [
     {
