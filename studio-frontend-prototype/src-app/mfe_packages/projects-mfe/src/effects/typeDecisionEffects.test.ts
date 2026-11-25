@@ -22,7 +22,7 @@ vi.mock('@gears-frontx/react', async (importOriginal) => ({
   apiRegistry: {
     getService: () => ({
       decideBinding: (target: unknown) => ({ fetch: (body: unknown) => decide(target, body) }),
-      confirmTypes: (target: unknown) => ({ fetch: (body: unknown) => confirm(target, body) }),
+      confirmTypes: () => ({ fetch: (body: unknown) => confirm(body) }),
       specsPerSource: (params: unknown) => ({ specsPerSource: params }),
     }),
   },
@@ -134,13 +134,10 @@ describe('a bulk confirmation', () => {
     return dispatch;
   };
 
-  it("sends every target in one call to the project's batch route, each pending until it settles", async () => {
+  it("sends every target of the project in one call, each pending until it settles", async () => {
     confirm.mockResolvedValue({ confirmed: [{ id: 'b-1' }, { id: 'b-2' }], skipped: [] });
     const dispatch = request();
-    expect(confirm).toHaveBeenCalledWith(
-      { workspaceId: 'w-1', projectId: 'p-1' },
-      { binding_ids: ['b-1', 'b-2'] }
-    );
+    expect(confirm).toHaveBeenCalledWith({ project_id: 'p-1', binding_ids: ['b-1', 'b-2'] });
     expect(dispatch.mock.calls).toEqual([[decisionStarted('b-1')], [decisionStarted('b-2')]]);
     await settle();
     expect(dispatch.mock.calls.slice(2)).toEqual([[decisionSettled('b-1')], [decisionSettled('b-2')]]);

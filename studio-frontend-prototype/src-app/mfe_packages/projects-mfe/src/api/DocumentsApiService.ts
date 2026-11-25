@@ -149,10 +149,10 @@ export class DocumentsApiService extends BaseApiService {
    * Confirms the proposed type of each named binding of a project at once. A
    * binding with nothing to confirm is skipped and named, never refused.
    */
-  confirmTypes({ workspaceId, projectId }: ProjectParams) {
+  confirmTypes() {
     return this.protocol(RestEndpointProtocol).mutation<ConfirmTypesResultDto, ConfirmTypesDto>(
       'POST',
-      `/workspaces/${workspaceId}/projects/${projectId}/document-bindings/confirm`
+      '/document-bindings/confirm'
     );
   }
 

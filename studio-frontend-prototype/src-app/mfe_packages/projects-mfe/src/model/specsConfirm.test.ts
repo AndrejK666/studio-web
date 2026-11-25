@@ -7,7 +7,7 @@ const row = (id: string, overrides: Partial<SpecRow> = {}): SpecRow => ({
   origin: 'repository',
   name: `${id}.md`,
   state: 'detected',
-  type: { key: 'design', name: 'Design Document', proposed: true, confidence: 0.57 },
+  type: { key: 'design', name: 'Design Document', proposed: true, auto: false, confidence: 0.57 },
   review: { kind: 'check_needed' },
   source: { kind: 'unknown' },
   open: null,
@@ -18,7 +18,7 @@ const row = (id: string, overrides: Partial<SpecRow> = {}): SpecRow => ({
   ...overrides,
 });
 
-const PRD = { key: 'prd', name: 'Product Requirements (PRD)', proposed: true, confidence: 0.8 };
+const PRD = { key: 'prd', name: 'Product Requirements (PRD)', proposed: true, auto: false, confidence: 0.8 };
 
 describe('the proposed types a person may confirm', () => {
   it('are the editable rows whose type is still proposed', () => {

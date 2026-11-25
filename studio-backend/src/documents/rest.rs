@@ -509,6 +509,8 @@ const CONFIRM_TYPES_MAX: usize = 1000;
 #[derive(Debug)]
 #[toolkit_macros::api_dto(request)]
 pub struct ConfirmTypesDto {
+    /// The project whose bindings are confirmed, its own and the workspace's it inherits.
+    pub project_id: Uuid,
     /// The bindings to confirm, at most 1000. One whose type is settled, or
     /// that has no proposal, is skipped and named in the answer.
     pub binding_ids: Vec<Uuid>,
@@ -2302,13 +2304,10 @@ async fn decide_binding(
 pub(super) async fn confirm_types(
     Extension(ctx): Extension<SecurityContext>,
     Extension(service): Extension<Arc<DocumentsService>>,
-    Path((workspace_id, project_id)): Path<(Uuid, Uuid)>,
     Json(body): Json<ConfirmTypesDto>,
 ) -> ApiResult<JsonBody<ConfirmTypesResultDto>> {
-    service
-        .authorize(&ctx, workspace_id)
-        .await
-        .map_err(no_tenant)?;
+    let project_id = body.project_id;
+    let workspace_id = parent_workspace(&service, &ctx, project_id).await?;
     service
         .authorize(&ctx, project_id)
         .await
@@ -9731,7 +9730,7 @@ pub fn register_routes(
         .register(router, openapi);
 
     router = OperationBuilder::put("/studio-documents/v1/spec-pipeline/settings")
-        .operation_id("studio_documents.put_spec_pipeline_settings")
+        .operation_id("studio_documents.update_spec_pipeline_settings")
         .summary("Turn a project's spec pipeline on or off, and set its auto-confirm threshold")
         .description(
             "Kept in the project's config (`spec_pipeline`). A threshold from 0 to 1; 1 confirms \
@@ -12826,13 +12825,11 @@ pub fn register_routes(
     .error_500(openapi)
     .register(router, openapi);
 
-    router = OperationBuilder::post(
-        "/studio-documents/v1/workspaces/{workspace_id}/projects/{project_id}/document-bindings/confirm",
-    )
-    .operation_id("studio_documents.confirm_binding_types")
-    .summary("Confirm the proposed types of many document bindings")
-    .description(
-        "The bulk form of `confirm` on `PUT …/document-bindings/{id}`: each named \
+    router = OperationBuilder::post("/studio-documents/v1/document-bindings/confirm")
+        .operation_id("studio_documents.confirm_binding_types")
+        .summary("Confirm the proposed types of many document bindings")
+        .description(
+            "The bulk form of `confirm` on `PUT …/document-bindings/{id}`: each named \
          binding whose type a classifier proposed (`detected`) is confirmed, and \
          joins the project's settled documentation -- the Bound list its domain \
          model is read from. A binding whose type is already settled, that has no \
@@ -12841,25 +12838,23 @@ pub fn register_routes(
          project's own bindings and the workspace's it inherits qualify. At most \
          1000 ids per call. Conformance is not re-checked: confirming keeps the \
          type the last verdict was computed against.",
-    )
-    .tag("StudioDocuments")
-    .authenticated()
-    .require_license_features::<License>([])
-    .path_param("workspace_id", "Workspace tenant id")
-    .path_param("project_id", "Project tenant id")
-    .json_request::<ConfirmTypesDto>(openapi, "The bindings to confirm")
-    .handler(confirm_types)
-    .json_response_with_schema::<ConfirmTypesResultDto>(
-        openapi,
-        StatusCode::OK,
-        "What was confirmed, and what was skipped and why",
-    )
-    .error_400(openapi)
-    .error_401(openapi)
-    .error_403(openapi)
-    .error_404(openapi)
-    .error_500(openapi)
-    .register(router, openapi);
+        )
+        .tag("StudioDocuments")
+        .authenticated()
+        .require_license_features::<License>([])
+        .json_request::<ConfirmTypesDto>(openapi, "The bindings to confirm")
+        .handler(confirm_types)
+        .json_response_with_schema::<ConfirmTypesResultDto>(
+            openapi,
+            StatusCode::OK,
+            "What was confirmed, and what was skipped and why",
+        )
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_403(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
 
     router = OperationBuilder::delete(
         "/studio-documents/v1/workspaces/{workspace_id}/document-bindings/{id}",

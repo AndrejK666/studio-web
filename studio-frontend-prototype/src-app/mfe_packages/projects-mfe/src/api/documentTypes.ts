@@ -86,6 +86,7 @@ export type DecideBindingDto =
 
 /** Mirrors `ConfirmTypesDto`: the bindings whose proposed type a person accepts. */
 export interface ConfirmTypesDto {
+  project_id: string;
   binding_ids: string[];
 }
 

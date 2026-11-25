@@ -1,4 +1,4 @@
-//! The Specs list's bulk *Confirm*: `POST …/projects/{project_id}/document-bindings/confirm`.
+//! The Specs list's bulk *Confirm*: `POST /studio-documents/v1/document-bindings/confirm`.
 //!
 //! What it must hold to: only a proposal (`detected` with a type) is
 //! confirmed; a settled type, a binding with no proposal, another project's
@@ -21,7 +21,6 @@ use account_management_sdk::{
 };
 use async_trait::async_trait;
 use axum::Extension;
-use axum::extract::Path;
 use gts::GtsTypeId;
 use time::OffsetDateTime;
 use toolkit::api::canonical_prelude::Json;
@@ -423,8 +422,8 @@ async fn the_route_confirms_for_a_member_and_names_what_it_skipped() {
     let Json(answer) = confirm_types(
         Extension(rig.ctx(rig.workspace)),
         Extension(Arc::clone(&rig.service)),
-        Path((rig.workspace, rig.project)),
         Json(ConfirmTypesDto {
+            project_id: rig.project,
             binding_ids: vec![proposed, settled],
         }),
     )
@@ -451,8 +450,8 @@ async fn a_non_member_is_refused_and_nothing_is_confirmed() {
     let refused = confirm_types(
         Extension(rig.ctx(rig.other_workspace)),
         Extension(Arc::clone(&rig.service)),
-        Path((rig.workspace, rig.project)),
         Json(ConfirmTypesDto {
+            project_id: rig.project,
             binding_ids: vec![proposed],
         }),
     )
@@ -475,8 +474,8 @@ async fn a_member_of_one_project_cannot_confirm_through_another() {
     let refused = confirm_types(
         Extension(rig.ctx(rig.other_project)),
         Extension(Arc::clone(&rig.service)),
-        Path((rig.workspace, rig.project)),
         Json(ConfirmTypesDto {
+            project_id: rig.project,
             binding_ids: vec![proposed],
         }),
     )
@@ -493,8 +492,8 @@ async fn too_many_ids_are_refused() {
     let refused = confirm_types(
         Extension(rig.ctx(rig.workspace)),
         Extension(Arc::clone(&rig.service)),
-        Path((rig.workspace, rig.project)),
         Json(ConfirmTypesDto {
+            project_id: rig.project,
             binding_ids: (0..1001).map(|_| Uuid::new_v4()).collect(),
         }),
     )

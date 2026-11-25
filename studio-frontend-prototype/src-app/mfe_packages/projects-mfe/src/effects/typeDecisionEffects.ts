@@ -40,13 +40,13 @@ export function initTypeDecisionEffects(dispatch: AppDispatch, app: FrontXApp): 
 
   // Bulk *Confirm*: one call for every target, each row pending until it settles.
   eventBus.on('mfe/projects/types-confirm-requested', (request) => {
-    const { projectId, workspaceId, targets } = request;
+    const { projectId, targets } = request;
     if (targets.length === 0) return;
     const documents = apiRegistry.getService(DocumentsApiService);
     targets.forEach((target) => dispatch(decisionStarted(target.id)));
     void documents
-      .confirmTypes({ workspaceId, projectId })
-      .fetch({ binding_ids: targets.map((target) => target.id) })
+      .confirmTypes()
+      .fetch({ project_id: projectId, binding_ids: targets.map((target) => target.id) })
       .then(
         (result) => {
           eventBus.emit('mfe/projects/types-confirmed', {
