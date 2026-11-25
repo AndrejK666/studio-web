@@ -2354,6 +2354,7 @@ response	GET /studio-connector/v1/providers	items.default_base_url	String	always
 response	GET /studio-connector/v1/providers	items.display_name	String	always
 response	GET /studio-connector/v1/providers	items.fixed_target	bool	always
 response	GET /studio-connector/v1/providers	items.instance_id	String	always
+response	GET /studio-connector/v1/providers	items.pasted_key	bool	always
 response	GET /studio-connector/v1/providers	items.provider	String	always
 response	GET /studio-connector/v1/providers	items.sign_in	bool	always
 response	GET /studio-connector/v1/providers	items.token_optional	bool	always
