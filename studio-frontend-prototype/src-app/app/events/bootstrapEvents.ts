@@ -64,8 +64,15 @@ declare module '@gears-frontx/react' {
     'app/pins/open': {
       route: { token: string; org?: string; workspace?: string; project?: string; section?: string };
     };
-    /** Go to a place an MFE found (Search): the deepest level named, on its entry screen. */
-    'app/context/place/requested': { organizationId: string; workspaceId?: string; projectId?: string; route?: string; view?: string };
+    /** Go to a place an MFE found (Search): the deepest level named, on its entry screen. `keep` (the path's nested menus): on the tab on screen instead, when it is a tab of that level; the address falls back to the entry where the place does not answer it. */
+    'app/context/place/requested': {
+      organizationId: string;
+      workspaceId?: string;
+      projectId?: string;
+      route?: string;
+      view?: string;
+      keep?: boolean;
+    };
     /** "Try again" on the editor whose session failed to come up. */
     'app/editor/session/retry': void;
     /** The editor bar's Reload: a fresh frame, the session keeps running. */

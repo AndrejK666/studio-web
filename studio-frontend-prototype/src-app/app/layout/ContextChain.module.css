@@ -53,3 +53,18 @@
 .list .slot[aria-current='page'] {
   background: color-mix(in oklab, var(--foreground) 6%, transparent);
 }
+
+/* A row of the path's menus: a long name ends in an ellipsis. */
+.rowName {
+  max-width: 16rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A submenu: a long list scrolls inside it, and it never outgrows a phone. */
+.submenu {
+  max-height: min(20rem, 60vh);
+  max-width: calc(100vw - 2 * var(--space-4));
+  overflow-y: auto;
+}

@@ -11,7 +11,7 @@
  * - Under 900px the sidebar is a drawer over the screen, opened from the bar.
  */
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { useAppSelector, useDomainExtensions, FRONTX_SCREEN_DOMAIN } from '@gears-frontx/react';
 import { Menu } from 'lucide-react';
 import { APP_CONTEXT_SLICE_KEY, type AppContextState } from '@/app/slices/appContextSlice';
@@ -26,28 +26,11 @@ import { useLevelTabs } from '../useLevelTabs';
 import { ShellSidebar, type SidebarModels } from './ShellSidebar';
 import styles from './ShellSidebar.module.css';
 
-/** Below this width the sidebar is a drawer over the screen. */
-export const NARROW_VIEWPORT_PX = 900;
+// Below the breakpoint the sidebar is a drawer over the screen.
+export { NARROW_VIEWPORT_PX, useNarrowViewport } from '../useNarrowViewport';
 
 /** The id of the drawer the bar's menu button opens. */
 export const SIDEBAR_DRAWER_ID = 'shell-sidebar-drawer';
-
-/** Whether the window is narrower than `NARROW_VIEWPORT_PX`. */
-export function useNarrowViewport(): boolean {
-  const query = `(max-width: ${NARROW_VIEWPORT_PX - 0.02}px)`;
-  const [narrow, setNarrow] = useState(() =>
-    typeof window !== 'undefined' && typeof window.matchMedia === 'function' ? window.matchMedia(query).matches : false
-  );
-  useEffect(() => {
-    if (typeof window.matchMedia !== 'function') return undefined;
-    const list = window.matchMedia(query);
-    const onChange = () => setNarrow(list.matches);
-    onChange();
-    list.addEventListener('change', onChange);
-    return () => list.removeEventListener('change', onChange);
-  }, [query]);
-  return narrow;
-}
 
 /** Whether a key press happened where typing is going on. */
 function typingIn(event: KeyboardEvent): boolean {

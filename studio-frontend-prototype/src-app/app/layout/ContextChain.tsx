@@ -2,7 +2,7 @@
 
 // @cpt-dod:cpt-studiofrontend-dod-shell-levels-chain:p1
 // @cpt-dod:cpt-studiofrontend-dod-shell-levels-workspace-level:p1
-import React, { useCallback, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useRef, useState } from 'react';
 import { useAppSelector, useDomainExtensions, eventBus, FRONTX_SCREEN_DOMAIN } from '@gears-frontx/react';
 import {
   Breadcrumb,
@@ -17,9 +17,10 @@ import {
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
 } from '@gears-frontx/ui-kit/dropdown-menu';
 import { InputGroup, InputGroupAddon, InputGroupInput } from '@gears-frontx/ui-kit/input-group';
 import { Popover, PopoverContent, PopoverTrigger } from '@gears-frontx/ui-kit/popover';
@@ -31,6 +32,7 @@ import {
   ChevronDown,
   Folder,
   Layers,
+  LoaderCircle,
   Search,
   Server,
   type LucideIcon,
@@ -45,6 +47,15 @@ import { useShellText } from '@/app/i18n/shellTranslations';
 import type { ScreenText } from '@constructor-studio/mfe-shared';
 import { useScreenLevel } from './useScreenLevel';
 import { useOrgLogo } from './orgLogo';
+import { useNarrowViewport } from './useNarrowViewport';
+import {
+  openPlace,
+  useProjectsOf,
+  useTabOnScreen,
+  useWorkspacesOf,
+  type ChildList,
+  type Place,
+} from './chainChildren';
 import styles from './ContextChain.module.css';
 
 interface ChainSlot {
@@ -58,17 +69,16 @@ interface ChainSlot {
   Icon: LucideIcon;
   /** The entry for the level above, at the top of the menu. */
   up?: { label: string; level: ScreenLevel };
+  /** The move an option stands for: picking it, or its level when it is the one picked. */
   pick: (id: string) => void;
+  /** What an option's submenu lists (the organization's workspaces, the workspace's projects); none: no submenus. */
+  nest?: 'workspaces' | 'projects';
   /** A level with one item (the platform): a button to it, no menu. */
   only?: boolean;
 }
 
-const pickWorkspace = (id: string) =>
-  eventBus.emit('app/context/workspace/changed', { workspaceId: id });
-const enterWorkspace = (id: string) =>
-  eventBus.emit('app/context/workspace/changed', { workspaceId: id, enter: true });
-const pickProject = (id: string) =>
-  eventBus.emit('app/context/project/changed', { projectId: id });
+/** Goes to a workspace or a project picked anywhere in the path. */
+type Go = (place: Place) => void;
 
 // @cpt-begin:cpt-studiofrontend-algo-shell-levels-path:p1:inst-1
 // @cpt-begin:cpt-studiofrontend-algo-shell-levels-path:p1:inst-2
@@ -84,7 +94,8 @@ function slotsOf(
   level: ScreenLevel,
   context: AppContextState | undefined,
   t: ScreenText,
-  hasPlatform: boolean
+  hasPlatform: boolean,
+  go: Go
 ): ChainSlot[] {
   const head: ChainSlot[] = [];
   if (hasPlatform) {
@@ -99,6 +110,7 @@ function slotsOf(
     });
   }
   if (!context?.org) return head;
+  const orgId = context.org.id;
   head.push({
     level: 'organization',
     caps: t('chain_organization'),
@@ -107,16 +119,22 @@ function slotsOf(
     Icon: Building2,
     up: { label: t('chain_organization_overview', { organization: context.org.name }), level: 'organization' },
     pick: (id) => {
-      if (id !== context.org?.id) pickOrg(id);
+      if (id !== orgId) pickOrg(id);
+      // From another level (the platform, Admin) the organization picked
+      // already goes to that organization's own level.
+      else if (level !== 'organization') requestLevel('organization');
     },
+    nest: 'workspaces',
   });
   // The platform and Admin sit beside the organizations: no workspace to pick.
   if (level === 'platform' || level === 'admin') return head;
-  return [...head, ...belowOrganization(level, context, t)];
+  return [...head, ...belowOrganization(level, context, t, go)];
 }
 
-function belowOrganization(level: ScreenLevel, context: AppContextState, t: ScreenText): ChainSlot[] {
+function belowOrganization(level: ScreenLevel, context: AppContextState, t: ScreenText, go: Go): ChainSlot[] {
   const workspaces = context.workspaces ?? [];
+  const organizationId = context.org!.id;
+  const pickWorkspace = (workspaceId: string) => go({ organizationId, workspaceId });
 
   // @cpt-begin:cpt-studiofrontend-algo-shell-levels-path:p1:inst-4
   if (level === 'organization') {
@@ -130,13 +148,15 @@ function belowOrganization(level: ScreenLevel, context: AppContextState, t: Scre
         none: pending ? '' : t('chain_all_workspaces'),
         options: workspaces,
         Icon: Layers,
-        pick: enterWorkspace,
+        pick: pickWorkspace,
+        nest: 'projects',
       },
     ];
   }
   // @cpt-end:cpt-studiofrontend-algo-shell-levels-path:p1:inst-4
 
   if (!context.workspace) return [];
+  const workspaceId = context.workspace.id;
   const slots: ChainSlot[] = [
     {
       level: 'workspace',
@@ -146,6 +166,7 @@ function belowOrganization(level: ScreenLevel, context: AppContextState, t: Scre
       Icon: Layers,
       up: { label: t('chain_all_workspaces'), level: 'organization' },
       pick: pickWorkspace,
+      nest: 'projects',
     },
   ];
 
@@ -160,7 +181,7 @@ function belowOrganization(level: ScreenLevel, context: AppContextState, t: Scre
         label: t('chain_projects_in', { workspace: context.workspace.name }),
         level: 'workspace',
       },
-      pick: pickProject,
+      pick: (projectId) => go({ organizationId, workspaceId, projectId }),
     });
   }
 
@@ -220,52 +241,204 @@ const SlotFace = React.forwardRef<
 });
 SlotFace.displayName = 'SlotFace';
 
-const MenuSlot: React.FC<{ slot: ChainSlot; isCurrent: boolean }> = ({ slot, isCurrent }) => {
-  const onPick = useCallback(
-    (id: string) => {
-      slot.pick(id);
-      // Switching the organization moves the address itself (org/changed).
-      if (!isCurrent && slot.current && slot.level !== 'organization') requestLevel(slot.level);
-    },
-    [slot, isCurrent]
+// ─── The nested menus ────────────────────────────────────────────────────
+
+interface ChainMenu {
+  go: Go;
+  /** Closes the whole menu: a submenu row's own click does not. */
+  close: () => void;
+  /** The place in scope, as deep as the level goes: what each row checks itself against. */
+  here: { org?: string; workspace?: string; project?: string };
+  narrow: boolean;
+}
+
+const ChainMenuContext = createContext<ChainMenu | null>(null);
+
+function useChainMenu(): ChainMenu {
+  const menu = useContext(ChainMenuContext);
+  if (!menu) throw new Error('A row of the path’s menu outside its menu');
+  return menu;
+}
+
+/** A row with nothing below it. */
+const LeafRow: React.FC<{ icon: React.ReactNode; label: string; current: boolean; onChoose: () => void }> = ({
+  icon,
+  label,
+  current,
+  onChoose,
+}) => (
+  <DropdownMenuItem onClick={onChoose} aria-current={current ? 'true' : undefined}>
+    {icon}
+    <span className={styles.rowName}>{label}</span>
+    {current && <Check className="ml-auto" aria-hidden="true" />}
+  </DropdownMenuItem>
+);
+
+/**
+ * A row with a submenu of what is below it. A click (or Enter) on the row
+ * goes to it, as on a row without one; hovering it or ArrowRight opens the
+ * submenu, ArrowLeft and Escape close it. A tap opens the submenu — a touch
+ * screen has no hover — whose first row goes to the parent itself.
+ */
+const NestedRow: React.FC<{
+  icon: React.ReactNode;
+  label: string;
+  current: boolean;
+  onChoose: () => void;
+  children: React.ReactNode;
+}> = ({ icon, label, current, onChoose, children }) => {
+  const t = useShellText();
+  const { close, narrow } = useChainMenu();
+  const touched = useRef(false);
+  return (
+    <DropdownMenuSub>
+      <DropdownMenuSubTrigger
+        aria-current={current ? 'true' : undefined}
+        onPointerDown={(event) => {
+          touched.current = event.pointerType === 'touch';
+        }}
+        onClick={() => {
+          if (touched.current) return;
+          close();
+          onChoose();
+        }}
+      >
+        {icon}
+        <span className={styles.rowName}>{label}</span>
+        {current && <Check className="ml-auto" aria-hidden="true" />}
+      </DropdownMenuSubTrigger>
+      <DropdownMenuSubContent
+        side={narrow ? 'bottom' : 'right'}
+        sideOffset={narrow ? 4 : 0}
+        className={`!w-auto ${styles.submenu}`}
+      >
+        <DropdownMenuItem onClick={onChoose}>
+          {icon}
+          <span className={styles.rowName}>{t('chain_open_item', { name: label })}</span>
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        {children}
+      </DropdownMenuSubContent>
+    </DropdownMenuSub>
   );
+};
+
+/** What a list being read, failed or empty shows instead of its rows; null once it has rows. */
+const ListState: React.FC<{ list: ChildList; empty: string }> = ({ list, empty }) => {
+  const t = useShellText();
+  if (list.items.length > 0) return null;
+  const text = list.loading ? t('chain_children_loading') : list.failed ? t('chain_children_failed') : empty;
+  return (
+    <DropdownMenuItem disabled data-chain-list-state={list.loading ? 'loading' : list.failed ? 'failed' : 'empty'}>
+      {list.loading && <LoaderCircle className="animate-spin" aria-hidden="true" />}
+      {text}
+    </DropdownMenuItem>
+  );
+};
+
+/** A workspace's projects, read when its submenu opens. */
+const ProjectsMenu: React.FC<{ organizationId: string; workspaceId: string }> = ({ organizationId, workspaceId }) => {
+  const t = useShellText();
+  const { go, here } = useChainMenu();
+  const list = useProjectsOf(workspaceId);
+  return (
+    <>
+      <ListState list={list} empty={t('chain_no_projects_here')} />
+      {list.items.map((project) => (
+        <LeafRow
+          key={project.id}
+          icon={<Folder strokeWidth={1.5} aria-hidden="true" />}
+          label={project.name}
+          current={here.project === project.id}
+          onChoose={() => go({ organizationId, workspaceId, projectId: project.id })}
+        />
+      ))}
+    </>
+  );
+};
+
+/** A workspace as a row: its projects in its submenu, unless it is known to have none. */
+const WorkspaceRow: React.FC<{ organizationId: string; workspace: ContextEntity; onChoose: () => void }> = ({
+  organizationId,
+  workspace,
+  onChoose,
+}) => {
+  const { here } = useChainMenu();
+  const icon = <Layers strokeWidth={1.5} aria-hidden="true" />;
+  const current = here.org === organizationId && here.workspace === workspace.id;
+  if (workspace.count === 0) {
+    return <LeafRow icon={icon} label={workspace.name} current={current} onChoose={onChoose} />;
+  }
+  return (
+    <NestedRow icon={icon} label={workspace.name} current={current} onChoose={onChoose}>
+      <ProjectsMenu organizationId={organizationId} workspaceId={workspace.id} />
+    </NestedRow>
+  );
+};
+
+/** An organization's workspaces, read when its submenu opens. */
+const WorkspacesMenu: React.FC<{ organizationId: string }> = ({ organizationId }) => {
+  const t = useShellText();
+  const { go } = useChainMenu();
+  const list = useWorkspacesOf(organizationId);
+  return (
+    <>
+      <ListState list={list} empty={t('chain_no_workspaces_here')} />
+      {list.items.map((workspace) => (
+        <WorkspaceRow
+          key={workspace.id}
+          organizationId={organizationId}
+          workspace={workspace}
+          onChoose={() => go({ organizationId, workspaceId: workspace.id })}
+        />
+      ))}
+    </>
+  );
+};
+
+const MenuSlot: React.FC<{ slot: ChainSlot; isCurrent: boolean }> = ({ slot, isCurrent }) => {
+  const outer = useChainMenu();
+  const [open, setOpen] = useState(false);
+  const close = useCallback(() => setOpen(false), []);
+  const menu = { ...outer, close };
+  const orgId = outer.here.org;
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        disabled={slot.options.length === 0 && !slot.up}
-        render={<SlotFace chainSlot={slot} isCurrent={isCurrent} />}
-      />
-      <DropdownMenuContent align="start" className="!w-auto">
-        {slot.up && (
-          <>
-            <DropdownMenuItem onClick={() => requestLevel(slot.up!.level)}>
-              <slot.Icon aria-hidden="true" />
-              {slot.up.label}
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-          </>
-        )}
-        <DropdownMenuRadioGroup value={slot.current?.id ?? ''} onValueChange={onPick}>
-          {slot.options.map((option) => (
-            <DropdownMenuRadioItem
-              key={option.id}
-              value={option.id}
-              closeOnClick
-              // The radio group reports no change for the item already picked,
-              // so from another level (the platform, Admin) picking it would
-              // move nothing: it goes to that level here.
-              onClick={
-                !isCurrent && option.id === slot.current?.id ? () => requestLevel(slot.level) : undefined
-              }
-            >
-              <SlotMark slot={slot} id={option.id} />
-              {option.name}
-            </DropdownMenuRadioItem>
-          ))}
-        </DropdownMenuRadioGroup>
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <ChainMenuContext.Provider value={menu}>
+      <DropdownMenu open={open} onOpenChange={setOpen}>
+        <DropdownMenuTrigger
+          disabled={slot.options.length === 0 && !slot.up}
+          render={<SlotFace chainSlot={slot} isCurrent={isCurrent} />}
+        />
+        <DropdownMenuContent align="start" className="!w-auto">
+          {slot.up && (
+            <>
+              <DropdownMenuItem onClick={() => requestLevel(slot.up!.level)}>
+                <slot.Icon aria-hidden="true" />
+                {slot.up.label}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+            </>
+          )}
+          {slot.options.map((option) => {
+            const icon = <SlotMark slot={slot} id={option.id} />;
+            const current = option.id === slot.current?.id;
+            const onChoose = () => slot.pick(option.id);
+            if (slot.nest === 'workspaces' && option.count !== 0) {
+              return (
+                <NestedRow key={option.id} icon={icon} label={option.name} current={current} onChoose={onChoose}>
+                  <WorkspacesMenu organizationId={option.id} />
+                </NestedRow>
+              );
+            }
+            if (slot.nest === 'projects' && orgId) {
+              return <WorkspaceRow key={option.id} organizationId={orgId} workspace={option} onChoose={onChoose} />;
+            }
+            return <LeafRow key={option.id} icon={icon} label={option.name} current={current} onChoose={onChoose} />;
+          })}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </ChainMenuContext.Provider>
   );
 };
 
@@ -355,37 +528,64 @@ export const ContextChain: React.FC = () => {
   const level = useScreenLevel();
   const screens = useDomainExtensions(FRONTX_SCREEN_DOMAIN) as StudioScreenExtension[];
   const hasPlatform = resolveLevelMenu(screens, 'platform').length > 0;
+  const tab = useTabOnScreen();
+  const narrow = useNarrowViewport();
 
-  const slots = slotsOf(level, context, t, hasPlatform);
+  // Where the path stands, as deep as the level goes: the workspace the slice
+  // keeps at the organization level is a preference, not a place on screen.
+  const below = level === 'workspace' || level === 'project';
+  const here = {
+    org: context?.org?.id,
+    workspace: below ? context?.workspace?.id : undefined,
+    project: level === 'project' ? context?.project?.id : undefined,
+  };
+
+  // A place of the level on screen opens on the tab on screen (`openPlace`);
+  // the place already on screen, picked again, moves nothing.
+  const go: Go = (place) => {
+    const target: ScreenLevel = place.projectId ? 'project' : 'workspace';
+    const same =
+      place.organizationId === here.org &&
+      place.workspaceId === here.workspace &&
+      (place.projectId ?? undefined) === here.project;
+    if (same && level === target) return;
+    void openPlace(place, level === target, tab);
+  };
+
+  const slots = slotsOf(level, context, t, hasPlatform, go);
   if (slots.length === 0) {
     return context?.loading ? <Skeleton className="h-8 w-40" /> : null;
   }
 
+  const menu: ChainMenu = { go, close: () => undefined, here, narrow };
+
   return (
-    <Breadcrumb>
-      {/* @cpt-begin:cpt-studiofrontend-algo-shell-levels-path:p1:inst-3 */}
-      <BreadcrumbList className={styles.list}>
-        {slots.map((slot, index) => (
-          <React.Fragment key={slot.level}>
-            {index > 0 && (
-              <BreadcrumbSeparator className={styles.separator}>
-                <ArrowRight strokeWidth={1.5} />
-              </BreadcrumbSeparator>
-            )}
-            <BreadcrumbItem>
-              {slot.only ? (
-                <SlotFace chainSlot={slot} isCurrent={slot.level === level} onClick={() => slot.pick('')} />
-              ) : slot.level === 'project' ? (
-                <SearchSlot slot={slot} isCurrent={slot.level === level} />
-              ) : (
-                <MenuSlot slot={slot} isCurrent={slot.level === level} />
+    <ChainMenuContext.Provider value={menu}>
+      <Breadcrumb>
+        {/* @cpt-begin:cpt-studiofrontend-algo-shell-levels-path:p1:inst-3 */}
+        <BreadcrumbList className={styles.list}>
+          {slots.map((slot, index) => (
+            <React.Fragment key={slot.level}>
+              {index > 0 && (
+                <BreadcrumbSeparator className={styles.separator}>
+                  <ArrowRight strokeWidth={1.5} />
+                </BreadcrumbSeparator>
               )}
-            </BreadcrumbItem>
-          </React.Fragment>
-        ))}
-      </BreadcrumbList>
-      {/* @cpt-end:cpt-studiofrontend-algo-shell-levels-path:p1:inst-3 */}
-    </Breadcrumb>
+              <BreadcrumbItem>
+                {slot.only ? (
+                  <SlotFace chainSlot={slot} isCurrent={slot.level === level} onClick={() => slot.pick('')} />
+                ) : slot.level === 'project' ? (
+                  <SearchSlot slot={slot} isCurrent={slot.level === level} />
+                ) : (
+                  <MenuSlot slot={slot} isCurrent={slot.level === level} />
+                )}
+              </BreadcrumbItem>
+            </React.Fragment>
+          ))}
+        </BreadcrumbList>
+        {/* @cpt-end:cpt-studiofrontend-algo-shell-levels-path:p1:inst-3 */}
+      </Breadcrumb>
+    </ChainMenuContext.Provider>
   );
 };
 

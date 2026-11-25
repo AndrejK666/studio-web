@@ -99,6 +99,23 @@ export function registerAppContextEffects(app: FrontXApp, editorSession: EditorS
     return group ? levelOf(group.owner) : undefined;
   };
 
+  /**
+   * The screen and section on screen, when they are `level`'s — what a move
+   * to another place of the same level keeps (the path's nested menus). The
+   * IDE is kept too: it opens the other project's workspace, without an
+   * artifact. `materialize` drops a section the place does not answer.
+   */
+  const screenToKeep = (level: ScreenLevel): { token: string; section?: string } | undefined => {
+    const current = routing?.navigation.currentRoute();
+    if (!current) return undefined;
+    const inScope = current.project ? 'project' : current.workspace ? 'workspace' : currentGroupLevel();
+    if (inScope !== level) return undefined;
+    if (current.token === EDITOR_SCREEN_TOKEN) return { token: current.token };
+    const token = tokenToKeep(current, level);
+    if (!token) return undefined;
+    return token === current.token && current.section ? { token, section: current.section } : { token };
+  };
+
   const currentOrgId = (): string | null =>
     routing?.navigation.currentRoute()?.org ?? context().org?.id ?? null;
   const currentWorkspaceId = (): string | null =>
@@ -269,9 +286,18 @@ export function registerAppContextEffects(app: FrontXApp, editorSession: EditorS
 
   // A place found elsewhere (Search): the whole address is known, so it is
   // one navigation, and `materialize` resolves the names and the level.
-  eventBus.on('app/context/place/requested', ({ organizationId, workspaceId, projectId, route: asked, view }) => {
+  eventBus.on('app/context/place/requested', ({ organizationId, workspaceId, projectId, route: asked, view, keep }) => {
     if (!routing) return;
     const level: ScreenLevel = projectId ? 'project' : workspaceId ? 'workspace' : 'organization';
+    const kept = keep ? screenToKeep(level) : undefined;
+    if (kept) {
+      const route: ShellRoute = { token: kept.token, org: organizationId };
+      if (workspaceId) route.workspace = workspaceId;
+      if (projectId) route.project = projectId;
+      if (kept.section) route.section = kept.section;
+      routing.navigation.navigate(route, 'push');
+      return;
+    }
     const target = asked ? screens().find((screen) => screen.presentation?.route === asked && levelOf(screen) === level) : undefined;
     const token = (target && tokenOf(target)) || entryTokenOf(screens(), level);
     if (!token) return;
