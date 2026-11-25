@@ -158,8 +158,15 @@ mod uuid_text {
     }
 }
 
-/// The Inbox tools (`crate::mcp`).
-pub(crate) use mcp::tools as mcp_tools;
+// This gear's MCP tools, collected by studio-mcp (ADR-0079).
+// What waits on the person: the Inbox.
+inventory::submit! {
+    crate::mcp::sdk::ToolSet {
+        gear: "studio-user",
+        order: 60,
+        tools: mcp::tools,
+    }
+}
 /// Fold an alias key into its stored form. Re-exported because the
 /// knowledge-graph sync must normalize a login the same way a write did,
 /// or the lookup misses the row.

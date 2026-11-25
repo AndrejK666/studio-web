@@ -636,7 +636,16 @@ pub async fn git_sources(
 
 #[path = "project_sources_mcp.rs"]
 mod mcp;
-pub(crate) use mcp::tools as mcp_tools;
+// This gear's MCP tools, collected by studio-mcp (ADR-0079).
+// The pipeline starts here: a project's sources (then its connections, the
+// product's description, where it runs, its builds and their runs).
+inventory::submit! {
+    crate::mcp::sdk::ToolSet {
+        gear: "studio-organizations",
+        order: 80,
+        tools: mcp::tools,
+    }
+}
 
 #[cfg(test)]
 #[path = "project_sources_tests.rs"]

@@ -48,7 +48,14 @@ mod graph_sync_task;
 pub(crate) mod gts;
 mod kubernetes; // a cluster an organization deploys into (ADR-0043)
 mod mcp;
-pub(crate) use mcp::tools as mcp_tools;
+// This gear's MCP tools, collected by studio-mcp (ADR-0079).
+inventory::submit! {
+    crate::mcp::sdk::ToolSet {
+        gear: "studio-connector",
+        order: 90,
+        tools: mcp::tools,
+    }
+}
 mod notify;
 mod oauth; // a connection signed in to rather than pasted (ADR-0049)
 mod ownership;

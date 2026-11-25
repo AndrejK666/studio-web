@@ -17,7 +17,9 @@
 //! The tools are not written here. The gear that owns the routes a tool uses
 //! declares it beside them, in its own `mcp.rs`, so a feature and its tool land
 //! in one PR, and an owner changing a route sees the tool that calls it.
-//! [`tools`] only collects them.
+//! The gear also registers them, as an [`sdk::ToolSet`] submitted in its own
+//! module: this is the core's MCP port (ADR-0079), and studio-mcp names no
+//! gear. [`tools`] collects what gears registered, in their `order`.
 //!
 //! A tool reaches Studio through the REST API, as its caller ([`sdk::Api`]):
 //! MCP adds a way in and no rights. Why that, and not in-process calls, is in
@@ -47,35 +49,11 @@ pub fn tools() -> Vec<sdk::Tool> {
 /// `tools/list` gives them: what a component's page lists under the gear,
 /// and what the kits' claims test holds to the claims.
 pub fn tools_by_gear() -> Vec<(&'static str, sdk::Tool)> {
-    let mut all = Vec::new();
-    let mut add = |gear: &'static str, tools: Vec<sdk::Tool>| {
-        all.extend(tools.into_iter().map(|tool| (gear, tool)));
-    };
-    add("studio-domain-model", crate::domain_model::mcp_tools());
-    // What the documents describe and what is left to decide before a build.
-    add("studio-documents", crate::documents::mcp_tools());
-    add("studio-spec-mapping", crate::spec_mapping::mcp_tools());
-    add("studio-spec-graph", crate::spec_graph::mcp_tools());
-    // Where a project stands.
-    add("studio-organizations", crate::organizations::mcp_tools());
-    // What waits on the person.
-    add("studio-user", crate::user_profile::mcp_tools());
-    add("studio-spec-quality", crate::spec_quality::mcp_tools());
-    // The pipeline, in the order a project goes through it: its sources and
-    // the connections they are read through, the product's description,
-    // then where it runs, its builds, and the runs they start.
-    add("studio-organizations", crate::project_sources::mcp_tools());
-    add("studio-connector", crate::connectors::mcp_tools());
-    add("studio-product", crate::product::mcp_tools());
-    add("studio-environments", crate::environments::mcp_tools());
-    add(
-        "studio-artifact-ingest",
-        crate::artifact_ingest::mcp_tools(),
-    );
-    add("studio-tasks", crate::tasks::mcp_tools());
-    // The kit library, and installing kits for everyone or one organization.
-    add("studio-kits", crate::kit_registry::mcp_tools());
-    all
+    let mut sets: Vec<&sdk::ToolSet> = inventory::iter::<sdk::ToolSet>.into_iter().collect();
+    sets.sort_by_key(|set| set.order);
+    sets.into_iter()
+        .flat_map(|set| (set.tools)().into_iter().map(move |tool| (set.gear, tool)))
+        .collect()
 }
 
 /// The client and the gateway URL the tools use, once the gear has started.
@@ -278,6 +256,35 @@ mod tests {
             for (name, p) in properties {
                 assert!(p.is_object(), "{}: `{name}` is not a schema", t.name);
             }
+        }
+    }
+
+    /// Moving the list into the gears (ADR-0079) changed no name and no
+    /// place in `tools/list`. A new tool or gear adds its line here.
+    #[test]
+    fn tools_list_keeps_its_order_and_gears() {
+        let expected: Vec<(&str, &str)> = include_str!("tools_order.txt")
+            .lines()
+            .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
+            .map(|l| l.split_once(' ').expect("`<gear> <tool>`"))
+            .collect();
+        let actual: Vec<(&str, &str)> = tools_by_gear()
+            .iter()
+            .map(|(gear, tool)| (*gear, tool.name))
+            .collect();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn no_two_tool_sets_share_an_order() {
+        let mut orders = BTreeSet::new();
+        for set in inventory::iter::<sdk::ToolSet> {
+            assert!(
+                orders.insert(set.order),
+                "{} takes order {}, which another set has",
+                set.gear,
+                set.order
+            );
         }
     }
 

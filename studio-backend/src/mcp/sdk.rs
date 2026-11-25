@@ -17,8 +17,24 @@ use std::time::{Duration, Instant};
 use axum::http::HeaderValue;
 use serde_json::{Map, Value, json};
 
+/// A gear's tools, registered by the gear itself (the core's MCP port,
+/// ADR-0079): `inventory::submit! { crate::mcp::sdk::ToolSet { … } }` in the
+/// gear's own module. studio-mcp names no gear; it collects every set.
+pub struct ToolSet {
+    /// The gear that serves the tools (`studio-documents`).
+    pub gear: &'static str,
+    /// Where the set stands in `tools/list`, lowest first. Two sets never
+    /// share an order: what an agent reads first is decided here, not by
+    /// link order.
+    pub order: u16,
+    pub tools: fn() -> Vec<Tool>,
+}
+
+inventory::collect!(ToolSet);
+
 /// One tool an agent can call. The gear that owns the routes it uses declares
-/// it, next to them (`<gear>/mcp.rs`); `studio-mcp` only collects them.
+/// it, next to them (`<gear>/mcp.rs`), and registers it as part of its
+/// [`ToolSet`]; `studio-mcp` only collects them.
 pub struct Tool {
     /// The name the agent calls it by: `<area>_<what>`, snake case.
     pub name: &'static str,

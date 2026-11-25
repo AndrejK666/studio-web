@@ -44,7 +44,14 @@ pub(crate) mod images; // a project's images and charts as records (ADR-0062 §4
 pub(crate) mod images_sink; // a pipeline's published images, recorded (ADR-0062 §4)
 pub(crate) mod infra; // a product's infra services, placed and installed with it (ADR-0064)
 mod mcp;
-pub(crate) use mcp::tools as mcp_tools;
+// This gear's MCP tools, collected by studio-mcp (ADR-0079).
+inventory::submit! {
+    crate::mcp::sdk::ToolSet {
+        gear: "studio-environments",
+        order: 110,
+        tools: mcp::tools,
+    }
+}
 mod migrations;
 mod model;
 pub(crate) mod path; // a project's path from its product to running (#1050)

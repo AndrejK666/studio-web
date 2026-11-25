@@ -33,7 +33,14 @@ pub mod config;
 pub mod findings;
 pub mod gear;
 mod mcp;
-pub(crate) use mcp::tools as mcp_tools;
+// This gear's MCP tools, collected by studio-mcp (ADR-0079).
+inventory::submit! {
+    crate::mcp::sdk::ToolSet {
+        gear: "studio-spec-quality",
+        order: 70,
+        tools: mcp::tools,
+    }
+}
 pub mod record;
 pub mod rest;
 pub mod sdk;

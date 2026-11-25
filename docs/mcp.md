@@ -464,8 +464,11 @@ tool made appear in the metrics of the routes they reached.
 ## Adding a tool
 
 A tool lives with the gear whose routes it calls, in that gear's `mcp.rs`
-(`src/domain_model/mcp.rs` is the pattern), and is listed in
-`crate::mcp::tools()`. It is a route and a description: `Run::Get` and
+(`src/domain_model/mcp.rs` is the pattern). The gear registers its tools
+itself with `inventory::submit!` of a `crate::mcp::sdk::ToolSet` (its gear
+name, an `order` in `tools/list`, its `tools` function) in its own module;
+studio-mcp names no gear (ADR-0079). A new tool also takes its line in
+`studio-backend/src/mcp/tools_order.txt`. A tool is a route and a description: `Run::Get` and
 `Run::Post`, `Run::Put`, `Run::Patch` and `Run::Delete` send the arguments to one route; `Run::Custom` is for more than one
 request, as `spec_check` submits and then waits. Write the description for the
 agent: what the tool answers, when to call it, what it does not do. That text

@@ -25,7 +25,14 @@ mod gearbox;
 mod infra_gdl;
 mod kind;
 mod mcp;
-pub(crate) use mcp::tools as mcp_tools;
+// This gear's MCP tools, collected by studio-mcp (ADR-0079).
+inventory::submit! {
+    crate::mcp::sdk::ToolSet {
+        gear: "studio-product",
+        order: 100,
+        tools: mcp::tools,
+    }
+}
 
 /// Every type this gear declares in the model, for the kits' claims test:
 /// the catalogue's (it holds the product's two) and its gear explanations.

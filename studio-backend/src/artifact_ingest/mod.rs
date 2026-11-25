@@ -27,7 +27,14 @@ pub(crate) mod graph_backend;
 pub(crate) mod gts;
 mod index;
 mod mcp;
-pub(crate) use mcp::tools as mcp_tools;
+// This gear's MCP tools, collected by studio-mcp (ADR-0079).
+inventory::submit! {
+    crate::mcp::sdk::ToolSet {
+        gear: "studio-artifact-ingest",
+        order: 120,
+        tools: mcp::tools,
+    }
+}
 
 /// Every type this gear declares in the model, for the kits' claims test.
 #[cfg(test)]

@@ -17,7 +17,14 @@
 
 mod local;
 mod mcp;
-pub(crate) use mcp::tools as mcp_tools;
+// This gear's MCP tools, collected by studio-mcp (ADR-0079).
+inventory::submit! {
+    crate::mcp::sdk::ToolSet {
+        gear: "studio-spec-mapping",
+        order: 30,
+        tools: mcp::tools,
+    }
+}
 pub(crate) mod plan;
 mod product;
 pub(crate) mod reading;

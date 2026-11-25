@@ -14,13 +14,6 @@ derived_view -> artifact_ingest
 kit_registry -> artifact_ingest
 kit_registry -> components_catalog
 kit_registry -> studio_theia
-mcp -> artifact_ingest
-mcp -> documents
-mcp -> environments
-mcp -> product
-mcp -> spec_graph
-mcp -> spec_mapping
-mcp -> spec_quality
 notify -> studio_theia
 organizations -> artifact_ingest
 organizations -> components_catalog

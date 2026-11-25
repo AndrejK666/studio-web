@@ -67,7 +67,14 @@ use types_registry_sdk::{RegisterResult, TypesRegistryClient};
 use repo::DocumentsRepo;
 use service::{DocumentsService, SyncAnalysis};
 
-pub(crate) use mcp::tools as mcp_tools;
+// This gear's MCP tools, collected by studio-mcp (ADR-0079).
+inventory::submit! {
+    crate::mcp::sdk::ToolSet {
+        gear: "studio-documents",
+        order: 20,
+        tools: mcp::tools,
+    }
+}
 
 /// Every type this gear declares in the model, for the kits' claims test:
 /// its tables' rows, their chunks, the review records and the process's.

@@ -38,7 +38,14 @@
 mod dispatch;
 mod entity;
 mod mcp;
-pub(crate) use mcp::tools as mcp_tools;
+// This gear's MCP tools, collected by studio-mcp (ADR-0079).
+inventory::submit! {
+    crate::mcp::sdk::ToolSet {
+        gear: "studio-tasks",
+        order: 130,
+        tools: mcp::tools,
+    }
+}
 mod migrations;
 mod registry;
 mod rest;

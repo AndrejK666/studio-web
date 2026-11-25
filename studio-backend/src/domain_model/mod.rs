@@ -32,7 +32,15 @@ mod entity;
 pub(crate) mod events;
 pub(crate) mod gts;
 mod mcp;
-pub(crate) use mcp::tools as mcp_tools;
+// This gear's MCP tools, collected by studio-mcp (ADR-0079).
+// First in `tools/list`: what the documents describe.
+inventory::submit! {
+    crate::mcp::sdk::ToolSet {
+        gear: "studio-domain-model",
+        order: 10,
+        tools: mcp::tools,
+    }
+}
 #[cfg(test)]
 mod claimed_types_tests;
 #[cfg(test)]

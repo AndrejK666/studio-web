@@ -21,7 +21,14 @@
 mod client;
 pub mod config;
 mod mcp;
-pub(crate) use mcp::tools as mcp_tools;
+// This gear's MCP tools, collected by studio-mcp (ADR-0079).
+inventory::submit! {
+    crate::mcp::sdk::ToolSet {
+        gear: "studio-spec-graph",
+        order: 40,
+        tools: mcp::tools,
+    }
+}
 mod rest;
 
 use std::sync::{Arc, OnceLock};

@@ -34,7 +34,15 @@ mod shelf_bundles;
 mod sweep;
 
 pub(crate) use installed::KITS_INSTALLED_METADATA_TYPE;
-pub(crate) use mcp::tools as mcp_tools;
+// This gear's MCP tools, collected by studio-mcp (ADR-0079).
+// The kit library, and installing kits for everyone or one organization.
+inventory::submit! {
+    crate::mcp::sdk::ToolSet {
+        gear: "studio-kits",
+        order: 140,
+        tools: mcp::tools,
+    }
+}
 
 use std::sync::{Arc, OnceLock};
 

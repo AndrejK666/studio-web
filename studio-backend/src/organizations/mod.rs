@@ -29,8 +29,15 @@ pub mod project_types;
 pub use logo::LOGO_METADATA_TYPE;
 /// The subject the organization gear acts as (its project creation run, the logo).
 pub use logo::SERVICE_SUBJECT_ID;
-/// The project status tool (`crate::mcp`).
-pub(crate) use mcp::tools as mcp_tools;
+// This gear's MCP tools, collected by studio-mcp (ADR-0079).
+// Where a project stands.
+inventory::submit! {
+    crate::mcp::sdk::ToolSet {
+        gear: "studio-organizations",
+        order: 50,
+        tools: mcp::tools,
+    }
+}
 pub mod port;
 mod rest;
 pub mod rollups;
