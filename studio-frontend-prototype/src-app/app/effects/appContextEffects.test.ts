@@ -168,6 +168,39 @@ describe('registerAppContextEffects', () => {
     );
   });
 
+  describe('a place picked in the path, keeping the tab on screen', () => {
+    it('opens another project on the section on screen', async () => {
+      handle.navigation.currentRoute.mockReturnValue({ ...IN_PROJECT, section: 'artifacts', view: 'focused' });
+      await emit('app/context/place/requested', { organizationId: 'o2', workspaceId: 'w9', projectId: 'p7', keep: true });
+      expect(handle.navigation.navigate).toHaveBeenCalledWith(
+        { token: 'projects', org: 'o2', workspace: 'w9', project: 'p7', section: 'artifacts' }, 'push'
+      );
+    });
+
+    it('keeps a workspace tab for another workspace', async () => {
+      handle.navigation.currentRoute.mockReturnValue({ token: 'projects', org: 'o1', workspace: 'w1' });
+      await emit('app/context/place/requested', { organizationId: 'o1', workspaceId: 'w2', keep: true });
+      expect(handle.navigation.navigate).toHaveBeenCalledWith({ token: 'projects', org: 'o1', workspace: 'w2' }, 'push');
+    });
+
+    it('opens the entry point when the tab on screen is of another level', async () => {
+      handle.navigation.currentRoute.mockReturnValue({ token: 'people', org: 'o1' });
+      await emit('app/context/place/requested', { organizationId: 'o1', workspaceId: 'w1', projectId: 'p2', keep: true });
+      const [route] = vi.mocked(handle.navigation.navigate).mock.calls[0] as [Record<string, unknown>, string];
+      expect(route.token).not.toBe('people');
+      expect(route.section).toBeUndefined();
+    });
+
+    it('keeps the IDE, without the artifact open in it', async () => {
+      handle.groups.mockReturnValue(
+        groupScreens([...screens, screen('space.main', '/space', 'project', { placement: 'hidden' })])
+      );
+      handle.navigation.currentRoute.mockReturnValue({ ...IN_PROJECT, token: 'space', section: undefined, artifact: 'n-1' });
+      await emit('app/context/place/requested', { organizationId: 'o1', workspaceId: 'w1', projectId: 'p2', keep: true });
+      expect(handle.navigation.navigate).toHaveBeenCalledWith({ token: 'space', org: 'o1', workspace: 'w1', project: 'p2' }, 'push');
+    });
+  });
+
   it('a tab the Studio domain model adds opens its generic screen at the section it names', async () => {
     await emit('app/context/screen/requested', { extensionId: 'model.types', section: 'type:vendors' });
     expect(handle.navigation.navigate).toHaveBeenCalledWith(
