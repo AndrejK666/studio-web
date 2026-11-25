@@ -9,20 +9,25 @@
 # keep this base and release.yml's backend-binary runner in step.
 # ONNX Runtime for the graph-storage gear's in-process embedding provider
 # (`ort` is pinned `load-dynamic`; the library is dlopen'ed from ORT_DYLIB_PATH).
-# Same version and checksum as Dockerfile.src and the gears-rust CI lane. The
+# Same version and checksum as Dockerfile.src. The
 # model artifacts are deployment data, not image content: the Helm chart's
 # init container fetches them into an emptyDir (see deploy/helm).
 FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS onnxruntime
+# The GitHub release (microsoft/onnxruntime) is gone — the repository answers
+# 404, which broke every image build. Microsoft's NuGet package of the same
+# version carries the same build: its runtimes/linux-x64/native/libonnxruntime.so
+# is byte-identical (sha256 5715f06d…) to the one the 1.29.0 tarball shipped.
 ARG ONNXRUNTIME_VERSION=1.29.0
-ARG ONNXRUNTIME_SHA256=c3fddc4f139a045b0c4902c57410f0694f1c2fdf9b6939fbe38b1aeae7cd14ba
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+ARG ONNXRUNTIME_SHA256=4557021fec4da3924e2e12ff44b1cc50b176de0d2c5c7daa89ab11c208b3a454
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl unzip \
  && rm -rf /var/lib/apt/lists/* \
- && curl -sSL --fail -o /tmp/onnxruntime.tgz \
-      "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}.tgz" \
- && echo "${ONNXRUNTIME_SHA256}  /tmp/onnxruntime.tgz" | sha256sum --check \
- && mkdir -p /opt/onnxruntime \
- && tar xzf /tmp/onnxruntime.tgz -C /opt/onnxruntime --strip-components=1 \
- && rm /tmp/onnxruntime.tgz
+ && curl -sSL --fail -o /tmp/onnxruntime.nupkg \
+      "https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime/${ONNXRUNTIME_VERSION}/microsoft.ml.onnxruntime.${ONNXRUNTIME_VERSION}.nupkg" \
+ && echo "${ONNXRUNTIME_SHA256}  /tmp/onnxruntime.nupkg" | sha256sum --check \
+ && mkdir -p /opt/onnxruntime/lib \
+ && unzip -j /tmp/onnxruntime.nupkg runtimes/linux-x64/native/libonnxruntime.so -d /opt/onnxruntime/lib \
+ && ln -s libonnxruntime.so /opt/onnxruntime/lib/libonnxruntime.so.1 \
+ && rm /tmp/onnxruntime.nupkg
 
 # Helm, for deploys to an organization's environments (environments/deploy.rs,
 # ADR-0043): the server installs a product's generated chart with the
