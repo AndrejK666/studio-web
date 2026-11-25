@@ -14,6 +14,7 @@ import {
   STUDIO_SHARED_PROPERTY_SCREENS_AVAILABLE,
   TAB_LEVELS,
   isAvailableScreens,
+  kitAvailable,
   loadScreenPreviews,
   modelOf,
   modelTabs,
@@ -21,6 +22,7 @@ import {
   shellTabsOf,
   type ModelTab,
 } from '@constructor-studio/mfe-shared';
+
 import {
   KitPageApiService,
   KitsApiService,
@@ -37,6 +39,9 @@ import { useHomeTranslations } from '../../i18n';
 import { installWithRequired } from '../../model/requires';
 import { PageLoading, ProjectPage } from '@constructor-studio/mfe-shared/page';
 import styles from './HomeScreen.module.css';
+
+/** The kit whose catalogue keeps the pictures a build took of screens (studio-components-catalog). */
+const PREVIEWS_KIT = 'components';
 
 
 const RTL_LANGUAGES = ['ar', 'he', 'fa', 'ur'];
@@ -374,12 +379,15 @@ function useKitPageContext(bridge: ChildMfeBridge, orgId: string | null): KitPag
       shellTabs: shellTabsOf(value),
       routes: value?.routes ?? null,
       modelTabs: levelModelTabs && levelModelTabs.orgId === orgId ? levelModelTabs.tabs : null,
-      // The catalogue's pictures, else the ones the portal's build took of its own screens.
+      // The catalogue's pictures, else the ones the portal's build took of its own screens. The
+      // catalogue is the components kit's: where it is not installed only the portal's are asked.
       loadPreviews: (component: string) =>
         loadScreenPreviews(component, () =>
-          Promise.resolve()
-            .then(() => pageApi.screenPreviews({ component, organizationId: orgId }).fetch())
-            .then((r): ScreenPreview[] => r?.items ?? [])
+          kitAvailable(value, PREVIEWS_KIT)
+            ? Promise.resolve()
+                .then(() => pageApi.screenPreviews({ component, organizationId: orgId }).fetch())
+                .then((r): ScreenPreview[] => r?.items ?? [])
+            : Promise.resolve([])
         ),
     };
   }, [availableKey, levelModelTabs, orgId, pageApi]);

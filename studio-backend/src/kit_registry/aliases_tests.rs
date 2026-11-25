@@ -261,6 +261,7 @@ async fn installations_under_the_old_slugs_count_as_the_kits_they_resolve_to() {
             "assistant",
             "components",
             "delivery",
+            "ide",
             "org-costs",
             "org-reports",
             "project-domain-model",

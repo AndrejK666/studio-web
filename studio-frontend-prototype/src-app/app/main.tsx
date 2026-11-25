@@ -11,11 +11,12 @@ import {
   StudioEventsApiService,
   StudioTasksApiService,
 } from '@constructor-studio/mfe-shared';
-import { CloneStatusApiService, IdentityApiService, OrganizationsApiService, StudioSessionApiService } from '@/app/api';
+import { IdentityApiService, OrganizationsApiService, StudioSessionApiService } from '@/app/api';
 import { InstalledKitsApiService } from '@/app/api/InstalledKitsApiService';
 import { PresenceApiService } from '@/app/api/PresenceApiService';
 import { InboxCountApiService } from '@/app/api/InboxCountApiService';
 import { MfeHandlerIframe } from '@/app/mfe/MfeHandlerIframe';
+import { contributeKits } from '@/app/ports/shellPorts';
 import './globals.css'; // Global styles with CSS variables
 import '@/app/i18n/shellTranslations'; // The shell's own strings (`shell:`)
 import '@/app/events/bootstrapEvents'; // Register app-level events (type augmentation)
@@ -56,9 +57,7 @@ apiRegistry.register(StudioEventsApiService);
 // The editor's session: its launch, the run that says it is ready, and the
 // sources and connections it clones from.
 apiRegistry.register(StudioSessionApiService);
-// Whether the project's sources could be cloned: why the editor opens without one.
-apiRegistry.register(CloneStatusApiService);
-// The desktops a project is open on, and a file handed to one (ADR-0027 §5–6).
+// The desktops a project is open on (ADR-0027 §5–6).
 apiRegistry.register(DesktopApiService);
 apiRegistry.register(StudioTasksApiService);
 apiRegistry.register(ConnectorsApiService);
@@ -66,6 +65,9 @@ apiRegistry.register(ConnectorsApiService);
 apiRegistry.register(DomainModelApiService);
 // Who is in Studio now: the heartbeat, and the notes it collects (layout/Presence.tsx).
 apiRegistry.register(PresenceApiService);
+// What kits hand the shell (ADR-0079 §4): each kit's `src-app/kits/<kit>/shell.ts`
+// registers its own API services and fills the shell's ports. The shell names none.
+contributeKits(import.meta.glob<{ default?: unknown }>('../kits/*/shell.ts', { eager: true }));
 
 // Initialize API services
 apiRegistry.initialize({});

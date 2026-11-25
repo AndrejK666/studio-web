@@ -10,6 +10,11 @@
  *
  * Every part says what it could not do: no organization yet, workspaces that
  * could not be read, a graph that refused — never an empty list in their place.
+ *
+ * The artifact graph is another kit's (project-git, ADR-0079): Search is the
+ * core's and finds places without it. Where its `pull-request` type is not
+ * installed the graph is not asked, and a graph that answers as absent
+ * (`kitAbsent`) leaves the group out rather than showing a failure.
  */
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
@@ -22,10 +27,12 @@ import {
   STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE,
   closeOverlay,
   errorMessage,
+  kitAbsent,
   openPlace,
   refusalText,
   sendToHost,
   useHostChrome,
+  useScreenAvailability,
 } from '@constructor-studio/mfe-shared';
 import { SearchApiService } from '../../api/SearchApiService';
 import { MIN_ARTIFACT_QUERY, artifactHit, matchPlaces, type ArtifactHit, type Place } from '../../model/search';
@@ -35,6 +42,9 @@ import styles from './SearchScreen.module.css';
 const DEBOUNCE_MS = 250;
 /** Workspaces whose projects are read; more is a large organization, said as such. */
 const WORKSPACES_READ = 40;
+/** The artifact graph's kit, and the type that says it is installed (ADR-0071 §5). */
+const GRAPH_KIT = 'project-git';
+const PULL_REQUEST_TYPE = 'gts.cf.studio.domain.pull_request.v1~';
 
 const idOf = (value: unknown): string | null =>
   value && typeof value === 'object' && typeof (value as { id?: unknown }).id === 'string'
@@ -50,7 +60,9 @@ type HitsState =
   | { state: 'idle' }
   | { state: 'loading'; query: string }
   | { state: 'ready'; query: string; hits: ArtifactHit[] }
-  | { state: 'failed'; query: string; error: string };
+  | { state: 'failed'; query: string; error: string }
+  /** The graph's kit is not here: no group at all. */
+  | { state: 'absent' };
 
 type Row = { key: string; place?: Place; hit?: ArtifactHit };
 
@@ -59,6 +71,7 @@ export const SearchScreen: React.FC<{ bridge: ChildMfeBridge }> = ({ bridge }) =
   const { containerRef, dataTheme } = useHostChrome();
   const organization = useSharedProperty(STUDIO_SHARED_PROPERTY_CONTEXT_ORGANIZATION, { bridge });
   const workspace = useSharedProperty(STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE, { bridge });
+  const graphHere = useScreenAvailability({ bridge }).type(PULL_REQUEST_TYPE);
   const orgId = idOf(organization);
   const workspaceId = idOf(workspace);
   const [query, setQuery] = useState('');
@@ -129,7 +142,7 @@ export const SearchScreen: React.FC<{ bridge: ChildMfeBridge }> = ({ bridge }) =
   // The graph, asked once the person stops typing.
   const trimmed = query.trim();
   useEffect(() => {
-    if (trimmed.length < MIN_ARTIFACT_QUERY) return;
+    if (trimmed.length < MIN_ARTIFACT_QUERY || !graphHere) return;
     let alive = true;
     const timer = window.setTimeout(() => {
       if (!alive) return;
@@ -142,7 +155,12 @@ export const SearchScreen: React.FC<{ bridge: ChildMfeBridge }> = ({ bridge }) =
             if (alive) setHits({ state: 'ready', query: trimmed, hits: (answer?.nodes ?? []).map((n) => artifactHit(n, { workspaceId })) });
           },
           (e: unknown) => {
-            if (alive) setHits({ state: 'failed', query: trimmed, error: refusalText(e) ?? errorMessage(e) });
+            if (!alive) return;
+            setHits(
+              kitAbsent(e, { kit: GRAPH_KIT })
+                ? { state: 'absent' }
+                : { state: 'failed', query: trimmed, error: refusalText(e) ?? errorMessage(e) }
+            );
           }
         );
     }, DEBOUNCE_MS);
@@ -150,7 +168,8 @@ export const SearchScreen: React.FC<{ bridge: ChildMfeBridge }> = ({ bridge }) =
       alive = false;
       window.clearTimeout(timer);
     };
-  }, [trimmed, workspaceId]);
+  }, [trimmed, workspaceId, graphHere]);
+  const graphShown = graphHere && hits.state !== 'absent';
 
   const matchedPlaces = useMemo(
     () => (places.state === 'ready' ? matchPlaces(trimmed, places.places) : []),
@@ -281,7 +300,8 @@ export const SearchScreen: React.FC<{ bridge: ChildMfeBridge }> = ({ bridge }) =
               </p>
             )}
           </section>
-          <section>
+          {graphShown && (
+          <section data-artifacts>
             <h3 className={styles.group}>{t('group_artifacts')}</h3>
             {trimmed.length < MIN_ARTIFACT_QUERY ? (
               <p className={styles.note}>{t('artifacts_short')}</p>
@@ -303,6 +323,7 @@ export const SearchScreen: React.FC<{ bridge: ChildMfeBridge }> = ({ bridge }) =
               </ul>
             )}
           </section>
+          )}
         </div>
       )}
     </div>

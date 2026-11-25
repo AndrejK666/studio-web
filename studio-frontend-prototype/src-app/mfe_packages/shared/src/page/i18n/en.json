@@ -1,0 +1,6 @@
+{
+  "title": "{kit} is not installed here",
+  "note": "This part comes with the {kit} kit, which this project or organization does not have.",
+  "note_gear": "This part comes with the {kit} kit, whose service does not run in this Studio.",
+  "open_kits": "Open Kits"
+}

@@ -25,7 +25,7 @@ import {
   DerivedViewStrip,
   openScreen,
   useDerivedViewPoll,
-  violationOfType,
+  kitAbsent,
   type DerivedViewState,
 } from '@constructor-studio/mfe-shared';
 import { ProjectPage } from '@constructor-studio/mfe-shared/page';
@@ -124,7 +124,7 @@ async function readInventory(productApi: ProductApi, projectId: string): Promise
     // The plan is the Spec mapping kit's (ADR-0074): without it the plan's
     // part of the list is left out and said so, and the rest still shows.
     productApi.projectPlan(projectId).catch((e: unknown) => {
-      if (!violationOfType(e, 'KIT_NOT_INSTALLED')) throw e;
+      if (!kitAbsent(e, { kit: 'spec-mapping' })) throw e;
       partial.push('partial_plan_kit');
       return { items: [] as PlanRow[] };
     }),

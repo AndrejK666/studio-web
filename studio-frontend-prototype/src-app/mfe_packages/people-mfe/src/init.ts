@@ -5,8 +5,11 @@
 
 import { createFrontX, apiRegistry, i18n, queryCacheShared } from '@gears-frontx/react';
 import { AccountsApiService, PeopleApiService, authShared } from '@constructor-studio/mfe-shared';
+import { WorkSignalsApiService } from './api/WorkSignalsApiService';
 
 apiRegistry.register(PeopleApiService);
+// Other kits' gears, each optional: the open pull requests, the activity feed, Insight.
+apiRegistry.register(WorkSignalsApiService);
 apiRegistry.register(AccountsApiService);
 apiRegistry.initialize();
 

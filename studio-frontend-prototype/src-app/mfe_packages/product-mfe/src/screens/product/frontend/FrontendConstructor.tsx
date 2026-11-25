@@ -28,7 +28,8 @@ import {
   NativeSelectOption,
 } from '@gears-frontx/ui-kit';
 import { type ScreenPreview } from '../../../api/client';
-import { repoPathsOf } from '@constructor-studio/mfe-shared';
+import { kitAbsent, repoPathsOf, type KitAbsence } from '@constructor-studio/mfe-shared';
+import { KitAbsentState } from '@constructor-studio/mfe-shared/page';
 import {
   FRONTX_SHELL_TEMPLATE,
   assemblySteps,
@@ -165,6 +166,8 @@ export function FrontendConstructor() {
   const { t } = useFrontendTranslations();
   const [data, setData] = useState<Loaded | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  /** The catalogue is the Components kit's (studio-components-catalog): without it there is nothing to pick from. */
+  const [absent, setAbsent] = useState<KitAbsence | null>(null);
   const [picks, setPicks] = useState<string[]>([]);
   const [saved, setSaved] = useState<string[]>([]);
   /** Whether the product record keeps the frontend, which is what its
@@ -236,7 +239,12 @@ export function FrontendConstructor() {
         setShellRef(shell);
         setSavedShell(shell);
       })
-      .catch((e: unknown) => alive && setErr(errText(e)));
+      .catch((e: unknown) => {
+        if (!alive) return;
+        const why = kitAbsent(e, { kit: 'components' });
+        if (why) setAbsent(why);
+        else setErr(errText(e));
+      });
     return () => {
       alive = false;
     };
@@ -293,6 +301,7 @@ export function FrontendConstructor() {
   /** The picture open large; `null` when none is. */
   const [enlarged, setEnlarged] = useState<Shot | null>(null);
 
+  if (absent && !data) return <KitAbsentState absence={absent} name="Components" compact />;
   if (err && !data) return <div className={common.error}>{err}</div>;
   if (!data) return <p className={common.muted}>{t('reading_catalogue')}</p>;
 

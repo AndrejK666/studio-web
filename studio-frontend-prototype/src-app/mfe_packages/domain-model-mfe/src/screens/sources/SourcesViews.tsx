@@ -7,6 +7,8 @@
 
 import { Button } from '@gears-frontx/ui-kit';
 import { useState } from 'react';
+import type { KitAbsence } from '@constructor-studio/mfe-shared';
+import { KitAbsentState } from '@constructor-studio/mfe-shared/page';
 import {
   coverageCounts,
   orderRelated,
@@ -32,8 +34,14 @@ import { EmptyState, ErrorLine, Hint, Loading } from '../common/ui';
 import common from '../common/common.module.css';
 import styles from './sources.module.css';
 
-/** The product findings as read, or why they could not be. */
-export type ProductRead = { repo: string | null; items: ProductFinding[] } | { error: string };
+/**
+ * The product findings as read, or why they could not be: `absent` when the
+ * Spec mapping kit (studio-spec-mapping) is not here, which is no failure.
+ */
+export type ProductRead =
+  | { repo: string | null; items: ProductFinding[] }
+  | { error: string }
+  | { absent: KitAbsence };
 
 /** A match across projects as its decision is kept. */
 export const relatedKey = (r: RelatedRequirement) => `rel:${r.id}|${r.other_project_id}|${r.other_id}`;
@@ -52,6 +60,7 @@ export function AgainstTheCode({
 }) {
   const { t } = useSourcesTranslations();
   if (!read) return <Loading>{t('loading')}</Loading>;
+  if ('absent' in read) return <KitAbsentState absence={read.absent} compact />;
   if ('error' in read) return <ErrorLine>{read.error}</ErrorLine>;
   if (!read.repo) return <EmptyState title={t('no_code_title')} body={t('no_code_body')} />;
   if (read.items.length === 0)

@@ -553,6 +553,29 @@ describe('ReleasesScreen', () => {
       expect(await screen.findByText('Fix the cart')).toBeTruthy();
     });
 
+    it('says Git collaboration is not installed in place of the CI runs where its gear refuses', async () => {
+      setUp({ deployments: [] });
+      const nodes = service.nodes as (params: { type: string }) => { fetch: () => Promise<unknown> };
+      service.nodes = (params: { type: string }) =>
+        params.type === 'workflow_run'
+          ? {
+              fetch: () =>
+                Promise.reject(
+                  Object.assign(new Error('Request failed with status code 400'), {
+                    response: {
+                      status: 400,
+                      data: { context: { violations: [{ type: 'KIT_NOT_INSTALLED', subject: 'project-git', description: 'not here' }] } },
+                    },
+                  })
+                ),
+            }
+          : nodes(params);
+      render(<ReleasesScreen bridge={null} />);
+      const ci = await el('[data-build-in-ci]');
+      await waitFor(() => expect(ci.querySelector('[data-kit-absent="project-git"]')).toBeTruthy());
+      expect(ci.textContent).not.toContain('Request failed');
+    });
+
     it('a failed build names its gear under Build and its cause leads to the gear', async () => {
       setUp({
         path: readyPath({

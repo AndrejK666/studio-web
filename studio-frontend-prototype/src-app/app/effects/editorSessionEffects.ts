@@ -20,6 +20,7 @@ import {
   ConnectorsApiService,
   PROJECT_CONFIG_TYPE,
   StudioEventsApiService,
+  STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL,
   StudioTasksApiService,
   checkoutDirectory,
   createRunFollower,
@@ -35,7 +36,8 @@ import {
   type StudioRun,
   type StudioRunState,
 } from '@constructor-studio/mfe-shared';
-import { CloneStatusApiService, StudioSessionApiService, type SourceCloneStatus, type StudioSession } from '@/app/api';
+import { StudioSessionApiService, type StudioSession } from '@/app/api';
+import { shellPort } from '@/app/ports/shellPorts';
 import { connectEditorBridge, type EditorMessage, type EditorTheme } from '@/app/mfe/editorBridge';
 import type { FrameHook } from '@/app/mfe/MfeHandlerIframe';
 import { showNotice } from '@/app/mfe/notifyAction';
@@ -52,7 +54,6 @@ import {
   editorSessionReset,
   editorSessionShown,
   readEditorSession,
-  type EditorCloneProblem,
   type EditorSessionFailure,
 } from '@/app/slices/editorSessionSlice';
 
@@ -68,9 +69,14 @@ const MAX_READ_FAILURES = 5;
  */
 const ANSWER_DEADLINE_MS = 2 * 60_000;
 
-/** `space-mfe`'s entry (`src-app/mfe_packages/space-mfe/mfe.json`, checked by the tests): the one frame the editor's bridge attaches to. */
-export const EDITOR_FRAME_ENTRY =
-  'gts.frontx.mfes.mfe.entry.v1~constructor_studio.mfes.mfe.entry_iframe.v1~constructor_studio.space.mfe.main.v1';
+/**
+ * The frame the editor's bridge attaches to: the one whose address is the
+ * editor's frame-url property, which this shell publishes. The shell names the
+ * property, its own port, and not the kit whose entry declares it (space-mfe,
+ * kit `ide`; ADR-0079).
+ */
+export const isEditorFrame = (entry: { urlProperty?: string }): boolean =>
+  entry.urlProperty === STUDIO_SHARED_PROPERTY_SPACE_FRAME_URL;
 
 /** The portal's light themes; the IDE has one light theme, and every other portal theme is dark there. */
 const LIGHT_THEMES: ReadonlySet<string> = new Set([DEFAULT_THEME_ID, LIGHT_THEME_ID]);
@@ -117,20 +123,6 @@ function endOf(read: StudioRun | 'gone' | null): Outcome | null {
   return read ? runOutcome(read.state, read.last_error) : null;
 }
 
-
-/** The failed rows of a project's clone status, as the editor's status shows them. */
-export function cloneProblems(items: readonly SourceCloneStatus[]): EditorCloneProblem[] {
-  return items
-    .filter((s) => s.state === 'failed')
-    .map((s) => ({
-      repository: s.full_path,
-      cause: s.cause ?? null,
-      causeText: s.cause_text ?? null,
-      action: s.action ?? null,
-      actionText: s.action_text ?? null,
-      detail: s.detail ?? null,
-    }));
-}
 
 function launchRefusal(error: unknown): EditorSessionFailure {
   return isNotFound(error)
@@ -191,13 +183,18 @@ export function createEditorSession(app: FrontXApp): EditorSession {
     return { repos: sessionSources(sources, connections.items), sources };
   };
 
-  /** The project's sources whose last clone failed, into the status; best effort, a failed read says nothing. */
+  /**
+   * The project's sources whose last clone failed, into the status, from the
+   * kit that fills `editor.cloneProblems`; best effort: no such kit, or a
+   * failed read, says nothing.
+   */
   const readClones = async (projectId: string, superseded: () => boolean): Promise<void> => {
-    if (!apiRegistry.has(CloneStatusApiService)) return;
+    const read = shellPort('editor.cloneProblems');
+    if (!read) return;
     try {
-      const list = await apiRegistry.getService(CloneStatusApiService).cloneStatus({ projectId }).fetch({ staleTime: 0 });
+      const problems = await read(projectId);
       if (superseded()) return;
-      dispatch(editorSessionClones(cloneProblems(list.items)));
+      dispatch(editorSessionClones(problems));
     } catch (error) {
       console.warn('[editor-session] clone status unreadable:', errorMessage(error));
     }
@@ -466,7 +463,7 @@ export function createEditorSession(app: FrontXApp): EditorSession {
 
   // @cpt-begin:cpt-studiofrontend-flow-editor-bridge-open:p1:inst-4
   const frame: FrameHook = (element, entry) => {
-    if (entry.id !== EDITOR_FRAME_ENTRY) return undefined;
+    if (!isEditorFrame(entry)) return undefined;
     bridge?.dispose();
     answered = false;
     const mine = connectEditorBridge(element, {

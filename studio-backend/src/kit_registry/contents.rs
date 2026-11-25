@@ -352,6 +352,13 @@ fn builtin_contents(slug: &str) -> Option<KitContents> {
             }],
             ..KitContents::default()
         },
+        // `space-mfe`: the project's IDE, a frame the shell's editor session
+        // fills (ADR-0021); the shell binds to its frame-url property, not to
+        // this kit (ADR-0079).
+        "ide" => KitContents {
+            screens: vec![project_tab("IDE", Some("/space"))],
+            ..KitContents::default()
+        },
         // `components-mfe` (ADR-0042, ADR-0046): the platform's catalogue,
         // its gear repositories and the publication requests it answers;
         // and the organization's catalogue and registry. A project's

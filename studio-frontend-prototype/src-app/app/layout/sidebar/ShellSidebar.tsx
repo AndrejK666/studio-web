@@ -14,7 +14,6 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
 import { eventBus, useAppSelector } from '@gears-frontx/react';
 import {
-  Boxes,
   Building2,
   ChevronRight,
   Clock,
@@ -37,6 +36,7 @@ import { usePins } from '@/app/pins/usePins';
 import { pinKey } from '@/app/pins/pins';
 import { tokenOf } from '@/app/routing/screenTokens';
 import { cn } from '@/app/lib/utils';
+import { BundledIcon } from '@/app/icons/BundledIcon';
 import { ProductMenu } from '../ProductMenu';
 import { UserMenu } from '../UserMenu';
 import { WorkInbox } from '../WorkInbox';
@@ -49,8 +49,6 @@ import { ContextSwitcher } from './ContextSwitcher';
 import { useRecentProjects, type RecentProject } from './recentProjects';
 import styles from './ShellSidebar.module.css';
 
-/** The route the Components item opens: the organization's catalogue (kit `components`). */
-export const COMPONENTS_ROUTE = '/components';
 /** The workspace's project list, what Projects opens inside a workspace. */
 export const PROJECTS_ROUTE = '/projects';
 /** The organization's workspaces and their projects, what Projects opens above a workspace. */
@@ -65,6 +63,8 @@ export interface SidebarModels {
 }
 
 const routeOf = (ext: StudioScreenExtension | undefined) => ext?.presentation?.route;
+/** The name a raised item answers to in the DOM: its route's last segment. */
+const sidebarItemOf = (ext: StudioScreenExtension) => routeOf(ext)?.split('/').filter(Boolean).pop() ?? ext.id;
 const findTab = (model: LevelTabsModel, route: string) =>
   model.ordered.find((tab) => routeOf(tab.extension) === route)?.extension;
 
@@ -236,8 +236,10 @@ export const ShellSidebar: React.FC<ShellSidebarProps> = ({ models, level, rail 
   const workspace = level === 'workspace' || level === 'project' ? (context?.workspace ?? null) : null;
   const project = level === 'project' ? (context?.project ?? null) : null;
 
-  // Components and Projects are tabs of a level, raised to the top of the list.
-  const components = findTab(models.organization, COMPONENTS_ROUTE);
+  // Projects is a tab of a level, raised to the top of the list; so is every
+  // organization tab whose manifest asks for it (`presentation.sidebar`): the
+  // shell names none of them, the kit that brings one does.
+  const raised = models.organization.ordered.map((tab) => tab.extension).filter((ext) => ext.presentation?.sidebar);
   const workspaceProjects = workspace ? findTab(models.workspace, PROJECTS_ROUTE) : undefined;
   const orgWorkspaces = findTab(models.organization, WORKSPACES_ROUTE);
   const projectsTarget = workspaceProjects ?? orgWorkspaces;
@@ -325,7 +327,7 @@ export const ShellSidebar: React.FC<ShellSidebarProps> = ({ models, level, rail 
                   <TabList
                     id={`${ids}-organization-tabs`}
                     model={models.organization}
-                    without={[components?.id, orgWorkspaces?.id]}
+                    without={[...raised.map((ext) => ext.id), orgWorkspaces?.id]}
                     label={org.name}
                   />
                 </div>
@@ -432,16 +434,17 @@ export const ShellSidebar: React.FC<ShellSidebarProps> = ({ models, level, rail 
               )}
             </Row>
           )}
-          {components && (
+          {raised.map((ext) => (
             <Row
-              icon={<Boxes aria-hidden="true" />}
-              label={components.presentation?.label ?? t('sidebar_components')}
-              onClick={() => chooseTab(components)}
-              active={models.organization.isActive(components)}
+              key={ext.id}
+              icon={<BundledIcon declared={ext.presentation?.icon} />}
+              label={ext.presentation?.label ?? ''}
+              onClick={() => chooseTab(ext)}
+              active={models.organization.isActive(ext)}
               rail={rail}
-              data={{ 'data-sidebar-item': 'components' }}
+              data={{ 'data-sidebar-item': sidebarItemOf(ext) }}
             />
-          )}
+          ))}
           {showPlatform && models.platform.ordered.length > 0 && (
             <Row
               icon={<Server aria-hidden="true" />}

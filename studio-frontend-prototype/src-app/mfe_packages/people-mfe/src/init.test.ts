@@ -22,11 +22,13 @@ const { authShared, PeopleApiService, AccountsApiService } = vi.hoisted(() => ({
   AccountsApiService: class AccountsApiService {},
 }));
 vi.mock('@constructor-studio/mfe-shared', () => ({ authShared, PeopleApiService, AccountsApiService }));
+const { WorkSignalsApiService } = vi.hoisted(() => ({ WorkSignalsApiService: class WorkSignalsApiService {} }));
+vi.mock('./api/WorkSignalsApiService', () => ({ WorkSignalsApiService }));
 
 describe('people-mfe init', () => {
   it('registers its API services before building the app', async () => {
     const module = await import('./init');
-    expect(register.mock.calls.map(([service]) => service)).toEqual([PeopleApiService, AccountsApiService]);
+    expect(register.mock.calls.map(([service]) => service)).toEqual([PeopleApiService, WorkSignalsApiService, AccountsApiService]);
     expect(initialize).toHaveBeenCalledTimes(1);
     expect(register.mock.invocationCallOrder[0]).toBeLessThan(build.mock.invocationCallOrder[0]);
     // authShared last: without it every read goes out with no bearer (401).

@@ -6,6 +6,11 @@ const { service } = vi.hoisted(() => ({ service: {} as Record<string, unknown> }
 vi.mock('@gears-frontx/react', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@gears-frontx/react')>()),
   apiRegistry: { getService: () => service },
+  // The shared kit-absent state reads its own words, the bridge and the shell's screens.
+  useScreenTranslations: () => ({ isLoaded: true }),
+  useTranslation: () => ({ language: 'en', t: (key: string) => key }),
+  useMfeBridge: () => null,
+  useSharedProperty: () => null,
 }));
 
 import { PullsView } from './PullsView';
@@ -30,6 +35,15 @@ describe('PullsView', () => {
   beforeEach(() => {
     for (const k of Object.keys(service)) delete service[k];
     service.openPullRequests = () => ({ fetch: () => Promise.resolve({ items: [pull], total: 1 }) });
+  });
+
+  it('says Git collaboration is not installed where its gear does not answer', async () => {
+    service.openPullRequests = () => ({
+      fetch: () => Promise.reject(Object.assign(new Error('Request failed with status code 404'), { response: { status: 404, data: '' } })),
+    });
+    render(<PullsView projectId="p1" repository="o/r" defaultBase="main" t={t} />);
+    await waitFor(() => expect(document.querySelector('[data-kit-absent="project-git"]')).toBeTruthy());
+    expect(screen.queryByText(/404/)).toBeNull();
   });
 
   it('reviews a pull request against the base and shows its threads', async () => {

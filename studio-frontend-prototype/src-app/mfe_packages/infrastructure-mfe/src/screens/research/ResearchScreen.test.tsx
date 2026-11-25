@@ -25,6 +25,11 @@ vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
 vi.mock('@gears-frontx/react', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@gears-frontx/react')>()),
   apiRegistry: { getService: () => service },
+  // The shared kit-absent state reads its own words, the bridge and the shell's screens.
+  useScreenTranslations: () => ({ isLoaded: true }),
+  useTranslation: () => ({ language: 'en', t: (key: string) => key }),
+  useMfeBridge: () => null,
+  useSharedProperty: () => null,
 }));
 
 import { ResearchScreen } from './ResearchScreen';
@@ -142,6 +147,13 @@ describe('Organization › Constructor Research', () => {
     expect(app.querySelector('[data-deployment-status]')).not.toBeNull();
     expect(document.querySelector('[data-research-running]')?.textContent).toBe('1');
     expect(card.closest('details')?.open).toBe(false);
+  });
+
+  it('says Delivery is not installed where its environments gear does not answer', async () => {
+    service.environments = read('environments', Object.assign(new Error('Request failed with status code 503'), { response: { status: 503, data: '' } }));
+    renderScreen();
+    await waitFor(() => expect(document.querySelector('[data-kit-absent="delivery"]')).toBeTruthy());
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 
   it('walks a member who has not signed in to Connections first', async () => {

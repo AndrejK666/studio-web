@@ -30,6 +30,7 @@ const catalogCategories = new Map<string, KitCategory>([
   ['org-reports', 'reporting'],
   ['assistant', 'studio'],
   ['studio-api-docs', 'studio'],
+  ['ide', 'studio'],
 ]);
 
 export function kitCategory(slug: string): KitCategory {

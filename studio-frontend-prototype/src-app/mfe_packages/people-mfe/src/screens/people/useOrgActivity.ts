@@ -24,6 +24,7 @@ import {
   directoryOf,
   insightFigures,
   insightStatements,
+  kitAbsent,
   repoProjects,
   type ActivityEvent,
   type ActivityIndex,
@@ -36,6 +37,7 @@ import {
   type PersonRow,
   type PresenceEntry,
 } from '@constructor-studio/mfe-shared';
+import { GIT_KIT, INSIGHT_KIT, WorkSignalsApiService } from '../../api/WorkSignalsApiService';
 
 /** How far back the Activity feed counts. */
 export const FEED_DAYS = 90;
@@ -46,6 +48,8 @@ export type InsightState =
   | { state: 'loading' }
   | { state: 'ok'; figures: InsightFigure[]; truncated: boolean }
   | { state: 'no_handles' }
+  /** Insight is not in this Studio, or not installed here: nothing to show, and no failure. */
+  | { state: 'absent' }
   | { state: 'failed'; detail: string };
 
 /** A source that could not be read, as a message key and its count. */
@@ -128,7 +132,20 @@ async function orgProjects(orgId: string, missing: Missing[]): Promise<OrgProjec
 }
 
 /** Everything the People page needs to place people on projects. */
-export function useOrgActivity(orgId: string | null, people: readonly PersonRow[] | null): OrgActivity {
+/**
+ * Which of the other kits' sources to read: `git` (the open pull requests and
+ * the activity feed) only where the project-git kit's `pull-request` type is
+ * installed, as the shell publishes it; unknown reads.
+ */
+export interface ActivitySources {
+  git: boolean;
+}
+
+export function useOrgActivity(
+  orgId: string | null,
+  people: readonly PersonRow[] | null,
+  sources: ActivitySources = { git: true }
+): OrgActivity {
   const [state, setState] = useState<OrgActivity>(blankActivity);
   const ids = useMemo(() => (people ?? []).map((p) => p.id).join(','), [people]);
 
@@ -136,6 +153,13 @@ export function useOrgActivity(orgId: string | null, people: readonly PersonRow[
     if (!orgId || people === null) return;
     let live = true;
     const api = apiRegistry.getService(PeopleApiService);
+    const signals = apiRegistry.getService(WorkSignalsApiService);
+    /** A source another kit brings: `null` for a failure, `[]` where the kit is absent (no figures, no failure). */
+    const optional = <T>(read: Promise<{ items: T[] }>): Promise<T[] | null> =>
+      read.then(
+        (r) => r.items,
+        (e: unknown) => (kitAbsent(e, { kit: GIT_KIT }) ? [] : null)
+      );
     const accounts = apiRegistry.getService(AccountsApiService);
     const since = new Date(Date.now() - FEED_DAYS * 86_400_000).toISOString();
     const missing: Missing[] = [];
@@ -181,20 +205,8 @@ export function useOrgActivity(orgId: string | null, people: readonly PersonRow[
               (e) => e?.value ?? null,
               () => null
             ),
-          api
-            .openPullRequests({ projectId: p.id })
-            .fetch({ staleTime: 0 })
-            .then(
-              (r) => r.items,
-              () => null
-            ),
-          api
-            .activityFeed({ projectId: p.id })
-            .fetch({ staleTime: 0 })
-            .then(
-              (r) => r.items,
-              () => null
-            ),
+          sources.git ? optional(signals.openPullRequests({ projectId: p.id }).fetch({ staleTime: 0 })) : Promise.resolve([]),
+          sources.git ? optional(signals.activityFeed({ projectId: p.id }).fetch({ staleTime: 0 })) : Promise.resolve([]),
           api.desktopSessions(p.id).catch(() => null),
         ]);
         return { p, config, pulls, feed, desk };
@@ -258,14 +270,14 @@ export function useOrgActivity(orgId: string | null, people: readonly PersonRow[
       else {
         try {
           const [a, r] = await Promise.all([
-            api.insightQuery.fetch({ sql: sql.authored }),
-            api.insightQuery.fetch({ sql: sql.reviewed }),
+            signals.insightQuery.fetch({ sql: sql.authored }),
+            signals.insightQuery.fetch({ sql: sql.reviewed }),
           ]);
           const figures = insightFigures(a.rows, r.rows);
           addInsight(index, dir, figures, repos);
           insight = { state: 'ok', figures, truncated: a.truncated || r.truncated };
         } catch (e) {
-          insight = { state: 'failed', detail: message(e) };
+          insight = kitAbsent(e, { kit: INSIGHT_KIT }) ? { state: 'absent' } : { state: 'failed', detail: message(e) };
         }
       }
       if (!live) return;
@@ -276,7 +288,7 @@ export function useOrgActivity(orgId: string | null, people: readonly PersonRow[
     };
     // `ids` stands for `people`: a new array with the same people is the same load.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orgId, ids]);
+  }, [orgId, ids, sources.git]);
 
   return state;
 }

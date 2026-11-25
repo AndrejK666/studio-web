@@ -3,6 +3,14 @@ import { describe, expect, it, vi } from 'vitest';
 import type { RelatedRequirement, SpecModelUpload } from '../../model/spec-model';
 
 vi.mock('../../i18n', async () => (await import('../common/testText')).i18nMock());
+// The shared kit-absent state reads its own words, the bridge and the shell's screens.
+vi.mock('@gears-frontx/react', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@gears-frontx/react')>()),
+  useScreenTranslations: () => ({ isLoaded: true }),
+  useTranslation: () => ({ language: 'en', t: (key: string) => key }),
+  useMfeBridge: () => null,
+  useSharedProperty: () => null,
+}));
 
 import { AgainstTheCode, Elsewhere, relatedKey, Uploads, Work } from './SourcesViews';
 
@@ -25,6 +33,12 @@ describe('Sources views', () => {
   it('Against the code: no repository, nothing to compare', () => {
     render(<AgainstTheCode read={{ repo: null, items: [] }} />);
     expect(screen.getByText('no_code_title')).toBeTruthy();
+  });
+
+  it('Against the code: the Spec mapping kit absent is said, not printed as a failure', () => {
+    render(<AgainstTheCode read={{ absent: { kit: 'spec-mapping', reason: 'gear_absent', detail: null } }} />);
+    expect(document.querySelector('[data-kit-absent="spec-mapping"]')).toBeTruthy();
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 
   it('Work: nothing syncs the work', () => {

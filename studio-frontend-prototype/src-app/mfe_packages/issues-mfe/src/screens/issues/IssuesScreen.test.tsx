@@ -25,6 +25,10 @@ vi.mock('../../i18n', () => ({ useIssuesTranslations: translations }));
 vi.mock('@gears-frontx/react', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@gears-frontx/react')>()),
   apiRegistry: { getService: () => service },
+  // The shared kit-absent state reads its own words and the bridge.
+  useScreenTranslations: () => ({ isLoaded: true }),
+  useTranslation: () => ({ language: 'en', t: (key: string) => key }),
+  useMfeBridge: () => null,
   useSharedProperty: (id: string) =>
     id.includes('context.project.') ? scope.project : id.includes('context.workspace.') ? scope.workspace : 'default',
 }));
@@ -250,6 +254,20 @@ describe('IssuesScreen', () => {
     // Try again reads it all again.
     fireEvent.click(screen.getByRole('button', { name: 'retry' }));
     expect(await screen.findByText(finding.title)).toBeTruthy();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('says the kit is not installed, not that the queue failed, on KIT_NOT_INSTALLED', async () => {
+    issues.mockRejectedValueOnce(
+      Object.assign(new Error('Request failed with status code 400'), {
+        response: {
+          status: 400,
+          data: { context: { violations: [{ type: 'KIT_NOT_INSTALLED', subject: 'project-domain-model', description: 'not here' }] } },
+        },
+      })
+    );
+    render(<IssuesScreen bridge={bridge()} />);
+    await waitFor(() => expect(document.querySelector('[data-kit-absent="project-domain-model"]')).toBeTruthy());
     expect(screen.queryByRole('alert')).toBeNull();
   });
 

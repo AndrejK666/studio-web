@@ -54,7 +54,11 @@ import {
   type PersonRow,
   type RoleDef,
   type ScreenText,
+  useScreenAvailability,
 } from '@constructor-studio/mfe-shared';
+
+/** project-git's open pull request, by GTS id (ADR-0071 §5). */
+const PULL_REQUEST_TYPE = 'gts.cf.studio.domain.pull_request.v1~';
 import { usePeopleTranslations } from '../../i18n';
 import { useOrgActivity } from './useOrgActivity';
 import { PeopleMatrix } from './PeopleMatrix';
@@ -188,7 +192,9 @@ function OrgPeople({ org, t, language, bridge, container }: ScreenProps & { org:
 
   const all = useMemo(() => people ?? [], [people]);
   const rows = useMemo(() => withColleagues(all, colleagues, org.id), [all, colleagues, org.id]);
-  const activity = useOrgActivity(org.id, people === null ? null : rows);
+  // The open pull requests and the feed are project-git's: read where its type is.
+  const git = useScreenAvailability(bridge ? { bridge } : undefined).type(PULL_REQUEST_TYPE);
+  const activity = useOrgActivity(org.id, people === null ? null : rows, { git });
   const model = cfg?.model ?? 'tenant';
   const orgProjects: OrgProject[] = useMemo(() => activity.projects ?? [], [activity.projects]);
   const projectRowsOf = (p: PersonRow) =>

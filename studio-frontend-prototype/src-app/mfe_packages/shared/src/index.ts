@@ -195,6 +195,7 @@ export {
 } from './i18n/screenText';
 export { errorMessage } from './errors/message';
 export { typeAbsence, type TypeAbsence } from './errors/typeAbsent';
+export { kitAbsent, KIT_NOT_INSTALLED, type KitAbsence } from './errors/kitAbsent';
 export {
   PROJECT_CONFIG_TYPE,
   type ProjectConfig,

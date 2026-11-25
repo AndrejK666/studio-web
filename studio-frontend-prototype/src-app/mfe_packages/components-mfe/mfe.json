@@ -75,7 +75,8 @@
         "order": 65,
         "level": "organization",
         "kit": "components",
-        "modelTab": "gears"
+        "modelTab": "gears",
+        "sidebar": true
       }
     }
   ]
