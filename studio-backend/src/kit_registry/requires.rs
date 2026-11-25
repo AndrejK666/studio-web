@@ -106,3 +106,7 @@ pub fn requirement_met(kits: &[InstalledKit], slug: &str) -> bool {
 #[cfg(test)]
 #[path = "requires_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "requires_reads_tests.rs"]
+mod reads_tests;
