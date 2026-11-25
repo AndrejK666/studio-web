@@ -633,6 +633,8 @@ export function buildStudioOverlayDomain(): ExtensionDomain {
       STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE,
       STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT,
       STUDIO_SHARED_PROPERTY_SESSION_PROFILE,
+      // Search asks another kit's gear only where that kit's types are here.
+      STUDIO_SHARED_PROPERTY_SCREENS_AVAILABLE,
     ],
   });
 }
