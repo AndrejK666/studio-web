@@ -1,0 +1,9 @@
+apiVersion: v2
+name: spec-graph
+description: >-
+  The spec-graph service the Spec graph kit (studio-spec-graph) calls: a release of its own beside
+  Studio's, as gears-matcher is. Studio holds only its address and key (backend.specGraph.*,
+  appSecrets spec_graph_secret).
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

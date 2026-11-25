@@ -8,6 +8,17 @@ backend:
   # A subject id is per-installation, so this value cannot be shared with
   # another environment — this is `admin` in the studio realm of studio-dev.cfabric.org.
   platformAdmins: "46ac15da-3618-4fd2-9a8e-67699228c132"
+  # The spec-graph service, the Spec graph kit's engine: the release `spec-graph` of
+  # deploy/helm/spec-graph (values-dev.yaml there). gitUrl is this backend's gateway as that
+  # service reaches it: it clones a project's sources through the Git proxy there. Its key is
+  # appSecrets spec_graph_secret, the same value as the service's NS_API_KEY.
+  specGraph:
+    url: "http://spec-graph:8099"
+    gitUrl: "http://studio-studio-web-backend/cf"
+    # The id of the service account of the Keycloak client `spec-graph` in this realm
+    # (GET /auth/admin/realms/studio/users?username=service-account-spec-graph&exact=true).
+    # Per installation, like platformAdmins. Empty: the service's own token reaches nothing.
+    serviceSubject: ""
   # The gear catalogue in the IDE's Building mode. The corpus is a commit of
   # the fork branch that carries gear.gdl descriptors until
   # constructorfabric/gears-rust#4793 merges, never the branch itself: a
