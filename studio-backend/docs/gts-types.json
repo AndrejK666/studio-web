@@ -70,14 +70,6 @@
     },
     {
       "gear": "studio-connector",
-      "instance_id": "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.anthropic_connector.v1"
-    },
-    {
-      "gear": "studio-connector",
-      "instance_id": "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.openai_connector.v1"
-    },
-    {
-      "gear": "studio-connector",
       "instance_id": "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.slack_connector.v1"
     },
     {
@@ -115,6 +107,14 @@
     {
       "gear": "studio-connector",
       "instance_id": "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.assembly_service_connector.v1"
+    },
+    {
+      "gear": "studio-connector",
+      "instance_id": "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.anthropic_connector.v1"
+    },
+    {
+      "gear": "studio-connector",
+      "instance_id": "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.openai_connector.v1"
     }
   ],
   "schemas": [

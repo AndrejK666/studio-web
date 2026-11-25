@@ -39,7 +39,7 @@ provider. Read closely, they are these:
    with the key credstore holds for the calling member (ADR-0030). It was
    behind the `llm` feature too, so the Kubernetes release did not have it —
    while `studio-session` points every session's agents at it.
-3. **The connector gear's model-provider drivers** (`connectors/ai_providers.rs`,
+3. **The connector gear's model-provider drivers** (`llm_proxy/connector_drivers.rs`, formerly `connectors/ai_providers.rs`,
    linked as `anthropic-connector-plugin` and `openai-connector-plugin`). They
    do one thing with a provider: "test connection" lists models with the key
    being stored, through an HTTP client and URL conventions of their own. The

@@ -24,7 +24,7 @@ use async_trait::async_trait;
 use serde_yaml::Value;
 
 use super::driver::{
-    ConnectionAuth, ConnectorCategory, ConnectorDriver, DriverCheck, DriverIdentity,
+    ConnectionAuth, ConnectorCategory, ConnectorDriver, DriverCheck, DriverIdentity, FormField,
 };
 
 pub struct KubernetesDriver;
@@ -53,6 +53,16 @@ impl ConnectorDriver for KubernetesDriver {
 
     fn credential_hint(&self) -> &'static str {
         "eyJhbGciOi… or a kubeconfig with the cluster's CA"
+    }
+
+    /// The credential may be a whole kubeconfig, whose cluster server is the
+    /// address when none is typed.
+    fn form_fields(&self) -> Vec<FormField> {
+        vec![
+            FormField::base_url(self.default_base_url()),
+            FormField::token(self.credential_label(), self.credential_hint(), true)
+                .format("kubeconfig"),
+        ]
     }
 
     async fn test(&self, auth: &ConnectionAuth) -> anyhow::Result<DriverIdentity> {

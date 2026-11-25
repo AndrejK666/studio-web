@@ -315,10 +315,12 @@ it.
 | `studio-session` (`cpt-studio-component-session`) | `studio_session::sdk::TenantMembership` | Whether the caller reaches the workspace a route names |
 | `usage-collector` (platform) | `usage_collector_sdk::UsageCollectorClientV1`, through `usage::sdk::Usage` | Recording what each call used |
 
-It is used in-process by `studio-connector`'s `anthropic-connector-plugin` and
-`openai-connector-plugin`, through `ModelProviders`, resolved on use. The two
-gears use each other through each other's `port`/`sdk`, each resolved from the
-ClientHub when used, so neither depends on the other's start.
+It brings `anthropic-connector-plugin` and `openai-connector-plugin`
+(`connector_drivers.rs`, `plugins/`): the model providers' drivers, contributed
+through `studio-connector`'s connector-driver port (`connectors::sdk::drivers`,
+ADR-0079). Each tests a key through `ModelProviders`, resolved on use. This
+gear uses `studio-connector` through its `sdk`; `studio-connector` names
+nothing of this gear.
 
 ### 3.5 External Dependencies
 

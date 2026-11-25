@@ -31,7 +31,6 @@
 //! the credstore reference rather than the token, launching a session with
 //! private repos needs no secret handling in the browser at all.
 
-mod ai_providers;
 pub(crate) mod assembly_service; // the service an assembly strategy runs on (ADR-0074)
 mod bitbucket;
 pub(crate) mod clone;
@@ -60,6 +59,8 @@ mod notify;
 mod oauth; // a connection signed in to rather than pasted (ADR-0049)
 mod ownership;
 mod plugin;
+#[cfg(test)]
+mod provider_form_tests;
 mod references; // the one resolver of references (ADR-0047)
 mod registry; // an OCI registry products ship through (ADR-0048)
 mod repository;
@@ -95,12 +96,10 @@ use service::ConnectorService;
 /// Every driver instance id the assembly knows how to look for. Resolution is
 /// by GTS id through ClientHub, so an id whose plugin gear is not linked
 /// simply yields no driver.
-const KNOWN_DRIVERS: [&str; 16] = [
+const KNOWN_DRIVERS: [&str; 14] = [
     gts::GITLAB_INSTANCE_ID,
     gts::GITHUB_INSTANCE_ID,
     gts::BITBUCKET_INSTANCE_ID,
-    gts::ANTHROPIC_INSTANCE_ID,
-    gts::OPENAI_INSTANCE_ID,
     gts::SLACK_INSTANCE_ID,
     gts::SLACK_WEBHOOK_INSTANCE_ID,
     gts::ZULIP_INSTANCE_ID,
@@ -249,7 +248,7 @@ impl Gear for StudioConnectorGear {
             info!(hosts = ?cfg.private_hosts, "studio-connector: private hosts allowed for connections");
         }
         let mut drivers: Vec<(String, Arc<dyn ConnectorDriver>)> = Vec::new();
-        for id in KNOWN_DRIVERS {
+        for id in KNOWN_DRIVERS.into_iter().chain(sdk::drivers::slots()) {
             match ctx
                 .client_hub()
                 .get_scoped::<dyn ConnectorDriver>(&ClientScope::gts_id(id))

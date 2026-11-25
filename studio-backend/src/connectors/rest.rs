@@ -194,6 +194,78 @@ pub struct ProviderDto {
     /// does when it also takes its own access key, so a client offers both:
     /// Constructor Research takes an `rk-` key a member made in Research.
     pub pasted_key: bool,
+    /// The form a connection of this provider is made with, in the order a
+    /// client draws it: the address, the credential and the provider's
+    /// options. A client renders it as it is, with no code per provider.
+    pub fields: Vec<FormFieldDto>,
+    /// Who may hold a connection: `any` (the organization or a person),
+    /// `organization` (only the organization: a person's own profile does not
+    /// offer it) or `personal` (a person's own account, offered first).
+    pub holder: String,
+    /// `true` when `holder` is the only one: the form offers no choice and
+    /// sends it as the `scope`.
+    pub holder_fixed: bool,
+}
+
+/// One field of the form a connection is made with.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct FormFieldDto {
+    /// Where the value goes: `base_url`, `token`, or else the name of one of
+    /// the connection's `options`.
+    pub name: String,
+    /// What the field is called above it.
+    pub label: String,
+    /// `text` | `secret` (hidden while typed) | `url` | `select` (one of
+    /// `choices`).
+    pub kind: String,
+    /// The connection cannot be saved without it.
+    pub required: bool,
+    /// A sentence beside the field; empty when there is none.
+    pub hint: String,
+    /// What the empty field shows.
+    pub placeholder: String,
+    /// A shape the value comes in that a client may help with: `kubeconfig`
+    /// (a file or pasted YAML whose cluster server is the address).
+    #[serde(default)]
+    pub format: Option<String>,
+    /// A regular expression the whole value matches.
+    #[serde(default)]
+    pub pattern: Option<String>,
+    #[serde(default)]
+    pub max_length: Option<u32>,
+    /// A `select`'s choices.
+    #[serde(default)]
+    pub choices: Vec<FieldChoiceDto>,
+}
+
+/// One choice of a `select` field.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct FieldChoiceDto {
+    pub value: String,
+    pub label: String,
+}
+
+impl From<super::driver::FormField> for FormFieldDto {
+    fn from(f: super::driver::FormField) -> Self {
+        Self {
+            name: f.name,
+            label: f.label,
+            kind: f.kind.as_str().to_owned(),
+            required: f.required,
+            hint: f.hint,
+            placeholder: f.placeholder,
+            format: f.format.map(str::to_owned),
+            pattern: f.pattern.map(str::to_owned),
+            max_length: f.max_length,
+            choices: f
+                .choices
+                .into_iter()
+                .map(|(value, label)| FieldChoiceDto { value, label })
+                .collect(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -738,6 +810,9 @@ async fn list_providers(
                 token_optional: p.token_optional,
                 sign_in: p.sign_in,
                 pasted_key: p.pasted_key,
+                fields: p.fields.into_iter().map(FormFieldDto::from).collect(),
+                holder: p.holder.to_owned(),
+                holder_fixed: p.holder_fixed,
             })
             .collect(),
     }))

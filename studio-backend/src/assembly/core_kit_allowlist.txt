@@ -9,7 +9,6 @@
 # instead (MCP tools, Overview blocks, access rules, connector drivers,
 # background work, cost metering). When you remove a reference, remove its line.
 catalog_graph -> artifact_ingest
-connectors -> llm_proxy
 derived_view -> artifact_ingest
 kit_registry -> artifact_ingest
 kit_registry -> components_catalog

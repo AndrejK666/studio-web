@@ -295,6 +295,12 @@ pub struct ProviderInfo {
     /// Whether a connection may be made with a pasted credential; for a
     /// provider that also signs in, its own access key.
     pub pasted_key: bool,
+    /// The form a connection is made with, in the order a client draws it.
+    pub fields: Vec<super::driver::FormField>,
+    /// Who may hold a connection: `any` | `organization` | `personal`.
+    pub holder: &'static str,
+    /// Whether that holder is the only one the form offers.
+    pub holder_fixed: bool,
 }
 
 pub struct ConnectorService {
@@ -317,7 +323,7 @@ pub struct ConnectorService {
 /// runs the Research emulator it is `http://research.localhost:…`). It is
 /// parsed, not held to the rule a typed address is. A driver without one (a
 /// gear repository) is refused an empty address.
-fn resolve_base_url(
+pub(super) fn resolve_base_url(
     driver: &dyn ConnectorDriver,
     supplied: Option<&str>,
 ) -> anyhow::Result<String> {
@@ -623,6 +629,9 @@ impl ConnectorService {
                 token_optional: d.token_optional(),
                 sign_in: d.signs_in(),
                 pasted_key: d.takes_pasted_key(),
+                fields: d.form_fields(),
+                holder: d.holder().as_str(),
+                holder_fixed: d.holder_fixed(),
             })
             .collect()
     }
@@ -2667,16 +2676,10 @@ mod base_url_rule_tests {
     //! API key be sent to an address somebody typed.
 
     use super::{address_change_needs_token, resolve_base_url};
-    use crate::connectors::ai_providers::{AnthropicDriver, OpenAiDriver, ProviderLink};
     use crate::connectors::bitbucket::BitbucketDriver;
     use crate::connectors::driver::ConnectorDriver;
     use crate::connectors::github::GitHubDriver;
     use crate::connectors::gitlab::GitLabDriver;
-
-    /// Base-URL rules never reach the provider layer.
-    fn no_proxy() -> ProviderLink {
-        std::sync::Arc::new(|| anyhow::bail!("not in this test"))
-    }
 
     fn http() -> reqwest::Client {
         reqwest::Client::new()
@@ -2687,8 +2690,6 @@ mod base_url_rule_tests {
             Box::new(GitHubDriver::new(http())),
             Box::new(GitLabDriver::new(http())),
             Box::new(BitbucketDriver::new(http())),
-            Box::new(AnthropicDriver::new(no_proxy())),
-            Box::new(OpenAiDriver::new(no_proxy())),
         ]
     }
 
@@ -2811,25 +2812,6 @@ mod base_url_rule_tests {
                 driver.provider()
             );
         }
-    }
-
-    /// Model providers have one set of endpoints. An address anywhere else is
-    /// a stored API key pointed somewhere it was not issued for.
-    #[test]
-    fn a_model_provider_is_pinned_to_its_own_hosts() {
-        for driver in [
-            Box::new(AnthropicDriver::new(no_proxy())) as Box<dyn ConnectorDriver>,
-            Box::new(OpenAiDriver::new(no_proxy())),
-        ] {
-            assert!(
-                resolve_base_url(driver.as_ref(), Some("https://api.example.org")).is_err(),
-                "{} accepted a foreign host",
-                driver.provider()
-            );
-        }
-        // Their own hosts, and subdomains of them, stay usable.
-        let anthropic: Box<dyn ConnectorDriver> = Box::new(AnthropicDriver::new(no_proxy()));
-        assert!(resolve_base_url(anthropic.as_ref(), Some("https://api.anthropic.com/v1")).is_ok());
     }
 }
 

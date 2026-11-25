@@ -61,6 +61,61 @@ pub use super::service::{
     own_connection,
 };
 
+/// The connector-driver port (ADR-0079 §4): what a kit's gear needs to bring
+/// the driver of a concrete system. The core stores connections and secrets
+/// and does sign-in and test; a driver says how to reach one provider and
+/// what its form asks for.
+///
+/// A kit's driver plugin gear implements [`drivers::ConnectorDriver`],
+/// registers it in its `init` with [`drivers::register_driver`], and names
+/// its instance id once with
+/// `inventory::submit! { crate::connectors::sdk::drivers::DriverSlot { instance_id: … } }`,
+/// so studio-connector looks for it without the core naming the kit.
+pub mod drivers {
+    pub use super::super::driver::{
+        ConnectionAuth, ConnectorCategory, ConnectorDriver, DriverIdentity,
+    };
+    /// The form a driver describes (`ConnectorDriver::form_fields`, `holder`).
+    /// No kit's driver describes one of its own yet: the model providers'
+    /// take the default.
+    #[allow(unused_imports)]
+    pub use super::super::driver::{FieldKind, FormField, Holder};
+    pub use super::super::plugin::register_driver;
+    pub use super::super::url_guard::HostRule;
+
+    /// A driver instance id a kit's plugin gear registers its driver under.
+    /// studio-connector resolves every submitted slot beside its own
+    /// drivers'; one whose plugin is not linked yields no driver.
+    pub struct DriverSlot {
+        /// Derived from the connector plugin contract
+        /// (`cf.studio.connector.plugin.v1~`).
+        pub instance_id: &'static str,
+    }
+
+    inventory::collect!(DriverSlot);
+
+    /// The submitted slots' instance ids, sorted.
+    pub fn slots() -> Vec<&'static str> {
+        let mut ids: Vec<&'static str> = inventory::iter::<DriverSlot>
+            .into_iter()
+            .map(|s| s.instance_id)
+            .collect();
+        ids.sort_unstable();
+        ids
+    }
+
+    /// Where a connection of `driver` would point when `supplied` is typed
+    /// (`None`: the driver's default), or why it may not: the guard every
+    /// address passes, for a kit's driver to test its rule against.
+    #[cfg(test)]
+    pub fn resolve_base_url(
+        driver: &dyn ConnectorDriver,
+        supplied: Option<&str>,
+    ) -> anyhow::Result<String> {
+        super::super::service::resolve_base_url(driver, supplied)
+    }
+}
+
 /// Whose connection a tenant may use: an organization, and anything under
 /// it, only one held by itself, one of its workspaces or one of its
 /// projects. The pure rule; [`ConnectorService::ensure_owned`] applies it

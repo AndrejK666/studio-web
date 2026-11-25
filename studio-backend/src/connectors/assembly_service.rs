@@ -15,7 +15,10 @@ use std::collections::BTreeMap;
 use anyhow::{Context, anyhow};
 use async_trait::async_trait;
 
-use super::driver::{ConnectionAuth, ConnectorCategory, ConnectorDriver, DriverIdentity};
+use super::driver::{
+    ConnectionAuth, ConnectorCategory, ConnectorDriver, DriverIdentity, FieldKind, FormField,
+    Holder,
+};
 
 pub const PROVIDER: &str = "assembly-service";
 
@@ -31,6 +34,9 @@ impl AssemblyServiceDriver {
         Self { http }
     }
 }
+
+/// [`strategy_ok`] as the form's pattern, for a client to check as it is typed.
+const STRATEGY_PATTERN: &str = "^[a-z][a-z0-9_]{0,39}$";
 
 /// A strategy id as a kit's manifest writes one: `snake_case`, at most 40.
 fn strategy_ok(id: &str) -> bool {
@@ -87,6 +93,29 @@ impl ConnectorDriver for AssemblyServiceDriver {
 
     fn credential_hint(&self) -> &'static str {
         "The service's shared secret (a bearer)"
+    }
+
+    /// The strategy the service runs first, then its address (it has no
+    /// default) and its secret.
+    fn form_fields(&self) -> Vec<FormField> {
+        vec![
+            FormField::option(STRATEGY_OPTION, "Strategy ID", FieldKind::Text)
+                .required()
+                .hint("Enter the ID from the kit manifest in snake_case.")
+                .pattern(STRATEGY_PATTERN)
+                .max_length(40),
+            FormField::base_url(self.default_base_url()),
+            FormField::token(self.credential_label(), self.credential_hint(), true),
+        ]
+    }
+
+    /// A kit's service is the organization's, and only its.
+    fn holder(&self) -> Holder {
+        Holder::Organization
+    }
+
+    fn holder_fixed(&self) -> bool {
+        true
     }
 
     fn check_options(

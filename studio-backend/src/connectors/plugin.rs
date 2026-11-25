@@ -30,7 +30,7 @@ use super::gts::plugin_registration;
 
 /// Shared registration path: publish the instance document, then expose the
 /// driver under the same GTS id.
-async fn register_driver(
+pub async fn register_driver(
     ctx: &GearCtx,
     instance_id: &str,
     vendor: &str,
@@ -106,14 +106,9 @@ mod github_plugin;
 #[path = "plugins/bitbucket/mod.rs"]
 mod bitbucket_plugin;
 
-/// Anthropic — the credential `@theia/ai-claude-code` authenticates with. Its
-/// key test goes out through studio-llm-proxy (ADR-0039), not a client here.
-#[path = "plugins/anthropic/mod.rs"]
-mod anthropic_plugin;
-
-/// OpenAI — what `@theia/ai-codex` uses. Tested through studio-llm-proxy too.
-#[path = "plugins/openai/mod.rs"]
-mod openai_plugin;
+// The model providers' drivers (Anthropic, OpenAI) are the assistant kit's:
+// `llm_proxy::connector_drivers`, through the connector-driver port
+// (`sdk::drivers`, ADR-0079).
 
 /* ── Chat platforms ──────────────────────────────────────────────────────────
  *

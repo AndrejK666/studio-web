@@ -623,6 +623,162 @@ pub struct SentMessage {
     pub id: Option<String>,
 }
 
+/* ── The form a connection is made with ──
+ *
+ * What the portal draws when somebody adds a connection, said by the driver
+ * so a client needs no code of its own per provider: which fields, in which
+ * order, of what kind, and who may hold the connection.
+ */
+
+/// What kind of input a form field is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FieldKind {
+    /// One line of text.
+    Text,
+    /// A credential: hidden while typed, never shown back.
+    Secret,
+    /// An address.
+    Url,
+    /// One of [`FormField::choices`]. No driver offers a choice yet; the
+    /// kind is part of the form's vocabulary so a client draws one when it does.
+    #[allow(dead_code)]
+    Select,
+}
+
+impl FieldKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::Secret => "secret",
+            Self::Url => "url",
+            Self::Select => "select",
+        }
+    }
+}
+
+/// One field of the form a connection is made with.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormField {
+    /// Where the value goes: [`FormField::BASE_URL`], [`FormField::TOKEN`],
+    /// or else the name of one of the connection's options.
+    pub name: String,
+    /// What the field is called above it.
+    pub label: String,
+    pub kind: FieldKind,
+    /// Whether the connection cannot be saved without it.
+    pub required: bool,
+    /// A sentence beside the field; empty when there is none.
+    pub hint: String,
+    /// What the empty field shows.
+    pub placeholder: String,
+    /// A shape the value comes in that a client may help with: `kubeconfig`
+    /// (a file or pasted YAML whose cluster server is the address).
+    pub format: Option<&'static str>,
+    /// A regular expression the whole value matches.
+    pub pattern: Option<&'static str>,
+    pub max_length: Option<u32>,
+    /// A [`FieldKind::Select`]'s choices: value, then label.
+    pub choices: Vec<(String, String)>,
+}
+
+impl FormField {
+    /// The field whose value is the connection's address.
+    pub const BASE_URL: &'static str = "base_url";
+    /// The field whose value is the connection's credential.
+    pub const TOKEN: &'static str = "token";
+
+    fn new(name: &str, label: &str, kind: FieldKind) -> Self {
+        Self {
+            name: name.to_owned(),
+            label: label.to_owned(),
+            kind,
+            required: false,
+            hint: String::new(),
+            placeholder: String::new(),
+            format: None,
+            pattern: None,
+            max_length: None,
+            choices: Vec::new(),
+        }
+    }
+
+    /// The address, offered with the provider's default: required when it
+    /// has none.
+    pub fn base_url(default_base_url: &str) -> Self {
+        Self {
+            required: default_base_url.is_empty(),
+            placeholder: default_base_url.to_owned(),
+            ..Self::new(Self::BASE_URL, "Instance URL", FieldKind::Url)
+        }
+    }
+
+    /// The credential.
+    pub fn token(label: &str, placeholder: &str, required: bool) -> Self {
+        Self {
+            required,
+            placeholder: placeholder.to_owned(),
+            ..Self::new(Self::TOKEN, label, FieldKind::Secret)
+        }
+    }
+
+    /// One of the connection's options.
+    pub fn option(name: &str, label: &str, kind: FieldKind) -> Self {
+        Self::new(name, label, kind)
+    }
+
+    pub fn required(mut self) -> Self {
+        self.required = true;
+        self
+    }
+
+    pub fn hint(mut self, hint: &str) -> Self {
+        self.hint = hint.to_owned();
+        self
+    }
+
+    pub fn placeholder(mut self, placeholder: &str) -> Self {
+        self.placeholder = placeholder.to_owned();
+        self
+    }
+
+    pub fn format(mut self, format: &'static str) -> Self {
+        self.format = Some(format);
+        self
+    }
+
+    pub fn pattern(mut self, pattern: &'static str) -> Self {
+        self.pattern = Some(pattern);
+        self
+    }
+
+    pub fn max_length(mut self, max_length: u32) -> Self {
+        self.max_length = Some(max_length);
+        self
+    }
+}
+
+/// Who may hold a connection of a provider.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Holder {
+    /// The organization or a person: the form offers both.
+    Any,
+    /// Only the organization uses it (a cluster, a registry, a service): a
+    /// person's own profile does not offer it, and the form starts there.
+    Organization,
+    /// A person's own account (one signed in to): the form starts there.
+    Personal,
+}
+
+impl Holder {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Any => "any",
+            Self::Organization => "organization",
+            Self::Personal => "personal",
+        }
+    }
+}
+
 #[async_trait]
 pub trait ConnectorDriver: Send + Sync + 'static {
     /// Stable provider key used in the API and the UI (`gitlab`, `github`).
@@ -800,6 +956,44 @@ pub trait ConnectorDriver: Send + Sync + 'static {
     /// Placeholder hinting at the credential's shape (`glpat-…`, `sk-ant-…`).
     fn credential_hint(&self) -> &'static str {
         ""
+    }
+
+    /// The form a connection of this provider is made with, in the order a
+    /// client draws it. By default the address (none for a
+    /// [fixed target](Self::fixed_target), whose credential is its whole
+    /// address) and the credential.
+    fn form_fields(&self) -> Vec<FormField> {
+        let mut fields = Vec::new();
+        if !self.fixed_target() {
+            fields.push(FormField::base_url(self.default_base_url()));
+        }
+        fields.push(FormField::token(
+            self.credential_label(),
+            self.credential_hint(),
+            !self.token_optional(),
+        ));
+        fields
+    }
+
+    /// Who may hold a connection of this provider. By default a signed-in
+    /// account is a person's own, and what only the server uses (a cluster,
+    /// a registry, a service) is the organization's.
+    fn holder(&self) -> Holder {
+        if self.signs_in() {
+            return Holder::Personal;
+        }
+        match self.category() {
+            ConnectorCategory::Cluster
+            | ConnectorCategory::Registry
+            | ConnectorCategory::Service => Holder::Organization,
+            _ => Holder::Any,
+        }
+    }
+
+    /// Whether the [holder](Self::holder) is the only one: the form then
+    /// offers no choice.
+    fn holder_fixed(&self) -> bool {
+        false
     }
 
     /// Verify the credential and report whose it is.

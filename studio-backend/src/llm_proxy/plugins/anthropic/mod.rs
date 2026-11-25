@@ -5,10 +5,8 @@ use serde::Deserialize;
 use toolkit::Gear;
 use toolkit::context::GearCtx;
 
-use super::super::ai_providers::{AnthropicDriver, hub_link};
-use super::super::driver::ConnectorDriver;
-use super::super::gts::ANTHROPIC_INSTANCE_ID;
-use super::register_driver;
+use super::connector_drivers::{ANTHROPIC_INSTANCE_ID, AnthropicDriver, hub_link};
+use crate::connectors::sdk::drivers::{ConnectorDriver, register_driver};
 
 /// This driver's section: the vendor studio-connector selects drivers by, and
 /// its priority among them. Each driver keeps its own, because Gearbox reads a

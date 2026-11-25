@@ -1,4 +1,7 @@
-//! Model-provider drivers: Anthropic and OpenAI.
+//! Model-provider drivers: Anthropic and OpenAI, the assistant kit's
+//! contribution to studio-connector's connector-driver port (ADR-0079): the
+//! core stores the connections and their keys and does the test; these say
+//! what an Anthropic or an OpenAI key is and how it is tested.
 //!
 //! These connections are what the IDE agents authenticate with — an Anthropic
 //! key is what makes `@theia/ai-claude-code` work inside a session, an OpenAI
@@ -21,9 +24,17 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use super::driver::{ConnectionAuth, ConnectorCategory, ConnectorDriver, DriverIdentity};
-use super::url_guard::HostRule;
-use crate::llm_proxy::port::{ModelInfo, ModelProviders};
+use super::port::{ModelInfo, ModelProviders};
+use crate::connectors::sdk::drivers::{
+    ConnectionAuth, ConnectorCategory, ConnectorDriver, DriverIdentity, DriverSlot, HostRule,
+};
+
+/// The drivers' instance ids under studio-connector's plugin contract.
+pub const ANTHROPIC_INSTANCE_ID: &str = "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.anthropic_connector.v1";
+pub const OPENAI_INSTANCE_ID: &str = "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.openai_connector.v1";
+
+inventory::submit! { DriverSlot { instance_id: ANTHROPIC_INSTANCE_ID } }
+inventory::submit! { DriverSlot { instance_id: OPENAI_INSTANCE_ID } }
 
 /// How a driver reaches the provider layer: resolved on use, so a plugin does
 /// not depend on the order gears start in, and a deployment without the proxy
@@ -281,6 +292,64 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    /// Model providers have one set of endpoints. An address anywhere else is
+    /// a stored API key pointed somewhere it was not issued for.
+    #[test]
+    fn a_model_provider_is_pinned_to_its_own_hosts() {
+        use crate::connectors::sdk::drivers::resolve_base_url;
+        let none: ProviderLink = Arc::new(|| anyhow::bail!("not in this test"));
+        let drivers: [Box<dyn ConnectorDriver>; 2] = [
+            Box::new(AnthropicDriver::new(none.clone())),
+            Box::new(OpenAiDriver::new(none.clone())),
+        ];
+        for driver in &drivers {
+            assert!(
+                resolve_base_url(driver.as_ref(), Some("https://api.example.org")).is_err(),
+                "{} accepted a foreign host",
+                driver.provider()
+            );
+            // Its own default passes its own rule, and no internal address does.
+            assert_eq!(
+                resolve_base_url(driver.as_ref(), None).unwrap(),
+                driver.default_base_url()
+            );
+            assert!(resolve_base_url(driver.as_ref(), Some("https://127.0.0.1:8090/cf")).is_err());
+        }
+        // Their own hosts, and subdomains of them, stay usable.
+        assert!(
+            resolve_base_url(drivers[0].as_ref(), Some("https://api.anthropic.com/v1")).is_ok()
+        );
+    }
+
+    /// The form a key is pasted into: the address, then the key, as every
+    /// pasted provider's; anyone may hold one.
+    #[test]
+    fn a_key_form_is_the_default_one() {
+        use crate::connectors::sdk::drivers::{FieldKind, FormField, Holder};
+        let none: ProviderLink = Arc::new(|| anyhow::bail!("not in this test"));
+        let driver = AnthropicDriver::new(none);
+        let fields = driver.form_fields();
+        assert_eq!(
+            fields.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(),
+            [FormField::BASE_URL, FormField::TOKEN]
+        );
+        assert_eq!(fields[0].placeholder, "https://api.anthropic.com");
+        assert!(!fields[0].required);
+        assert_eq!(fields[1].kind, FieldKind::Secret);
+        assert_eq!(fields[1].label, "API Key");
+        assert_eq!(fields[1].placeholder, "sk-ant-…");
+        assert!(fields[1].required);
+        assert_eq!(driver.holder(), Holder::Any);
+    }
+
+    /// The core looks for these drivers only because their slots say so.
+    #[test]
+    fn both_drivers_are_in_the_port() {
+        let slots = crate::connectors::sdk::drivers::slots();
+        assert!(slots.contains(&ANTHROPIC_INSTANCE_ID), "{slots:?}");
+        assert!(slots.contains(&OPENAI_INSTANCE_ID), "{slots:?}");
     }
 
     #[tokio::test]
