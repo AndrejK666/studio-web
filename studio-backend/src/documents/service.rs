@@ -4788,6 +4788,7 @@ impl DocumentsService {
                 continue;
             }
             row.state = BindingState::Confirmed.as_str().to_string();
+            row.confirmed_by = Some(super::pipeline::CONFIRMED_BY_PERSON.to_owned());
             row.updated_at = now;
             rows.push(row);
         }
