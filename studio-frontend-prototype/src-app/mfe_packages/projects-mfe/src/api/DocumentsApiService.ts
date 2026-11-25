@@ -99,7 +99,7 @@ export class DocumentsApiService extends BaseApiService {
   readonly specPipeline = this.protocol(RestEndpointProtocol).queryWith<
     SpecPipelineDto,
     { projectId: string }
-  >(({ projectId }) => `/spec-pipeline?${new URLSearchParams({ project_id: projectId })}`);
+  >(({ projectId }) => `/spec-pipeline/state?${new URLSearchParams({ project_id: projectId })}`);
 
   /** Run the pipeline now; the steps that stopped run again. */
   runSpecPipeline() {

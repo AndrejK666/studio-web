@@ -2161,12 +2161,12 @@
     {
       "method": "GET",
       "path": "/studio-documents/v1/spec-pipeline",
-      "operation_id": "studio_documents.get_spec_pipeline",
+      "operation_id": "studio_documents.list_spec_pipeline",
       "tag": "StudioDocuments",
-      "summary": "A project's automatic spec pipeline: its settings and how each step last went",
+      "summary": "What a project has of each document type it declares",
       "authenticated": true,
       "responses": [
-        "SpecPipelineDto"
+        "PipelineListDto"
       ],
       "errors": [
         "400",
@@ -2177,13 +2177,13 @@
     },
     {
       "method": "GET",
-      "path": "/studio-documents/v1/spec-pipeline",
-      "operation_id": "studio_documents.list_spec_pipeline",
+      "path": "/studio-documents/v1/spec-pipeline/state",
+      "operation_id": "studio_documents.get_spec_pipeline",
       "tag": "StudioDocuments",
-      "summary": "What a project has of each document type it declares",
+      "summary": "A project's automatic spec pipeline: its settings and how each step last went",
       "authenticated": true,
       "responses": [
-        "PipelineListDto"
+        "SpecPipelineDto"
       ],
       "errors": [
         "400",

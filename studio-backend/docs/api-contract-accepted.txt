@@ -3298,10 +3298,6 @@ response	GET /studio-documents/v1/spec-model/work	synced	bool	always
 response	GET /studio-documents/v1/spec-model/work	total	u32	always
 response	GET /studio-documents/v1/spec-model/work	unlinked	u32	always
 response	GET /studio-documents/v1/spec-model/work	work	u32	always
-response	GET /studio-documents/v1/spec-pipeline	auto_confirm_threshold	f64	always
-response	GET /studio-documents/v1/spec-pipeline	computed_at	String	optional
-response	GET /studio-documents/v1/spec-pipeline	enabled	bool	always
-response	GET /studio-documents/v1/spec-pipeline	error	String	optional
 response	GET /studio-documents/v1/spec-pipeline	items	Vec<{}>	always
 response	GET /studio-documents/v1/spec-pipeline	items.authored	Vec<{}>	always
 response	GET /studio-documents/v1/spec-pipeline	items.authored.conforms	bool	optional
@@ -3324,17 +3320,21 @@ response	GET /studio-documents/v1/spec-pipeline	items.type_key	String	always
 response	GET /studio-documents/v1/spec-pipeline	items.type_name	String	always
 response	GET /studio-documents/v1/spec-pipeline	items.untouched	bool	always
 response	GET /studio-documents/v1/spec-pipeline	items.valid	u32	always
-response	GET /studio-documents/v1/spec-pipeline	project_id	String	always
-response	GET /studio-documents/v1/spec-pipeline	requested_at	String	optional
-response	GET /studio-documents/v1/spec-pipeline	status	String	optional
-response	GET /studio-documents/v1/spec-pipeline	steps	Vec<{}>	always
-response	GET /studio-documents/v1/spec-pipeline	steps.at	String	optional
-response	GET /studio-documents/v1/spec-pipeline	steps.link	String	optional
-response	GET /studio-documents/v1/spec-pipeline	steps.reason	String	optional
-response	GET /studio-documents/v1/spec-pipeline	steps.state	String	always
-response	GET /studio-documents/v1/spec-pipeline	steps.step	String	always
-response	GET /studio-documents/v1/spec-pipeline	steps.summary	String	optional
 response	GET /studio-documents/v1/spec-pipeline	total	u32	always
+response	GET /studio-documents/v1/spec-pipeline/state	auto_confirm_threshold	f64	always
+response	GET /studio-documents/v1/spec-pipeline/state	computed_at	String	optional
+response	GET /studio-documents/v1/spec-pipeline/state	enabled	bool	always
+response	GET /studio-documents/v1/spec-pipeline/state	error	String	optional
+response	GET /studio-documents/v1/spec-pipeline/state	project_id	String	always
+response	GET /studio-documents/v1/spec-pipeline/state	requested_at	String	optional
+response	GET /studio-documents/v1/spec-pipeline/state	status	String	optional
+response	GET /studio-documents/v1/spec-pipeline/state	steps	Vec<{}>	always
+response	GET /studio-documents/v1/spec-pipeline/state	steps.at	String	optional
+response	GET /studio-documents/v1/spec-pipeline/state	steps.link	String	optional
+response	GET /studio-documents/v1/spec-pipeline/state	steps.reason	String	optional
+response	GET /studio-documents/v1/spec-pipeline/state	steps.state	String	always
+response	GET /studio-documents/v1/spec-pipeline/state	steps.step	String	always
+response	GET /studio-documents/v1/spec-pipeline/state	steps.summary	String	optional
 response	GET /studio-documents/v1/spec-rows	items	Vec<{}>	always
 response	GET /studio-documents/v1/spec-rows	items.auto_confirmed	bool	always
 response	GET /studio-documents/v1/spec-rows	items.checked_at	String	optional
@@ -9876,6 +9876,7 @@ route	GET /studio-documents/v1/spec-model/term-drift
 route	GET /studio-documents/v1/spec-model/trace
 route	GET /studio-documents/v1/spec-model/work
 route	GET /studio-documents/v1/spec-pipeline
+route	GET /studio-documents/v1/spec-pipeline/state
 route	GET /studio-documents/v1/spec-rows
 route	GET /studio-documents/v1/specs-per-source
 route	GET /studio-documents/v1/workspaces/{}/capabilities

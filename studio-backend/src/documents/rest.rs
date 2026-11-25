@@ -9687,7 +9687,7 @@ pub fn register_routes(
         .error_503(openapi)
         .register(router, openapi);
 
-    router = OperationBuilder::get("/studio-documents/v1/spec-pipeline")
+    router = OperationBuilder::get("/studio-documents/v1/spec-pipeline/state")
         .operation_id("studio_documents.get_spec_pipeline")
         .summary("A project's automatic spec pipeline: its settings and how each step last went")
         .description(
