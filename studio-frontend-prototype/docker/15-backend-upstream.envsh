@@ -1,0 +1,51 @@
+#!/bin/sh
+# What nginx needs to find the backend again after it is replaced
+# (nginx.conf.template: `resolver ${BACKEND_RESOLVER}` and
+# `set $backend ${BACKEND_UPSTREAM}`). A hostname written into proxy_pass is
+# resolved once, at start: when the backend's container or pod came back with
+# a new address the portal kept proxying to the old one until it was restarted.
+# Through a variable, nginx asks the resolver again (every 10 s at most).
+#
+# `.envsh`, not `.sh`: the image's entrypoint SOURCES it, so what it exports
+# reaches 20-envsubst-on-templates.sh, which renders the template.
+#
+#   BACKEND_RESOLVER  the container's own nameservers (/etc/resolv.conf): the
+#                     cluster DNS in k8s, Docker's 127.0.0.11 in compose.
+#   BACKEND_UPSTREAM  BACKEND_HOST, its host made absolute where only a search
+#                     domain finds it. nginx's resolver applies no search
+#                     domains, so the chart's `<release>-backend:80` becomes
+#                     `<release>-backend.<namespace>.svc.cluster.local:80`;
+#                     compose's `studio-backend:8090` resolves as it is.
+set -eu
+
+resolv_conf="${BACKEND_RESOLV_CONF:-/etc/resolv.conf}"
+
+BACKEND_RESOLVER=$(awk 'BEGIN { ORS = " " } $1 == "nameserver" { if ($2 ~ ":") print "[" $2 "]"; else print $2 }' "$resolv_conf" 2>/dev/null || true)
+BACKEND_RESOLVER="${BACKEND_RESOLVER% }"
+# No resolv.conf to read: Docker's embedded DNS is the one a container has.
+[ -n "$BACKEND_RESOLVER" ] || BACKEND_RESOLVER=127.0.0.11
+
+backend="${BACKEND_HOST:-studio-backend:8090}"
+host="${backend%:*}"
+port=""
+[ "$host" = "$backend" ] || port=":${backend##*:}"
+
+BACKEND_UPSTREAM="$backend"
+case "$host" in
+  *.* | \[*) ;; # already absolute, or an address
+  *)
+    # A trailing dot asks for the name itself, without the search domains.
+    if ! getent hosts "$host." >/dev/null 2>&1; then
+      for domain in $(awk '$1 == "search" { for (i = 2; i <= NF; i++) print $i }' "$resolv_conf" 2>/dev/null || true); do
+        if getent hosts "$host.$domain." >/dev/null 2>&1; then
+          BACKEND_UPSTREAM="$host.$domain$port"
+          break
+        fi
+      done
+    fi
+    ;;
+esac
+
+unset resolv_conf backend host port domain
+export BACKEND_RESOLVER BACKEND_UPSTREAM
+echo "[backend-upstream] proxying /cf/ to $BACKEND_UPSTREAM, resolved through $BACKEND_RESOLVER"

@@ -5,15 +5,18 @@
 FROM nginxinc/nginx-unprivileged:1.27-alpine@sha256:65e3e85dbaed8ba248841d9d58a899b6197106c23cb0ff1a132b7bfe0547e4c0
 
 # Template (not a literal conf): the entrypoint's envsubst renders it with
-# BACKEND_HOST at start, so one image serves compose and k8s alike.
+# BACKEND_HOST (through 15-backend-upstream.envsh) at start, so one image serves compose and k8s alike.
 COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 ENV BACKEND_HOST=studio-backend:8090
 COPY dist/ /usr/share/nginx/html/
 # Runtime env injection: regenerates env.js from STUDIO_* vars at start
 # (the entrypoint executes /docker-entrypoint.d/*.sh before serving).
 COPY docker/10-runtime-env.sh /docker-entrypoint.d/10-runtime-env.sh
+# Sourced by the entrypoint before the template is rendered: the backend's
+# resolver and absolute name (see nginx.conf.template).
+COPY docker/15-backend-upstream.envsh /docker-entrypoint.d/15-backend-upstream.envsh
 USER root
-RUN chmod +x /docker-entrypoint.d/10-runtime-env.sh \
+RUN chmod +x /docker-entrypoint.d/10-runtime-env.sh /docker-entrypoint.d/15-backend-upstream.envsh \
  && touch /usr/share/nginx/html/env.js \
  && chown 101:101 /usr/share/nginx/html/env.js
 USER 101

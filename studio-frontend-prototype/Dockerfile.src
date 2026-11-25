@@ -18,8 +18,11 @@ COPY studio-frontend-prototype/nginx.conf.template /etc/nginx/templates/default.
 ENV BACKEND_HOST=studio-backend:8090
 COPY --from=build /src/dist/ /usr/share/nginx/html/
 COPY studio-frontend-prototype/docker/10-runtime-env.sh /docker-entrypoint.d/10-runtime-env.sh
+# Sourced by the entrypoint before the template is rendered: the backend's
+# resolver and absolute name (see nginx.conf.template).
+COPY studio-frontend-prototype/docker/15-backend-upstream.envsh /docker-entrypoint.d/15-backend-upstream.envsh
 USER root
-RUN chmod +x /docker-entrypoint.d/10-runtime-env.sh \
+RUN chmod +x /docker-entrypoint.d/10-runtime-env.sh /docker-entrypoint.d/15-backend-upstream.envsh \
  && touch /usr/share/nginx/html/env.js \
  && chown 101:101 /usr/share/nginx/html/env.js
 USER 101
