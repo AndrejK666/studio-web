@@ -263,6 +263,24 @@ async fn filters_answer_the_same_from_postgres_as_from_the_graph() {
         json!({"_and": [{"impact": {"_eq": "high"}}, {"_not": {"status": {"_is_null": true}}}]}),
         json!({"score": {"_eq": "unknown"}}),
         json!({"score": {"_gt": "a"}}),
+        // Equality as containment, mixed with the typed reading: a string
+        // never equals a number, nor a number a string.
+        json!({"score": {"_in": ["unknown", 2]}}),
+        json!({"score": {"_nin": ["unknown", 2]}}),
+        json!({"score": {"_neq": "unknown"}}),
+        json!({"impact": {"_in": ["high", 2]}}),
+        json!({"_or": [{"impact": {"_eq": "low"}}, {"status": {"_eq": "closed"}}]}),
+    ] {
+        p.same("risk", json!({"where": w, "limit": 200})).await;
+    }
+    // A list past the OR form's length is one test of the list.
+    let mut long: Vec<Value> = (0..30).map(|i| json!(format!("level-{i}"))).collect();
+    long.push(json!("high"));
+    long.push(json!("unknown"));
+    for w in [
+        json!({"impact": {"_in": long}}),
+        json!({"score": {"_in": long}}),
+        json!({"impact": {"_nin": long}}),
     ] {
         p.same("risk", json!({"where": w, "limit": 200})).await;
     }
@@ -275,6 +293,11 @@ async fn filters_answer_the_same_from_postgres_as_from_the_graph() {
         json!({"aliases": {"_contains": "kernel"}}),
         json!({"aliases": {"_contains": "KERNEL"}}),
         json!({"name": {"_contains": "or"}}),
+        // A list holding a value does not equal it, in either reader.
+        json!({"aliases": {"_eq": "kernel"}}),
+        json!({"aliases": {"_in": ["kernel", "base"]}}),
+        json!({"aliases": {"_neq": "kernel"}}),
+        json!({"name": {"_in": ["Core", "Nobody"]}}),
     ] {
         p.same("team", json!({"where": w})).await;
     }
@@ -1420,4 +1443,36 @@ fn a_fill_that_keeps_failing_waits_longer_each_time() {
     assert!(fills.claim(tenant));
     fills.release(tenant, false);
     assert!(fills.claim(tenant), "a success clears the count");
+}
+
+/// A gear's read of every match by a field is read unordered and ordered in
+/// process: the same rows in the same order as Postgres's `ORDER BY` gives a
+/// page of them, mixed kinds and absent values included.
+#[tokio::test]
+async fn a_read_of_every_match_orders_as_the_sql_does() {
+    let p = seeded().await;
+    for order in [
+        json!([{"field": "title"}]),
+        json!([{"field": "title", "direction": "desc"}]),
+        json!([{"field": "impact"}, {"field": "title", "direction": "desc"}]),
+        // Numbers, text, `null` and absent in one key, both ways.
+        json!([{"field": "score"}]),
+        json!([{"field": "score", "direction": "desc"}]),
+        json!([{"field": "status", "direction": "desc"}, {"field": "score"}]),
+    ] {
+        let every = Query::from_json(json!({"type": "risk", "order_by": order})).expect("query");
+        // With a limit the read model pages with its `ORDER BY`.
+        let paged = Query::from_json(json!({"type": "risk", "order_by": order, "limit": 1000}))
+            .expect("query");
+        let a = p.sql.query_bulk(&p.ctx, &every).await.expect("every match");
+        let b = p.sql.query_bulk(&p.ctx, &paged).await.expect("a page");
+        assert_eq!(a.source, "read_model");
+        assert_eq!(shape(&a), shape(&b), "order {order}");
+        assert_eq!(a.rows.total, 7);
+    }
+    // Where every value is of one kind, the graph's order is the same.
+    p.same_bulk(json!({"type": "risk", "order_by": [{"field": "title"}]}))
+        .await;
+    p.same_bulk(json!({"type": "risk", "where": {"_not": {"score": {"_eq": "unknown"}}}, "order_by": [{"field": "score", "direction": "desc"}]}))
+        .await;
 }

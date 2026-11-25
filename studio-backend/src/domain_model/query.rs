@@ -717,6 +717,66 @@ fn select(nodes: Vec<ObjectNode>, plan: &Plan) -> Vec<ObjectNode> {
     keyed.into_iter().map(|(_, n)| n).collect()
 }
 
+/// Where a value falls in the read model's order ([`sql::order`]): numbers,
+/// then text, then booleans, then anything else.
+fn kind_rank(v: &Value) -> u8 {
+    match v {
+        Value::Number(_) => 0,
+        Value::String(_) => 1,
+        Value::Bool(_) => 2,
+        _ => 3,
+    }
+}
+
+/// Two rows as the read model's `ORDER BY` puts them ([`sql::order`] and the
+/// id after it): each key absent last whichever way it runs, present values
+/// by kind and then by value, reversed together when the key descends. The
+/// same as [`by_order`] wherever a key holds one kind, and a total order
+/// where it holds several, which a sort needs.
+fn read_model_order(
+    order_by: &[(Vec<String>, Direction)],
+    (a, a_id): (&[Option<&Value>], &str),
+    (b, b_id): (&[Option<&Value>], &str),
+) -> Ordering {
+    for ((_, dir), (x, y)) in order_by.iter().zip(a.iter().zip(b)) {
+        let ord = match (x, y) {
+            (None, None) => Ordering::Equal,
+            (None, Some(_)) => return Ordering::Greater,
+            (Some(_), None) => return Ordering::Less,
+            (Some(x), Some(y)) => {
+                let o = kind_rank(x)
+                    .cmp(&kind_rank(y))
+                    .then_with(|| compare(x, y).unwrap_or(Ordering::Equal));
+                if *dir == Direction::Desc {
+                    o.reverse()
+                } else {
+                    o
+                }
+            }
+        };
+        if ord.is_ne() {
+            return ord;
+        }
+    }
+    a_id.cmp(b_id)
+}
+
+/// The read model's matches in the order its `ORDER BY` would have given.
+fn in_order(nodes: Vec<ObjectNode>, order_by: &[(Vec<String>, Direction)]) -> Vec<ObjectNode> {
+    let mut keyed: Vec<(Value, ObjectNode)> = nodes
+        .into_iter()
+        .map(|n| (Value::String(n.instance_id.clone()), n))
+        .collect();
+    keyed.sort_by(|(ia, a), (ib, b)| {
+        read_model_order(
+            order_by,
+            (&sort_values(a, order_by, ia), &a.instance_id),
+            (&sort_values(b, order_by, ib), &b.instance_id),
+        )
+    });
+    keyed.into_iter().map(|(_, n)| n).collect()
+}
+
 // ── Cursors ───────────────────────────────────────────────────────────────
 
 /// Where a page ended: the last row's sort values and id. It travels with a
@@ -1181,6 +1241,27 @@ async fn run_with(
                 None => mirror.count(tenant, &root).await?,
             };
             (Vec::new(), total)
+        } else if bulk.is_some()
+            && q.selection.limit.is_none()
+            && after.is_none()
+            && q.offset.unwrap_or(0) == 0
+            && !plan.order_by.is_empty()
+        {
+            // A gear's read of every match by a payload field: read them
+            // unordered and order them here as the `ORDER BY` would, instead
+            // of Postgres sorting whole rows by computed keys (on the stand,
+            // a project's 6,500 bindings by path: 87 ms sorted, 34 ms not).
+            // Ordered by id alone, Postgres keeps the sort: its parallel plan
+            // beat the serial unordered read there. More than the bound
+            // (which no gear's read reaches) falls back to the ordered page.
+            let cap = plan.limit as u64 + 1;
+            let found = mirror.matches(tenant, &root, cap).await?;
+            if (found.len() as u64) < cap {
+                let total = found.len() as u64;
+                (in_order(found, &plan.order_by), total)
+            } else {
+                mirror.root(tenant, &root, None, 0, cap).await?
+            }
         } else {
             let offset = u64::try_from(q.offset.unwrap_or(0)).unwrap_or(u64::MAX);
             let past = after

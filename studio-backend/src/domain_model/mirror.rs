@@ -435,6 +435,28 @@ impl DomainMirror {
         Ok((rows.into_iter().map(to_node).collect(), total))
     }
 
+    /// Up to `limit` of a query's matches in no order: what a read of every
+    /// match asks, ordering them itself. Postgres sorting the whole rows of a
+    /// large read spills them to disk (on the stand, 6,500 bindings of 1 KB
+    /// sorted through 6 MB of temporary files, most of the statement's time);
+    /// sorting the keys after is a few milliseconds.
+    pub async fn matches(
+        &self,
+        tenant: Uuid,
+        q: &RootSelect,
+        limit: u64,
+    ) -> anyhow::Result<Vec<ObjectNode>> {
+        let conn = self.db.conn()?;
+        let rows = object::Entity::find()
+            .secure()
+            .scope_with(&AccessScope::for_tenant(tenant))
+            .filter(Self::root_condition(q))
+            .limit(limit)
+            .all(&conn)
+            .await?;
+        Ok(rows.into_iter().map(to_node).collect())
+    }
+
     /// How many objects match a query's root: one `COUNT`, no page.
     pub async fn count(&self, tenant: Uuid, q: &RootSelect) -> anyhow::Result<u64> {
         let conn = self.db.conn()?;
