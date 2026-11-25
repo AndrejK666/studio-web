@@ -49,10 +49,7 @@ use toolkit::client_hub::ClientHub;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
-pub use super::overview::{
-    GROWTH_ALERT, Period, QUIET_DAYS, Row, STUCK_DAYS, Windows, days_since, growth, median,
-    windows,
-};
+pub use super::overview::{GROWTH_ALERT, Row, STUCK_DAYS, Windows, growth, median};
 pub use super::status::Kits;
 pub use crate::user_profile::RosterMember;
 
@@ -63,6 +60,7 @@ pub enum Level {
     Organization,
     /// Project › Overview (not collected yet: the project's status still
     /// composes its kits' parts itself).
+    #[allow(dead_code, reason = "the project overview is the port's next step")]
     Project,
 }
 
@@ -71,6 +69,7 @@ pub struct OverviewBlock {
     /// The kit it belongs to: shown only where that kit is installed.
     pub kit: &'static str,
     /// The gear that computes it (`studio-usage`), for logs.
+    #[allow(dead_code, reason = "named for logs and readers of the registry")]
     pub gear: &'static str,
     /// Its name inside the kit (`spend`); `kit/id` is unique.
     pub id: &'static str,
@@ -106,6 +105,7 @@ pub struct BlockAt {
     pub organization: Uuid,
     /// The periods the overview compares.
     pub windows: Windows,
+    #[allow(dead_code, reason = "part of the block contract; no block reads it yet")]
     pub now: OffsetDateTime,
     /// Only the signals one project's health reads (`project-status`): no
     /// tile, no needs, and nothing read only for them.
@@ -115,6 +115,7 @@ pub struct BlockAt {
 /// The organization as the core read it, for a block's answer.
 pub struct BlockScope<'a> {
     pub at: &'a BlockAt,
+    #[allow(dead_code, reason = "part of the block contract; no block reads it yet")]
     pub organization_name: &'a str,
     /// The workspaces' and projects' rows; one project's alone when
     /// [`BlockAt::health_only`].
@@ -359,12 +360,12 @@ impl LinkDto {
 pub struct ItemsDto {
     /// The button that folds it out.
     pub label: Words,
-    pub rows: Vec<ItemDto>,
+    pub rows: Vec<OverviewItemDto>,
 }
 
 #[derive(Debug, Clone, Default)]
 #[toolkit_macros::api_dto(response)]
-pub struct ItemDto {
+pub struct OverviewItemDto {
     pub text: LineDto,
     pub link: LinkDto,
 }

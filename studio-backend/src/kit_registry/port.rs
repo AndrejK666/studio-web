@@ -26,6 +26,8 @@ pub use super::gate::{
     KIT_NOT_INSTALLED, KitRefusal, require_kit, sync_wanted, tool_refusal, with_claimed_routes,
 };
 use super::installed::{KitInstaller, Refusal};
+/// A kit's passport (`kit.gdl`), which the component catalogue reads too.
+pub(crate) use super::kit_gdl;
 pub use super::manifest::STRATEGY_CONTRACTS;
 pub(crate) use super::manifest::{
     KitManifest, PROJECT_CREATION_STEPS, project_type_kit, project_type_kits,

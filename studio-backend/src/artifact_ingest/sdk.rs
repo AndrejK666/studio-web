@@ -3,4 +3,4 @@
 //! (`studio_authz_plugin::MirrorSyncSubject`), not from here.
 
 #[cfg(feature = "graph")]
-pub(crate) use super::graph_backend::{str_without_nul, without_nul};
+pub(crate) use super::graph_backend::without_nul;

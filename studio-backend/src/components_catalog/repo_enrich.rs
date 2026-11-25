@@ -3061,7 +3061,7 @@ fn passport_paths<'a>(paths: &[&'a str]) -> Vec<&'a str> {
         .copied()
         .filter(|p| {
             let name = p.rsplit('/').next().unwrap_or(p);
-            (name == super::service_gdl::FILE || name == crate::kit_registry::kit_gdl::FILE)
+            (name == super::service_gdl::FILE || name == crate::kit_registry::port::kit_gdl::FILE)
                 && !skip_path(p)
         })
         .collect();
@@ -3130,7 +3130,7 @@ fn passport_component(
         }
         (s.name, s.description, "service", payload)
     } else {
-        let k = crate::kit_registry::kit_gdl::read(body)?;
+        let k = crate::kit_registry::port::kit_gdl::read(body)?;
         let docs = docs_of(dir, &k.docs, paths);
         let manifest = k.manifest.as_deref().and_then(resolve).or_else(|| {
             let beside = if dir.is_empty() {

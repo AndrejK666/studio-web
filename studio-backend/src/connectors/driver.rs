@@ -736,6 +736,7 @@ impl FormField {
         self
     }
 
+    #[allow(dead_code, reason = "part of the form-field builder; no driver sets one yet")]
     pub fn placeholder(mut self, placeholder: &str) -> Self {
         self.placeholder = placeholder.to_owned();
         self

@@ -614,11 +614,6 @@ mod tests {
     use super::super::{Expr, Op};
     use super::Sql;
 
-    fn compiled(op: Op, arg: serde_json::Value) -> (String, usize) {
-        let (text, params) = compiled_at(&["id"], op, arg);
-        (text, params.len())
-    }
-
     /// The text and the parameters a comparison on `path` compiles to.
     fn compiled_at(
         path: &[&str],
@@ -738,15 +733,15 @@ mod tests {
         assert!(forwards.contains("re.src = studio_domain_objects.instance_id"), "{forwards}");
         assert!(forwards.contains("re.relation IN ($2, '')"), "{forwards}");
         assert!(!forwards.contains("owner_id"), "{forwards}");
-        // edge type, relation, types, then the inner filter's field and value
-        assert_eq!(n, 5);
+        // edge type, relation, types, then the inner filter's one containment value
+        assert_eq!(n, 4);
         let (backwards, _) = related(true, None);
         assert!(backwards.contains("ro.instance_id = re.src"), "{backwards}");
         assert!(backwards.contains("re.dst = studio_domain_objects.instance_id"), "{backwards}");
         // The PDP's owners narrow the related objects, and none reads none.
         let (owned, n) = related(false, Some(vec![uuid::Uuid::nil()]));
         assert!(owned.contains("ro.owner_id::text IN"), "{owned}");
-        assert_eq!(n, 6);
+        assert_eq!(n, 5);
         let (nobody, _) = related(false, Some(vec![]));
         assert!(nobody.contains(" AND FALSE "), "{nobody}");
     }
