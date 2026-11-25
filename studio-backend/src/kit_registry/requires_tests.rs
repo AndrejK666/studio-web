@@ -203,19 +203,21 @@ async fn uninstalling_a_kit_another_still_needs_is_refused_naming_it() {
     let installer = installer();
     let platform = caller(PLATFORM_ADMIN, PLATFORM_TENANT);
     let admin = caller(ORG_ADMIN, ORG);
-    // A base kit another base kit requires.
+    // A base kit other base kits require.
     match installer.uninstall_base(&platform, "project-specs").await {
         Err(Refusal::RequiredBy { kit, by }) => {
             assert_eq!(kit, "project-specs");
-            assert_eq!(by, ["project-domain-model"]);
+            assert_eq!(
+                by,
+                ["project-domain-model", "project-product", "project-tests"]
+            );
         }
         other => panic!("{other:?}"),
     }
-    // Both, the requiring one first, go.
-    installer
-        .uninstall_base(&platform, "project-domain-model")
-        .await
-        .unwrap();
+    // All, the requiring ones first, go.
+    for kit in ["project-domain-model", "project-product", "project-tests"] {
+        installer.uninstall_base(&platform, kit).await.unwrap();
+    }
     installer
         .uninstall_base(&platform, "project-specs")
         .await

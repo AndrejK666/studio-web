@@ -123,7 +123,11 @@ fn closure(by_slug: &BTreeMap<String, KitManifest>, kit: &str) -> BTreeSet<Strin
     let mut seen = BTreeSet::from([kit.to_owned()]);
     let mut stack = vec![kit.to_owned()];
     while let Some(k) = stack.pop() {
-        for r in by_slug.get(&k).map(|m| m.requires.clone()).unwrap_or_default() {
+        for r in by_slug
+            .get(&k)
+            .map(|m| m.requires.clone())
+            .unwrap_or_default()
+        {
             if seen.insert(r.clone()) {
                 stack.push(r);
             }
@@ -172,20 +176,31 @@ fn undeclared() -> BTreeMap<(String, String), Vec<String>> {
 fn every_owner_is_a_built_in_kit_and_no_gear_is_placed_twice() {
     let kits = by_slug();
     for (gear, kit) in GEAR_OWNERS {
-        assert!(kits.contains_key(*kit), "`{gear}`'s owner `{kit}` is no built-in kit");
-        assert!(!CORE_GEARS.contains(gear), "`{gear}` is both core and `{kit}`'s");
+        assert!(
+            kits.contains_key(*kit),
+            "`{gear}`'s owner `{kit}` is no built-in kit"
+        );
+        assert!(
+            !CORE_GEARS.contains(gear),
+            "`{gear}` is both core and `{kit}`'s"
+        );
     }
     let gears: BTreeSet<&str> = GEAR_OWNERS.iter().map(|(g, _)| *g).collect();
     assert_eq!(gears.len(), GEAR_OWNERS.len(), "a gear has two owners");
-    // The owners are the kits that claim the gear, as ADR-0079 places it.
-    for (gear, kit) in GEAR_OWNERS {
-        let claims = kits[*kit].gears.iter().any(|c| c.gear == *gear);
-        let reads = kits[*kit]
-            .permissions
-            .reads
-            .iter()
-            .any(|r| gear_of_route(r) == Some(gear));
-        assert!(claims || reads, "`{kit}` neither claims nor reads its own `{gear}`");
+    // An owner stands for at least one of the gears it owns: it claims or
+    // reads it (project-git owns studio-git without naming it).
+    for kit in GEAR_OWNERS.iter().map(|(_, k)| *k).collect::<BTreeSet<_>>() {
+        let m = &kits[kit];
+        let own = |gear: &str| GEAR_OWNERS.iter().any(|(g, k)| *g == gear && *k == kit);
+        let names_one = m.gears.iter().any(|c| own(&c.gear))
+            || m.permissions
+                .reads
+                .iter()
+                .any(|r| gear_of_route(r).is_some_and(own));
+        assert!(
+            names_one,
+            "`{kit}` neither claims nor reads any gear it owns"
+        );
     }
 }
 

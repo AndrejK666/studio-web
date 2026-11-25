@@ -188,12 +188,12 @@ async fn studio_s_own_inbox_sources_come_and_go_with_their_kits() {
     );
     // Without project-specs there are no review requests; the pull requests
     // stay, and nothing is restarted for it.
-    // (The Project model requires Specs, ADR-0071 §5: it goes first.)
+    // (Project model, Product and Tests require Specs, ADR-0071 §5: they go
+    // first.)
     let platform = caller(PLATFORM_ADMIN, PLATFORM_TENANT);
-    installer
-        .uninstall_base(&platform, "project-domain-model")
-        .await
-        .unwrap();
+    for kit in ["project-domain-model", "project-product", "project-tests"] {
+        installer.uninstall_base(&platform, kit).await.unwrap();
+    }
     installer
         .uninstall_base(&platform, "project-specs")
         .await
@@ -202,7 +202,12 @@ async fn studio_s_own_inbox_sources_come_and_go_with_their_kits() {
         studio(installer.inbox_sources(&member, ORG).await.unwrap()),
         [pair("project-git", "pull-requests")]
     );
-    // Without project-git either, none of Studio's own.
+    // Without project-git either, none of Studio's own (Delivery requires
+    // it: it goes first).
+    installer
+        .uninstall_base(&platform, "delivery")
+        .await
+        .unwrap();
     installer
         .uninstall_base(&platform, "project-git")
         .await
