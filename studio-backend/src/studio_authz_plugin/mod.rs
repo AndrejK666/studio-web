@@ -183,6 +183,17 @@ impl AccessConfig {
         })
     }
 
+    /// Does a role the caller's membership projects carry `privilege` here?
+    /// See [`crate::access_config::projected_role_carries`].
+    fn membership_carries(&self, role: &str, privilege: &str) -> bool {
+        let defined = self
+            .roles
+            .iter()
+            .find(|r| r.key == role)
+            .map(|r| r.privileges.as_slice());
+        crate::access_config::projected_role_carries(defined, role, privilege)
+    }
+
     /// Does anybody own this organization?
     fn has_an_owner(&self) -> bool {
         self.grants.iter().any(|g| {
@@ -269,6 +280,10 @@ pub struct Service {
 
 /// How long a kit's presence in a tenant is reused for a service rule.
 const KIT_PRESENCE_TTL: Duration = Duration::from_secs(30);
+
+/// The platform root: a membership of it is a platform administrator's, and
+/// projects no role into an organization's access config.
+const PLATFORM_ROOT: Uuid = Uuid::from_u128(1);
 
 /// How many tenants up a target is followed looking for one the caller
 /// reaches: a project sits under a workspace, an organization and the root.
@@ -581,6 +596,34 @@ impl Service {
         b.build().unwrap_or_else(|_| SecurityContext::anonymous())
     }
 
+    /// The role the caller's active membership of the organization `tenant`
+    /// lies in projects into its access config, if any
+    /// ([`crate::access_config::projected_role`]). Read at every decision,
+    /// never kept: a demotion or a membership that ends takes the role away
+    /// on the next request. A membership of the platform root projects
+    /// nothing into an organization's document — a platform administrator's
+    /// reach is their own arm, not an organization's role.
+    async fn membership_role_in(
+        &self,
+        request: &EvaluationRequest,
+        tenant: Uuid,
+    ) -> Option<String> {
+        let reader = self.organization_reader()?;
+        let subject = request.subject.id.to_string();
+        let memberships = match reader.memberships_of_subject(&subject).await {
+            Ok(m) => m,
+            Err(error) => {
+                // Not a denial of what explicit grants allow: the projection
+                // only adds, so an unreadable membership adds nothing.
+                warn!(%subject, "studio-authz: cannot read memberships for the role projection: {error:#}");
+                return None;
+            }
+        };
+        projected_membership_role(&memberships, tenant, |t| self.parent_of(request, t))
+            .await
+            .map(str::to_owned)
+    }
+
     /// Every key a grant may name the caller's person by — the person id and
     /// every sign-in subject of theirs, the caller's own among them
     /// (`OrganizationReader::grant_keys_of`, ADR-0040 §5).
@@ -648,9 +691,13 @@ impl Service {
             ConfigRead::Unreadable => false,
             ConfigRead::Found(cfg) if !cfg.has_an_owner() => true,
             ConfigRead::Found(cfg) => {
+                let membership = self.membership_role_in(request, organization).await;
                 let eligible = cfg.owns(&subjects)
                     || (cfg.model == "roles"
-                        && cfg.grants_org_privilege(&subjects, "access.manage"));
+                        && (cfg.grants_org_privilege(&subjects, "access.manage")
+                            || membership
+                                .as_deref()
+                                .is_some_and(|r| cfg.membership_carries(r, "access.manage"))));
                 if !eligible {
                     false
                 } else if let Some(reader) = self.organization_reader() {
@@ -778,11 +825,26 @@ enum RoleDecision {
 /// testing it meant standing up an account-management double — so it had no
 /// tests at all, while the helpers around it had many. Everything here is a
 /// decision; the caller does the I/O and builds the response.
+#[cfg(test)]
 fn decide(
     subjects: &[String],
     read: &ConfigRead,
     subject_teams: &[String],
     privilege: &str,
+) -> RoleDecision {
+    decide_as(subjects, read, subject_teams, privilege, None)
+}
+
+/// [`decide`], with the role the caller's active membership of the
+/// organization projects (`crate::access_config::projected_role`): an
+/// `admin` member holds the `admin` role organization-wide without a stored
+/// grant, and loses it the moment the membership changes.
+fn decide_as(
+    subjects: &[String],
+    read: &ConfigRead,
+    subject_teams: &[String],
+    privilege: &str,
+    membership: Option<&str>,
 ) -> RoleDecision {
     let cfg = match read {
         // We do not know what this organization decided, so we do not act on a
@@ -795,6 +857,9 @@ fn decide(
     };
     if cfg.model != "roles" {
         return RoleDecision::Clamp;
+    }
+    if membership.is_some_and(|role| cfg.membership_carries(role, privilege)) {
+        return RoleDecision::Tenant;
     }
 
     // Walk the subject's grants that carry this privilege. An org-scoped grant
@@ -1207,7 +1272,14 @@ impl AuthZResolverPluginClient for Service {
         // TODO(step 4): resolve the subject's Teams (RG groups) for team grants.
         let subject_teams: Vec<String> = Vec::new();
 
-        let project_scopes = match decide(&subjects, &read, &subject_teams, privilege) {
+        let membership = self.membership_role_in(&request, tid).await;
+        let project_scopes = match decide_as(
+            &subjects,
+            &read,
+            &subject_teams,
+            privilege,
+            membership.as_deref(),
+        ) {
             RoleDecision::Clamp => {
                 let tids = self.clamp_tenants(&request, tid).await;
                 return Ok(tenant_clamp(&request, &tids));
@@ -1293,6 +1365,36 @@ where
         }
     }
     false
+}
+
+/// The role the nearest organization at or above `tenant` that `memberships`
+/// holds actively projects ([`crate::access_config::projected_role`]). The
+/// platform root never counts. `parent_of` walks up; a tenant it cannot
+/// place ends the walk with nothing.
+async fn projected_membership_role<F, Fut>(
+    memberships: &[crate::user_profile::SubjectMembership],
+    tenant: Uuid,
+    parent_of: F,
+) -> Option<&'static str>
+where
+    F: Fn(Uuid) -> Fut,
+    Fut: std::future::Future<Output = Option<Uuid>>,
+{
+    let root = PLATFORM_ROOT;
+    let mut at = tenant;
+    for _ in 0..MAX_TENANT_DEPTH {
+        if at == root {
+            return None;
+        }
+        if let Some(m) = memberships.iter().find(|m| m.org_id == at) {
+            return crate::access_config::projected_role(&m.role, &m.status);
+        }
+        match parent_of(at).await {
+            Some(parent) if parent != at => at = parent,
+            _ => return None,
+        }
+    }
+    None
 }
 
 /// The tenant-isolation constraint set: owner-tenant is `tid`, plus the
@@ -2057,6 +2159,52 @@ mod tests {
         );
     }
 
+    /// Dev 2026-11-26: an `admin` member of an organization on the `roles`
+    /// model held no stored grant and was refused every domain object (kits,
+    /// the domain query, the gear documents). Their membership projects the
+    /// `admin` role; demoted to `member`, it projects nothing again.
+    #[test]
+    fn an_admin_membership_reads_and_writes_domain_objects_until_it_is_demoted() {
+        // The organization's own ladder, as Dev's c31da936 has it: `admin`
+        // carries `*.view` and `*.edit` privileges, which imply the domain's.
+        let cfg = found(
+            "roles",
+            serde_json::json!([{ "key": "admin", "privileges": ["project.view", "project.edit", "people.view"] }]),
+            serde_json::json!([org_grant("someone-else", "owner")]),
+        );
+        let admin = crate::access_config::projected_role("admin", "active");
+        for privilege in ["domain.view", "domain.edit"] {
+            assert_eq!(
+                decide_as(&one("ada"), &cfg, &[], privilege, admin),
+                RoleDecision::Tenant,
+                "{privilege}"
+            );
+            let demoted = crate::access_config::projected_role("member", "active");
+            assert_eq!(
+                decide_as(&one("ada"), &cfg, &[], privilege, demoted),
+                RoleDecision::Deny,
+                "{privilege} after demotion"
+            );
+            let suspended = crate::access_config::projected_role("admin", "suspended");
+            assert_eq!(
+                decide_as(&one("ada"), &cfg, &[], privilege, suspended),
+                RoleDecision::Deny,
+                "{privilege} while suspended"
+            );
+        }
+        // What the organization's ladder leaves out, the administrator lacks.
+        assert_eq!(
+            decide_as(&one("ada"), &cfg, &[], "access.manage", admin),
+            RoleDecision::Deny
+        );
+        // The tenant model is untouched by the projection.
+        let tenant = found("tenant", serde_json::json!([]), serde_json::json!([]));
+        assert_eq!(
+            decide_as(&one("ada"), &tenant, &[], "domain.view", admin),
+            RoleDecision::Clamp
+        );
+    }
+
     /// Roles narrow. Being in the tenant is not itself a grant.
     #[test]
     fn a_member_with_no_grant_is_denied_rather_than_clamped() {
@@ -2381,6 +2529,49 @@ mod target_tests {
             t if t == ORG || t == HOME => Some(ROOT),
             _ => None,
         }
+    }
+
+    fn membership(org: Uuid, role: &str, status: &str) -> crate::user_profile::SubjectMembership {
+        crate::user_profile::SubjectMembership {
+            org_id: org,
+            role: role.to_owned(),
+            status: status.to_owned(),
+        }
+    }
+
+    /// The projection finds the organization a project or workspace lies in,
+    /// and nothing else: not another organization's membership, not a
+    /// suspended one, not the platform root's.
+    #[tokio::test]
+    async fn a_membership_projects_its_role_into_the_tenants_of_its_organization_only() {
+        let admin = [membership(ORG, "admin", "active")];
+        for at in [ORG, WORKSPACE, PROJECT] {
+            assert_eq!(
+                projected_membership_role(&admin, at, parent).await,
+                Some("admin")
+            );
+        }
+        assert_eq!(projected_membership_role(&admin, HOME, parent).await, None);
+        let elsewhere = [membership(HOME, "admin", "active")];
+        assert_eq!(
+            projected_membership_role(&elsewhere, PROJECT, parent).await,
+            None
+        );
+        let suspended = [membership(ORG, "admin", "suspended")];
+        assert_eq!(
+            projected_membership_role(&suspended, PROJECT, parent).await,
+            None
+        );
+        let member = [membership(ORG, "member", "active")];
+        assert_eq!(
+            projected_membership_role(&member, PROJECT, parent).await,
+            None
+        );
+        let platform = [membership(ROOT, "owner", "active")];
+        assert_eq!(
+            projected_membership_role(&platform, PROJECT, parent).await,
+            None
+        );
     }
 
     #[test]
