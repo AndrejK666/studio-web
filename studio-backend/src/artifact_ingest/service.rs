@@ -36,7 +36,10 @@ use crate::documents::port::{DocumentClassifier, IngestedDocument, is_prose_path
 use crate::tasks::sdk::SyncReporter;
 
 /// Hard cap on pages per channel — a runaway loop backstop, not a real limit.
-const MAX_PAGES: u32 = 50;
+/// 200 pages of 100 reach [`MAX_COMMITS`]: at 50 a repository with more than
+/// 5000 merge requests or commits (platform/alms/core) was cut short without a
+/// word, and the commit cap below could never be reached.
+const MAX_PAGES: u32 = 200;
 const PER_PAGE: u32 = 100;
 /// Backstop on file nodes per sync, so a giant monorepo can't flood the graph.
 const MAX_FILES: usize = 10_000;
@@ -1143,6 +1146,13 @@ impl IngestService {
                 0,
             )
             .await?;
+            if page == MAX_PAGES {
+                warn!(
+                    repo = repo_full_path,
+                    cap = MAX_PAGES * PER_PAGE,
+                    "studio-artifact-ingest: pull request cap reached — older ones not ingested"
+                );
+            }
         }
 
         edges.extend(item_link_edges(
