@@ -879,3 +879,99 @@ async fn a_refused_move_fails_before_reading_the_old_store() {
         "nothing was written"
     );
 }
+
+#[tokio::test]
+async fn a_repositorys_nodes_are_read_and_counted_without_the_rest() {
+    use std::sync::atomic::Ordering;
+    let (_legacy, model, store) = setup();
+    let ctx = ctx();
+    store.list(&ctx, None).await.unwrap();
+    moved(&store, &ctx).await;
+    let file = |id: &str, repo: &str| {
+        node(
+            gts::FILE_TYPE,
+            id,
+            json!({"repo": repo, "path": id, "workspace_id": WS}),
+        )
+    };
+    store
+        .upsert_nodes(
+            &ctx,
+            &[
+                file("a1", "repo-a"),
+                file("a2", "repo-a"),
+                file("b1", "repo-b"),
+            ],
+        )
+        .await
+        .unwrap();
+
+    model.rows_read.store(0, Ordering::SeqCst);
+    let mut ids: Vec<String> = store
+        .list_of_repo(&ctx, gts::FILE_TYPE, "repo-a")
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|n| n.instance_id)
+        .collect();
+    ids.sort();
+    assert_eq!(
+        ids,
+        ["a1", "a2"],
+        "the repository's files, by their artifact ids"
+    );
+    assert_eq!(
+        model.rows_read.load(Ordering::SeqCst),
+        2,
+        "another repository's file is not read"
+    );
+
+    model.rows_read.store(0, Ordering::SeqCst);
+    assert_eq!(
+        store
+            .count_of_repo(&ctx, gts::FILE_TYPE, "repo-a")
+            .await
+            .unwrap(),
+        2
+    );
+    assert!(
+        model.rows_read.load(Ordering::SeqCst) <= 1,
+        "a count reads at most one row"
+    );
+    assert_eq!(
+        store
+            .count_of_repo(&ctx, gts::COMMENT_TYPE, "repo-a")
+            .await
+            .unwrap(),
+        0
+    );
+}
+
+#[tokio::test]
+async fn before_the_move_a_repositorys_nodes_come_from_the_old_store() {
+    let (legacy, _model, store) = setup();
+    let ctx = ctx();
+    legacy
+        .upsert_nodes(
+            &ctx,
+            &[node(
+                gts::FILE_TYPE,
+                "a1",
+                json!({"repo": "repo-a", "path": "a1", "workspace_id": WS}),
+            )],
+        )
+        .await
+        .unwrap();
+    let listed = store
+        .list_of_repo(&ctx, gts::FILE_TYPE, "repo-a")
+        .await
+        .unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(
+        store
+            .count_of_repo(&ctx, gts::FILE_TYPE, "repo-b")
+            .await
+            .unwrap(),
+        0
+    );
+}

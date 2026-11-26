@@ -161,6 +161,44 @@ pub trait GraphStore: Send + Sync {
         Ok(u64::try_from(n).unwrap_or(u64::MAX))
     }
 
+    /// The nodes of one type whose payload `repo` names `repo`: what a sync
+    /// reads back of the repository it walks (the files it may forget).
+    ///
+    /// Defaulted to the type's whole projection narrowed here, which is what
+    /// the sync did. The domain model overrides it with a query narrowed by
+    /// the declared `repo` field, so a sync reads one repository's files
+    /// rather than every file of the organization.
+    async fn list_of_repo(
+        &self,
+        ctx: &SecurityContext,
+        type_id: &str,
+        repo: &str,
+    ) -> anyhow::Result<Vec<GtsNode>> {
+        Ok(self
+            .list(ctx, Some(type_id))
+            .await?
+            .iter()
+            .filter(|n| node_of_repo(n, repo))
+            .cloned()
+            .collect())
+    }
+
+    /// How many of those there are, without handing them over.
+    async fn count_of_repo(
+        &self,
+        ctx: &SecurityContext,
+        type_id: &str,
+        repo: &str,
+    ) -> anyhow::Result<u64> {
+        let n = self
+            .list(ctx, Some(type_id))
+            .await?
+            .iter()
+            .filter(|n| node_of_repo(n, repo))
+            .count();
+        Ok(u64::try_from(n).unwrap_or(u64::MAX))
+    }
+
     /// [`GraphStore::list_in_scope`] for several projects at once, keyed by
     /// project: what a table of projects reads, so it asks once per type
     /// rather than once per type and project. A node naming two of them is
@@ -262,6 +300,11 @@ pub trait GraphStore: Send + Sync {
         let nodes = self.list(ctx, query.type_filter).await?;
         Ok(page_of_nodes(&nodes, query))
     }
+}
+
+/// Whether a node's payload names `repo` as the repository it came from.
+pub(crate) fn node_of_repo(node: &GtsNode, repo: &str) -> bool {
+    node.value.get("repo").and_then(Value::as_str) == Some(repo)
 }
 
 /// [`GraphStore::repos_of_files`] from the scope's whole file listing: the
