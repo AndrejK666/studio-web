@@ -41,7 +41,8 @@ pub const GITHUB_INSTANCE_ID: &str = "gts.cf.toolkit.plugins.plugin.v1~cf.studio
 pub const BITBUCKET_INSTANCE_ID: &str = "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.bitbucket_connector.v1";
 // A kit's driver names its own instance id, beside its driver, and submits it
 // as a `sdk::drivers::DriverSlot` (ADR-0079): the model providers' are in
-// `llm_proxy::connector_drivers`.
+// `llm_proxy::connector_drivers`, a cluster's (Kubernetes) in
+// `environments::cluster_driver`.
 // Chat platforms. Two ids per platform, because a bot token and an incoming
 // webhook are different credentials with different reach — see
 // `super::slack`'s module note — and a driver is addressed by exactly one id.
@@ -53,9 +54,6 @@ pub const ZULIP_INSTANCE_ID: &str =
 pub const ZULIP_WEBHOOK_INSTANCE_ID: &str = "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.zulip_webhook_connector.v1";
 pub const DISCORD_INSTANCE_ID: &str = "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.discord_connector.v1";
 pub const DISCORD_WEBHOOK_INSTANCE_ID: &str = "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.discord_webhook_connector.v1";
-
-/// A Kubernetes cluster an organization's environments deploy into (ADR-0043).
-pub const KUBERNETES_INSTANCE_ID: &str = "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.kubernetes_connector.v1";
 
 /// An OCI registry an organization's products ship through (ADR-0048).
 pub const REGISTRY_INSTANCE_ID: &str = "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.registry_connector.v1";

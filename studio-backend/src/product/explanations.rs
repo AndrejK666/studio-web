@@ -42,6 +42,14 @@ inventory::submit! {
     }
 }
 
+// A deployment's profile declares it (`crate::gts_inventory`, ADR-0079 §4).
+inventory::submit! {
+    crate::gts_inventory::ProfileDeclaredType {
+        gear: "studio-product",
+        type_id: EXPLANATIONS_METADATA_TYPE,
+    }
+}
+
 /// The documents this gear keeps as domain objects, each record of their
 /// lists an object (ADR-0066 §8a, `storage.metadata`).
 /// The gear's `storage.metadata` setting, read at init.

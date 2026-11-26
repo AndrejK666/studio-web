@@ -5,10 +5,8 @@ use serde::Deserialize;
 use toolkit::Gear;
 use toolkit::context::GearCtx;
 
-use super::super::driver::ConnectorDriver;
-use super::super::gts::KUBERNETES_INSTANCE_ID;
-use super::super::kubernetes::KubernetesDriver;
-use super::register_driver;
+use crate::environments::cluster_driver::{KUBERNETES_INSTANCE_ID, KubernetesDriver};
+use crate::connectors::sdk::drivers::{ConnectorDriver, register_driver};
 
 // No `http_client()`: a cluster is reached through kube's own client,
 // built per call from the connection's CA and credential.

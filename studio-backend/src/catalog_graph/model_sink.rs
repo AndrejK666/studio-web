@@ -181,10 +181,27 @@ fn object_id(instance_id: &str) -> String {
     format!("cat-{instance_id}")
 }
 
-/// Whether `gear` writes nodes of `type_id`: the product its two, the
-/// catalogue the rest. Only those are moved and held by it.
+/// Node types of the catalogue graph a gear other than the catalogue writes,
+/// registered by that gear (`studio-product` its two, ADR-0079 §4): the
+/// catalogue writes every type no gear registers.
+pub(crate) struct HeldNodeTypes {
+    pub gear: &'static str,
+    pub type_ids: &'static [&'static str],
+}
+
+inventory::collect!(HeldNodeTypes);
+
+/// Whether `gear` writes nodes of `type_id`: a gear that registered its
+/// types those, the catalogue the rest. Only those are moved and held by it.
 fn owns_type(gear: &str, type_id: &str) -> bool {
-    (gear == "studio-product") == cgts::PRODUCT_NODE_TYPES.contains(&type_id)
+    let mut held = inventory::iter::<HeldNodeTypes>.into_iter();
+    match inventory::iter::<HeldNodeTypes>
+        .into_iter()
+        .find(|h| h.gear == gear)
+    {
+        Some(own) => own.type_ids.contains(&type_id),
+        None => !held.any(|h| h.type_ids.contains(&type_id)),
+    }
 }
 
 /// The types `gear` declares for the catalogue: all of them, held where it

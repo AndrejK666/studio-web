@@ -24,6 +24,8 @@ mod leaving;
 mod mcp;
 mod migrations;
 mod org_requests;
+/// The Inbox port (ADR-0079 §4): the sources kits' gears register.
+pub mod port;
 mod rest;
 mod service;
 mod store;

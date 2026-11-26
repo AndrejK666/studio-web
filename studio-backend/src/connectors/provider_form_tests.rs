@@ -4,7 +4,6 @@
 use super::assembly_service::AssemblyServiceDriver;
 use super::driver::{ConnectorDriver, FieldKind, FormField, Holder};
 use super::github::GitHubDriver;
-use super::kubernetes::KubernetesDriver;
 use super::registry::RegistryDriver;
 use super::research::ResearchDriver;
 use super::rest::FormFieldDto;
@@ -54,16 +53,10 @@ fn research_asks_only_for_a_key_and_starts_personal() {
     assert_eq!(driver.holder(), Holder::Personal);
 }
 
-/// A cluster's credential may be a kubeconfig, and only the organization
-/// holds a cluster or a registry.
+/// Only the organization holds a registry (a cluster's form is the delivery
+/// kit's driver's: `environments::cluster_driver`).
 #[test]
-fn a_cluster_takes_a_kubeconfig_and_is_the_organizations() {
-    let driver = KubernetesDriver;
-    let fields = driver.form_fields();
-    assert_eq!(names(&driver), [FormField::BASE_URL, FormField::TOKEN]);
-    assert_eq!(fields[1].format, Some("kubeconfig"));
-    assert_eq!(driver.holder(), Holder::Organization);
-    assert!(!driver.holder_fixed());
+fn a_registry_is_the_organizations() {
     assert_eq!(RegistryDriver::new(http()).holder(), Holder::Organization);
 }
 
@@ -92,11 +85,8 @@ fn an_assembly_service_names_its_strategy_and_has_one_holder() {
 #[test]
 fn a_field_goes_out_as_the_driver_said_it() {
     let dto = FormFieldDto::from(
-        KubernetesDriver
-            .form_fields()
-            .into_iter()
-            .nth(1)
-            .expect("a token field"),
+        FormField::token("Service-account token or kubeconfig", "eyJhbGciOi…", true)
+            .format("kubeconfig"),
     );
     assert_eq!(dto.name, "token");
     assert_eq!(dto.kind, "secret");

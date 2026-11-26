@@ -18,6 +18,33 @@ mod history;
 mod memo;
 /// The Decisions block of an organization's Overview (ADR-0079 §4).
 pub mod overview_block;
+// What this gear registers, contributed to the offline GTS inventory
+// (`crate::gts_inventory`, ADR-0079 §4).
+inventory::submit! {
+    crate::gts_inventory::GtsSchemas {
+        gear: "studio-components-catalog",
+        schemas: inventory_entries,
+    }
+}
+
+/// This gear's documents as the inventory records them: the catalogue
+/// graph's, in both registries.
+fn inventory_entries() -> Vec<serde_json::Value> {
+    use crate::catalog_graph::gts;
+    use crate::gts_inventory::{BOOT_FAILS, GRAPH_STORAGE, TYPES_REGISTRY, entry};
+    let gear = "studio-components-catalog";
+    let mut out: Vec<serde_json::Value> = gts::type_schemas()
+        .into_iter()
+        .map(|s| entry(TYPES_REGISTRY, gear, BOOT_FAILS, s))
+        .collect();
+    for s in gts::graph_node_type_schemas()
+        .into_iter()
+        .chain(gts::graph_edge_type_schemas())
+    {
+        out.push(entry(GRAPH_STORAGE, gear, BOOT_FAILS, s));
+    }
+    out
+}
 mod ownership;
 pub mod port;
 mod project_components; // a project's components, derived when its repositories sync

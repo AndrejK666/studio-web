@@ -773,6 +773,9 @@
         "pull-request",
         "work-item",
         "comment"
+      ],
+      "mcp_tools": [
+        "project_source_detach"
       ]
     }
   ],

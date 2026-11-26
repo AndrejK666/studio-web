@@ -62,3 +62,25 @@ pub fn type_schemas() -> Vec<Value> {
     })
     .collect()
 }
+
+// What this gear registers, contributed to the offline GTS inventory
+// (`crate::gts_inventory`, ADR-0079 §4).
+inventory::submit! {
+    crate::gts_inventory::GtsSchemas {
+        gear: "studio-documents",
+        schemas: inventory_entries,
+    }
+}
+
+/// This gear's documents as the inventory records them.
+fn inventory_entries() -> Vec<serde_json::Value> {
+    use crate::gts_inventory::{TYPES_REGISTRY, WARN_AND_CONTINUE, entry};
+    // The one gear that logs and continues when the registry refuses a
+    // document (`documents/mod.rs`): document types are also stored in its own
+    // PostgreSQL tables, so the registration is a catalog entry rather than the
+    // system of record.
+    type_schemas()
+        .into_iter()
+        .map(|s| entry(TYPES_REGISTRY, "studio-documents", WARN_AND_CONTINUE, s))
+        .collect()
+}

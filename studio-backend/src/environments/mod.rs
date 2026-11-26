@@ -35,6 +35,10 @@
 
 pub(crate) mod build; // a product built by Studio in the organization's cluster (ADR-0048 §9)
 mod build_records; // a project's build records, kept in its organization's model
+mod cli; // the build Job's steps on the command line (the command-line port, ADR-0079)
+/// A cluster connection's driver, contributed through studio-connector's
+/// connector-driver port (ADR-0079).
+pub(crate) mod cluster_driver;
 mod database;
 mod deploy;
 mod failure; // why a build or a deploy failed, and the action that fixes it (#1054)
@@ -42,6 +46,7 @@ mod gear_overrides; // a configuration secret that sets a gear's field the descr
 mod image_tasks; // delete, copy (promote, import) and sweep of image records
 pub(crate) mod images; // a project's images and charts as records (ADR-0062 §4)
 pub(crate) mod images_sink; // a pipeline's published images, recorded (ADR-0062 §4)
+mod inbox; // deploys awaiting approval in the Inbox tool (the Inbox port, ADR-0079)
 pub(crate) mod infra; // a product's infra services, placed and installed with it (ADR-0064)
 mod mcp;
 // This gear's MCP tools, collected by studio-mcp (ADR-0079).
@@ -76,6 +81,12 @@ mod service;
 mod status_part; // its part of a project's status (ADR-0079)
 mod store;
 mod workflow; // the build workflow proposed to a product's repository (ADR-0048)
+
+// One module per plugin gear: `#[toolkit::gear]` aliases its dependencies at
+// module scope, so two gears in one module collide (see connectors/plugin.rs).
+/// Kubernetes — the cluster an organization's environments deploy into.
+#[path = "plugins/kubernetes/mod.rs"]
+mod kubernetes_connector_plugin;
 
 use std::sync::{Arc, OnceLock};
 

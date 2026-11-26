@@ -1,5 +1,7 @@
 //! Kubernetes driver: a cluster an organization's products are deployed into
-//! (ADR-0043).
+//! (ADR-0043). The delivery kit's contribution to studio-connector's
+//! connector-driver port (ADR-0079): the core stores the connection and its
+//! credential; this says what a cluster connection is and how it is tested.
 //!
 //! A connection of this kind holds the cluster's API server as its address
 //! and, as its credential, either a service-account token or a kubeconfig.
@@ -23,9 +25,15 @@ use anyhow::{Context, anyhow, bail};
 use async_trait::async_trait;
 use serde_yaml::Value;
 
-use super::driver::{
-    ConnectionAuth, ConnectorCategory, ConnectorDriver, DriverCheck, DriverIdentity, FormField,
+use crate::connectors::sdk::drivers::{
+    ConnectionAuth, ConnectorCategory, ConnectorDriver, DriverCheck, DriverIdentity, DriverSlot,
+    FormField,
 };
+
+/// The driver's instance id under studio-connector's plugin contract.
+pub const KUBERNETES_INSTANCE_ID: &str = "gts.cf.toolkit.plugins.plugin.v1~cf.studio.connector.plugin.v1~cf.studio._.kubernetes_connector.v1";
+
+inventory::submit! { DriverSlot { instance_id: KUBERNETES_INSTANCE_ID } }
 
 pub struct KubernetesDriver;
 
@@ -611,6 +619,20 @@ pub async fn cluster_readiness(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::connectors::sdk::drivers::Holder;
+
+    /// A cluster's credential may be a kubeconfig, and only the organization
+    /// holds a cluster.
+    #[test]
+    fn a_cluster_takes_a_kubeconfig_and_is_the_organizations() {
+        let driver = KubernetesDriver;
+        let fields = driver.form_fields();
+        let names: Vec<String> = fields.iter().map(|f| f.name.clone()).collect();
+        assert_eq!(names, [FormField::BASE_URL, FormField::TOKEN]);
+        assert_eq!(fields[1].format, Some("kubeconfig"));
+        assert_eq!(driver.holder(), Holder::Organization);
+        assert!(!driver.holder_fixed());
+    }
 
     const SERVER: &str = "https://k8s.acme.example:6443";
 

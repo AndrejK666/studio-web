@@ -108,7 +108,8 @@ mod bitbucket_plugin;
 
 // The model providers' drivers (Anthropic, OpenAI) are the assistant kit's:
 // `llm_proxy::connector_drivers`, through the connector-driver port
-// (`sdk::drivers`, ADR-0079).
+// (`sdk::drivers`, ADR-0079). So is a cluster's (Kubernetes), the delivery
+// kit's: `environments::cluster_driver`.
 
 /* ── Chat platforms ──────────────────────────────────────────────────────────
  *
@@ -138,9 +139,6 @@ mod discord_plugin;
 
 #[path = "plugins/discord_webhook/mod.rs"]
 mod discord_webhook_plugin;
-
-#[path = "plugins/kubernetes/mod.rs"]
-mod kubernetes_plugin;
 
 #[path = "plugins/gear_repository/mod.rs"]
 mod gear_repository_plugin;

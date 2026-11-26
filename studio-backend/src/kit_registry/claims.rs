@@ -107,7 +107,6 @@ pub const SHELL_MCP_TOOLS: &[&str] = &[
     // A project's sources and the connections they are read through.
     "project_sources",
     "project_sources_set",
-    "project_source_detach",
     "project_connections",
     "connection_repositories",
     // studio-user: the Inbox.

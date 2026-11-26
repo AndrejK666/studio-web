@@ -23,6 +23,15 @@ pub mod rest;
 pub mod sdk;
 pub mod service;
 
+// Contributed through studio-tasks' background-work port (ADR-0079 §4).
+inventory::submit! {
+    crate::tasks::sdk::ScheduleSet {
+        gear: "studio-session",
+        order: 10,
+        schedules: platform_schedules,
+    }
+}
+
 /// The schedules this gear asks for.
 ///
 /// Read by `studio-scheduler` at its `start` phase, alongside `studio-tasks`'
@@ -34,8 +43,8 @@ pub mod service;
 /// gear that stood down — sessions switched off, or no container runtime to
 /// reach — registered no `session.reap` handler, and the scheduler skips a
 /// schedule whose task type nothing can run.
-pub fn platform_schedules() -> Vec<crate::tasks::PlatformSchedule> {
-    vec![crate::tasks::PlatformSchedule {
+pub fn platform_schedules() -> Vec<crate::tasks::sdk::PlatformSchedule> {
+    vec![crate::tasks::sdk::PlatformSchedule {
         name: "session-reaper",
         task_type: reap_task::TASK_TYPE,
         cron: reap_task::CRON,

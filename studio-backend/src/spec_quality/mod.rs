@@ -41,6 +41,15 @@ inventory::submit! {
         tools: mcp::tools,
     }
 }
+
+// What these tools are for, in studio-mcp's `instructions`.
+inventory::submit! {
+    crate::mcp::sdk::Instruction {
+        gear: "studio-spec-quality",
+        order: 30,
+        phrase: "the spec-quality detectors",
+    }
+}
 pub mod record;
 pub mod rest;
 pub mod sdk;
