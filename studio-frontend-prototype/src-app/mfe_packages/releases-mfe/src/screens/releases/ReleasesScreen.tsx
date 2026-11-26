@@ -20,6 +20,7 @@ import {
   openScreen,
   screenView,
   useHostChrome,
+  useOrganizationId,
   usePollWhileVisible,
   writeListState,
   useScreenAvailability,
@@ -158,6 +159,8 @@ function Releases({ projectId, onOrganization }: { projectId: string; onOrganiza
   const screens = useScreenAvailability();
   const noEnvironmentKey = screens.route(ROUTES.infrastructure) ? 'no_environment' : 'no_environment_admin';
   const api = useApi();
+  // Where the query reads the builds; until the shell says, `/nodes` answers.
+  const orgId = useOrganizationId();
   const [path, setPath] = useState<ProjectPath | null>(null);
   // Deploy to…: closed, or open on an environment or the Research target.
   const [dialog, setDialog] = useState<{ environmentId: string | null; research: boolean } | null>(null);
@@ -209,7 +212,7 @@ function Releases({ projectId, onOrganization }: { projectId: string; onOrganiza
       .projectPath({ projectId, include: 'targets,deployments' })
       .fetch({ staleTime: 0 })
       .catch(() => null);
-    void api.nodes({ projectId, type: 'build', limit: 200, sort: 'updated' }).fetch({ staleTime: 0 }).then(
+    void api.nodes({ projectId, type: 'build', limit: 200, sort: 'updated', orgId }).fetch({ staleTime: 0 }).then(
       (p) => {
         if (!live) return;
         setBuilds(ideBuildsOf(p.nodes ?? []));
@@ -247,7 +250,7 @@ function Releases({ projectId, onOrganization }: { projectId: string; onOrganiza
     return () => {
       live = false;
     };
-  }, [api, projectId, round, onOrganization]);
+  }, [api, projectId, round, onOrganization, orgId]);
 
   const environments = useMemo(() => targets?.environments.map((x) => x.environment) ?? [], [targets]);
   const names = useTargetNames(environments, path);

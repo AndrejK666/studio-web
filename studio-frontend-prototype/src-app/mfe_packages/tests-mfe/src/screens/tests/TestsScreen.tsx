@@ -34,6 +34,7 @@ import {
   type KitAbsence,
   STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT,
   STUDIO_SHARED_PROPERTY_CONTEXT_WORKSPACE,
+  useOrganizationId,
 } from '@constructor-studio/mfe-shared';
 import { GridFailed } from '@constructor-studio/mfe-shared/grid';
 import { KitAbsentState, PageEmpty, PageLoading, ProjectPage } from '@constructor-studio/mfe-shared/page';
@@ -178,6 +179,8 @@ function ProjectTests({
   const [conformance, setConformance] = useState<Conformance | Failed | null>(null);
   // Bumped by Retry: the same reads, once more.
   const [attempt, setAttempt] = useState(0);
+  // Where the query reads the repositories; until the shell says, `/nodes` answers.
+  const orgId = useOrganizationId();
   const retry = () => {
     setError(null);
     setAbsent(null);
@@ -192,7 +195,7 @@ function ProjectTests({
     Promise.all([
       api.ciRuns({ projectId: forProject }).fetch({ staleTime: 0 }),
       api
-        .repositories({ projectId: forProject })
+        .repositories({ projectId: forProject, orgId })
         .fetch({ staleTime: 0 })
         .catch(() => null),
       pullsShown
@@ -248,7 +251,7 @@ function ProjectTests({
     return () => {
       alive = false;
     };
-  }, [projectId, workspaceId, attempt, pullsShown]);
+  }, [projectId, workspaceId, attempt, pullsShown, orgId]);
 
   const now = read?.at ?? 0;
   const main = useMemo(() => (read ? mainline(read.runs, now) : null), [read, now]);
