@@ -38,6 +38,15 @@ inventory::submit! {
         tools: mcp::tools,
     }
 }
+// Detaching a project's source: after studio-organizations' sources (80),
+// before its connections (90), where the pipeline asks for it.
+inventory::submit! {
+    crate::mcp::sdk::ToolSet {
+        gear: "studio-artifact-ingest",
+        order: 85,
+        tools: mcp::source_tools,
+    }
+}
 
 /// Every type this gear declares in the model, for the kits' claims test.
 #[cfg(test)]

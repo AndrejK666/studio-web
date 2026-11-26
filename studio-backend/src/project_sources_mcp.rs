@@ -6,12 +6,44 @@
 //! replaces `sources` alone and writes it back, so the config's other fields
 //! (its build, its settings) are kept as they are.
 
+use std::future::Future;
+use std::pin::Pin;
+
 use serde_json::{Map, Value, json};
 
 use super::PROJECT_CONFIG_TYPE;
 use crate::mcp::sdk::{
     Api, Effect, Run, Tool, ToolError, ToolFuture, object, project_id, required_text,
 };
+
+/// What a kit's gear reads of each of a project's sources, added to
+/// `project_sources` under its `key` (a port, ADR-0079 §4): the clone status
+/// is project-git's. Registered in the gear's own module with
+/// `inventory::submit! { crate::project_sources::SourceReading { … } }`.
+pub struct SourceReading {
+    /// Where each source carries it (`clone`). A list read and sent back to
+    /// `project_sources_set` keeps none of it: it is a reading, not a setting.
+    pub key: &'static str,
+    /// The gear that reads it, for readers of the registry.
+    #[allow(dead_code, reason = "named for readers of the registry")]
+    pub gear: &'static str,
+    /// The project's readings as the person may read them,
+    /// `{"items": [{"clone_url", …}]}` matched to the sources by
+    /// `clone_url`; `None` when there are none to read.
+    pub read: fn(Api, String) -> ReadingFuture,
+}
+
+pub type ReadingFuture = Pin<Box<dyn Future<Output = Option<Value>> + Send>>;
+
+inventory::collect!(SourceReading);
+
+/// Every registered reading, by key.
+fn readings() -> Vec<&'static SourceReading> {
+    let mut out: Vec<&'static SourceReading> =
+        inventory::iter::<SourceReading>.into_iter().collect();
+    out.sort_by_key(|r| r.key);
+    out
+}
 
 /// The config's entry: `/account-management/v1/tenants/{project}/metadata/{type}`.
 fn config_path(project: &str) -> Result<String, ToolError> {
@@ -78,30 +110,6 @@ pub fn tools() -> Vec<Tool> {
             experimental: true,
             run: Run::Custom(project_sources_set),
         },
-        Tool {
-            name: "project_source_detach",
-            description: "Detach one repository from the project: it leaves the project's \
-                sources and everything synced from it (issues, pull requests, files, specs' \
-                bindings) is forgotten, as one durable run. `clone_url` is the source's, from \
-                `project_sources`. Answers `run_id`; read the outcome with `task_run`. Ask \
-                your person first: it cannot be undone except by attaching and syncing the \
-                repository again.",
-            input_schema: || {
-                object(
-                    json!({
-                        "project_id": project_id(),
-                        "clone_url": { "type": "string", "description": "The source's clone URL." }
-                    }),
-                    &["project_id", "clone_url"],
-                )
-            },
-            effect: Effect::Destructive,
-            experimental: true,
-            run: Run::Post {
-                path: "/studio-artifact-ingest/v1/sources/detach",
-                query: &["project_id"],
-            },
-        },
     ]
 }
 
@@ -124,29 +132,28 @@ fn sources_of(config: &Value) -> Value {
     json!({ "sources": sources })
 }
 
-/// Where the last clone of each source is read (`artifact_ingest::clone_status`).
-const CLONE_STATUS_PATH: &str = "/studio-artifact-ingest/v1/sources/clone-status";
-
 fn project_sources(api: Api, args: Map<String, Value>) -> ToolFuture {
     Box::pin(async move {
         let project = required_text(&args, "project_id")?;
         let sources = sources_of(&read_config(&api, &project).await?);
-        // The clone status is extra: a deployment that keeps none still
-        // lists the sources.
-        let clones = api
-            .get_answer(CLONE_STATUS_PATH, &[("project_id".to_owned(), project)])
-            .await
-            .ok()
-            .filter(|answer| answer.ok())
-            .map(|answer| answer.body);
-        Ok(with_clones(sources, clones.as_ref()))
+        // The kits' readings are extra (the clone status): a deployment that
+        // keeps none still lists the sources.
+        let found = readings();
+        let read = found.iter().map(|r| (r.read)(api.clone(), project.clone()));
+        let read = futures_util::future::join_all(read).await;
+        Ok(found
+            .iter()
+            .zip(read)
+            .fold(sources, |listed, (r, items)| {
+                with_reading(listed, r.key, items.as_ref())
+            }))
     })
 }
 
-/// `listed` (`{"sources": [...]}`) with each source's `clone` from the clone
-/// status' items, matched by `clone_url`. Unchanged without them.
-fn with_clones(mut listed: Value, clones: Option<&Value>) -> Value {
-    let Some(items) = clones
+/// `listed` (`{"sources": [...]}`) with each source's `key` from a reading's
+/// items, matched by `clone_url`. Unchanged without them.
+fn with_reading(mut listed: Value, key: &str, readings: Option<&Value>) -> Value {
+    let Some(items) = readings
         .and_then(|c| c.get("items"))
         .and_then(Value::as_array)
     else {
@@ -170,21 +177,23 @@ fn with_clones(mut listed: Value, clones: Option<&Value>) -> Value {
         clone.remove("full_path");
         clone.retain(|_, v| !v.is_null());
         if let Some(entry) = source.as_object_mut() {
-            entry.insert("clone".into(), Value::Object(clone));
+            entry.insert(key.into(), Value::Object(clone));
         }
     }
     listed
 }
 
-/// `config` with `sources` replaced and nothing else touched. The `clone`
-/// that `project_sources` adds to each source is a reading, not a setting: a
-/// list read and sent back keeps none of it.
+/// `config` with `sources` replaced and nothing else touched. What
+/// `project_sources` adds to each source (its `clone`) is a reading, not a
+/// setting: a list read and sent back keeps none of it.
 fn with_sources(mut config: Value, mut sources: Value) -> Result<Value, ToolError> {
     let Some(items) = sources.as_array_mut() else {
         return Err(ToolError::new("`sources` is a list"));
     };
     for source in items.iter_mut().filter_map(Value::as_object_mut) {
-        source.remove("clone");
+        for r in inventory::iter::<SourceReading> {
+            source.remove(r.key);
+        }
     }
     if !config.is_object() {
         config = json!({});
@@ -250,7 +259,7 @@ mod tests {
             { "clone_url": "https://github.com/acme/web.git", "full_path": "acme/web",
               "state": "never" }
         ]});
-        let out = with_clones(listed.clone(), Some(&clones));
+        let out = with_reading(listed.clone(), "clone", Some(&clones));
         let api = &out["sources"][0]["clone"];
         assert_eq!(api["state"], "failed");
         assert_eq!(api["cause"], "connection_not_found");
@@ -260,7 +269,7 @@ mod tests {
         assert_eq!(out["sources"][1]["clone"], json!({ "state": "never" }));
         assert_eq!(out["sources"][1]["full_path"], "acme/web");
         // No clone status, no `clone`.
-        assert_eq!(with_clones(listed.clone(), None), listed);
+        assert_eq!(with_reading(listed.clone(), "clone", None), listed);
     }
 
     /// #1070 review: a read-modify-write through `project_sources` and
@@ -278,7 +287,7 @@ mod tests {
             { "clone_url": "https://github.com/acme/api.git", "full_path": "acme/api",
               "state": "failed", "cause": "no_connection", "action": "connect" }
         ]});
-        let read = with_clones(sources_of(&stored), Some(&clones));
+        let read = with_reading(sources_of(&stored), "clone", Some(&clones));
         assert_eq!(read["sources"][0]["clone"]["state"], "failed");
 
         let written = with_sources(stored.clone(), read["sources"].clone()).unwrap();
