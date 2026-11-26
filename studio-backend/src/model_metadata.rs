@@ -22,6 +22,16 @@
 //!   object writes refuse them, so only the gear's own rules change them.
 //! * **Inheritance.** `resolve_metadata` walks the tenant and its ancestors,
 //!   as account-management does.
+//! * **Who reads and writes.** Whoever reaches the tenant, as for the
+//!   account-management row: the caller's own context must read the tenant
+//!   (`get_tenant`, the platform's visibility rule), and then the document is
+//!   read and written as the gear ([`KeptByGear`]). Through the caller's
+//!   context the domain-object PDP asked again, by role, and on the `roles`
+//!   model a member without a grant lost every gear document — the
+//!   connection catalogue, the environments — although the gear had already
+//!   decided. The reach is checked with the caller's context as it came in,
+//!   never the one acting in the tenant's organization, which would reach
+//!   any tenant it named.
 //!
 //! Rows of a type not configured here, and every other call, go to
 //! account-management unchanged.
@@ -46,7 +56,7 @@ use toolkit_security::SecurityContext;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use crate::domain_model::port::{DomainObjects, OwnedObject, StoredObject, TypeNeed};
+use crate::domain_model::port::{DomainObjects, KeptByGear, OwnedObject, StoredObject, TypeNeed};
 
 #[resource_error(gts_id!("cf.studio._.tenant_document.v1~"))]
 pub struct StudioTenantDocumentError;
@@ -380,8 +390,11 @@ impl ModelMetadata {
         self.kinds.iter().find(|k| type_id == k.type_id)
     }
 
+    /// The model, reached as the gear: who may read or write a document is
+    /// decided before ([`Self::reached`]), as account-management decided it
+    /// for the row.
     fn port(&self) -> Option<Arc<dyn DomainObjects>> {
-        match &self.port {
+        let port = match &self.port {
             PortSource::Hub(hub) => {
                 let port = hub.get::<dyn DomainObjects>().ok();
                 if port.is_none() {
@@ -393,7 +406,16 @@ impl ModelMetadata {
             }
             #[cfg(test)]
             PortSource::Fixed(port) => Some(Arc::clone(port)),
-        }
+        };
+        port.map(KeptByGear::wrap)
+    }
+
+    /// Does the caller reach `tenant`? Asked with the context the call came
+    /// in with: account-management answers by the caller's home and
+    /// organizations, so a tenant they do not reach is not found — the
+    /// answer the account-management row gave them.
+    async fn reached(&self, ctx: &SecurityContext, tenant: Uuid) -> Result<(), CanonicalError> {
+        self.inner.get_tenant(ctx, tenant).await.map(|_| ())
     }
 
     fn split(kind: &Kind, value: &Value) -> Split {
@@ -837,6 +859,7 @@ impl AccountManagementClient for ModelMetadata {
         let (Some(kind), Some(port)) = (self.kind(&type_id), self.port()) else {
             return self.inner.get_metadata(ctx, tenant_id, type_id).await;
         };
+        self.reached(ctx, tenant_id).await?;
         let ctx = &self.in_org_of(ctx, tenant_id).await;
         self.moved(ctx, port.as_ref(), tenant_id, kind)
             .await?
@@ -867,6 +890,10 @@ impl AccountManagementClient for ModelMetadata {
         let (Some(kind), Some(port)) = (self.kind(&type_id), self.port()) else {
             return self.inner.resolve_metadata(ctx, tenant_id, type_id).await;
         };
+        // The tenant asked about, as account-management checks it; what it
+        // inherits from above is read for it, as account-management's walk
+        // does.
+        self.reached(ctx, tenant_id).await?;
         let mut at = Some(tenant_id);
         let mut seen = HashSet::new();
         while let Some(tenant) = at.filter(|t| seen.insert(*t)) {
@@ -906,6 +933,7 @@ impl AccountManagementClient for ModelMetadata {
         let (Some(kind), Some(port)) = (self.kind(&input.type_id), self.port()) else {
             return self.inner.upsert_metadata(ctx, tenant_id, input).await;
         };
+        self.reached(ctx, tenant_id).await?;
         let ctx = &self.in_org_of(ctx, tenant_id).await;
         let current = self.moved(ctx, port.as_ref(), tenant_id, kind).await?;
         let (version, legacy) = match self
@@ -980,6 +1008,7 @@ impl AccountManagementClient for ModelMetadata {
         let (Some(kind), Some(port)) = (self.kind(&type_id), self.port()) else {
             return self.inner.delete_metadata(ctx, tenant_id, type_id).await;
         };
+        self.reached(ctx, tenant_id).await?;
         let ctx = &self.in_org_of(ctx, tenant_id).await;
         if self
             .moved(ctx, port.as_ref(), tenant_id, kind)

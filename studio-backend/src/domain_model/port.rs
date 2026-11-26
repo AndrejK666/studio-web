@@ -317,6 +317,33 @@ pub fn in_memory() -> Arc<dyn DomainObjects> {
     )))))
 }
 
+/// [`in_memory`] behind the policy production runs on an organization on the
+/// `roles` model where the caller holds no grant: every caller is refused,
+/// and a gear acting as itself keeps its own records.
+#[cfg(test)]
+pub fn in_memory_without_grants() -> Arc<dyn DomainObjects> {
+    struct NoGrant;
+
+    #[async_trait]
+    impl super::access::ObjectPolicy for NoGrant {
+        async fn access(
+            &self,
+            _ctx: &SecurityContext,
+            _action: &str,
+            _entity: Option<&str>,
+        ) -> Result<super::access::Access, super::access::AccessError> {
+            Err(super::access::AccessError::Denied)
+        }
+    }
+
+    Arc::new(Objects(Arc::new(
+        DomainModelService::new(Arc::new(super::store::InMemoryDomainStore::default()))
+            .with_policy(Arc::new(super::access::GearsKeepTheirOwn(Arc::new(
+                NoGrant,
+            )))),
+    )))
+}
+
 #[async_trait]
 impl DomainObjects for Objects {
     async fn upsert(

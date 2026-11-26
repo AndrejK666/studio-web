@@ -3,7 +3,7 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use account_management_sdk::{
@@ -21,7 +21,7 @@ use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
 use super::{Kind, ModelMetadata, Part, not_found};
-use crate::domain_model::port::{DomainObjects, in_memory};
+use crate::domain_model::port::{DomainObjects, in_memory, in_memory_without_grants};
 
 const LIST: &str = "gts.cf.core.am.tenant_metadata.v1~cf.studio.test.list.v1~";
 const MAP: &str = "gts.cf.core.am.tenant_metadata.v1~cf.studio.test.map.v1~";
@@ -57,6 +57,9 @@ static KINDS: &[Kind] = &[
 struct Am {
     rows: Mutex<HashMap<(Uuid, String), (Value, i64)>>,
     parents: HashMap<Uuid, Uuid>,
+    /// Tenants the caller does not reach: `get_tenant` does not find them,
+    /// as account-management answers a tenant outside the caller's reach.
+    unreachable: HashSet<Uuid>,
 }
 
 fn ctx() -> SecurityContext {
@@ -327,6 +330,120 @@ async fn the_records_are_the_gears_and_refused_to_the_generic_writes() {
     );
 }
 
+// ── who reads and writes ─────────────────────────────────────────────────
+
+/// A person signed in to `org`, as the portal's token makes them.
+fn member_of(org: Uuid) -> SecurityContext {
+    SecurityContext::builder()
+        .subject_id(Uuid::new_v4())
+        .subject_type("user")
+        .subject_tenant_id(org)
+        .token_scopes(vec!["*".to_string()])
+        .bearer_token("member-token".to_string())
+        .build()
+        .expect("test security context")
+}
+
+/// The gear itself in `tenant`: what sees every document kept there.
+fn gear_in(tenant: Uuid) -> SecurityContext {
+    SecurityContext::builder()
+        .subject_id(Uuid::new_v4())
+        .subject_type("service")
+        .subject_tenant_id(tenant)
+        .token_scopes(vec!["*".to_string()])
+        .build()
+        .expect("test security context")
+}
+
+/// What Dev showed: an organization on the `roles` model, a member with no
+/// grant there. The domain-object PDP gives them nothing, and the connection
+/// catalogue -- a gear's document, an account-management row before it moved
+/// into the model -- answered "permission denied" on every read, so the
+/// member could neither list nor make a connection. The member reaches the
+/// tenant, so the gear reads and writes the document for them.
+#[tokio::test]
+async fn a_member_without_a_grant_reads_and_writes_a_document_of_a_tenant_they_reach() {
+    let org = Uuid::new_v4();
+    let workspace = Uuid::new_v4();
+    let mut am = Am::default();
+    am.parents.insert(workspace, org);
+    let am = Arc::new(am);
+    let port = in_memory_without_grants();
+    let m = ModelMetadata::with_port(Arc::clone(&am) as _, Arc::clone(&port), KINDS);
+    let member = member_of(org);
+
+    m.upsert_metadata(&member, org, upsert(LIST, json!({"items": [{"id": "a"}]})))
+        .await
+        .unwrap();
+    // As the caller, the model refuses: what the PDP answers without a grant.
+    let refused = port
+        .query(&member, json!({"type": "test-thing"}))
+        .await
+        .unwrap_err();
+    assert!(
+        crate::domain_model::port::is_refusal(&refused),
+        "{refused:#}"
+    );
+    let own = m
+        .get_metadata(&member, org, GtsTypeId::new(LIST))
+        .await
+        .unwrap();
+    assert_eq!(own.value["items"][0]["id"], "a");
+    // A workspace inherits its organization's, as before.
+    let inherited = m
+        .resolve_metadata(&member, workspace, GtsTypeId::new(LIST))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(inherited.value["items"][0]["id"], "a");
+}
+
+/// The gear reading as itself must not turn "names a tenant" into "reaches
+/// it": a tenant the caller does not reach is not found, for every call, and
+/// nothing is written there.
+#[tokio::test]
+async fn a_tenant_the_caller_does_not_reach_is_not_found_and_left_alone() {
+    let org = Uuid::new_v4();
+    let foreign = Uuid::new_v4();
+    let mut am = Am::default();
+    am.unreachable.insert(foreign);
+    let am = Arc::new(am);
+    let port = in_memory_without_grants();
+    let m = ModelMetadata::with_port(Arc::clone(&am) as _, Arc::clone(&port), KINDS);
+    let member = member_of(org);
+
+    let not_found = |e: CanonicalError| matches!(e, CanonicalError::NotFound { .. });
+    assert!(not_found(
+        m.get_metadata(&member, foreign, GtsTypeId::new(LIST))
+            .await
+            .unwrap_err()
+    ));
+    assert!(not_found(
+        m.resolve_metadata(&member, foreign, GtsTypeId::new(LIST))
+            .await
+            .unwrap_err()
+    ));
+    assert!(not_found(
+        m.upsert_metadata(
+            &member,
+            foreign,
+            upsert(LIST, json!({"items": [{"id": "x"}]}))
+        )
+        .await
+        .unwrap_err()
+    ));
+    assert!(not_found(
+        m.delete_metadata(&member, foreign, GtsTypeId::new(LIST))
+            .await
+            .unwrap_err()
+    ));
+    let (things, _) = port
+        .query(&gear_in(foreign), json!({"type": "test-thing"}))
+        .await
+        .unwrap_or_default();
+    assert!(things.is_empty(), "written in a foreign tenant: {things:?}");
+}
+
 // ── the fake ─────────────────────────────────────────────────────────────
 
 fn tenant(id: Uuid, parent: Option<Uuid>) -> Tenant {
@@ -410,6 +527,9 @@ impl AccountManagementClient for Am {
         Ok(())
     }
     async fn get_tenant(&self, _: &SecurityContext, id: Uuid) -> Result<Tenant, CanonicalError> {
+        if self.unreachable.contains(&id) {
+            return Err(not_found("tenant", id));
+        }
         Ok(tenant(id, self.parents.get(&id).copied()))
     }
     async fn create_tenant(
