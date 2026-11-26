@@ -10,6 +10,7 @@ export const LOOK: Record<string, { shape: 'square' | 'circle' | 'diamond' | 'tr
   design_element: { shape: 'diamond', colour: '#db2777' },
   decision: { shape: 'triangle', colour: '#7c3aed' },
   section: { shape: 'dot', colour: '#94a3b8' },
+  finding: { shape: 'circle', colour: '#0891b2' },
 };
 const OTHER = { shape: 'circle' as const, colour: '#64748b' };
 

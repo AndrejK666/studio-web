@@ -26,7 +26,7 @@ import { counts, documentsInOrder, place, without } from '../../model/findings';
 import { findingNode } from '../../model/graph';
 import { documentsOf, invalid, scopeOf, type Documents } from '../../model/scope';
 import { useSpecGraphTranslations } from '../../i18n';
-import { GraphStatus } from './GraphStatus';
+import { BuildChoice, GraphStatus, startBuild, type BuildOptions } from './GraphStatus';
 import { GraphView } from './GraphView';
 import { OntologyView } from './OntologyView';
 import { PullsView } from './PullsView';
@@ -366,6 +366,8 @@ const SetupForm: React.FC<{ projectId: string; t: Text; onDone: (p: SpecGraphPro
   const api = apiRegistry.getService(SpecGraphApiService);
   const [docs, setDocs] = useState<Documents>(documentsOf(undefined));
   const [named, setNamed] = useState(false);
+  const [buildNow, setBuildNow] = useState(true);
+  const [build, setBuild] = useState<BuildOptions>({ facts: false, contradictions: false });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // The label defaults to the first source's name (the repository the graph reads).
@@ -390,7 +392,9 @@ const SetupForm: React.FC<{ projectId: string; t: Text; onDone: (p: SpecGraphPro
     setBusy(true);
     setError(null);
     try {
-      onDone(await api.setup(projectId).fetch({ scope: scopeOf(docs) }));
+      const done = await api.setup(projectId).fetch({ scope: scopeOf(docs) });
+      if (buildNow) await startBuild(api, projectId, build);
+      onDone(done);
     } catch (err) {
       setError(message(err));
     } finally {
@@ -452,6 +456,13 @@ const SetupForm: React.FC<{ projectId: string; t: Text; onDone: (p: SpecGraphPro
           <p className={styles.muted}>
             {t('setup_scope_preview')} <code>{why ? t(why) : scopeOf(docs)}</code>
           </p>
+          <div className={styles.modes}>
+            <label className={styles.radio}>
+              <input type="checkbox" checked={buildNow} onChange={(e) => setBuildNow(e.target.checked)} />
+              {t('setup_build')}
+            </label>
+            {buildNow && <BuildChoice value={build} onChange={setBuild} t={t} />}
+          </div>
           <Button type="submit" disabled={busy || !!why}>
             {busy ? t('reading') : t('setup_submit')}
           </Button>

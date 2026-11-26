@@ -91,7 +91,7 @@ export class SpecGraphApiService extends BaseApiService {
   startRun(projectId: string) {
     return this.protocol(RestEndpointProtocol).mutation<
       { run: Run },
-      { job: 'index' | 'prepare'; params?: Record<string, unknown> }
+      { job: 'index' | 'prepare' | 'contradictions'; params?: Record<string, unknown> }
     >('POST', `${BASE}/runs?${q({ project_id: projectId })}`);
   }
 

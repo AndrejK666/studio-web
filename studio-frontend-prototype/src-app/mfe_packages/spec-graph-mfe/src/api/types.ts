@@ -113,7 +113,7 @@ export interface Run {
   revision?: string;
   params?: { base?: string; head?: string; head_rev?: string; facts?: boolean } | null;
   progress?: RunProgress | null;
-  result: (Partial<Review> & { stats?: { model_cost_usd?: number }; cost_usd?: number }) | null;
+  result: (Partial<Review> & { stats?: { model_cost_usd?: number }; cost_usd?: number; confirmed?: number; judged?: number }) | null;
 }
 
 /** The latest review of a pull request branch: the deterministic one kept, or the latest model run. */

@@ -71,7 +71,9 @@ describe('SpecGraphScreen', () => {
 
   it('offers the setup form for a project the service does not know', async () => {
     const setup = vi.fn(() => Promise.resolve({ project_id: 'p1', registered: true, project: null, service: null }));
+    const start = vi.fn((..._args: unknown[]) => Promise.resolve({ run: { id: 'r1', job: 'index', state: 'queued' } }));
     Object.assign(service, {
+      startRun: () => ({ fetch: start }),
       project: query({ project_id: 'p1', registered: false, project: null, service: null }),
       setup: () => ({ fetch: setup }),
       check: () => ({ fetch: () => Promise.resolve({ revision: 'abc', count: 0, blocking: 0, dismissed: 0, documents: [] }) }),
@@ -85,6 +87,9 @@ describe('SpecGraphScreen', () => {
     expect(screen.getByText('gears/a gears/b', { selector: 'code' })).toBeTruthy();
     fireEvent.click(screen.getByText('setup_submit'));
     await waitFor(() => expect(setup).toHaveBeenCalledWith({ scope: 'gears/a gears/b' }));
+    // the graph is built at once: the structure and the deterministic findings, no model unless asked
+    await waitFor(() => expect(start).toHaveBeenCalledWith({ job: 'index', params: { facts: false, findings: true } }));
+    expect(start).toHaveBeenCalledTimes(1);
     expect(await screen.findByText('nothing')).toBeTruthy();
   });
 
@@ -109,7 +114,17 @@ describe('SpecGraphScreen', () => {
     expect(await screen.findByText('link.resolves title')).toBeTruthy();
     expect(screen.queryByText('show_in_graph')).toBeNull();
     fireEvent.click(screen.getByText('status_build'));
-    await waitFor(() => expect(start).toHaveBeenCalledWith({ job: 'index', params: { facts: false } }));
+    await waitFor(() => expect(start).toHaveBeenCalledWith({ job: 'index', params: { facts: false, findings: true } }));
+    // with contradictions: the facts are extracted first, then the judge runs over them
+    start.mockClear();
+    fireEvent.click(screen.getByLabelText('build_contradictions'));
+    expect((screen.getByLabelText('build_facts') as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(screen.getByText('status_build'));
+    await waitFor(() => expect(start).toHaveBeenCalledTimes(2));
+    expect(start.mock.calls.map((c) => c[0])).toEqual([
+      { job: 'index', params: { facts: true, findings: true } },
+      { job: 'contradictions' },
+    ]);
   });
 
   it('lists the findings now by document, blocking first, and a decision takes one out', async () => {

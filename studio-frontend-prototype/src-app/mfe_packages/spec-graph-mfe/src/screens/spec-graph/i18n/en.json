@@ -6,7 +6,7 @@
   "refresh": "Read again",
   "reading": "Reading…",
   "now_hint": "Every deterministic finding at the project's branch: traceability, links and anchors, superseded decisions, the repository's own rules. These may gate a pull request.",
-  "stored_hint": "What the project's runs stored in its graph: contradictions the judges confirmed, with both passages, and the other judges' findings. A model's judgment: advisory until its rule is calibrated.",
+  "stored_hint": "What the project's runs stored in its graph: every deterministic finding at the indexed revision (an index replaces them, so a fixed one leaves), the contradictions the judge confirmed, with both passages, and the other judges' findings. A model's judgment is advisory until its rule is calibrated.",
   "blocking_one": "{count} blocking",
   "blocking_many": "{count} blocking",
   "findings_one": "{count} finding",
@@ -134,5 +134,13 @@
   "ontology_as": "Show the ontology as",
   "ontology_as_table": "Table",
   "ontology_as_graph": "Graph",
-  "ontology_graph_hint": "Each node type is a node, sized by how many this project's graph holds; each edge type an edge between the types it connects (a judge's conclusion in purple). Types with 0 appear in later runs: facts and concepts with an index that extracts facts, findings with a contradictions run, the judges' edges with the realization and status judges."
+  "ontology_graph_hint": "Each node type is a node, sized by how many this project's graph holds; each edge type an edge between the types it connects (a judge's conclusion in purple). Types with 0 appear in later runs: facts and concepts with an index that extracts facts, findings with a contradictions run, the judges' edges with the realization and status judges.",
+  "build_facts": "with facts (model)",
+  "build_facts_hint": "Also extract the facts every document states (limits, owners, chosen options) with a model: minutes and model cost, cached, so a re-index pays only for changed pieces. Needed by the contradictions run.",
+  "build_contradictions": "and find contradictions (model)",
+  "build_contradictions_hint": "Then judge the whole corpus for passages that give different values for one thing; the confirmed conflicts are stored as findings (Stored, and on the graph). Minutes and model cost.",
+  "status_judging": "Contradictions: {line}",
+  "status_judged": "Contradictions: {count} confirmed at {revision}",
+  "status_judge_failed": "The last contradictions run failed: {error}",
+  "setup_build": "Build the graph now (structure and deterministic findings, no model)"
 }
