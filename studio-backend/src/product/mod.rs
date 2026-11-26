@@ -45,6 +45,15 @@ inventory::submit! {
     }
 }
 
+// The catalogue graph's node types this gear writes, and the catalogue
+// does not.
+inventory::submit! {
+    crate::catalog_graph::HeldNodeTypes {
+        gear: "studio-product",
+        type_ids: &crate::catalog_graph::gts::PRODUCT_NODE_TYPES,
+    }
+}
+
 /// This gear's documents as the inventory records them.
 fn inventory_entries() -> Vec<serde_json::Value> {
     use crate::gts_inventory::{BOOT_FAILS, TYPES_REGISTRY, entry};
