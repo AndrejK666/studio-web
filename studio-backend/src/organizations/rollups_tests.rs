@@ -30,8 +30,10 @@ use uuid::Uuid;
 use super::{
     ORGANIZATION_TENANT_TYPE, PROJECT_TENANT_TYPE, Rollup, Sources, WORKSPACE_TENANT_TYPE,
 };
-use crate::artifact_ingest::port::{ArtifactCounter, ProjectSignalSource, ProjectSignals};
-use crate::documents::port::{DocumentCounter, ProjectDocumentCounts, SpecSummary};
+use crate::organizations::port::{
+    ArtifactCounter, DocumentCounter, ProjectDocumentCounts, RowSignalSource, RowSignals,
+    SpecSummary,
+};
 
 const ORG: Uuid = Uuid::from_u128(0x0a);
 const WS_1: Uuid = Uuid::from_u128(0x1a);
@@ -331,22 +333,13 @@ impl ArtifactCounter for Counted {
 }
 
 #[async_trait]
-impl ProjectSignalSource for Counted {
-    async fn project_signals(
-        &self,
-        _: &SecurityContext,
-        _: &str,
-        _: usize,
-    ) -> anyhow::Result<ProjectSignals> {
-        self.per_project.fetch_add(1, Ordering::SeqCst);
-        anyhow::bail!("not per project")
-    }
-    async fn project_signals_in(
+impl RowSignalSource for Counted {
+    async fn row_signals_in(
         &self,
         ctx: &SecurityContext,
         projects: &[String],
         _: usize,
-    ) -> HashMap<String, ProjectSignals> {
+    ) -> HashMap<String, RowSignals> {
         self.read_in.lock().unwrap().push(ctx.subject_tenant_id());
         self.batches.fetch_add(1, Ordering::SeqCst);
         self.named.fetch_add(projects.len(), Ordering::SeqCst);

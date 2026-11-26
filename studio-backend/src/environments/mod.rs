@@ -73,6 +73,7 @@ mod rest;
 mod secret_needs; // the configuration secrets a product needs in an environment
 mod secret_preflight; // a secret the description reads: made, or the deploy refused
 mod service;
+mod status_part; // its part of a project's status (ADR-0079)
 mod store;
 mod workflow; // the build workflow proposed to a product's repository (ADR-0048)
 

@@ -8,9 +8,3 @@
 # This list only shrinks. Do not add a line: contribute through a core port
 # instead (MCP tools, Overview blocks, access rules, connector drivers,
 # background work, cost metering). When you remove a reference, remove its line.
-organizations -> artifact_ingest
-organizations -> documents
-organizations -> environments
-organizations -> insight
-organizations -> product
-organizations -> usage

@@ -31,7 +31,7 @@ pub const GIT_KIT: &str = "project-git";
 /// projects.
 const WORKSPACES_ROUTE: &str = "/organization/workspaces";
 /// The account kinds a pull request's login is looked up as.
-const ACCOUNT_KINDS: [&str; 2] = ["github", "gitlab"];
+pub(super) const ACCOUNT_KINDS: [&str; 2] = ["github", "gitlab"];
 /// Queues said as needs, longest first.
 const QUEUES_SAID: usize = 6;
 

@@ -18,6 +18,7 @@ mod brief;
 mod classify;
 #[cfg(test)]
 mod confirm_types_tests;
+mod creation_steps; // its part of a project's creation (ADR-0079)
 mod data;
 #[cfg(test)]
 mod data_tests;
@@ -53,6 +54,7 @@ mod spec_model;
 mod spec_rows;
 mod spec_texts;
 mod stamp;
+mod status_part; // its part of a project's status (ADR-0079)
 #[cfg(test)]
 mod sync_analysis_tests;
 mod uploads;

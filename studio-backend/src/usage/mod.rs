@@ -22,6 +22,7 @@
 
 mod budgets;
 mod costs;
+mod metering; // its meter behind the cost metering port (ADR-0079)
 mod prices;
 mod rest;
 mod service;

@@ -301,21 +301,9 @@ pub fn counts(rows: &[SpecRow]) -> Vec<(Filter, u32)> {
     out
 }
 
-/// How a project's specs stand, for its one cell in the projects table.
-///
-/// A spec is what the Bound queue lists: a repository file somebody confirmed
-/// or chose a type for, or a document written in Studio. A file a detector only
-/// proposed is not one yet — it is waiting in Needs review.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct SpecSummary {
-    pub specs: u32,
-    /// Of those, written in Studio rather than found in a repository.
-    pub authored: u32,
-    /// Of those, with a validation verdict of either kind.
-    pub checked: u32,
-    /// Of the checked, the ones that do not conform.
-    pub failing: u32,
-}
+/// How a project's specs stand, for its one cell in the projects table: the
+/// core's rollup counts port (ADR-0079).
+pub use crate::organizations::port::SpecSummary;
 
 /// Fold `(state, verdict)` per binding and the verdict per authored document.
 ///

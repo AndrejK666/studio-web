@@ -39,9 +39,11 @@ use toolkit_odata::ODataQuery;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
+use super::rollup_port::{
+    ArtifactCounter, DocumentCounter, ProjectDocumentCounts, RowSignalSource, RowSignals,
+    SpecSummary,
+};
 use crate::access_config::AccessConfig;
-use crate::artifact_ingest::port::{ArtifactCounter, ProjectSignalSource, ProjectSignals};
-use crate::documents::port::{DocumentCounter, ProjectDocumentCounts, SpecSummary};
 use crate::kit_registry::port::ProjectPhases;
 use crate::user_profile::{OrganizationRoster, RosterMember};
 
@@ -113,7 +115,7 @@ pub struct Rollup {
     pub specs: Option<SpecSummary>,
     /// Projects only: open findings and comments, pull requests over the last
     /// [`ACTIVITY_DAYS`] days, and the last thing that happened.
-    pub signals: Option<ProjectSignals>,
+    pub signals: Option<RowSignals>,
     /// Projects only: the people who may work in it — see [`team_of`] for
     /// what that means under each access model.
     pub team: Option<u32>,
@@ -159,7 +161,7 @@ pub struct Sources {
     pub am: Arc<dyn AccountManagementClient>,
     pub documents: Option<Arc<dyn DocumentCounter>>,
     pub artifacts: Option<Arc<dyn ArtifactCounter>>,
-    pub signals: Option<Arc<dyn ProjectSignalSource>>,
+    pub signals: Option<Arc<dyn RowSignalSource>>,
     /// studio-user's memberships: who belongs to the organization, which is
     /// what a project's team is counted from (ADR-0011 §2).
     pub roster: Option<Arc<dyn OrganizationRoster>>,
@@ -383,7 +385,7 @@ impl Sources {
         };
         let signals = async {
             match &self.signals {
-                Some(source) => source.project_signals_in(ctx, &scopes, ACTIVITY_DAYS).await,
+                Some(source) => source.row_signals_in(ctx, &scopes, ACTIVITY_DAYS).await,
                 None => HashMap::new(),
             }
         };
@@ -519,7 +521,7 @@ impl Sources {
 struct ProjectCounts {
     documents: HashMap<Uuid, ProjectDocumentCounts>,
     findings: HashMap<String, u32>,
-    signals: HashMap<String, ProjectSignals>,
+    signals: HashMap<String, RowSignals>,
     phases: HashMap<Uuid, String>,
 }
 

@@ -1011,11 +1011,7 @@ pub struct RollupQuery {
 }
 
 fn rollup_dto(r: super::rollups::Rollup) -> RollupDto {
-    let pulls = r
-        .signals
-        .as_ref()
-        .filter(|s| s.pulls_known)
-        .map(|s| &s.pulls);
+    let pulls = r.signals.as_ref().and_then(|s| s.pulls.as_ref());
     let last = r.signals.as_ref().and_then(|s| s.last_event.as_ref());
     RollupDto {
         project_kind: r.project_kind,
@@ -1593,7 +1589,7 @@ pub(super) async fn compute_project_status(
         (
             "releases",
             read.delivery.is_none(),
-            Some(status::DELIVERY_KIT),
+            crate::project_path::stage_kit("deploy"),
         ),
     ] {
         if missing && kits.has(kit) {

@@ -301,10 +301,7 @@ fn the_whole_path_is_the_status_then_the_delivery_with_one_focus() {
 fn a_kit_that_does_not_apply_leaves_its_stages_out_and_the_numbers_stay() {
     let mut facts = status_facts();
     facts.findings = Some(FindingFacts { open: 0, high: 0 });
-    let kits = Kits::Only(vec![
-        status::PRODUCT_KIT.to_owned(),
-        status::DELIVERY_KIT.to_owned(),
-    ]);
+    let kits = Kits::Only(vec!["project-product".to_owned(), "delivery".to_owned()]);
     let steps = status::project_path_for(&facts, &kits);
     let up = upstream(&steps, &facts);
     let down = delivery_stages(&DeliveryFacts {
