@@ -214,6 +214,7 @@
   "org_title": "Organization",
   "org_about": "One tenant per organization (the admin hierarchy governs management, never data); workspaces and members live inside it. Switch organizations in the path bar.",
   "org_new": "New organization",
+  "org_new_platform_only": "Organizations sit directly under the platform, so only a platform administrator can create one. Ask a platform administrator if you need a new organization.",
   "org_all": "All organizations",
   "org_search": "Search organizations",
   "org_none": "No organizations yet.",
