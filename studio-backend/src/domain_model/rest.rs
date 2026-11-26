@@ -1385,6 +1385,8 @@ async fn revert_model(
 #[toolkit_macros::api_dto(request)]
 pub struct QueryObjectsRequest {
     /// The type to read: an ontology id (`project`), a node type id or its leaf.
+    /// The answer holds objects of every type that extends it too, each row
+    /// naming its own type as `entity`; `_type` in `where` narrows by it.
     #[serde(rename = "type")]
     pub type_ref: String,
     /// The project the objects belong to (its tenant id), as `POST /objects`
@@ -1392,10 +1394,18 @@ pub struct QueryObjectsRequest {
     /// what the caller may read, not by this.
     #[serde(default)]
     pub project_id: Option<String>,
+    /// Several projects at once (their tenant ids, at most 200): objects of
+    /// any of them, in one read. Not with `project_id`. Each must be one the
+    /// caller may read, or the whole request is refused with a 403 naming it.
+    #[serde(default)]
+    pub project_ids: Option<Vec<String>>,
     /// A boolean expression over the type's fields:
     /// `{"status": {"_eq": "active"}}`, combined with `_and`, `_or`, `_not`.
     /// Operators: `_eq _neq _gt _gte _lt _lte _in _nin _contains _is_null`.
     /// `id` is the object's own id. A field the type does not declare is a 400.
+    /// `{"_type": {"_in": ["deals-project"]}}` (also `_eq`, `_neq`, `_nin`)
+    /// tests the object's concrete type, the `entity` its row names: the
+    /// queried type or one extending it.
     /// A declared relation's name in place of a field filters by the objects one
     /// hop away: `{"delivers": {"status": {"_eq": "active"}}}` keeps the rows
     /// that deliver an active project (`~delivers` reads the relation backwards);
@@ -1654,7 +1664,7 @@ async fn query_objects(
     let query = Query {
         type_ref: req.type_ref,
         scope: req.project_id,
-        scopes: None,
+        scopes: req.project_ids,
         offset: req.offset,
         cursor: req.cursor,
         selection: Selection {
@@ -1697,8 +1707,13 @@ async fn query_objects(
     }
     let outcome = handle.0.query(&ctx, &query).await.map_err(|e| match e {
         QueryError::Invalid(m) => bad(m),
-        QueryError::Failed(e) => access_problem(&e)
-            .unwrap_or_else(|| CanonicalError::internal(format!("{e:#}")).create()),
+        QueryError::Failed(e) => match e.downcast_ref::<super::query::ProjectNotReadable>() {
+            Some(p) => StudioDomainModelError::permission_denied()
+                .with_reason(format!("DOMAIN_PROJECT_NOT_READABLE:{}", p.0))
+                .create(),
+            None => access_problem(&e)
+                .unwrap_or_else(|| CanonicalError::internal(format!("{e:#}")).create()),
+        },
     })?;
     Ok(Json(QueryObjectsResponse {
         items: outcome.rows.items.iter().map(|r| r.to_json()).collect(),
@@ -1888,6 +1903,11 @@ pub fn register_routes(
              three levels, and optionally counted by group (`aggregate`: `group_by` \
              fields or timestamp buckets, with `sum`, `avg`, `min`, `max` per group). \
              A `where` may filter by a related object's fields one relation away. \
+             A type reads the types that extend it too; `_type` in `where` narrows \
+             by the concrete type. `project_ids` reads several projects at once, \
+             each one the caller may read. Each type an `include` or a related \
+             filter reaches is read under the caller's own grant for that type: \
+             objects of a type they may not read are left out, with a warning. \
              Pages go by \
              cursor: an answer with more rows carries `next_cursor`, sent back as \
              `cursor` for the next page (`offset` still works meanwhile). Every field \

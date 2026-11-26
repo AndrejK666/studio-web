@@ -4,8 +4,15 @@
  * (`QueryObjectsRequest`, `QueryObjectsResponse`, `MutateObjectsRequest`), and
  * the few requests the screens build from the live model — pure, so they are
  * tested without a server.
+ *
+ * Each shape has a typed twin keyed by the type's name ({@link DomainQueryOf},
+ * {@link DomainRowOf}, {@link DomainResultOf}): for a type `model.gen.ts`
+ * knows, `fields`, `order_by` and `include` are checked against it and a row's
+ * `value` has its fields; any other name (a kit's type) reads untyped, as the
+ * plain shapes do.
  */
 
+import type { DomainEntities, DomainEntity, DomainRelations } from './model.gen';
 import { fieldsOfModel, type DomainModel, type ModelField } from './runtime';
 
 export type SortDirection = 'asc' | 'desc';
@@ -21,7 +28,8 @@ export interface DomainSelection {
    * Hasura-style: `{status: {_eq: 'active'}}`, `_and` / `_or` / `_not`. A
    * declared relation in place of a field filters by the objects one hop
    * away (`{delivers: {status: {_eq: 'active'}}}`, backwards with `~`); on
-   * the root only.
+   * the root only. `{_type: {_in: ['deals-project']}}` tests the object's
+   * concrete type (the row's `entity`): the queried type or one extending it.
    */
   where?: Record<string, unknown>;
   order_by?: DomainOrderBy[];
@@ -32,10 +40,18 @@ export interface DomainSelection {
 }
 
 export interface DomainQueryRequest extends DomainSelection {
-  /** An ontology id (`project`), a node type id or its leaf. */
+  /**
+   * An ontology id (`project`), a node type id or its leaf. The answer holds
+   * the objects of every type extending it too, each row naming its own.
+   */
   type: string;
   /** The workspace or project the objects were created in (its tenant id). */
   project_id?: string;
+  /**
+   * Several projects at once (at most 200), not with `project_id`. One the
+   * caller may not read refuses the whole request (403).
+   */
+  project_ids?: string[];
   offset?: number;
   /** The previous page's `next_cursor`: the rows after it (keyset paging). */
   cursor?: string;
@@ -98,6 +114,66 @@ export interface DomainQueryResult extends DomainRowSet {
   next_cursor?: string | null;
   /** With `aggregate`: the matches counted (and folded) per group. */
   groups?: DomainGroup[] | null;
+}
+
+// ── Typed by the generated model ──────────────────────────────────────────
+
+/**
+ * A row's `value` for type `T`: its generated interface where `model.gen.ts`
+ * has the type (still indexable, since a subtype's row carries more fields),
+ * a free record otherwise.
+ */
+export type DomainValueOf<T extends string> = [T] extends [DomainEntity]
+  ? DomainEntities[T] & Record<string, unknown>
+  : Record<string, unknown>;
+
+/** The fields `fields` and `order_by` may name on `T`: its own and `id`; any string for a type the generated model does not have. */
+export type DomainFieldOf<T extends string> = [T] extends [DomainEntity]
+  ? (keyof DomainEntities[T] & string) | 'id' | `${keyof DomainEntities[T] & string}.${string}`
+  : string;
+
+/** A relation named backwards (`~delivers`) or qualified (`team.delivers`): not checked here, the gear checks it. */
+type LooseRelation = `~${string}` | `${string}.${string}`;
+
+/** `include` on `T`: each relation the generated model declares, with its target's selection. */
+export type DomainIncludeOf<T extends string> = [T] extends [DomainEntity]
+  ? {
+      [R in keyof DomainRelations[T] & string]?: DomainSelectionOf<DomainRelations[T][R] & string>;
+    } & { [loose: LooseRelation]: DomainSelection }
+  : Record<string, DomainSelection>;
+
+export interface DomainOrderByOf<T extends string> {
+  field: DomainFieldOf<T>;
+  direction?: SortDirection;
+}
+
+/** {@link DomainSelection} checked against type `T`. */
+export interface DomainSelectionOf<T extends string> {
+  where?: Record<string, unknown>;
+  order_by?: DomainOrderByOf<T>[];
+  fields?: DomainFieldOf<T>[];
+  include?: DomainIncludeOf<T>;
+  limit?: number;
+}
+
+/** {@link DomainQueryRequest} for type `T`. */
+export interface DomainQueryOf<T extends string> extends DomainSelectionOf<T> {
+  type: T;
+  project_id?: string;
+  project_ids?: string[];
+  offset?: number;
+  cursor?: string;
+  aggregate?: DomainAggregate;
+}
+
+/** {@link DomainQueryRow} of type `T`. */
+export interface DomainRowOf<T extends string> extends Omit<DomainQueryRow, 'value'> {
+  value: DomainValueOf<T>;
+}
+
+/** {@link DomainQueryResult} of type `T`. */
+export interface DomainResultOf<T extends string> extends Omit<DomainQueryResult, 'items'> {
+  items: DomainRowOf<T>[];
 }
 
 export type DomainOperation =
