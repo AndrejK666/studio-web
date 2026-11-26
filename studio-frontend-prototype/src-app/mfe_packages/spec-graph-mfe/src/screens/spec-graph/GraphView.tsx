@@ -7,9 +7,10 @@
  * from a finding ("Show in graph"). Below the map: the node's own passage, and
  * each judge's conclusion with its quote and provenance.
  *
- * Two more pictures of the same graph: **Depth**, everything up to 2-4 hops
- * from the node (a slider), and **Whole graph**, every node; both laid out by
- * force, with sections folded into their documents unless asked for. Before
+ * Two more pictures of the same graph, drawn by sigma.js: **Depth**, everything
+ * up to 2-4 hops from the node (a slider), laid out by ForceAtlas2; and **Whole
+ * graph**, every node, as one island per community, coloured by type or by
+ * community. Sections fold into their documents unless asked for. Before
  * the first index run the graph is empty, and the view says so.
  */
 
@@ -20,7 +21,7 @@ import { SpecGraphApiService } from '../../api/SpecGraphApiService';
 import type { GraphNode, Neighbors, Picture, SearchHit } from '../../api/types';
 import { foldSections } from '../../model/collapse';
 import { documentOf, kindOf, label, side, type Side } from '../../model/graph';
-import { GraphPicture } from './GraphPicture';
+import { GraphCanvas, type Colouring } from './GraphCanvas';
 import { useSpecGraphTranslations } from '../../i18n';
 import styles from './SpecGraphScreen.module.css';
 import { refusalText } from '@constructor-studio/mfe-shared';
@@ -64,6 +65,7 @@ export const GraphView: React.FC<{
   const [mode, setMode] = useState<GraphMode>('neighbours');
   const [depth, setDepth] = useState(DEPTH.start);
   const [fold, setFold] = useState(true);
+  const [colouring, setColouring] = useState<Colouring>('cluster');
   const [picture, setPicture] = useState<{ ask: string; picture: Picture | null; error?: string } | null>(null);
   const current = trail.length ? trail[trail.length - 1] : null;
   const total = counts ? Object.values(counts).reduce((a, b) => a + b, 0) : null;
@@ -167,6 +169,15 @@ export const GraphView: React.FC<{
             {t('graph_fold')}
           </label>
         )}
+        {mode === 'whole' && (
+          <label className={styles.radio}>
+            {t('graph_colour')}
+            <select className={styles.input} value={colouring} onChange={(e) => setColouring(e.target.value as Colouring)}>
+              <option value="cluster">{t('graph_colour_cluster')}</option>
+              <option value="type">{t('graph_colour_type')}</option>
+            </select>
+          </label>
+        )}
       </div>
       <form className={styles.setup} onSubmit={(e) => void search(e)}>
         <label className={styles.baseField}>
@@ -210,7 +221,14 @@ export const GraphView: React.FC<{
       {drawn && (
         <>
           {drawn.truncated && <p className={styles.muted}>{t('graph_picture_truncated')}</p>}
-          <GraphPicture picture={drawn} centre={mode === 'depth' ? centreKey : undefined} onOpen={openFromPicture} t={t} />
+          <GraphCanvas
+            picture={drawn}
+            layout={mode === 'whole' ? 'islands' : 'around'}
+            centre={mode === 'depth' ? centreKey : undefined}
+            colouring={mode === 'whole' ? colouring : 'type'}
+            onOpen={openFromPicture}
+            t={t}
+          />
         </>
       )}
     </>

@@ -124,5 +124,11 @@
   "last_review": "Последнее ревью: {what}, {at}",
   "status_prepare_failed": "Последняя подготовка упала: {error}",
   "stage_embeddings_cache": "чтение кэша эмбеддингов",
-  "stage_cached": "из кэша"
+  "stage_cached": "из кэша",
+  "graph_full_screen": "На весь экран",
+  "graph_clusters": "кластеров: {count}",
+  "graph_links": "связей: {count}",
+  "graph_colour": "Цвет",
+  "graph_colour_cluster": "по кластеру",
+  "graph_colour_type": "по типу"
 }

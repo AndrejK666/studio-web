@@ -10,7 +10,7 @@ import React from 'react';
 import { Badge, Card, CardContent, CardHeader, CardTitle } from '@gears-frontx/ui-kit';
 import type { Ontology } from '../../api/types';
 import { useSpecGraphTranslations } from '../../i18n';
-import { lookOf } from './GraphPicture';
+import { lookOf } from '../../model/look';
 import styles from './SpecGraphScreen.module.css';
 
 type Text = ReturnType<typeof useSpecGraphTranslations>['t'];

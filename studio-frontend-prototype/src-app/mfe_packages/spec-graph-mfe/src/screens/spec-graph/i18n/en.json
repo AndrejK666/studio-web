@@ -124,5 +124,11 @@
   "last_review": "Last review: {what}, {at}",
   "status_prepare_failed": "The last preparation failed: {error}",
   "stage_embeddings_cache": "reading the embeddings cache",
-  "stage_cached": "from the cache"
+  "stage_cached": "from the cache",
+  "graph_full_screen": "Full screen",
+  "graph_clusters": "{count} clusters",
+  "graph_links": "{count} links",
+  "graph_colour": "Colour",
+  "graph_colour_cluster": "by cluster",
+  "graph_colour_type": "by type"
 }

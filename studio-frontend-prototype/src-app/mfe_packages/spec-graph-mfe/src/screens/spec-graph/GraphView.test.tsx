@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { service } = vi.hoisted(() => ({ service: {} as Record<string, unknown> }));
@@ -6,6 +6,34 @@ const { service } = vi.hoisted(() => ({ service: {} as Record<string, unknown> }
 vi.mock('@gears-frontx/react', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@gears-frontx/react')>()),
   apiRegistry: { getService: () => service },
+}));
+
+// jsdom has no WebGL: a stand-in for sigma keeps the graph it was given and its handlers
+type Drawn = { graph: { nodes: () => string[] }; handlers: Record<string, (e: { node: string }) => void> };
+const { drawn } = vi.hoisted(() => ({ drawn: [] as Drawn[] }));
+vi.mock('sigma', () => ({
+  default: class {
+    graph: { nodes: () => string[] };
+    handlers: Record<string, (e: { node: string }) => void> = {};
+    constructor(graph: { nodes: () => string[] }) {
+      this.graph = graph;
+      drawn.push(this);
+    }
+    on(name: string, f: (e: { node: string }) => void) {
+      this.handlers[name] = f;
+    }
+    refresh() {}
+    kill() {}
+    getCamera() {
+      return { on() {}, animate() {}, animatedReset() {}, getState: () => ({ ratio: 1 }) };
+    }
+    getNodeDisplayData() {
+      return { x: 0, y: 0 };
+    }
+    framedGraphToViewport() {
+      return { x: 0, y: 0 };
+    }
+  },
 }));
 
 import { GraphView } from './GraphView';
@@ -112,19 +140,22 @@ describe('GraphView', () => {
         }),
     }));
     Object.assign(service, { subgraph, overview });
+    drawn.length = 0;
     render(<GraphView projectId="p1" start={REQ} counts={{ requirement: 1, section: 1 }} t={t} />);
     fireEvent.click(screen.getByText('graph_mode_depth'));
     await waitFor(() => expect(subgraph).toHaveBeenCalledWith(expect.objectContaining({ key: REQ, depth: 2 })));
-    expect(await screen.findByLabelText('Chat service')).toBeTruthy();
-    // sections fold into their documents
-    expect(screen.getByLabelText('PRD.md')).toBeTruthy();
+    await waitFor(() => expect(drawn.length).toBeGreaterThan(0));
+    // sections fold into their documents: the section became its document's node
+    expect(drawn[drawn.length - 1].graph.nodes().sort()).toEqual([SVC, REQ, 'doc:gears/mini-chat/docs/PRD.md'].sort());
+    expect(screen.getByText(/graph_size/)).toBeTruthy();
     fireEvent.change(screen.getByRole('slider'), { target: { value: '4' } });
     await waitFor(() => expect(subgraph).toHaveBeenCalledWith(expect.objectContaining({ depth: 4 })));
     fireEvent.click(screen.getByText('graph_mode_whole'));
     await waitFor(() => expect(overview).toHaveBeenCalledWith({ projectId: 'p1', types: 'requirement,section' }));
-    expect(await screen.findByLabelText('A')).toBeTruthy();
-    // a node of the whole graph opens to a depth
-    fireEvent.click(screen.getByLabelText('A'));
+    await waitFor(() => expect(drawn[drawn.length - 1].graph.nodes()).toEqual(['doc:a.md']));
+    expect(screen.getByRole('combobox')).toBeTruthy();   // colour by cluster or by type
+    // a click on a node of the whole graph opens it to a depth
+    act(() => drawn[drawn.length - 1].handlers.clickNode({ node: 'doc:a.md' }));
     await waitFor(() => expect(subgraph).toHaveBeenCalledWith(expect.objectContaining({ key: 'doc:a.md' })));
   });
 
