@@ -122,5 +122,7 @@
   "last_running": "идёт",
   "last_model": "С моделью: {what}, {at}",
   "last_review": "Последнее ревью: {what}, {at}",
-  "status_prepare_failed": "Последняя подготовка упала: {error}"
+  "status_prepare_failed": "Последняя подготовка упала: {error}",
+  "stage_embeddings_cache": "чтение кэша эмбеддингов",
+  "stage_cached": "из кэша"
 }

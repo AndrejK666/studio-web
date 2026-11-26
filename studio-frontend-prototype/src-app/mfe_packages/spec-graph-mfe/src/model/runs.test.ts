@@ -20,4 +20,8 @@ describe('runs on the page', () => {
     expect(elapsed('2026-11-26T11:00:00Z', Date.parse('2026-11-26T11:03:07Z'))).toBe('3:07');
     expect(elapsed(null)).toBeNull();
   });
+
+  it('reads a stage with nothing to do as such', () => {
+    expect(progressOf(run('running', { progress: { stage: 'embeddings', done: 0, total: 0 } }))).toEqual({ stage: 'embeddings', done: 0, total: 0 });
+  });
 });

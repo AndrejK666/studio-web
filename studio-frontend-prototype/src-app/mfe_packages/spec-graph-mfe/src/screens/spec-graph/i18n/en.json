@@ -122,5 +122,7 @@
   "last_running": "running",
   "last_model": "With model: {what}, {at}",
   "last_review": "Last review: {what}, {at}",
-  "status_prepare_failed": "The last preparation failed: {error}"
+  "status_prepare_failed": "The last preparation failed: {error}",
+  "stage_embeddings_cache": "reading the embeddings cache",
+  "stage_cached": "from the cache"
 }

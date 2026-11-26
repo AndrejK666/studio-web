@@ -26,7 +26,9 @@ const message = (e: unknown) => refusalText(e) ?? (e instanceof Error ? e.messag
 /** How a run reads: `facts 40/85 · 3:07`. */
 export function runLine(r: Run, t: Text): string {
   const p = progressOf(r);
-  const counter = p ? `${t(`stage_${p.stage}`)}${p.total ? ` ${p.done ?? 0}/${p.total}` : ''}` : t(`state_${r.state}`);
+  const counter = p
+    ? `${t(`stage_${p.stage}`)}${p.total ? ` ${p.done ?? 0}/${p.total}` : p.total === 0 ? ` ${t('stage_cached')}` : ''}`
+    : t(`state_${r.state}`);
   const time = elapsed(r.started ?? r.created);
   return time ? `${counter} · ${time}` : counter;
 }
