@@ -5,7 +5,7 @@
 #
 # Before it: the Secret `studio-spec-graph` (values.yaml) and the Keycloak client `spec-graph`.
 image:
-  tag: "0.1.1"
+  tag: "0.1.2"
 studio:
   gatewayUrl: http://studio-studio-web-backend/cf
   tokenUrl: https://studio-dev.cfabric.org/auth/realms/studio/protocol/openid-connect/token
