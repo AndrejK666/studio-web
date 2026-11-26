@@ -257,6 +257,7 @@ impl RecentRuns for TaskService {
         let query = service::RunQuery {
             state: None,
             task_type: None,
+            project_id: None,
             offset: 0,
             limit,
         };

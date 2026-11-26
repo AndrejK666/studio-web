@@ -373,3 +373,62 @@ async fn a_run_filed_under_an_organization_is_cancelled_and_retried_there() {
     );
     handle.stop().await;
 }
+
+/// A project's Sources tab asks for the runs of that project only: the
+/// listing matches `payload.project_id` and leaves the organization's other
+/// runs, and runs that name no project, out.
+#[tokio::test]
+async fn the_listing_narrows_to_the_runs_that_name_a_project() {
+    let (svc, _db, handle) = service("tasks_list_by_project").await;
+    let org = Uuid::new_v4();
+    let caller = ctx(org);
+    let project = Uuid::new_v4();
+    let other = Uuid::new_v4();
+    let of = |project: Option<Uuid>, repo: &'static str| NewRun {
+        tenant: org,
+        task_type: TASK_TYPE,
+        payload: match project {
+            Some(p) => json!({ "project_id": p.to_string(), "repo_full_path": repo }),
+            None => json!({ "repo_full_path": repo }),
+        },
+        partition_key: Some(repo),
+        idempotency_key: None,
+        coalesce_queued: false,
+        notify_workspace_id: None,
+    };
+    let mine = svc
+        .enqueue(&caller, of(Some(project), "a/one"))
+        .await
+        .unwrap();
+    svc.enqueue(&caller, of(Some(other), "a/two"))
+        .await
+        .unwrap();
+    svc.enqueue(&caller, of(None, "a/three")).await.unwrap();
+
+    let query = RunQuery {
+        project_id: Some(project),
+        limit: 50,
+        ..RunQuery::default()
+    };
+    let (rows, total) = svc.list(&caller, &[org], &query).await.unwrap();
+    assert_eq!(total, 1);
+    assert_eq!(rows.iter().map(|r| r.id).collect::<Vec<_>>(), vec![mine.id]);
+
+    let (all, total) = svc
+        .list(
+            &caller,
+            &[org],
+            &RunQuery {
+                limit: 50,
+                ..RunQuery::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        (all.len(), total),
+        (3, 3),
+        "unfiltered, every run is listed"
+    );
+    handle.stop().await;
+}
