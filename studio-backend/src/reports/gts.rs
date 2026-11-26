@@ -56,6 +56,29 @@ pub fn graph_node_type_schemas() -> Vec<Value> {
     })]
 }
 
+// What this gear registers, contributed to the offline GTS inventory
+// (`crate::gts_inventory`, ADR-0079 §4).
+inventory::submit! {
+    crate::gts_inventory::GtsSchemas {
+        gear: "studio-reports",
+        schemas: inventory_entries,
+    }
+}
+
+/// This gear's documents as the inventory records them.
+fn inventory_entries() -> Vec<serde_json::Value> {
+    use crate::gts_inventory::{BOOT_FAILS, GRAPH_STORAGE, TYPES_REGISTRY, entry};
+    let gear = "studio-reports";
+    let mut out: Vec<serde_json::Value> = type_schemas()
+        .into_iter()
+        .map(|s| entry(TYPES_REGISTRY, gear, BOOT_FAILS, s))
+        .collect();
+    for s in graph_node_type_schemas() {
+        out.push(entry(GRAPH_STORAGE, gear, BOOT_FAILS, s));
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

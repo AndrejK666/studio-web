@@ -34,7 +34,19 @@
 //!
 //! # What is in scope
 //!
-//! Only what the code itself registers. The types a deployment profile declares
+//! Only what the code itself registers. The core's gears are listed here; a
+//! kit's gear contributes its own documents through this port (ADR-0079 §4),
+//! in its own module, so this file names no kit:
+//!
+//! ```ignore
+//! inventory::submit! {
+//!     crate::gts_inventory::GtsSchemas {
+//!         gear: "studio-reports",
+//!         schemas: gts::inventory_entries,
+//!     }
+//! }
+//! ```
+//! The types a deployment profile declares
 //! (`types-registry.config.entities` in `config/*.yaml`) belong to the profile,
 //! not here; [`config_declared_types`] lists the ones the code *names* so
 //! [`tests`] can prove every profile declares them.
@@ -62,11 +74,31 @@ pub const GRAPH_STORAGE: &str = "graph-storage";
 /// with a silently missing type, and today it is not the same for every gear
 /// (`studio-documents` warns where the others abort). Recorded per document so
 /// the committed snapshot shows the inconsistency instead of hiding it.
-const BOOT_FAILS: &str = "boot_fails";
-const WARN_AND_CONTINUE: &str = "warn_and_continue";
+pub const BOOT_FAILS: &str = "boot_fails";
+pub const WARN_AND_CONTINUE: &str = "warn_and_continue";
+
+/// The documents a kit's gear registers, contributed to the inventory
+/// (ADR-0079 §4). `schemas` answers [`entry`] values.
+pub struct GtsSchemas {
+    /// The gear that registers them (each entry names it too).
+    #[allow(dead_code, reason = "named for readers of the registry")]
+    pub gear: &'static str,
+    pub schemas: fn() -> Vec<Value>,
+}
+
+inventory::collect!(GtsSchemas);
+
+/// A type a kit's gear names but the deployment profile declares (see
+/// [`config_declared_types`]), contributed the same way.
+pub struct ProfileDeclaredType {
+    pub gear: &'static str,
+    pub type_id: &'static str,
+}
+
+inventory::collect!(ProfileDeclaredType);
 
 /// One registered document, as the snapshot records it.
-fn entry(registry: &str, gear: &str, on_refusal: &str, schema: Value) -> Value {
+pub fn entry(registry: &str, gear: &str, on_refusal: &str, schema: Value) -> Value {
     let type_id = schema
         .get("$id")
         .and_then(Value::as_str)
@@ -92,60 +124,9 @@ fn entry(registry: &str, gear: &str, on_refusal: &str, schema: Value) -> Value {
 pub fn schemas() -> Vec<Value> {
     let mut out: Vec<Value> = Vec::new();
 
-    // ── studio-artifact-ingest ────────────────────────────────────────────
-    let gear = "studio-artifact-ingest";
-    for s in crate::artifact_ingest::gts::type_schemas() {
-        out.push(entry(TYPES_REGISTRY, gear, BOOT_FAILS, s));
-    }
-    for s in crate::artifact_ingest::gts::graph_node_type_schemas()
-        .into_iter()
-        .chain(crate::artifact_ingest::gts::graph_edge_type_schemas())
-    {
-        out.push(entry(GRAPH_STORAGE, gear, BOOT_FAILS, s));
-    }
-
-    // ── studio-components-catalog ─────────────────────────────────────────
-    let gear = "studio-components-catalog";
-    for s in crate::catalog_graph::gts::type_schemas() {
-        out.push(entry(TYPES_REGISTRY, gear, BOOT_FAILS, s));
-    }
-    for s in crate::catalog_graph::gts::graph_node_type_schemas()
-        .into_iter()
-        .chain(crate::catalog_graph::gts::graph_edge_type_schemas())
-    {
-        out.push(entry(GRAPH_STORAGE, gear, BOOT_FAILS, s));
-    }
-
-    // ── studio-product ────────────────────────────────────────────────────
-    // Its node types live in the catalogue graph, which the catalogue's store
-    // registers with graph-storage whole (above); the types-registry entries
-    // are the product's own.
-    let gear = "studio-product";
-    for s in crate::catalog_graph::gts::product_type_schemas() {
-        out.push(entry(TYPES_REGISTRY, gear, BOOT_FAILS, s));
-    }
-
-    // ── studio-reports ────────────────────────────────────────────────────
-    let gear = "studio-reports";
-    for s in crate::reports::gts::type_schemas() {
-        out.push(entry(TYPES_REGISTRY, gear, BOOT_FAILS, s));
-    }
-    for s in crate::reports::gts::graph_node_type_schemas() {
-        out.push(entry(GRAPH_STORAGE, gear, BOOT_FAILS, s));
-    }
-
-    // ── studio-documents ──────────────────────────────────────────────────
-    // The one gear that logs and continues when the registry refuses a
-    // document (`documents/mod.rs`): document types are also stored in its own
-    // PostgreSQL tables, so the registration is a catalog entry rather than the
-    // system of record.
-    for s in crate::documents::gts::type_schemas() {
-        out.push(entry(
-            TYPES_REGISTRY,
-            "studio-documents",
-            WARN_AND_CONTINUE,
-            s,
-        ));
+    // The kits' gears' documents, as each contributed them.
+    for set in inventory::iter::<GtsSchemas> {
+        out.extend((set.schemas)());
     }
 
     // ── studio-domain-model ───────────────────────────────────────────────
@@ -285,7 +266,7 @@ pub fn plugin_instance_segments() -> Vec<Value> {
 /// `cf.studio.access.config.v1~` exactly that way. Listed here so the tests
 /// below can prove every shipped profile declares every one of them.
 pub fn config_declared_types() -> Vec<(&'static str, &'static str)> {
-    vec![
+    let mut out = vec![
         // Not the connector driver contract (CONNECTOR_PLUGIN_TYPE): the code
         // declares it (ConnectorPluginSpecV1), and a profile declaring it too
         // stops the boot -- see `no_profile_declares_a_type_the_code_registers`.
@@ -307,7 +288,15 @@ pub fn config_declared_types() -> Vec<(&'static str, &'static str)> {
             "studio-kits",
             crate::kit_registry::KITS_INSTALLED_METADATA_TYPE,
         ),
-        ("studio-product", crate::product::EXPLANATIONS_METADATA_TYPE),
+    ];
+    // The kits' gears' types, as each contributed them.
+    let mut kits: Vec<(&'static str, &'static str)> = inventory::iter::<ProfileDeclaredType>
+        .into_iter()
+        .map(|t| (t.gear, t.type_id))
+        .collect();
+    kits.sort_unstable();
+    out.extend(kits);
+    out.extend([
         // Declared by the profile and consumed by account-management and the
         // portal rather than by a constant in this crate: the three tenant types
         // below the platform root that shape the org / workspace / project
@@ -341,7 +330,8 @@ pub fn config_declared_types() -> Vec<(&'static str, &'static str)> {
             "studio-projects",
             "gts.cf.core.am.tenant_metadata.v1~cf.studio.project.types.v1~",
         ),
-    ]
+    ]);
+    out
 }
 
 /// The whole inventory as one document.
