@@ -64,13 +64,19 @@ pub fn tools() -> Vec<Tool> {
                 `{\"status\": {\"_eq\": \"active\"}}`, operators _eq _neq _gt _gte _lt _lte _in \
                 _nin _contains _is_null, combined with _and _or _not), ordered, projected to \
                 `fields`, with declared relations followed through `include` up to three \
-                levels. A field or relation the type does not have is refused with the list \
+                levels. A type reads the types that extend it too (each row names its own \
+                `entity`); `{\"_type\": {\"_in\": [...]}}` in `where` narrows by it. Pages go \
+                by `cursor`: send back an answer's `next_cursor` for the rows after it. \
+                `aggregate` counts the matches per group, with sums, averages, minimums and \
+                maximums. A field or relation the type does not have is refused with the list \
                 of what it has. Experimental: the shape may change.",
             input_schema: || {
                 object(
                     json!({
                         "type": { "type": "string", "description": "The type to read, as for `domain_type`." },
                         "project_id": { "type": "string", "description": "Only this project's objects." },
+                        "project_ids": { "type": "array", "items": { "type": "string" }, "maxItems": 200,
+                            "description": "Several projects' objects at once; each must be one you may read. Not with `project_id`." },
                         "where": { "type": "object" },
                         "order_by": { "type": "array", "items": { "type": "object",
                             "properties": { "field": { "type": "string" },
@@ -78,7 +84,22 @@ pub fn tools() -> Vec<Tool> {
                         "fields": { "type": "array", "items": { "type": "string" } },
                         "include": { "type": "object",
                             "description": "Relation name to {where, order_by, fields, limit, include}." },
-                        "offset": { "type": "integer", "minimum": 0 },
+                        "offset": { "type": "integer", "minimum": 0,
+                            "description": "Rows to skip. Prefer `cursor`; not with it." },
+                        "cursor": { "type": "string",
+                            "description": "The previous answer's `next_cursor`, with the same type, project, where and order_by." },
+                        "aggregate": { "type": "object",
+                            "description": "Counts per group of the matches, answered as `groups`.",
+                            "properties": {
+                                "group_by": { "type": "array", "items": { "type": "string" }, "maxItems": 3 },
+                                "bucket": { "type": "object",
+                                    "description": "A grouped timestamp field to `day`, `week` or `month`.",
+                                    "additionalProperties": { "type": "string", "enum": ["day", "week", "month"] } },
+                                "sum": { "type": "array", "items": { "type": "string" } },
+                                "avg": { "type": "array", "items": { "type": "string" } },
+                                "min": { "type": "array", "items": { "type": "string" } },
+                                "max": { "type": "array", "items": { "type": "string" } }
+                            } },
                         "limit": { "type": "integer", "minimum": 1, "maximum": 200 }
                     }),
                     &["type"],
