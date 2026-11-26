@@ -464,6 +464,9 @@ async fn a_run_out_of_time_reads_a_portion_and_the_next_goes_on_from_there() {
         (40, 0)
     );
     assert!(host.take_asked().is_empty());
+    // ...and still says how many comments the repository holds, not the
+    // none it read: a quiet repository is not one without comments.
+    assert_eq!(fourth.comments as i64, host.all_comments());
 }
 
 #[tokio::test]

@@ -92,7 +92,7 @@ describe('the headers', () => {
       ['pull_requests', 'Pull requests · 7 days'],
       ['commits', 'Commits · 7 days'],
       ['last_sync', 'Last sync'],
-      ['clone', 'Clone'],
+      ['clone', 'Working copy'],
       ['actions', 'Actions'],
     ]);
   });
@@ -552,9 +552,9 @@ describe('the Clone cell', () => {
     expect(lines(sourceRow())).toEqual(['—']);
   });
 
-  it('says a source that nobody cloned was never cloned', () => {
+  it('says a source nobody opened in an IDE was not opened yet', () => {
     expect(cell('clone', sourceRow({ clone: { kind: 'never' } })).container.textContent).toBe(
-      'Never cloned'
+      'Not opened in an IDE yet'
     );
   });
 

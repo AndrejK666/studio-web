@@ -2379,6 +2379,27 @@ impl IngestService {
                 comments,
                 "studio-artifact-ingest: comments read item by item"
             );
+            // The summary says how many comments the repository holds, as it
+            // says how many pull requests: an item read before and unchanged
+            // since is carried and its comments not read again, so what this
+            // pass read alone is 0 on a quiet repository with thousands.
+            match self.graph.list(ctx, Some(gts::COMMENT_TYPE)).await {
+                Ok(stored) => {
+                    let held = stored
+                        .iter()
+                        .filter(|n| {
+                            n.value.get("repo").and_then(serde_json::Value::as_str)
+                                == Some(repo_id.as_str())
+                        })
+                        .count();
+                    comments = comments.max(held);
+                }
+                Err(e) => warn!(
+                    repo = repo_full_path,
+                    error = %e,
+                    "studio-artifact-ingest: could not count the stored comments; the summary counts this pass's"
+                ),
+            }
         }
 
         // CI runs (ADR-0045): the newest of each workflow, whatever `since`
