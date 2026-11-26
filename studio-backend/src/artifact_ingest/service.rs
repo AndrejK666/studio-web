@@ -583,7 +583,11 @@ impl IngestService {
     /// [`Self::org_ctx`] for a read: the caller's own context when the
     /// organization cannot be had, which is what every read answered from
     /// before -- for a caller who does not reach the scope, nothing.
-    async fn read_ctx(&self, ctx: &SecurityContext, scope: Option<&str>) -> SecurityContext {
+    pub(super) async fn read_ctx(
+        &self,
+        ctx: &SecurityContext,
+        scope: Option<&str>,
+    ) -> SecurityContext {
         match self.org_ctx(ctx, scope).await {
             Ok(there) => there,
             Err(e) => {
@@ -3846,6 +3850,21 @@ impl IngestService {
     ) -> anyhow::Result<super::graph::NodePage> {
         let ctx = &self.read_ctx(ctx, query.scope).await;
         self.graph.page(ctx, query).await
+    }
+
+    /// Every node of `type_filter` in `scope` (the whole tenant without
+    /// one), unpaged: what a listing narrows by owner before it pages, when
+    /// the caller may read only some of it.
+    pub async fn nodes_of(
+        &self,
+        ctx: &SecurityContext,
+        type_filter: Option<&str>,
+        scope: Option<&str>,
+    ) -> anyhow::Result<Vec<GtsNode>> {
+        match scope {
+            Some(scope) => self.list_in_scope(ctx, type_filter, scope).await,
+            None => Ok(self.graph.list(ctx, type_filter).await?.as_ref().clone()),
+        }
     }
 
     /// Read the relations between ingested nodes back for the portal

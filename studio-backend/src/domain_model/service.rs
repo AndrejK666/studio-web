@@ -3108,6 +3108,17 @@ impl DomainModelService {
         Ok(read.retain(ctx, found).await)
     }
 
+    /// What `ctx` may read of `entity`'s objects: the answer [`Self::query`]
+    /// applies, for a gear that reads its own records and answers a caller
+    /// ([`super::port::DomainObjects::read_access`]).
+    pub async fn read_access(
+        &self,
+        ctx: &SecurityContext,
+        entity: Option<&str>,
+    ) -> Result<access::Access, AccessError> {
+        self.policy.access(ctx, access::READ, entity).await
+    }
+
     /// Answer a query (see [`super::query`]): a type's objects filtered,
     /// ordered, projected, with declared relations followed. Experimental,
     /// beside `list_objects` and `objects_graph` rather than in place of them.

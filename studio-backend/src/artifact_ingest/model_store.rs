@@ -182,7 +182,7 @@ const RELATIONS: [(&str, &str, &str, &str); 15] = [
 
 const RELATION_SOURCE: &str = "system-object";
 
-fn entity_of(artifact_type: &str) -> Option<&'static str> {
+pub(super) fn entity_of(artifact_type: &str) -> Option<&'static str> {
     KINDS
         .iter()
         .find(|(a, _)| *a == artifact_type)

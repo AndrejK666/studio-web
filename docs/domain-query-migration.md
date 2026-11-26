@@ -279,27 +279,37 @@ views), Activity › Timeline and the project overview's next steps. Each reads
 a type the domain model owns, through `useDomainQuery` / `fetchDomainAll` in
 mfe-shared, and asks the PDP what every other reader of those objects asks.
 
+**On the query where the model answers (2026-11-26).** The project's
+repositories (Tests, Releases, Product), CI runs as builds (Releases, Product)
+and IDE builds (Releases, Product) read `{type, project_id}` on `repository`,
+`ci-run` and `product-build` through `fetchProjectArtifacts` in mfe-shared.
+The artifact gear moves each organization into the model once, in the
+background, and leaves a `sync-state` marker (`art-store-moved-v1`); until it
+is there, and under `storage.artifacts: graph` (where it never is, or says
+`returned`), the model holds none or only part of the artifacts, so the
+helper reads `GET /nodes` instead. A marker the caller cannot read (a member
+with project grants only does not reach organization-wide objects) is the
+same "not yet". The two routes ask the same question now (below), so the
+fallback shows nobody more than the query would.
+
 **Looked at and left where they are.** The rule for a move: the screen shows
 the same thing to every role after it. These do not, or are not a plain read
 of one type.
 
 | Read | Screens | Why it stays |
 |---|---|---|
-| `GET /studio-artifact-ingest/v1/nodes` | Tests (repositories), Releases (builds, CI runs, repositories), Product (artifacts of any type; its `q` also matches title, author, path and number, which no one `where` does) | **Authorization differs.** The route admits a caller who reaches the project's tenant (account-management, as the caller) and then reads as the gear (`KeptByGear`). The query asks the PDP for `domain.view` and narrows to the granted projects. So the query shows *less* to a member whose role carries no `*.view`, `*.edit` or `*.manage` privilege, to a member with project grants only, on a project outside them that they still reach, to a platform administrator who is no member, and to everybody while the PDP cannot be asked (503). It also shows nothing for a tenant whose artifacts have not moved into the model yet, or under `storage.artifacts: graph`, where `/nodes` answers from the old store. |
-| `GET /studio-artifact-ingest/v1/runs` | Tests | The same authorization difference, and derived: jobs joined to their runs, `latest_completed`, revision and branch matching. |
+| `GET /studio-artifact-ingest/v1/nodes` | The fallback of the three screens above; Product's search (`q`), a repository's contents, cursor paging, the IDE, MCP | **Authorization is the query's now.** The route asks the domain-object policy for `domain.view` as the caller, in the organization the scope hangs under (`DomainObjects::read_access`, the answer `POST /query` applies), and keeps only nodes whose owner (project, else workspace, else organization) it admits: 403 without a grant, 503 while the PDP cannot be asked or the domain model is not there. A scope the caller may not read whole is narrowed before it is paged, so `total` counts only what they may read. It stays for what the model cannot answer: `q` also matches `author` and `number`, which the model's artifact types do not declare (the query refuses undeclared fields, and has `_contains`, no `_ilike`); and for a tenant whose artifacts have not moved, or under `storage.artifacts: graph`. |
+| `GET /studio-artifact-ingest/v1/runs` | Tests | **Authorization is the query's now**, as `/nodes`: runs and jobs of a project outside the grants are not listed. Stays because it is derived: jobs joined to their runs, `latest_completed`, revision and branch matching, all in `ci_runs.rs`; on the query that is two reads and the same code again in the browser. |
 | `GET /studio-documents/v1/workspaces/{w}/types` | Specs, Documents | Derived: the platform catalogue (not in the model) under the organization's and the workspace's overrides, minus what the workspace hides. The query sees only the stored overrides. |
 | `GET /studio-documents/v1/specs-per-source` | Sources | A join across two gears: decided bindings, then the repository each file came from. No single `aggregate` counts that. |
 | `GET /studio-components-catalog/v1/components`, `/profiles`, `/registry` | Product, Admin | Tiered (platform pins, organization, project, ADR-0061), classified by the reference, superseded entries hidden. |
 | Search, the activity feed, the projects table's rollups, the organization overview | | Ranked or folded across many types and gears: search runs hybrid retrieval, the feed merges several sources in time order, rollups and the overview count per project in one read. One query per type would be more reads and the same code in the browser. |
 | Derived domain-model facts, `GET /objects/graph`, `GET /type-counts` | Admin › Model | Graph-shaped or across every type (step 2): the query is one type at a time. |
 
-**What moves them.** For the artifact reads: the gear and the query asking one
-question about who reads artifacts (the gear's routes asking the PDP the
-query's question, or the query admitting what reaching the project admits).
-Then the listing is `{type, where: {_or: [{project_id: {_eq: p}},
-{workspace_id: {_eq: p}}]}}` on the model's artifact types (`repository`,
-`ci-run`, `product-build`, `release`, …), whose payload is what `/nodes`
-returns today.
+**What moves them.** For `/nodes`: every organization moved into the model
+and `storage.artifacts: graph` retired (then the fallback goes), and `author`
+and `number` declared on the artifact types for the search. For `/runs`: the
+job join and `latest_completed` as a read the query can express.
 
 **Gears reading through the store.** The artifact sync reads back the
 repository it walks: the files it may forget and the comments it counts. Both

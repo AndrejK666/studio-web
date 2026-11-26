@@ -67,6 +67,7 @@ mod paging; // a provider's listing walked to its end
 pub mod port;
 mod pr_links; // pull request → file links, resumable across runs
 mod pull_request_waits;
+mod read_access; // `/nodes` and `/runs` read what `domain.view` admits (ADR-0035)
 mod rest;
 mod row_signals; // its answer to the rollup counts port (ADR-0079)
 mod service;

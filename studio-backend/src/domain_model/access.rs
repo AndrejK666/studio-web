@@ -285,6 +285,16 @@ impl Access {
         }
     }
 
+    /// [`Self::new`] for another gear's tests: what a policy double answers.
+    #[cfg(test)]
+    pub fn for_tests(
+        ctx: &SecurityContext,
+        scope: AccessScope,
+        tenants: Option<Arc<dyn TenantParents>>,
+    ) -> Self {
+        Self::new(ctx, scope, tenants)
+    }
+
     /// Read and keep tenant chains in `shared` as well, across requests.
     #[must_use]
     pub(super) fn sharing_chains(mut self, shared: Arc<TenantChains>) -> Self {
