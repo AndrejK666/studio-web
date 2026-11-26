@@ -95,6 +95,7 @@ vi.mock('../../../../shared/useSourceRowActions', () => ({
     changeShareMode: vi.fn(),
     detach: vi.fn(),
     detaching: new Set<string>(),
+    openSyncRun: vi.fn(),
   }),
 }));
 vi.mock('../../../../shared/useSyncRefusals', () => ({ useSyncRefusals: () => undefined }));
@@ -184,7 +185,7 @@ describe('SourcesSection', () => {
     section();
 
     await waitFor(() => expect(shownRows()).toBe(2));
-    expect(loadArgs[0]).toEqual(['p-1', null, 'Uploaded files']);
+    expect(loadArgs[0]).toEqual(['p-1', null, 'Uploaded files', 'org-1']);
   });
 
   it('says the sources could not be read, and Try again reads them again', () => {

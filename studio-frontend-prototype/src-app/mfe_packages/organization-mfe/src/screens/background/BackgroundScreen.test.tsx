@@ -184,6 +184,53 @@ describe('BackgroundScreen', () => {
     expect(await within(schedules).findByText('schedules_no_matches')).toBeTruthy();
   });
 
+  it('opens the run a link names above the lists, with its retry, even when the list does not show it', async () => {
+    const id = '0d9c1f2a-1111-4222-8333-444455556666';
+    const asked: string[] = [];
+    Object.assign(service, {
+      run: ({ id: runId, tenant }: { id: string; tenant: string }) => ({
+        fetch: () => {
+          asked.push(`${runId}@${tenant}`);
+          return Promise.resolve({
+            ...run('x', 'succeeded', 'artifact.ingest'),
+            id: runId,
+            state: 'failed',
+            attempts: 3,
+            last_error: 'attempt 1 never reported back',
+          });
+        },
+      }),
+    });
+    window.history.pushState({}, '', `/?screen=tasks;view=run-${id}`);
+    try {
+      render(<BackgroundScreen />);
+      const linked = await waitFor(() => {
+        const found = document.querySelector(`[data-linked-run="${id}"]`);
+        if (!found) throw new Error('no linked run yet');
+        return found as HTMLElement;
+      });
+      expect(asked[0]).toBe(`${id}@o1`);
+      expect(within(linked).getAllByText('attempt 1 never reported back').length).toBeGreaterThan(0);
+      fireEvent.click(within(linked).getByRole('button', { name: 'retry' }));
+      await waitFor(() => expect(calls).toContain(`retry:${id}`));
+    } finally {
+      window.history.pushState({}, '', '/');
+    }
+  });
+
+  it('says so when the run a link names is not found', async () => {
+    Object.assign(service, {
+      run: () => ({ fetch: () => Promise.reject(new Error('404')) }),
+    });
+    window.history.pushState({}, '', '/?screen=tasks;view=run-0d9c1f2a-1111-4222-8333-444455556666');
+    try {
+      render(<BackgroundScreen />);
+      expect(await screen.findByText('linked_missing')).toBeTruthy();
+    } finally {
+      window.history.pushState({}, '', '/');
+    }
+  });
+
   it('offers a retry when the runs could not be read', async () => {
     let fail = true;
     Object.assign(service, {

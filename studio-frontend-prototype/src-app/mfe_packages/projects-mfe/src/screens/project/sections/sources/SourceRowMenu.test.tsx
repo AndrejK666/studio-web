@@ -29,6 +29,7 @@ const actions = (): SourceRowActions => ({
   changeBranch: vi.fn(async () => undefined),
   detach: vi.fn(),
   detaching: new Set<string>(),
+  openSyncRun: vi.fn(),
 });
 
 async function openMenu(row: SourceRow, given: SourceRowActions) {

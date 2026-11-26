@@ -5,11 +5,15 @@ import {
   type DataGridLoadContext,
   type DataGridLoadResult,
 } from '@gears-frontx/ui-kit';
-import { AccountsApiService, ConnectorsApiService } from '@constructor-studio/mfe-shared';
+import {
+  AccountsApiService,
+  ConnectorsApiService,
+  StudioTasksApiService,
+} from '@constructor-studio/mfe-shared';
 import { TEXT_SEARCH_FILTER_KEY } from '@constructor-studio/mfe-shared/grid';
 import { ArtifactIngestApiService } from '../api/ArtifactIngestApiService';
 import { DocumentsApiService } from '../api/DocumentsApiService';
-import { inFlight } from '../model/repoImport';
+import { INGEST_TASK_TYPE, inFlight } from '../model/repoImport';
 import {
   buildSourceRows,
   filterSourceRows,
@@ -58,6 +62,27 @@ function settledSyncsOf(lines: readonly SourceImportLine[]): string {
     .join('\n');
 }
 
+/** Each line's run and where it stands: a new run, or one that moved, is news for the runs' listing. */
+function runStatesOf(lines: readonly SourceImportLine[]): string {
+  return lines
+    .filter((line) => line.runId !== null)
+    .map((line) => `${line.runId}:${line.status}:${line.lastError ?? ''}`)
+    .join('\n');
+}
+
+/** The most runs one read lists (the gear's ceiling); newest first, it reaches every source's last. */
+const RUNS_PAGE = 200;
+
+/** Calls `onChange` when `key` changes after the first render. */
+function useOnChange(key: string, onChange: () => void): void {
+  const seen = useRef(key);
+  useEffect(() => {
+    if (seen.current === key) return;
+    seen.current = key;
+    onChange();
+  }, [key, onChange]);
+}
+
 function useOnSyncSettled(projectId: string, settledSyncs: string, onSettled: () => void): void {
   const seen = useRef<{ projectId: string; syncs: Set<string> } | null>(null);
   useEffect(() => {
@@ -73,16 +98,21 @@ function useOnSyncSettled(projectId: string, settledSyncs: string, onSettled: ()
 // @cpt-dod:cpt-studiofrontend-dod-project-sources-reads:p1
 // @cpt-dod:cpt-studiofrontend-dod-project-sources-gaps:p1
 // @cpt-dod:cpt-studiofrontend-dod-project-sources-search:p1
-/** `uploadsName` is the "Uploaded files" row's name, which the search matches. */
+/**
+ * `uploadsName` is the "Uploaded files" row's name, which the search matches.
+ * `orgId` is the organization the project's syncs are filed under.
+ */
 export function useSourcesLoad(
   projectId: string,
   workspaceId: string | null,
-  uploadsName: string
+  uploadsName: string,
+  orgId: string | null = null
 ): SourcesLoad {
   const accounts = apiRegistry.getService(AccountsApiService);
   const ingest = apiRegistry.getService(ArtifactIngestApiService);
   const documents = apiRegistry.getService(DocumentsApiService);
   const connectors = apiRegistry.getService(ConnectorsApiService);
+  const tasks = apiRegistry.getService(StudioTasksApiService);
   const cache = useQueryCache();
 
   const config = useProjectConfig(projectId);
@@ -94,6 +124,17 @@ export function useSourcesLoad(
   const specs = useApiQuery(documents.specsPerSource({ scope: projectId }));
   // Whether each source could be cloned (#1071). Extra: unread, the rows say nothing of it.
   const clones = useApiQuery(ingest.cloneStatus({ project_id: projectId }));
+  // Each source's last sync, however it ended (the "Last sync" cell's status). Extra: unread, the rows say only the date.
+  const runsParams = useMemo(
+    () => ({
+      taskType: INGEST_TASK_TYPE,
+      projectId,
+      limit: RUNS_PAGE,
+      ...(orgId ? { organizationId: orgId } : {}),
+    }),
+    [projectId, orgId]
+  );
+  const runs = useApiQuery(tasks.runs(runsParams), { staleTime: 0 });
   const studio = useProjectDocuments(workspaceId, projectId);
   const { repos: lines } = useProjectImport(projectId);
 
@@ -108,6 +149,7 @@ export function useSourcesLoad(
       // Without a workspace they cannot be read either.
       uploads: workspaceId === null || studio.failed ? null : studio.own,
       clones: clones.isError ? null : (clones.data?.items ?? null),
+      runs: runs.isError ? null : (runs.data?.items ?? null),
     }),
     [
       config.config,
@@ -124,6 +166,8 @@ export function useSourcesLoad(
       studio.own,
       clones.isError,
       clones.data,
+      runs.isError,
+      runs.data,
     ]
   );
   const rows = useMemo(() => buildSourceRows(answers), [answers]);
@@ -138,6 +182,12 @@ export function useSourcesLoad(
     void cache.invalidate(documents.specsPerSource({ scope: projectId }));
   }, [cache, ingest, documents, nodesParams, projectId]);
   useOnSyncSettled(projectId, settledSyncsOf(lines), refetchAfterSync);
+
+  // The live lines move first; the listing adds the tries and times of the same run.
+  const refetchRuns = useCallback(() => {
+    void cache.invalidate(tasks.runs(runsParams));
+  }, [cache, tasks, runsParams]);
+  useOnChange(runStatesOf(lines), refetchRuns);
 
   const retry = useCallback(() => {
     void cache.invalidate(projectConfigQuery(accounts, projectId));

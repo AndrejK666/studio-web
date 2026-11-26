@@ -5,6 +5,10 @@ import {
   Button,
   NativeSelect,
   NativeSelectOption,
+  Popover,
+  PopoverContent,
+  PopoverTitle,
+  PopoverTrigger,
   VisuallyHidden,
   type DataGridTableColumn,
 } from '@gears-frontx/ui-kit';
@@ -19,6 +23,7 @@ import type { Refusal, ScreenText } from '@constructor-studio/mfe-shared';
 import { useProjectText, useSourcesText } from '../../../../i18n';
 import type { SourceRow, SourcesTableRow, UploadsRow } from '../../../../model/sourceRows';
 import type { SourceRowActions } from '../../../../shared/useSourceRowActions';
+import { syncSettled, syncTook, type SourceSyncRun } from '../../../../model/sourceSyncRun';
 import { useDayTime } from '../../../../shared/dayTime';
 import { useDaysAgo } from '../../../../shared/daysAgo';
 import { LazyActivitySparkline } from './LazyActivitySparkline';
@@ -256,10 +261,104 @@ function reasonText(projectText: ScreenText, reason: Refusal | null): string | u
   return reason.kind === 'i18n' ? projectText(reason.key) : reason.text;
 }
 
-const LastSyncCell: React.FC<{ row: SourceRow; actions: SourceRowActions }> = ({
-  row,
-  actions,
-}) => {
+/** The status's words: with its attempt while one beyond the first runs. */
+export function syncStatusLabel(t: ScreenText, run: SourceSyncRun, cancelling: boolean): string {
+  if (cancelling) return t('sync_cancelling');
+  const label = t(`sync_status_${run.status}`);
+  return run.status === 'running' && run.attempts !== null && run.attempts > 1
+    ? t('sync_status_attempt', { status: label, count: run.attempts })
+    : label;
+}
+
+/**
+ * The last sync's status under its date, opening its details: everything the
+ * run said, its tries and times, and the way to the run in Background work.
+ */
+const SyncStatus: React.FC<{
+  row: SourceRow;
+  run: SourceSyncRun;
+  actions: SourceRowActions;
+  container?: HTMLElement | null;
+}> = ({ row, run, actions, container }) => {
+  const t = useSourcesText();
+  const dayTime = useDayTime();
+  const { formatRelative } = useFormatters();
+  const cancelling = row.sync.kind === 'in_flight' && row.sync.cancelling;
+  const label = syncStatusLabel(t, run, cancelling);
+  // "Running for" counts to when the details were opened.
+  const [openedAt, setOpenedAt] = React.useState<number | null>(null);
+  const took = syncTook(run, openedAt ?? Number.NaN);
+  return (
+    <Popover onOpenChange={(open) => open && setOpenedAt(Date.now())}>
+      <PopoverTrigger
+        className={styles.syncStatus}
+        data-sync-status={run.status}
+        aria-label={t('sync_details', { name: row.fullPath, status: label })}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <span className={styles.syncState}>
+          <span className={styles.syncDot} aria-hidden="true" />
+          {label}
+        </span>
+        {run.detail && <span className={styles.syncDetail}>{run.detail}</span>}
+      </PopoverTrigger>
+      <PopoverContent
+        container={container ?? undefined}
+        align="start"
+        className={styles.syncPopover}
+        data-sync-details={run.runId}
+      >
+        <PopoverTitle className={styles.syncPopoverTitle} data-sync-status={run.status}>
+          <span className={styles.syncDot} aria-hidden="true" />
+          {label}
+        </PopoverTitle>
+        <p className={styles.syncPopoverText}>{run.detail ?? t('sync_said_nothing')}</p>
+        <dl className={styles.syncFacts}>
+          {run.attempts !== null && (
+            <>
+              <dt>{t('sync_fact_tries')}</dt>
+              <dd>{run.attempts}</dd>
+            </>
+          )}
+          {run.startedAt && (
+            <>
+              <dt>{t('sync_fact_started')}</dt>
+              <dd title={formatRelative(run.startedAt)}>{dayTime(run.startedAt)}</dd>
+            </>
+          )}
+          {took && (
+            <>
+              <dt>{t(syncSettled(run.status) ? 'sync_fact_took' : 'sync_fact_running_for')}</dt>
+              <dd>{took}</dd>
+            </>
+          )}
+          {run.finishedAt && (
+            <>
+              <dt>{t('sync_fact_finished')}</dt>
+              <dd title={formatRelative(run.finishedAt)}>{dayTime(run.finishedAt)}</dd>
+            </>
+          )}
+        </dl>
+        <Button
+          variant="link"
+          size="sm"
+          className={styles.syncOpenTask}
+          onClick={() => actions.openSyncRun(run.runId)}
+        >
+          {t('sync_open_task')}
+        </Button>
+      </PopoverContent>
+    </Popover>
+  );
+};
+
+SyncStatus.displayName = 'SyncStatus';
+
+const LastSyncCell: React.FC<{
+  row: SourceRow;
+  actions: SourceRowActions;
+  container?: HTMLElement | null;
+}> = ({ row, actions, container }) => {
   const t = useSourcesText();
   const projectText = useProjectText();
   const { formatRelative } = useFormatters();
@@ -284,6 +383,10 @@ const LastSyncCell: React.FC<{ row: SourceRow; actions: SourceRowActions }> = ({
   };
 
   const second = (): React.ReactNode => {
+    // The run, once there is one: its status, what it said, and the way to it.
+    if (row.syncRun) {
+      return <SyncStatus row={row} run={row.syncRun} actions={actions} container={container} />;
+    }
     switch (sync.kind) {
       case 'none':
         return null;
@@ -453,12 +556,13 @@ export function sourceColumns({
     {
       id: 'last_sync',
       label: t('col_last_sync'),
-      width: '8rem',
+      // The date, and under it the sync's status and what it said.
+      width: '14rem',
       render: (row) =>
         row.kind === 'uploads' ? (
           <UploadedAtCell row={row} />
         ) : (
-          <LastSyncCell row={row} actions={actions} />
+          <LastSyncCell row={row} actions={actions} container={container} />
         ),
     },
     {

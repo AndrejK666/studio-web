@@ -76,6 +76,13 @@
   font-size: 0.75rem;
 }
 
+/* The run a link opened, above the lists. */
+.linked {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
 .actions {
   display: inline-flex;
   gap: var(--space-1);

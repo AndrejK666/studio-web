@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { TaskRun } from "./types";
-import { duration, foldRecurring, headline, mergePages, runProgress, stateTone } from "./model";
+import { duration, foldRecurring, headline, linkedRunOf, mergePages, runProgress, stateTone } from "./model";
 
 function run(id: string, task_type: string, state: string, created_at: string): TaskRun {
   return { id, task_type, state, created_at, attempts: 1, payload: {} } as unknown as TaskRun;
@@ -75,5 +75,14 @@ describe("a running run that counts", () => {
     expect(runProgress(run("r", "a", "running", "2026-11-23T10:00:00Z"))).toBeNull();
     expect(runProgress(counting("succeeded", { step: "upload", steps }))).toBeNull();
     expect(runProgress(counting("running", { step: "launch", steps }))).toBeNull();
+  });
+});
+
+describe('linkedRunOf', () => {
+  it('reads the run a screen view names, and nothing else', () => {
+    expect(linkedRunOf('run-0d9c1f2a-1111-4222-8333-444455556666')).toBe('0d9c1f2a-1111-4222-8333-444455556666');
+    expect(linkedRunOf('run-nope')).toBeNull();
+    expect(linkedRunOf('needs-decision')).toBeNull();
+    expect(linkedRunOf(undefined)).toBeNull();
   });
 });

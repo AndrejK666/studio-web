@@ -58,5 +58,7 @@
   "search_schedules": "Search schedules",
   "schedules_no_matches": "No schedule matches.",
   "clear_search": "Clear search",
-  "try_again": "Try again"
+  "try_again": "Try again",
+  "linked_title": "The run you opened",
+  "linked_missing": "That run is not found here: it belongs to another organization, or it is gone."
 }

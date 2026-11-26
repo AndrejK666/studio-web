@@ -348,6 +348,60 @@ export const RunDetails: React.FC<{ run: ShownRun; t: Text; language: string }> 
 
 RunDetails.displayName = 'RunDetails';
 
+/**
+ * The run a link opened (`?screen=…;view=run-<id>`, the Sources tab's "Open
+ * the sync task"): the row's columns, its Retry and Cancel, and its details,
+ * whatever the list's filter shows.
+ */
+export const LinkedRun: React.FC<{
+  run: TaskRun;
+  t: Text;
+  language: string;
+  now: number;
+  onAct: (run: TaskRun, what: 'cancel' | 'retry') => void;
+}> = ({ run, t, language, now, onAct }) => (
+  <div className={styles.linked} data-linked-run={run.id}>
+    <dl className={styles.details}>
+      <dt>{t('col_task')}</dt>
+      <dd>
+        <b>{run.task_type}</b> <span className={styles.muted}>{run.id.slice(0, 8)}</span>
+      </dd>
+      <dt>{t('col_state')}</dt>
+      <dd>
+        <Badge variant={VARIANT[stateTone(run.state)]}>{t(`state_${run.state}`)}</Badge>
+      </dd>
+      <dt>{t('col_what')}</dt>
+      <dd>{headline(run)}</dd>
+      <dt>{t('col_tries')}</dt>
+      <dd>{run.attempts}</dd>
+      <dt>{t('col_took')}</dt>
+      <dd>{duration(run, now)}</dd>
+      <dt>{t('col_started')}</dt>
+      <dd>{when(run.started_at ?? run.created_at, language)}</dd>
+    </dl>
+    <span className={styles.actions}>
+      {(run.state === 'failed' || run.state === 'cancelled') && (
+        <Button variant="outline" size="sm" onClick={() => onAct(run, 'retry')}>
+          {t('retry')}
+        </Button>
+      )}
+      {!finished(run) && (
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={run.cancel_requested}
+          onClick={() => onAct(run, 'cancel')}
+        >
+          {t('cancel')}
+        </Button>
+      )}
+    </span>
+    <RunDetails run={run} t={t} language={language} />
+  </div>
+);
+
+LinkedRun.displayName = 'LinkedRun';
+
 /** A schedule in the grid. */
 type ScheduleRow = TaskSchedule;
 

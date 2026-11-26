@@ -56,6 +56,7 @@ const actions: SourceRowActions = {
   changeBranch: vi.fn(async () => undefined),
   detach: vi.fn(),
   detaching: new Set<string>(),
+  openSyncRun: vi.fn(),
 };
 
 const WEEK = { open: 2, merged: 1, commits: 5, days: [0, 0, 1, 0, 0, 1, 0] };
@@ -450,6 +451,96 @@ describe('the Last sync cell', () => {
     expect(
       stopped({ kind: 'stopped', status: 'cancelled', reason: null, canRetry: true })
     ).toEqual(['Last attempt cancelled', null]);
+  });
+
+  const syncRun = (overrides: Partial<NonNullable<SourceRow['syncRun']>> = {}) => ({
+    runId: 'r-1',
+    status: 'succeeded' as const,
+    detail: '10269 pull requests, 9187 files, 3261 comments, 5000 commits',
+    attempts: 1,
+    createdAt: '2026-11-26T07:00:00Z',
+    startedAt: '2026-11-26T07:00:00Z',
+    finishedAt: '2026-11-26T07:13:00Z',
+    ...overrides,
+  });
+  const status = (row: SourceRow) => {
+    const trigger = cell('last_sync', row).container.querySelector('[data-sync-status]');
+    return [trigger?.getAttribute('data-sync-status'), trigger?.textContent];
+  };
+
+  it.each<[Partial<NonNullable<SourceRow['syncRun']>>, string, string]>([
+    [{}, 'succeeded', 'Synced10269 pull requests, 9187 files, 3261 comments, 5000 commits'],
+    [
+      { status: 'running', attempts: 2, detail: 'linking merge requests to files: 7495 of 10269 linked' },
+      'running',
+      'Syncing · attempt 2linking merge requests to files: 7495 of 10269 linked',
+    ],
+    [{ status: 'running', attempts: 1, detail: null }, 'running', 'Syncing'],
+    [
+      { status: 'partial', detail: 'partial -- linked 7495 of 10269, 2774 left' },
+      'partial',
+      'Partial · continues next attemptpartial -- linked 7495 of 10269, 2774 left',
+    ],
+    [
+      { status: 'retrying', detail: 'the provider answered 502' },
+      'retrying',
+      'Attempt failed · will retrythe provider answered 502',
+    ],
+    [
+      { status: 'failed', detail: 'attempt 1 never reported back (its lease ran out)' },
+      'failed',
+      'Failedattempt 1 never reported back (its lease ran out)',
+    ],
+    [{ status: 'cancelled', detail: null }, 'cancelled', 'Cancelled'],
+  ])('shows the run %j as %s, with what it said', (overrides, state, text) => {
+    expect(status(sourceRow({ syncRun: syncRun(overrides) }))).toEqual([state, text]);
+  });
+
+  it('says Cancelling… over the status while a cancel is asked for', () => {
+    expect(
+      status(
+        sourceRow({
+          sync: { kind: 'in_flight', cancelling: true, canCancel: false },
+          syncRun: syncRun({ status: 'running', detail: null }),
+        })
+      )
+    ).toEqual(['running', 'Cancelling…']);
+  });
+
+  it('opens the details: everything the run said, its tries and times, and the way to its task', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    vi.mocked(actions.openSyncRun).mockReset();
+    const view = cell(
+      'last_sync',
+      sourceRow({
+        syncRun: syncRun({ status: 'failed', attempts: 3, detail: 'attempt 1 never reported back' }),
+      }),
+      container
+    );
+    fireEvent.click(
+      view.getByRole('button', { name: 'Last sync of acme/api: Failed. Show the details' })
+    );
+    const details = await waitFor(() => {
+      const found = document.querySelector('[data-sync-details="r-1"]');
+      if (!found) throw new Error('no details yet');
+      return found as HTMLElement;
+    });
+    expect(within(details).getByText('attempt 1 never reported back')).toBeTruthy();
+    expect(
+      [...details.querySelectorAll('dt')].map((term) => [
+        term.textContent,
+        term.nextElementSibling?.textContent,
+      ])
+    ).toEqual([
+      ['Tries', '3'],
+      ['Started', 'day 2026-11-26T07:00:00.000Z'],
+      ['Took', '13 min'],
+      ['Finished', 'day 2026-11-26T07:13:00.000Z'],
+    ]);
+    fireEvent.click(within(details).getByRole('button', { name: 'Open the sync task' }));
+    expect(actions.openSyncRun).toHaveBeenCalledWith('r-1');
+    container.remove();
   });
 });
 
