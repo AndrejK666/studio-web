@@ -227,6 +227,48 @@ After the removal date: `GET /objects` goes, together with its lines in
 read (step 2), and the `/model/*` and `/types/*` routes stay; they are how the
 model itself is edited.
 
+## Which screens read through the query, and which stay (2026-11-26)
+
+**On the query.** Admin › Objects (`TypeObjects`, `ObjectAttributes`, saved
+views), Activity › Timeline and the project overview's next steps. Each reads
+a type the domain model owns, through `useDomainQuery` / `fetchDomainAll` in
+mfe-shared, and asks the PDP what every other reader of those objects asks.
+
+**Looked at and left where they are.** The rule for a move: the screen shows
+the same thing to every role after it. These do not, or are not a plain read
+of one type.
+
+| Read | Screens | Why it stays |
+|---|---|---|
+| `GET /studio-artifact-ingest/v1/nodes` | Tests (repositories), Releases (builds, CI runs, repositories), Product (artifacts of any type; its `q` also matches title, author, path and number, which no one `where` does) | **Authorization differs.** The route admits a caller who reaches the project's tenant (account-management, as the caller) and then reads as the gear (`KeptByGear`). The query asks the PDP for `domain.view` and narrows to the granted projects. So the query shows *less* to a member whose role carries no `*.view`, `*.edit` or `*.manage` privilege, to a member with project grants only, on a project outside them that they still reach, to a platform administrator who is no member, and to everybody while the PDP cannot be asked (503). It also shows nothing for a tenant whose artifacts have not moved into the model yet, or under `storage.artifacts: graph`, where `/nodes` answers from the old store. |
+| `GET /studio-artifact-ingest/v1/runs` | Tests | The same authorization difference, and derived: jobs joined to their runs, `latest_completed`, revision and branch matching. |
+| `GET /studio-documents/v1/workspaces/{w}/types` | Specs, Documents | Derived: the platform catalogue (not in the model) under the organization's and the workspace's overrides, minus what the workspace hides. The query sees only the stored overrides. |
+| `GET /studio-documents/v1/specs-per-source` | Sources | A join across two gears: decided bindings, then the repository each file came from. No single `aggregate` counts that. |
+| `GET /studio-components-catalog/v1/components`, `/profiles`, `/registry` | Product, Admin | Tiered (platform pins, organization, project, ADR-0061), classified by the reference, superseded entries hidden. |
+| Search, the activity feed, the projects table's rollups, the organization overview | | Ranked or folded across many types and gears: search runs hybrid retrieval, the feed merges several sources in time order, rollups and the overview count per project in one read. One query per type would be more reads and the same code in the browser. |
+| Derived domain-model facts, `GET /objects/graph`, `GET /type-counts` | Admin › Model | Graph-shaped or across every type (step 2): the query is one type at a time. |
+
+**What moves them.** For the artifact reads: the gear and the query asking one
+question about who reads artifacts (the gear's routes asking the PDP the
+query's question, or the query admitting what reaching the project admits).
+Then the listing is `{type, where: {_or: [{project_id: {_eq: p}},
+{workspace_id: {_eq: p}}]}}` on the model's artifact types (`repository`,
+`ci-run`, `product-build`, `release`, …), whose payload is what `/nodes`
+returns today.
+
+**Gears reading through the store.** The artifact sync reads back the
+repository it walks: the files it may forget and the comments it counts. Both
+go through `GraphStore::list_of_repo` / `count_of_repo`; the model answers them
+with one query narrowed by the declared `repo` field instead of every file or
+comment of the organization, and graph-storage keeps the whole-type read it
+cannot avoid. The sync's marks (pull requests and issues read whole, cached),
+the repository's last state, the prune of a detached repository and the names
+search lays on its hits stay on `GraphStore::list`: they read a type whole on
+purpose, or the set is small and cached. The components catalogue's registry
+reads already answer from the model through `ModelSink`, which keeps the old
+store as its fallback until a tenant has moved; going around it to the port
+would drop that fallback for sets of a few dozen rows.
+
 ## Risks worth watching
 
 - **Strict fields.** The query refuses a field the model does not declare, while
