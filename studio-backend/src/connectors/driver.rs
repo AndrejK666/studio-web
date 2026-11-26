@@ -1037,6 +1037,13 @@ pub trait ConnectorDriver: Send + Sync + 'static {
     /// `per_page` caps one page — the caller pages until an empty page comes
     /// back ([`Self::list_issue_page`] says when an empty answer is not the
     /// end). Defaulted so a non-source driver stays a small, local job.
+    ///
+    /// Ordered newest *created* first -- as are pull requests and the
+    /// repository-wide comments, and commits newest first. A sync out of time
+    /// stops at a page and the next attempt asks for that page again
+    /// (`artifact_ingest::listing_cursor`); that holds only while a page
+    /// boundary stays put as the repository changes, which an order by last
+    /// update does not give.
     async fn list_issues(
         &self,
         auth: &ConnectionAuth,

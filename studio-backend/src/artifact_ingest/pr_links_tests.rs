@@ -15,7 +15,7 @@ use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
 use super::prune_tests::NoSecrets;
-use super::{IngestService, SyncSummary};
+use super::{IngestService, SyncSummary, out_of_time_for_items};
 use crate::artifact_ingest::graph::{GraphStore, InMemoryGraphStore};
 use crate::artifact_ingest::gts;
 use crate::connectors::sdk::{
@@ -290,8 +290,9 @@ async fn a_run_out_of_time_links_a_portion_and_the_next_goes_on_from_there() {
     let driver = Arc::new(ManyPulls::new(40, 2));
     let (svc, graph) = service(driver.clone());
 
-    // Out of time from the start: one portion, and the rest is left.
-    let first = sync(&svc, Some(Instant::now())).await;
+    // Out of time once the listings are read: one portion, and the rest is
+    // left.
+    let first = sync(&svc, Some(out_of_time_for_items())).await;
     assert_eq!(
         (first.links_done, first.links_total, first.links_left),
         (16, 40, 24)
@@ -309,13 +310,14 @@ async fn a_run_out_of_time_links_a_portion_and_the_next_goes_on_from_there() {
     let linked = links(&graph).await;
     assert_eq!(linked.len(), 16);
 
-    // The next attempt does not ask again about the sixteen.
-    let second = sync(&svc, Some(Instant::now())).await;
+    // The next attempt does not ask again about the sixteen. It does not
+    // list again either: the pull requests come from the graph, newest first.
+    let second = sync(&svc, Some(out_of_time_for_items())).await;
     assert_eq!(
         (second.links_done, second.links_total, second.links_left),
         (32, 40, 8)
     );
-    assert_eq!(driver.take_asked(), (17..=32).collect::<Vec<_>>());
+    assert_eq!(driver.take_asked(), (25..=40).collect::<Vec<_>>());
 
     // With time enough, it finishes -- and says so.
     let third = sync(&svc, None).await;
@@ -324,7 +326,7 @@ async fn a_run_out_of_time_links_a_portion_and_the_next_goes_on_from_there() {
         (40, 40, 0)
     );
     assert!(!third.is_partial());
-    assert_eq!(driver.take_asked(), (33..=40).collect::<Vec<_>>());
+    assert_eq!(driver.take_asked(), (17..=24).collect::<Vec<_>>());
 
     let linked = links(&graph).await;
     for n in 1..=40 {

@@ -27,6 +27,7 @@ pub(crate) mod graph_backend;
 pub(crate) mod gts;
 mod index;
 mod item_comments; // comments read item by item, resumable across runs
+mod listing_cursor; // where the listings got to, resumable across runs
 mod mcp;
 // This gear's MCP tools, collected by studio-mcp (ADR-0079).
 inventory::submit! {

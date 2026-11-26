@@ -965,9 +965,12 @@ impl ConnectorDriver for GitHubDriver {
         // /issues returns both issues and PRs; a PR carries a `pull_request`
         // object, which we drop so this endpoint means issues only. Whether
         // the page held anything is answered apart: a page of nothing but
-        // PRs is not the end of the listing.
+        // PRs is not the end of the listing. Newest created first: a
+        // creation time never moves, so a page boundary stays put while a
+        // sync walks the listing and a stopped walk goes on from its page
+        // (`artifact_ingest::listing_cursor`).
         let mut url = format!(
-            "{}/repos/{repo_full_path}/issues?state=all&sort=updated&direction=desc&per_page={}&page={}",
+            "{}/repos/{repo_full_path}/issues?state=all&sort=created&direction=desc&per_page={}&page={}",
             auth.root(),
             per_page.clamp(1, 100),
             page.max(1),
@@ -1016,11 +1019,12 @@ impl ConnectorDriver for GitHubDriver {
         page: u32,
         per_page: u32,
     ) -> anyhow::Result<Vec<RemotePullRequest>> {
-        // /pulls has no `since` filter; we sort by most-recent activity and let
-        // the caller stop once it walks past the incremental cursor.
+        // /pulls has no `since` filter: every pull request is listed. Newest
+        // created first, as the issues: a page boundary stays put while a
+        // sync walks it (`artifact_ingest::listing_cursor`).
         let _ = since;
         let url = format!(
-            "{}/repos/{repo_full_path}/pulls?state=all&sort=updated&direction=desc&per_page={}&page={}",
+            "{}/repos/{repo_full_path}/pulls?state=all&sort=created&direction=desc&per_page={}&page={}",
             auth.root(),
             per_page.clamp(1, 100),
             page.max(1),
@@ -1118,8 +1122,10 @@ impl ConnectorDriver for GitHubDriver {
         page: u32,
         per_page: u32,
     ) -> anyhow::Result<Vec<RemoteComment>> {
+        // Newest created first, so a sync's stopped walk goes on from its
+        // page (`artifact_ingest::listing_cursor`).
         let mut url = format!(
-            "{}/repos/{repo_full_path}/issues/comments?sort=updated&direction=desc&per_page={}&page={}",
+            "{}/repos/{repo_full_path}/issues/comments?sort=created&direction=desc&per_page={}&page={}",
             auth.root(),
             per_page.clamp(1, 100),
             page.max(1),

@@ -17,7 +17,7 @@ use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
 use super::prune_tests::NoSecrets;
-use super::{IngestService, SyncSummary};
+use super::{IngestService, SyncSummary, out_of_time_for_items};
 use crate::artifact_ingest::graph::{GraphStore, InMemoryGraphStore};
 use crate::artifact_ingest::gts;
 use crate::connectors::sdk::{
@@ -412,7 +412,7 @@ async fn a_run_out_of_time_reads_a_portion_and_the_next_goes_on_from_there() {
     let host = Arc::new(BigHost::new(30, 10));
     let (svc, graph) = service(host.clone());
 
-    let first = sync(&svc, Some(Instant::now())).await;
+    let first = sync(&svc, Some(out_of_time_for_items())).await;
     assert_eq!(
         (
             first.comment_items_done,
@@ -425,7 +425,7 @@ async fn a_run_out_of_time_reads_a_portion_and_the_next_goes_on_from_there() {
     let asked_first: HashSet<(bool, i64)> = host.take_asked().into_iter().collect();
     assert_eq!(asked_first.len(), 16);
 
-    let second = sync(&svc, Some(Instant::now())).await;
+    let second = sync(&svc, Some(out_of_time_for_items())).await;
     assert_eq!(
         (second.comment_items_done, second.comment_items_left),
         (32, 8)

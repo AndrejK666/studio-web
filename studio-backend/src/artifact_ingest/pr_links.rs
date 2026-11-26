@@ -66,6 +66,18 @@ pub(super) fn fingerprint(p: &RemotePullRequest) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// [`fingerprint`] of a pull request as its stored node says it: for one an
+/// earlier attempt of a resumed walk listed (`listing_cursor`), which this
+/// attempt does not list again.
+pub(super) fn stored_fingerprint(node: &GtsNode) -> Option<String> {
+    ["head_sha", "merge_sha", "updated_at"]
+        .into_iter()
+        .filter_map(|field| node.value.get(field).and_then(Value::as_str))
+        .map(str::trim)
+        .find(|s| !s.is_empty())
+        .map(str::to_owned)
+}
+
 /// The marks the stored pull requests of one repository carry: node instance
 /// id → the head they were linked at.
 pub(super) fn stored_marks(stored: &[GtsNode], repo_id: &str) -> HashMap<String, String> {

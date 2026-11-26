@@ -27,16 +27,19 @@
 //! ## A sync too big for one attempt goes on in the next
 //!
 //! An attempt holds the queue's lease for fifteen minutes. A repository with
-//! thousands of pull requests needs longer than that to link each one to the
-//! files it changed (one provider call apiece) -- and on GitLab to read each
-//! merge request's and issue's comments, one call apiece too -- so an attempt
-//! works to [`ATTEMPT_BUDGET`], stores what it has, and -- when some are
-//! left -- answers `Retry` with "linked X of Y" or "read the comments of X of
-//! Y". The next attempt syncs again and asks only about what is not done yet:
-//! which items are done is kept on their nodes in the graph (`pr_links`,
-//! `item_comments`), not on the run, so a retry by hand and the next scheduled
-//! sync go on from there too. An attempt that is the last one ends `Done`
-//! with the count: what it stored is good, and the next sync does the rest.
+//! ten thousand merge requests and twenty thousand commits needs longer than
+//! that just to list them, then to link each pull request to the files it
+//! changed (one provider call apiece) -- and on GitLab to read each merge
+//! request's and issue's comments, one call apiece too -- so an attempt works
+//! to [`ATTEMPT_BUDGET`], stores what it has, and -- when some is left --
+//! answers `Retry` with "listed … so far", "linked X of Y" or "read the
+//! comments of X of Y". The next attempt asks only about what is not done
+//! yet: where the listings got to is kept on the repository node
+//! (`listing_cursor`), which items are done on their own nodes (`pr_links`,
+//! `item_comments`) -- in the graph, not on the run, so a retry by hand and
+//! the next scheduled sync go on from there too. An attempt that is the last
+//! one ends `Done` with the count: what it stored is good, and the next sync
+//! does the rest.
 
 use crate::plural::plural;
 use std::sync::Arc;
@@ -113,10 +116,28 @@ const ATTEMPT_BUDGET: Duration = Duration::from_secs(12 * 60);
 const ATTEMPTS: i16 = 8;
 
 /// What a partial sync got through of the work it does in portions, in
-/// words: the pull requests linked to their files and the items whose
-/// comments were read, each only when some of it is left.
+/// words: the listings read so far, the pull requests linked to their files
+/// and the items whose comments were read, each only when some of it is left.
 fn left_over(counts: &super::service::SyncSummary, noun: &dyn Fn(usize) -> String) -> String {
     let mut parts: Vec<String> = Vec::new();
+    if counts.listings_left > 0 {
+        parts.push(format!(
+            "listed {}, {}, {} and {} so far, {} not read to the end yet",
+            plural(counts.issues, "issue", "issues"),
+            noun(counts.pull_requests),
+            plural(counts.comments, "comment", "comments"),
+            plural(counts.commits, "commit", "commits"),
+            plural(counts.listings_left, "listing", "listings"),
+        ));
+    } else if counts.rest_left {
+        parts.push(format!(
+            "listed all {}, {}, {} and {}; the files, the links and the comments are left",
+            plural(counts.issues, "issue", "issues"),
+            noun(counts.pull_requests),
+            plural(counts.comments, "comment", "comments"),
+            plural(counts.commits, "commit", "commits"),
+        ));
+    }
     if counts.links_left > 0 {
         parts.push(format!(
             "linked {} of {} to their files, {} left",

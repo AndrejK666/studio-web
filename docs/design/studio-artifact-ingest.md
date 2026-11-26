@@ -234,7 +234,10 @@ requests and 5,000 commits -- with nothing on the run to say so. What is left
 is a guard against a provider that never ends: a page that repeats the one
 before it, or 100,000 pages, stops the walk and is logged as an error naming
 the repository (`paging.rs`). Memory stays bounded by storing as it reads:
-each page of nodes is flushed as it comes, files 1,000 at a time.
+each page of nodes is flushed as it comes, files 1,000 at a time. Time is
+bounded per attempt, not per sync: a listing that does not fit stops at a
+page and the next attempt goes on from it (§ the `artifact.ingest` task,
+`listing_cursor.rs`).
 
 What is bounded is what is read again every sync and matters newest first:
 the newest 100 CI runs of each of up to 20 active workflows (300
@@ -397,7 +400,47 @@ this check an organization's sync could read a repository with the platform's
 token.
 
 A sync larger than one attempt goes on in the next. An attempt works to a
-12-minute budget inside the queue's 15-minute lease. Linking pull requests to
+12-minute budget inside the queue's 15-minute lease.
+
+The listings come first: issues, pull requests, GitHub's repository-wide
+comments, commits (`listing_cursor.rs`). Each asks for its pages until 90
+seconds short of the deadline -- after at least one page past where it
+started, so every attempt gets somewhere -- and each page is stored as it is
+read. Where the walk is is kept on the repository node as `listing`: per
+listing the last page read, the items counted before it and whether it is
+done, plus when the walk began and with which `since`. It is written with the
+listings' edges and authors (in that order, so it never says more than the
+graph holds) every 2 minutes of listing and when a listing stops, and cleared
+when the sync is complete. The next attempt -- or a retry by hand, or the next
+scheduled sync, within 24 hours and with the same `since` -- asks for that
+page again (one page of overlap) and goes on. The listings are ordered so a
+page boundary stays put while the walk runs: issues, pull requests and
+comments newest *created* first (GitLab `order_by=created_at`, GitHub
+`sort=created`), commits newest first. What arrives between two attempts
+lands in front and only pushes what was read further back -- duplicates,
+never a gap; an item deleted ahead of the cursor pulls the rest forward, which
+the overlap page covers up to a hundred times. (Ordered by last update, as
+they were, an item touched between attempts jumped to the front and was never
+read by that walk.) What was created after the walk began comes with the next
+sync, which starts from page 1. A sync that finishes in one attempt asks
+every page once, as before, and writes nothing extra.
+
+Nothing after the listings runs on a part of the items: while a listing is
+left, the attempt stops there and answers `Retry` with "listed N issues, M
+merge requests … so far, K listings not read to the end yet"
+(`listings_left` on the result; the counts are the walk's, across its
+attempts). The repository's record keeps its last finished sync meanwhile.
+Once every listing is read the cursor says `listed`, and the attempts after
+do not list again: the issues and pull requests an earlier attempt listed are
+taken from the graph -- the numbers comments and mentions resolve against,
+the mentions and parents they carry (read again from their stored title, body
+and `parent`, so one naming an item a later attempt listed still becomes an
+edge), and whether their files are linked and comments read (`null` marks
+are queued). An attempt whose listings took over a minute and ended with
+less than 6 minutes to go hands the rest to the next (`rest_left`): a first
+clone alone can take minutes.
+
+Linking pull requests to
 the files they changed (`modifies`, one provider call each, several in flight
 where the driver allows it -- six on GitLab, one on GitHub) stops 4 minutes
 short of that, and the rest of the sync stores what it has. Each pull request
@@ -413,13 +456,14 @@ read item by item, six in flight, stopping 2 minutes short of the deadline
 note touches its item, so a sync reads the notes only of the items that
 changed or were never read, and stores each portion's comment and author
 nodes, then their edges, then the marks. GitHub's repository-wide listing is
-paged and read whole within the attempt, up to the deadline.
+one of the listings above.
 
-An attempt that stopped with pull requests or comments left answers `Retry`
-with "linked X of Y" or "read the comments of X of Y" and the next attempt
-continues -- as does a retry by hand or the next scheduled sync, since the
-cursor is in the graph, not on the run. The last attempt ends `Done` with the
-count instead of failing.
+An attempt that stopped with listings, pull requests or comments left answers
+`Retry` with "listed … so far", "linked X of Y" or "read the comments of X of
+Y" and the next attempt continues -- as does a retry by hand or the next
+scheduled sync, since every cursor is in the graph, not on the run: a run's
+payload is what the route queued, and a retry by hand is another run. The
+last attempt ends `Done` with the count instead of failing.
 
 ##### Responsibility boundaries
 

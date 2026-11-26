@@ -410,7 +410,7 @@ async fn merge_requests_read_renamed_fields_and_survive_a_deleted_author() {
     let mock = Mock::builder()
         .get_q(
             &format!("{PROJECT}/merge_requests"),
-            "state=all&order_by=updated_at&updated_after=2026-11-01T00%3A00%3A00Z",
+            "state=all&order_by=created_at&updated_after=2026-11-01T00%3A00%3A00Z",
             Reply::json(json!([
                 // An older GitLab: `work_in_progress`, one `assignee`, no
                 // `reviewers`; the author's account was deleted.

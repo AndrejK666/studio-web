@@ -819,7 +819,13 @@ impl ConnectorDriver for GitLabDriver {
         let api = self.api(auth);
         let url = api.project(
             repo_full_path,
-            &listing_query("/issues?scope=all&state=all", since, page, per_page),
+            &listing_query(
+                "/issues?scope=all&state=all",
+                Order::Created,
+                since,
+                page,
+                per_page,
+            ),
         );
         Ok(api
             .page::<Issue>(&url, Family::Item)
@@ -845,7 +851,15 @@ impl ConnectorDriver for GitLabDriver {
         // answers in the listing's order whichever read finishes first.
         let api = self.api(auth);
         let mrs = self
-            .merge_requests(&api, repo_full_path, "all", since, page, per_page)
+            .merge_requests(
+                &api,
+                repo_full_path,
+                "all",
+                Order::Created,
+                since,
+                page,
+                per_page,
+            )
             .await?;
         let api = &api;
         let out = stream::iter(mrs.into_iter().map(|mr| async move {
@@ -891,7 +905,15 @@ impl ConnectorDriver for GitLabDriver {
         let mut out: Vec<PullRequestThreads> = Vec::new();
         for page in 1..=want.div_ceil(100) as u32 {
             let mrs = self
-                .merge_requests(api, repo_full_path, "opened", None, page, 100)
+                .merge_requests(
+                    api,
+                    repo_full_path,
+                    "opened",
+                    Order::Updated,
+                    None,
+                    page,
+                    100,
+                )
                 .await?;
             let full = mrs.len() == 100;
             let room = want.saturating_sub(out.len());
@@ -1136,13 +1158,15 @@ impl GitLabDriver {
         ))
     }
 
-    /// One page of a project's merge requests, most recently updated first.
+    /// One page of a project's merge requests, newest first by `order`.
     /// `state` is GitLab's: `all`, `opened`, `merged`, `closed`.
+    #[allow(clippy::too_many_arguments)]
     async fn merge_requests(
         &self,
         api: &Api<'_>,
         repo_full_path: &str,
         state: &str,
+        order: Order,
         since: Option<&str>,
         page: u32,
         per_page: u32,
@@ -1151,6 +1175,7 @@ impl GitLabDriver {
             repo_full_path,
             &listing_query(
                 &format!("/merge_requests?state={state}"),
+                order,
                 since,
                 page,
                 per_page,
@@ -1164,11 +1189,39 @@ impl GitLabDriver {
     }
 }
 
-/// A dated listing's query: newest activity first, one page, and
+/// What a dated listing is ordered by, newest first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Order {
+    /// When each item was created. The sync's listings: a creation time
+    /// never moves, so a page boundary stays put while the walk runs and a
+    /// walk stopped at page N goes on from page N (`listing_cursor`).
+    Created,
+    /// When each item last changed: the most active first, for a listing cut
+    /// at a few pages (the open merge requests' review state).
+    Updated,
+}
+
+impl Order {
+    fn field(self) -> &'static str {
+        match self {
+            Order::Created => "created_at",
+            Order::Updated => "updated_at",
+        }
+    }
+}
+
+/// A dated listing's query: newest first by `order`, one page, and
 /// `updated_after` for an incremental sync.
-fn listing_query(path: &str, since: Option<&str>, page: u32, per_page: u32) -> String {
+fn listing_query(
+    path: &str,
+    order: Order,
+    since: Option<&str>,
+    page: u32,
+    per_page: u32,
+) -> String {
     let mut q = format!(
-        "{path}&order_by=updated_at&sort=desc&per_page={}&page={}",
+        "{path}&order_by={}&sort=desc&per_page={}&page={}",
+        order.field(),
         per_page.clamp(1, 100),
         page.max(1)
     );

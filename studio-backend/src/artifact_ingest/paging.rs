@@ -35,6 +35,14 @@ impl<'a> Pages<'a> {
         Self::with_limit(repo, listing, RUNAWAY_PAGES)
     }
 
+    /// A walk that goes on from page `first`, where an earlier attempt
+    /// stopped (`listing_cursor`).
+    pub(super) fn starting_at(repo: &'a str, listing: &'static str, first: u32) -> Self {
+        let mut pages = Self::new(repo, listing);
+        pages.page = first.max(1) - 1;
+        pages
+    }
+
     pub(super) fn with_limit(repo: &'a str, listing: &'static str, limit: u32) -> Self {
         Self {
             repo,
@@ -99,6 +107,15 @@ mod tests {
         let walked: Vec<u32> = std::iter::from_fn(|| pages.next_page()).collect();
         assert_eq!(walked, vec![1, 2, 3]);
         assert_eq!(pages.next_page(), None, "still past it when asked again");
+    }
+
+    #[test]
+    fn a_walk_goes_on_from_the_page_it_is_given() {
+        let mut pages = Pages::starting_at("acme/app", "issues", 53);
+        assert_eq!(pages.next_page(), Some(53));
+        assert_eq!(pages.next_page(), Some(54));
+        let mut from_nothing = Pages::starting_at("acme/app", "issues", 0);
+        assert_eq!(from_nothing.next_page(), Some(1));
     }
 
     #[test]

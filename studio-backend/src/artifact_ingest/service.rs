@@ -24,6 +24,7 @@ use toolkit_security::SecurityContext;
 use super::comment_threads;
 use super::graph::{GraphStore, GtsEdge, GtsNode};
 use super::gts;
+use super::listing_cursor::{CHECKPOINT_EVERY, LISTING_TAIL, ListingCursor};
 use super::paging::Pages;
 use crate::connectors::sdk::git_checkout;
 use crate::connectors::sdk::{
@@ -311,6 +312,21 @@ pub struct SyncSummary {
     /// means the sync is partial, as with `links_left`.
     #[serde(default)]
     pub comment_items_left: usize,
+    /// Listings -- issues, pull requests, the repository-wide comments,
+    /// commits -- this sync ran out of time to read to their end. Not zero
+    /// means the sync is partial: what it listed is stored, the page it got
+    /// to is on the repository node (`listing_cursor`), and the next attempt
+    /// goes on from there. While any is left the counts above are what the
+    /// walk read so far, across its attempts, and nothing after the listings
+    /// (files, links, comments item by item, CI) ran.
+    #[serde(default)]
+    pub listings_left: usize,
+    /// Every listing was read, but so late in the attempt that the files, the
+    /// links and the comments read item by item are left to the next one,
+    /// which takes the items from the graph rather than listing them again.
+    /// Partial, like the counts above.
+    #[serde(default)]
+    pub rest_left: bool,
 }
 
 impl SyncSummary {
@@ -321,22 +337,46 @@ impl SyncSummary {
         serde_json::to_value(self).unwrap_or_else(|_| serde_json::json!({}))
     }
 
-    /// Whether the sync stopped with pull requests still to link, or items
+    /// Whether the sync stopped with listings not read to their end, the
+    /// passes after them not started, pull requests still to link, or items
     /// whose comments are still to be read.
     pub fn is_partial(&self) -> bool {
-        self.links_left > 0 || self.comment_items_left > 0
+        self.listings_left > 0
+            || self.rest_left
+            || self.links_left > 0
+            || self.comment_items_left > 0
     }
 }
 
 /// How long a sync may spend linking pull requests to their files before it
 /// stops for this run, short of its deadline: what comes after (comments,
-/// commits, CI runs, storing the relations) needs the rest.
+/// CI runs, storing the relations) needs the rest.
 const LINK_TAIL: std::time::Duration = std::time::Duration::from_secs(4 * 60);
 
-/// The same for comments read item by item, which come after the links:
-/// commits (every page of them), CI runs and storing the relations need the
-/// rest of the attempt.
+/// The same for comments read item by item, which come after the links: CI
+/// runs and storing the relations need the rest of the attempt.
 const COMMENTS_TAIL: std::time::Duration = std::time::Duration::from_secs(2 * 60);
+
+/// An attempt that spent at least [`LONG_LISTING`] on its listings and
+/// finished them with less than this left before its deadline hands the rest
+/// -- the checkout, classification, links, comments read item by item, CI --
+/// on to the next attempt: a first clone alone can take minutes, and the
+/// links need a portion's worth before [`LINK_TAIL`].
+const REST_TAIL: std::time::Duration = std::time::Duration::from_secs(6 * 60);
+
+/// See [`REST_TAIL`]: a listing quicker than this never hands on, so a small
+/// repository syncs in one attempt whatever the deadline says.
+const LONG_LISTING: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// A deadline that leaves the listings their time but none for the links and
+/// the comments read item by item: what the tests of those passes give a
+/// sync to see it stop between portions.
+#[cfg(test)]
+pub(super) fn out_of_time_for_items() -> std::time::Instant {
+    let tail = super::listing_cursor::LISTING_TAIL;
+    // Between the listing tail and the comment tail, nearer the comments'.
+    std::time::Instant::now() + tail + (COMMENTS_TAIL - tail) * 3 / 4
+}
 
 /// Put `repository` (the repository node's `full_path`) on each hit whose
 /// `repo` names one of `repos`.
@@ -797,11 +837,23 @@ impl IngestService {
         .await
     }
 
-    /// [`Self::run_sync`] that keeps to `deadline`: the pull request → file
-    /// links stop [`LINK_TAIL`] before it, comments read item by item
-    /// [`COMMENTS_TAIL`] before it and a repository-wide comment listing at
-    /// it, so the writes that close the sync still fit in the run's lease.
-    /// What the links and the item comments did not reach is `links_left` and
+    /// [`Self::run_sync`] that keeps to `deadline`, so the writes that close
+    /// the sync still fit in the run's lease.
+    ///
+    /// In this order:
+    /// 1. The listings -- issues, pull requests, the repository-wide comments
+    ///    where the provider has them, commits -- stop asking for pages
+    ///    `LISTING_TAIL` before it, and go on from the page they got to on
+    ///    the next attempt ([`super::listing_cursor`]). While any is left the
+    ///    attempt stops there: the passes below need every item.
+    /// 2. With every listing read, the checkout, the links (stopping
+    ///    [`LINK_TAIL`] before the deadline), the comments read item by item
+    ///    ([`COMMENTS_TAIL`]), CI and the rest. The items an earlier attempt of
+    ///    the same walk listed come from the graph, not from the provider. An
+    ///    attempt whose listings ran long and ended past [`REST_TAIL`] leaves
+    ///    all of this to the next.
+    ///
+    /// What is left is `listings_left`, `rest_left`, `links_left` and
     /// `comment_items_left` on the answer, and the next sync -- the run's next
     /// attempt -- goes on from there ([`super::pr_links`],
     /// [`super::item_comments`]).
@@ -936,13 +988,40 @@ impl IngestService {
                 None
             }
         };
-        nodes.push(gts::repo_node_keeping(
-            source_scope,
-            connector_id,
-            provider,
-            repo_full_path,
-            prior.as_ref(),
-        ));
+        // Where the listings are: a walk an earlier attempt stopped goes on
+        // from where it got to, else a new one starts (`listing_cursor`). The
+        // repository node carries it from the start -- it is written now
+        // anyway -- and every checkpoint after.
+        let mut cursor =
+            ListingCursor::resume(prior.as_ref(), since, time::OffsetDateTime::now_utc())
+                .unwrap_or_else(|| ListingCursor::fresh(time::OffsetDateTime::now_utc(), since));
+        // Whether an earlier attempt of this walk listed items this one will
+        // not list again: those are taken from the graph.
+        let continuing = cursor.progressed();
+        let cursor_node = |cursor: Option<&ListingCursor>| {
+            let mut node = gts::repo_node_keeping(
+                source_scope,
+                connector_id,
+                provider,
+                repo_full_path,
+                prior.as_ref(),
+            );
+            super::listing_cursor::put(&mut node, cursor);
+            node
+        };
+        nodes.push(cursor_node(Some(&cursor)));
+        if continuing {
+            info!(
+                repo = repo_full_path,
+                started_at = %cursor.started_at,
+                listed = cursor.listed,
+                issues_page = cursor.issues.next,
+                pull_requests_page = cursor.pull_requests.next,
+                comments_page = cursor.comments.next,
+                commits_page = cursor.commits.next,
+                "studio-artifact-ingest: going on with the listings where the last attempt stopped"
+            );
+        }
 
         // How many nodes this sync has stored so far. `nodes` holds only the
         // ones not stored yet: every flush writes them and empties it, so a
@@ -971,14 +1050,36 @@ impl IngestService {
         // issues and pull requests had them read, and at which state
         // (`item_comments`). Unreadable reads as none done -- the slow way,
         // never the wrong one.
+        //
+        // Continuing a walk, the stored items themselves are kept too: those
+        // an earlier attempt listed are not listed again, and the passes after
+        // the listings take them from here (`seed_items`). Unreadable then is
+        // an error: going on without them would leave them unlinked for good.
         let per_item_comments = driver.comments_per_item();
+        let of_repo = |stored: &[GtsNode]| -> Vec<GtsNode> {
+            stored
+                .iter()
+                .filter(|n| {
+                    n.value.get("repo").and_then(serde_json::Value::as_str)
+                        == Some(repo_id.as_str())
+                })
+                .cloned()
+                .collect()
+        };
+        let mut stored_pulls: Vec<GtsNode> = Vec::new();
+        let mut stored_issues: Vec<GtsNode> = Vec::new();
         let link_marks = match self.graph.list(ctx, Some(gts::PULL_REQUEST_TYPE)).await {
             Ok(stored) => {
                 if per_item_comments {
                     comment_marks.extend(super::item_comments::stored_marks(&stored, &repo_id));
                 }
-                super::pr_links::stored_marks(&stored, &repo_id)
+                let marks = super::pr_links::stored_marks(&stored, &repo_id);
+                if continuing {
+                    stored_pulls = of_repo(&stored);
+                }
+                marks
             }
+            Err(e) if continuing => return Err(e),
             Err(e) => {
                 tracing::warn!(
                     repo = repo_full_path,
@@ -988,11 +1089,17 @@ impl IngestService {
                 HashMap::new()
             }
         };
-        if per_item_comments {
+        if per_item_comments || continuing {
             match self.graph.list(ctx, Some(gts::ISSUE_TYPE)).await {
                 Ok(stored) => {
-                    comment_marks.extend(super::item_comments::stored_marks(&stored, &repo_id));
+                    if per_item_comments {
+                        comment_marks.extend(super::item_comments::stored_marks(&stored, &repo_id));
+                    }
+                    if continuing {
+                        stored_issues = of_repo(&stored);
+                    }
                 }
+                Err(e) if continuing => return Err(e),
                 Err(e) => tracing::warn!(
                     repo = repo_full_path,
                     error = %e,
@@ -1000,6 +1107,23 @@ impl IngestService {
                 ),
             }
         }
+        // What an earlier attempt listed answers to its number, as what this
+        // one lists does: a comment, a mention or a parent naming it finds it.
+        for n in &stored_issues {
+            if let Some(number) = n.value.get("number").and_then(serde_json::Value::as_i64) {
+                by_number.insert(number, n.instance_id.clone());
+                issue_by_number.insert(number, n.instance_id.clone());
+            }
+        }
+        for n in &stored_pulls {
+            if let Some(number) = n.value.get("number").and_then(serde_json::Value::as_i64) {
+                by_number.insert(number, n.instance_id.clone());
+                pr_by_number.insert(number, n.instance_id.clone());
+            }
+        }
+        // The items this attempt lists: the rest of the stored ones are an
+        // earlier attempt's (`seed_items`).
+        let mut listed_ids: HashSet<String> = HashSet::new();
         // Mark an issue or pull request node with the state its comments were
         // read at, when that is the state it is in now; otherwise mark it
         // unread and queue it for the comment pass. Nothing where comments
@@ -1030,10 +1154,63 @@ impl IngestService {
             }
         };
 
+        // The listings, each from where the walk got to (`listing_cursor`).
+        // Before asking for a page each one checks the time: past
+        // `LISTING_TAIL` short of the deadline it stops, once this attempt
+        // has asked for at least one page past the cursor -- so every attempt
+        // gets somewhere, however late it started. Every page is stored as it
+        // is read; the edges and authors of what was read, and the cursor,
+        // at checkpoints (`checkpoint`) every `CHECKPOINT_EVERY` and when a
+        // listing stops.
+        let listing_deadline = deadline.map(|d| d.checked_sub(LISTING_TAIL).unwrap_or(d));
+        let listing_began = std::time::Instant::now();
+        let mut last_checkpoint = listing_began;
+        let mut moved = false;
+        let mut out_of_time = false;
+        let mut users_stored: HashSet<String> = HashSet::new();
+        let mut edge_tally = EdgeTally::default();
+        let listing = !cursor.listed;
+        if per_item_comments && !cursor.comments.done {
+            // Read item by item after the listings, not listed.
+            cursor.comments.finish(0);
+        }
+        let svc = self;
+        // Store the edges and authors read so far and then the cursor, when
+        // the last checkpoint is `CHECKPOINT_EVERY` ago.
+        macro_rules! checkpoint_if_due {
+            () => {
+                if last_checkpoint.elapsed() >= CHECKPOINT_EVERY {
+                    flushed += svc
+                        .checkpoint(
+                            ctx,
+                            workspace_id,
+                            project_id,
+                            &users,
+                            &mut users_stored,
+                            &mut edges,
+                            &mut edge_tally,
+                            cursor_node(Some(&cursor)),
+                            repo_full_path,
+                        )
+                        .await?;
+                    last_checkpoint = std::time::Instant::now();
+                }
+            };
+        }
+
         progress.set("pulling issues…");
-        let mut issues = 0usize;
-        let mut pages = Pages::new(repo_full_path, "issues");
-        while let Some(page) = pages.next_page() {
+        let mut issues = cursor.issues.counted;
+        let mut pages = Pages::starting_at(repo_full_path, "issues", cursor.issues.first_page());
+        while listing && !cursor.issues.done {
+            let Some(page) = pages.next_page() else {
+                cursor.issues.finish(issues);
+                break;
+            };
+            if moved && past(listing_deadline) {
+                out_of_time = true;
+                break;
+            }
+            moved |= cursor.issues.is_new(page);
             // Whether the provider's page held anything: GitHub's issue
             // listing holds pull requests too, which the driver drops, so a
             // page of only those is no issues but not the end.
@@ -1041,8 +1218,10 @@ impl IngestService {
                 .list_issue_page(&auth, repo_full_path, since, page, PER_PAGE)
                 .await?;
             if !more || pages.repeats(batch.iter().map(|i| i.id.clone())) {
+                cursor.issues.finish(issues);
                 break;
             }
+            let before = issues;
             issues += batch.len();
             for i in batch {
                 let author = i.author.clone();
@@ -1066,6 +1245,7 @@ impl IngestService {
                 }
                 by_number.insert(number, node.instance_id.clone());
                 issue_by_number.insert(number, node.instance_id.clone());
+                listed_ids.insert(node.instance_id.clone());
                 nodes.push(node);
             }
             // Flush this page of issues immediately — they show up in the graph
@@ -1085,31 +1265,27 @@ impl IngestService {
                 0,
             )
             .await?;
+            cursor.issues.read(page, before);
+            checkpoint_if_due!();
         }
 
         // Review threads before the pull requests themselves: the count belongs
         // ON each pull-request node, so it has to be in hand before the nodes
         // are built. Best-effort — a provider that cannot answer, or one that
         // errors, leaves the metric unset and costs the sync nothing else.
-        progress.set("reading review threads…");
-        let threads = match driver
-            .open_review_threads(&download_auth, repo_full_path, MAX_THREAD_PULLS)
-            .await
-        {
-            Ok(v) => v,
-            Err(e) => {
-                tracing::warn!(
-                    error = %e,
-                    repo = repo_full_path,
-                    "studio-artifact-ingest: review threads unavailable — metric left unset"
-                );
-                None
-            }
+        // Only when this attempt lists pull requests; otherwise once the
+        // listings are done, for the repository's count alone.
+        let reads_threads = listing && !cursor.pull_requests.done && !out_of_time;
+        let threads = if reads_threads {
+            progress.set("reading review threads…");
+            review_threads(driver.as_ref(), &download_auth, repo_full_path).await
+        } else {
+            None
         };
         // Set by the checkout walk below, which is the only place that can
         // know: the sidecars are files in the repository.
         let mut open_document_threads: Option<usize> = None;
-        let open_review_threads = threads
+        let mut open_review_threads = threads
             .as_ref()
             .map(|list| list.iter().map(|t| t.open).sum::<usize>());
         let threads_by_number: HashMap<i64, PullRequestThreads> = threads
@@ -1119,15 +1295,30 @@ impl IngestService {
             .collect();
 
         progress.set("pulling pull requests…");
-        let mut pull_requests = 0usize;
-        let mut pages = Pages::new(repo_full_path, "pull requests");
-        while let Some(page) = pages.next_page() {
+        let mut pull_requests = cursor.pull_requests.counted;
+        let mut pages = Pages::starting_at(
+            repo_full_path,
+            "pull requests",
+            cursor.pull_requests.first_page(),
+        );
+        while listing && !out_of_time && !cursor.pull_requests.done {
+            let Some(page) = pages.next_page() else {
+                cursor.pull_requests.finish(pull_requests);
+                break;
+            };
+            if moved && past(listing_deadline) {
+                out_of_time = true;
+                break;
+            }
+            moved |= cursor.pull_requests.is_new(page);
             let batch = driver
                 .list_pull_requests(&auth, repo_full_path, since, page, PER_PAGE)
                 .await?;
             if batch.is_empty() || pages.repeats(batch.iter().map(|p| p.id.clone())) {
+                cursor.pull_requests.finish(pull_requests);
                 break;
             }
+            let before = pull_requests;
             pull_requests += batch.len();
             for p in batch {
                 let author = p.author.clone();
@@ -1228,6 +1419,7 @@ impl IngestService {
                     }
                 }
                 by_number.insert(number, pr_id.clone());
+                listed_ids.insert(pr_id.clone());
                 pr_by_number.insert(number, pr_id);
                 nodes.push(node);
             }
@@ -1246,8 +1438,198 @@ impl IngestService {
                 0,
             )
             .await?;
+            cursor.pull_requests.read(page, before);
+            checkpoint_if_due!();
         }
 
+        // Comments as one repository-wide listing (GitHub), each linked to
+        // the issue/PR node it is on (`comment_on`) and to its author.
+        // Best-effort: a provider that will not list them costs the sync its
+        // comments, nothing else. Where comments hang off each item (GitLab)
+        // they are read item by item after the listings.
+        progress.set("pulling comments…");
+        let mut comments = cursor.comments.counted;
+        let mut pages =
+            Pages::starting_at(repo_full_path, "comments", cursor.comments.first_page());
+        while listing && !out_of_time && !cursor.comments.done {
+            let Some(page) = pages.next_page() else {
+                cursor.comments.finish(comments);
+                break;
+            };
+            if moved && past(listing_deadline) {
+                out_of_time = true;
+                break;
+            }
+            moved |= cursor.comments.is_new(page);
+            let batch = match driver
+                .list_comments(&auth, repo_full_path, since, page, PER_PAGE)
+                .await
+            {
+                Ok(b) => b,
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        repo = repo_full_path,
+                        "studio-artifact-ingest: comment listing failed — skipping comments"
+                    );
+                    cursor.comments.finish(comments);
+                    break;
+                }
+            };
+            if batch.is_empty() || pages.repeats(batch.iter().map(|c| c.id.clone())) {
+                cursor.comments.finish(comments);
+                break;
+            }
+            let before = comments;
+            comments += batch.len();
+            for c in batch {
+                let author = c.author.clone();
+                let target = match c.target_is_pull_request {
+                    Some(true) => pr_by_number.get(&c.target_number),
+                    Some(false) => issue_by_number.get(&c.target_number),
+                    None => by_number.get(&c.target_number),
+                }
+                .cloned();
+                let node =
+                    gts::comment_node(source_scope, &repo_id, connector_id, repo_full_path, c);
+                let comment_id = node.instance_id.clone();
+                if let Some(target_id) = target {
+                    edges.push(gts::comment_on_edge(&comment_id, &target_id));
+                }
+                author_edge(&mut edges, &mut users, &comment_id, author.as_deref());
+                nodes.push(node);
+            }
+            self.flush_and_report(
+                ctx,
+                progress,
+                &mut nodes,
+                &mut flushed,
+                workspace_id,
+                project_id,
+                "pulling comments…",
+                issues,
+                pull_requests,
+                0,
+                comments,
+                0,
+            )
+            .await?;
+            cursor.comments.read(page, before);
+            checkpoint_if_due!();
+        }
+
+        // Commits, each linked to the repo (`artifact_of`) and to its author.
+        // Best-effort: a listing that fails ends here. Commit→file links are
+        // deferred (one extra call per commit — see the batching plan).
+        progress.set("pulling commits…");
+        let mut commits = cursor.commits.counted;
+        let mut pages = Pages::starting_at(repo_full_path, "commits", cursor.commits.first_page());
+        while listing && !out_of_time && !cursor.commits.done {
+            let Some(page) = pages.next_page() else {
+                cursor.commits.finish(commits);
+                break;
+            };
+            if moved && past(listing_deadline) {
+                out_of_time = true;
+                break;
+            }
+            moved |= cursor.commits.is_new(page);
+            let batch = match driver
+                .list_commits(&auth, repo_full_path, since, page, PER_PAGE)
+                .await
+            {
+                Ok(b) => b,
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        repo = repo_full_path,
+                        "studio-artifact-ingest: commit listing failed — skipping commits"
+                    );
+                    cursor.commits.finish(commits);
+                    break;
+                }
+            };
+            if batch.is_empty() || pages.repeats(batch.iter().map(|c| c.sha.clone())) {
+                cursor.commits.finish(commits);
+                break;
+            }
+            let before = commits;
+            commits += batch.len();
+            for c in batch {
+                let author = c.author.clone();
+                let node =
+                    gts::commit_node(source_scope, &repo_id, connector_id, repo_full_path, c);
+                let commit_id = node.instance_id.clone();
+                edges.push(gts::artifact_of_edge(&commit_id, &repo_id));
+                author_edge(&mut edges, &mut users, &commit_id, author.as_deref());
+                nodes.push(node);
+            }
+            self.flush_and_report(
+                ctx,
+                progress,
+                &mut nodes,
+                &mut flushed,
+                workspace_id,
+                project_id,
+                "pulling commits…",
+                issues,
+                pull_requests,
+                0,
+                comments,
+                commits,
+            )
+            .await?;
+            cursor.commits.read(page, before);
+            checkpoint_if_due!();
+        }
+        let listed_for = listing_began.elapsed();
+
+        // The items an earlier attempt of this walk listed, from the graph:
+        // what they mention and what they are part of, and -- once every
+        // listing is read -- whether their files are linked and their
+        // comments read. Only when continuing a walk; a walk this attempt
+        // began listed every item itself.
+        if continuing && cursor.left() == 0 {
+            for n in stored_issues
+                .iter()
+                .filter(|n| !listed_ids.contains(&n.instance_id))
+            {
+                if let Some(parent) = stored_parent(&n.value) {
+                    item_links.push((n.instance_id.clone(), gts::REL_PART_OF, parent));
+                }
+            }
+            for n in stored_pulls
+                .iter()
+                .filter(|n| !listed_ids.contains(&n.instance_id))
+            {
+                // As the listing reads them: its title and body, itself left
+                // out unless the mention says it is an issue.
+                let number = n.value.get("number").and_then(serde_json::Value::as_i64);
+                let text = format!(
+                    "{}
+{}",
+                    n.value
+                        .get("title")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default(),
+                    n.value
+                        .get("body")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                );
+                for m in find_references(&text, syntax).into_iter().filter(|m| {
+                    !(m.target.repo.is_none()
+                        && Some(m.target.number) == number
+                        && m.target.kind != RefKind::Issue)
+                }) {
+                    let rel = match m.relation {
+                        Relation::Closes => gts::REL_CLOSES,
+                        Relation::References => gts::REL_REFERENCES,
+                    };
+                    item_links.push((n.instance_id.clone(), rel, m.target));
+                }
+            }
+        }
         edges.extend(item_link_edges(
             &item_links,
             &issue_by_number,
@@ -1255,6 +1637,151 @@ impl IngestService {
             &by_number,
             repo_full_path,
         ));
+        if !out_of_time && cursor.left() == 0 && !cursor.listed {
+            info!(
+                repo = repo_full_path,
+                issues,
+                pull_requests,
+                comments,
+                commits,
+                seconds = listed_for.as_secs(),
+                "studio-artifact-ingest: every listing read to its end"
+            );
+        }
+        cursor.listed = cursor.left() == 0;
+
+        // Out of time with a listing not read to its end -- or with every one
+        // read but so late, after a long listing, that the checkout, the links
+        // and the comments would not fit: what was read is stored, the cursor
+        // says where the walk is, and the next attempt goes on from there.
+        // Nothing after the listings runs on a part of the items: the links
+        // and the comments must see every one, and the repository's record
+        // keeps its last finished sync until this one finishes.
+        let rest_left = cursor.listed
+            && listing
+            && listed_for >= LONG_LISTING
+            && past(deadline.map(|d| d.checked_sub(REST_TAIL).unwrap_or(d)));
+        if !cursor.listed || rest_left {
+            flushed += self
+                .checkpoint(
+                    ctx,
+                    workspace_id,
+                    project_id,
+                    &users,
+                    &mut users_stored,
+                    &mut edges,
+                    &mut edge_tally,
+                    cursor_node(Some(&cursor)),
+                    repo_full_path,
+                )
+                .await?;
+            let left = cursor.left();
+            info!(
+                repo = repo_full_path,
+                listings_left = left,
+                rest_left,
+                issues,
+                pull_requests,
+                comments,
+                commits,
+                issues_page = cursor.issues.next,
+                pull_requests_page = cursor.pull_requests.next,
+                comments_page = cursor.comments.next,
+                commits_page = cursor.commits.next,
+                edges = edge_tally.stored,
+                edge_errors = edge_tally.errors,
+                "studio-artifact-ingest: out of time in the listings; the next attempt goes on from the cursor"
+            );
+            return Ok(SyncSummary {
+                issues,
+                pull_requests,
+                comments,
+                commits,
+                open_review_threads,
+                stored: flushed,
+                listings_left: left,
+                rest_left,
+                ..Default::default()
+            });
+        }
+        // Every listing read. A long one is worth a checkpoint here, so a
+        // crash in what follows does not list it all again.
+        if listing && listed_for >= CHECKPOINT_EVERY {
+            flushed += self
+                .checkpoint(
+                    ctx,
+                    workspace_id,
+                    project_id,
+                    &users,
+                    &mut users_stored,
+                    &mut edges,
+                    &mut edge_tally,
+                    cursor_node(Some(&cursor)),
+                    repo_full_path,
+                )
+                .await?;
+        }
+        if !reads_threads {
+            progress.set("reading review threads…");
+            open_review_threads = review_threads(driver.as_ref(), &download_auth, repo_full_path)
+                .await
+                .map(|list| list.iter().map(|t| t.open).sum::<usize>());
+        }
+        // The pull requests and items an earlier attempt listed join the
+        // links and the comments read item by item: carried when their mark
+        // stands, queued when it does not (`null` -- listed, not done yet).
+        // Newest first, as a listing reads them.
+        if continuing {
+            let mut seeded: Vec<super::pr_links::Pending> = Vec::new();
+            for n in stored_pulls
+                .iter()
+                .filter(|n| !listed_ids.contains(&n.instance_id))
+            {
+                let number = n.value.get("number").and_then(serde_json::Value::as_i64);
+                let Some(number) = number else { continue };
+                if link_marks.contains_key(&n.instance_id) {
+                    links_carried += 1;
+                } else {
+                    seeded.push(super::pr_links::Pending {
+                        number,
+                        node: n.clone(),
+                        fingerprint: super::pr_links::stored_fingerprint(n),
+                    });
+                }
+            }
+            seeded.sort_by_key(|p| std::cmp::Reverse(p.number));
+            links_pending.extend(seeded);
+            if per_item_comments {
+                let mut seeded: Vec<super::item_comments::Pending> = Vec::new();
+                for (n, is_pull_request) in stored_issues
+                    .iter()
+                    .map(|n| (n, false))
+                    .chain(stored_pulls.iter().map(|n| (n, true)))
+                    .filter(|(n, _)| !listed_ids.contains(&n.instance_id))
+                {
+                    let number = n.value.get("number").and_then(serde_json::Value::as_i64);
+                    let Some(number) = number else { continue };
+                    if comment_marks.contains_key(&n.instance_id) {
+                        comments_carried += 1;
+                    } else {
+                        seeded.push(super::item_comments::Pending {
+                            number,
+                            is_pull_request,
+                            node: n.clone(),
+                            fingerprint: super::item_comments::fingerprint(
+                                n.value
+                                    .get("updated_at")
+                                    .and_then(serde_json::Value::as_str),
+                            ),
+                        });
+                    }
+                }
+                seeded.sort_by_key(|p| (!p.is_pull_request, std::cmp::Reverse(p.number)));
+                comments_pending.extend(seeded);
+            }
+        }
+        drop(stored_pulls);
+        drop(stored_issues);
 
         // Files come from the project's ONE checkout on this server
         // (`port::ProjectCheckout`): `{workspaces_root}/{project_id}/{dir}`,
@@ -1786,11 +2313,9 @@ impl IngestService {
         // Without files to link to (the listing failed) nothing is asked and
         // nothing is left for later: that is not a deadline.
 
-        // Comments on issues and PRs, each linked to the issue/PR node it is
-        // on (`comment_on`) and to its author. Best-effort: a provider that
-        // will not list them costs the sync its comments, nothing else.
-        progress.set("pulling comments…");
-        let mut comments = 0usize;
+        // Comments read item by item, where the provider keeps them on each
+        // issue and pull request (GitLab). Best-effort, like the listing.
+        // (A repository-wide listing, GitHub's, was read with the listings.)
         let mut comment_items = super::item_comments::Tally {
             total: comments_carried + comments_pending.len(),
             read: comments_carried,
@@ -1801,6 +2326,7 @@ impl IngestService {
             // state, several in flight, each portion stored as it is read, and
             // the pass stops `COMMENTS_TAIL` short of the deadline. What it
             // leaves, the next sync reads (`item_comments`).
+            progress.set("pulling comments…");
             let stored = flushed;
             let report = |t: &super::item_comments::Tally| {
                 progress.set_with(
@@ -1853,130 +2379,7 @@ impl IngestService {
                 comments,
                 "studio-artifact-ingest: comments read item by item"
             );
-        } else {
-            // One repository-wide listing (GitHub), walked to its end. Past
-            // the deadline the rest waits for the next sync, which reads
-            // comments again anyway: the run must still have time to store
-            // what it has.
-            let mut pages = Pages::new(repo_full_path, "comments");
-            while let Some(page) = pages.next_page() {
-                if past(deadline) {
-                    tracing::warn!(
-                        repo = repo_full_path,
-                        comments,
-                        "studio-artifact-ingest: out of time — remaining comments left for the next sync"
-                    );
-                    break;
-                }
-                let batch = match driver
-                    .list_comments(&auth, repo_full_path, since, page, PER_PAGE)
-                    .await
-                {
-                    Ok(b) => b,
-                    Err(e) => {
-                        tracing::warn!(
-                            error = %e,
-                            repo = repo_full_path,
-                            "studio-artifact-ingest: comment listing failed — skipping comments"
-                        );
-                        break;
-                    }
-                };
-                if batch.is_empty() || pages.repeats(batch.iter().map(|c| c.id.clone())) {
-                    break;
-                }
-                comments += batch.len();
-                for c in batch {
-                    let author = c.author.clone();
-                    let target = match c.target_is_pull_request {
-                        Some(true) => pr_by_number.get(&c.target_number),
-                        Some(false) => issue_by_number.get(&c.target_number),
-                        None => by_number.get(&c.target_number),
-                    }
-                    .cloned();
-                    let node =
-                        gts::comment_node(source_scope, &repo_id, connector_id, repo_full_path, c);
-                    let comment_id = node.instance_id.clone();
-                    if let Some(target_id) = target {
-                        edges.push(gts::comment_on_edge(&comment_id, &target_id));
-                    }
-                    author_edge(&mut edges, &mut users, &comment_id, author.as_deref());
-                    nodes.push(node);
-                }
-                self.flush_and_report(
-                    ctx,
-                    progress,
-                    &mut nodes,
-                    &mut flushed,
-                    workspace_id,
-                    project_id,
-                    "pulling comments…",
-                    issues,
-                    pull_requests,
-                    files,
-                    comments,
-                    0,
-                )
-                .await?;
-            }
         }
-
-        // Commits. Best-effort and paged; each links to the repo (`artifact_of`)
-        // and to its author. Commit→file links are deferred (one extra call per
-        // commit — see the batching plan).
-        progress.set("pulling commits…");
-        let mut commits = 0usize;
-        let mut pages = Pages::new(repo_full_path, "commits");
-        while let Some(page) = pages.next_page() {
-            let batch = match driver
-                .list_commits(&auth, repo_full_path, since, page, PER_PAGE)
-                .await
-            {
-                Ok(b) => b,
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        repo = repo_full_path,
-                        "studio-artifact-ingest: commit listing failed — skipping commits"
-                    );
-                    break;
-                }
-            };
-            if batch.is_empty() || pages.repeats(batch.iter().map(|c| c.sha.clone())) {
-                break;
-            }
-            commits += batch.len();
-            for c in batch {
-                let author = c.author.clone();
-                let node =
-                    gts::commit_node(source_scope, &repo_id, connector_id, repo_full_path, c);
-                let commit_id = node.instance_id.clone();
-                edges.push(gts::artifact_of_edge(&commit_id, &repo_id));
-                author_edge(&mut edges, &mut users, &commit_id, author.as_deref());
-                nodes.push(node);
-            }
-            self.flush_and_report(
-                ctx,
-                progress,
-                &mut nodes,
-                &mut flushed,
-                workspace_id,
-                project_id,
-                "pulling commits…",
-                issues,
-                pull_requests,
-                files,
-                comments,
-                commits,
-            )
-            .await?;
-        }
-        tracing::info!(
-            repo = repo_full_path,
-            comments,
-            commits,
-            "studio-artifact-ingest: pulled comments and commits"
-        );
 
         // CI runs (ADR-0045): the newest of each workflow, whatever `since`
         // says -- a run that was in progress at the last sync has finished
@@ -2269,7 +2672,12 @@ impl IngestService {
         // flush stores them plus anything appended since the last page. Node
         // tenant-tagging happens inside `store_node_batch`, so every flushed
         // batch is already scoped (see rest.rs `scope`).
-        nodes.extend(users.into_values());
+        nodes.extend(
+            users
+                .into_iter()
+                .filter(|(id, _)| !users_stored.contains(id))
+                .map(|(_, user)| user),
+        );
         progress.set("storing…");
         self.flush_and_report(
             ctx,
@@ -2287,14 +2695,39 @@ impl IngestService {
         )
         .await?;
 
+        // Relations, now that every endpoint node is stored -- the listings'
+        // own at their checkpoints, if they had any. Additive: a rejected edge
+        // chunk is logged and skipped (its nodes are already stored and the
+        // sync still succeeds) rather than failing the whole job.
+        for chunk in edges.chunks(EDGE_CHUNK) {
+            match self.graph.upsert_edges(ctx, chunk).await {
+                Ok(()) => edge_tally.stored += chunk.len(),
+                Err(e) => {
+                    edge_tally.errors += chunk.len();
+                    tracing::warn!(
+                        error = %e,
+                        repo = repo_full_path,
+                        chunk = chunk.len(),
+                        "studio-artifact-ingest: edge chunk upsert failed — skipped"
+                    );
+                }
+            }
+        }
+        drop(edges);
+
         // Stamp the sync onto the repository node — same instance id, so this
         // upserts over the record written when the sync started. A reader (the
         // project dashboard) then sees "last synced <when>, <what came in>"
         // instead of having to infer it from the presence of child nodes.
+        // Last, after the relations: it also clears the walk's cursor, or --
+        // with pull requests still to link or comments still to read -- keeps
+        // it, saying the listings are done, so the next attempt does not list
+        // again (`listing_cursor`).
+        let partial = links.left > 0 || comment_items.left > 0;
         let synced_at = time::OffsetDateTime::now_utc()
             .format(&time::format_description::well_known::Rfc3339)
             .unwrap_or_default();
-        nodes.push(gts::repo_synced_node(
+        let mut synced = gts::repo_synced_node(
             source_scope,
             connector_id,
             provider,
@@ -2312,7 +2745,9 @@ impl IngestService {
                 ci_error,
             },
             &threads.waiting,
-        ));
+        );
+        super::listing_cursor::put(&mut synced, partial.then_some(&cursor));
+        nodes.push(synced);
         self.flush_and_report(
             ctx,
             progress,
@@ -2328,28 +2763,12 @@ impl IngestService {
             commits,
         )
         .await?;
-
-        // Relations last — every endpoint node is now stored. Additive: a
-        // rejected edge chunk is logged and skipped (its nodes are already
-        // stored and the sync still succeeds) rather than failing the whole job.
-        let (total_nodes, total_edges) = (flushed, edges.len());
-        let mut edge_errors = 0usize;
-        for chunk in edges.chunks(EDGE_CHUNK) {
-            if let Err(e) = self.graph.upsert_edges(ctx, chunk).await {
-                edge_errors += chunk.len();
-                tracing::warn!(
-                    error = %e,
-                    repo = repo_full_path,
-                    chunk = chunk.len(),
-                    "studio-artifact-ingest: edge chunk upsert failed — skipped"
-                );
-            }
-        }
+        let total_nodes = flushed;
         tracing::info!(
             repo = repo_full_path,
             nodes = total_nodes,
-            edges = total_edges,
-            edge_errors,
+            edges = edge_tally.stored + edge_tally.errors,
+            edge_errors = edge_tally.errors,
             node_chunk = NODE_CHUNK,
             edge_chunk = EDGE_CHUNK,
             "studio-artifact-ingest: stored graph (chunked)"
@@ -2386,7 +2805,56 @@ impl IngestService {
             comment_items_done: comment_items.read,
             comment_items_total: comment_items.total,
             comment_items_left: comment_items.left,
+            listings_left: 0,
+            rest_left: false,
         })
+    }
+
+    /// Store what the listings read beyond their nodes -- the authors not
+    /// stored yet, then the edges gathered so far -- and then `repo_node`,
+    /// which carries the walk's cursor (`listing_cursor`): in that order, so
+    /// the cursor never says more than the graph holds. Drains `edges`;
+    /// returns how many author nodes it stored. A rejected edge chunk is
+    /// logged and counted, as at the end of a sync.
+    #[allow(clippy::too_many_arguments)]
+    async fn checkpoint(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Option<&str>,
+        project_id: Option<&str>,
+        users: &HashMap<String, GtsNode>,
+        users_stored: &mut HashSet<String>,
+        edges: &mut Vec<GtsEdge>,
+        tally: &mut EdgeTally,
+        repo_node: GtsNode,
+        repo_full_path: &str,
+    ) -> anyhow::Result<usize> {
+        let mut authors: Vec<GtsNode> = users
+            .iter()
+            .filter(|(id, _)| !users_stored.contains(*id))
+            .map(|(_, user)| user.clone())
+            .collect();
+        self.store_node_batch(ctx, &mut authors, workspace_id, project_id)
+            .await?;
+        users_stored.extend(authors.iter().map(|u| u.instance_id.clone()));
+        for chunk in edges.chunks(EDGE_CHUNK) {
+            match self.graph.upsert_edges(ctx, chunk).await {
+                Ok(()) => tally.stored += chunk.len(),
+                Err(e) => {
+                    tally.errors += chunk.len();
+                    tracing::warn!(
+                        error = %e,
+                        repo = repo_full_path,
+                        chunk = chunk.len(),
+                        "studio-artifact-ingest: edge chunk upsert failed — skipped"
+                    );
+                }
+            }
+        }
+        edges.clear();
+        self.store_node_batch(ctx, &mut [repo_node], workspace_id, project_id)
+            .await?;
+        Ok(authors.len())
     }
 
     /// Clone (or update) the repository on a blocking thread, then walk it.
@@ -4828,6 +5296,51 @@ fn query_value(s: &str) -> String {
     out
 }
 
+/// What the sync counted of the edges it stored, at checkpoints and at the
+/// end.
+#[derive(Debug, Clone, Copy, Default)]
+struct EdgeTally {
+    stored: usize,
+    errors: usize,
+}
+
+/// The open pull requests' review threads, or `None` when the provider cannot
+/// say or errs: best-effort, the metric is left unset and the sync goes on.
+async fn review_threads(
+    driver: &dyn ConnectorDriver,
+    auth: &ConnectionAuth,
+    repo_full_path: &str,
+) -> Option<Vec<PullRequestThreads>> {
+    match driver
+        .open_review_threads(auth, repo_full_path, MAX_THREAD_PULLS)
+        .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                repo = repo_full_path,
+                "studio-artifact-ingest: review threads unavailable — metric left unset"
+            );
+            None
+        }
+    }
+}
+
+/// The parent a stored issue names (`gts::issue_node`), as the listing read
+/// it: for an issue an earlier attempt of a resumed walk listed.
+fn stored_parent(value: &serde_json::Value) -> Option<NumberRef> {
+    let parent = value.get("parent")?;
+    Some(NumberRef {
+        repo: parent
+            .get("repo")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned),
+        number: parent.get("number")?.as_i64()?,
+        ..Default::default()
+    })
+}
+
 fn item_link_edges(
     links: &[(String, &'static str, NumberRef)],
     issue_by_number: &HashMap<i64, String>,
@@ -6343,3 +6856,7 @@ mod pr_links_tests;
 #[cfg(test)]
 #[path = "item_comments_tests.rs"]
 mod item_comments_tests;
+
+#[cfg(test)]
+#[path = "listing_cursor_tests.rs"]
+mod listing_cursor_tests;
