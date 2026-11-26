@@ -25,6 +25,15 @@ inventory::submit! {
         tools: mcp::tools,
     }
 }
+
+// What these tools are for, in studio-mcp's `instructions`.
+inventory::submit! {
+    crate::mcp::sdk::Instruction {
+        gear: "studio-spec-mapping",
+        order: 20,
+        phrase: "the requirements and capabilities its specifications state",
+    }
+}
 pub(crate) mod plan;
 mod product;
 pub(crate) mod reading;

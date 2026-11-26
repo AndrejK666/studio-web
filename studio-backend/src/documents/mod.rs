@@ -83,6 +83,15 @@ inventory::submit! {
     }
 }
 
+// What these tools are for, in studio-mcp's `instructions`.
+inventory::submit! {
+    crate::mcp::sdk::Instruction {
+        gear: "studio-documents",
+        order: 10,
+        phrase: "a project's domain model (what its documents say, `project_domain_model_*`)",
+    }
+}
+
 /// Every type this gear declares in the model, for the kits' claims test:
 /// its tables' rows, their chunks, the review records and the process's.
 #[cfg(test)]
