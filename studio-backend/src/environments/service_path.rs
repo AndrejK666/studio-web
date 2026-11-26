@@ -171,7 +171,7 @@ impl EnvironmentService {
                 .get::<dyn crate::artifact_ingest::port::DeliveryEvidence>()
                 .ok()?;
             let runs = evidence.ci_runs(ctx, &project.to_string()).await.ok()?;
-            Some(crate::organizations::last_build(runs))
+            Some(crate::artifact_ingest::port::last_build(runs))
         };
         let (research, builds, product_revision, deployments, record, ci) =
             tokio::join!(research, builds, product_revision, deployments, record, ci);

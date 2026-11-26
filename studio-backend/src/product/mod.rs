@@ -15,6 +15,7 @@
 //! [`port`].
 
 mod assembly;
+mod creation_steps; // its part of a project's creation (ADR-0079)
 mod description_edit;
 mod descriptions;
 mod explanations;
@@ -55,6 +56,7 @@ pub mod sdk;
 mod service;
 mod skeleton;
 pub mod sources_lock;
+mod status_part; // its part of a project's status (ADR-0079)
 
 use std::sync::{Arc, OnceLock};
 

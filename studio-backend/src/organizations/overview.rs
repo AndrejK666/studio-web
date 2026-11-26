@@ -54,8 +54,6 @@ pub const GROWTH_ALERT: f64 = 0.2;
 pub const QUIET_DAYS: u32 = 14;
 /// Background runs read per tenant.
 const RUNS_PER_TENANT: u64 = 100;
-/// The account kinds a login is looked up as.
-pub(super) const ACCOUNT_KINDS: [&str; 2] = ["github", "gitlab"];
 
 // ── Periods ──────────────────────────────────────────────────────────────────
 
@@ -348,11 +346,7 @@ pub struct Row {
 }
 
 pub fn row_of(r: &Rollup) -> Row {
-    let pulls = r
-        .signals
-        .as_ref()
-        .filter(|s| s.pulls_known)
-        .map(|s| &s.pulls);
+    let pulls = r.signals.as_ref().and_then(|s| s.pulls.as_ref());
     Row {
         id: r.id,
         name: r.name.clone(),

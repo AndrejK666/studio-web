@@ -4,12 +4,14 @@
 //! `GET /studio-organizations/v1/metrics?organization_id=&range=` composes two
 //! sources on the server, so the browser never sends a statement:
 //!
-//! * **Studio** -- the spend, per bucket and per workspace, from studio-usage
-//!   (only for a caller holding `cost.view`; people's own keys never count);
+//! * **Studio** -- the spend, per bucket and per workspace, from the kits'
+//!   meters (the cost metering port, `metering_port.rs`; studio-usage's, only
+//!   for a caller holding `cost.view`; people's own keys never count);
 //! * **Insight** -- git, CI and task figures for the repositories the scope's
-//!   projects are made of (`project.config` `sources[]`), through
-//!   studio-insight's [`RepositoryAnalytics`]. Repositories, because that is
-//!   the finest owner Insight can be asked by today.
+//!   projects are made of (`project.config` `sources[]`), from the kit that
+//!   analyses repositories (the repository metrics port,
+//!   `repository_metrics_port.rs`; studio-insight's). Repositories, because
+//!   that is the finest owner Insight can be asked by today.
 //!
 //! **A scope is an organization, one of its workspaces or one of its
 //! projects** (`workspace_id=` / `project_id=`): the same board then means
@@ -28,14 +30,10 @@ use time::{Date, Duration, OffsetDateTime, UtcOffset};
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
+use super::metering_port::{self, Metered};
 use super::overview::Overview;
+use super::repository_metrics_port;
 use super::rollups::{OrgProject, projects_of};
-use crate::insight::port::{
-    ActivityBucket, ActivityCell, ActivityQuery, ActivityUnavailable, RepositoryActivity,
-    RepositoryAnalytics, ReviewSpread,
-};
-use crate::usage::port::Payer;
-use crate::usage::{OrganizationUsage, PricedUsage};
 
 // ── Windows ──────────────────────────────────────────────────────────────────
 
@@ -73,6 +71,13 @@ impl Range {
     }
 }
 
+/// How a window is cut for a chart: days for a week, Monday weeks otherwise.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Bucket {
+    Day,
+    Week,
+}
+
 /// The windows a range compares, in UTC days, `to` included: the current
 /// one ends today, the previous one is as long and ends the day before.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,7 +85,7 @@ pub struct Span {
     pub previous_from: Date,
     pub current_from: Date,
     pub to: Date,
-    pub bucket: ActivityBucket,
+    pub bucket: Bucket,
     /// Each bucket's first day: every day for a week, else Monday weeks
     /// (the first and last of which may be partial).
     pub buckets: Vec<Date>,
@@ -93,7 +98,7 @@ pub fn span(range: Range, now: OffsetDateTime) -> Span {
     let previous_from = current_from - Duration::days(days);
     let (bucket, buckets) = match range {
         Range::Week => (
-            ActivityBucket::Day,
+            Bucket::Day,
             (0..days)
                 .map(|i| current_from + Duration::days(i))
                 .collect(),
@@ -106,7 +111,7 @@ pub fn span(range: Range, now: OffsetDateTime) -> Span {
                 out.push(first);
                 first += Duration::days(7);
             }
-            (ActivityBucket::Week, out)
+            (Bucket::Week, out)
         }
     };
     Span {
@@ -121,8 +126,8 @@ pub fn span(range: Range, now: OffsetDateTime) -> Span {
 impl Span {
     fn step(&self) -> i64 {
         match self.bucket {
-            ActivityBucket::Day => 1,
-            ActivityBucket::Week => 7,
+            Bucket::Day => 1,
+            Bucket::Week => 7,
         }
     }
 
@@ -205,22 +210,21 @@ pub struct Spent {
     pub unpriced: BTreeSet<String>,
 }
 
-pub fn spent(usage: &PricedUsage, tenants: Option<&BTreeSet<Uuid>>) -> Spent {
+/// What `metered` says the scope (`tenants`; `None` is everybody's) spent.
+/// The meters left people's own keys out already (`metering_port.rs`).
+pub fn spent(metered: &Metered, tenants: Option<&BTreeSet<Uuid>>) -> Spent {
     let mut out = Spent::default();
-    for f in &usage.facts {
-        if f.payer == Some(Payer::Personal) {
-            continue;
-        }
+    for f in &metered.items {
         if tenants.is_some_and(|t| !t.contains(&f.tenant)) {
             continue;
         }
-        match usage.cost_of(f) {
+        match f.cost {
             Some(c) => {
                 out.total += c;
                 *out.by_tenant.entry(f.tenant).or_default() += c;
             }
             None => {
-                out.unpriced.insert(format!("{}/{}", f.provider, f.item));
+                out.unpriced.insert(f.item.clone());
             }
         }
     }
@@ -266,35 +270,6 @@ pub fn by_workspace(
         .map(|(id, (name, cur, prev))| (id, name, cur, prev))
         .collect();
     out.sort_by(|a, b| b.2.total_cmp(&a.2).then(a.1.cmp(&b.1)));
-    out
-}
-
-// ── Insight's answer, grouped per measure ────────────────────────────────────
-
-/// One measure's cells: the current window, the previous one, and the
-/// current one per bucket.
-pub type Grouped<'a> = (
-    Option<&'a ActivityCell>,
-    Option<&'a ActivityCell>,
-    Vec<&'a ActivityCell>,
-);
-
-/// Cells grouped as `domain.measure` -> (current, previous, series).
-pub fn measures(cells: &[ActivityCell]) -> BTreeMap<String, Grouped<'_>> {
-    let mut out: BTreeMap<String, Grouped<'_>> = BTreeMap::new();
-    for c in cells {
-        let e = out
-            .entry(format!("{}.{}", c.domain, c.measure))
-            .or_default();
-        match c.bucket.as_str() {
-            "cur" => e.0 = Some(c),
-            "prev" => e.1 = Some(c),
-            _ => e.2.push(c),
-        }
-    }
-    for e in out.values_mut() {
-        e.2.sort_by(|a, b| a.bucket.cmp(&b.bucket));
-    }
     out
 }
 
@@ -432,81 +407,6 @@ pub struct OrgMetricsWorkspaceSpendDto {
     pub previous: f64,
 }
 
-fn cell(c: &ActivityCell) -> OrgMetricsCellDto {
-    OrgMetricsCellDto {
-        total: c.total,
-        median: c.median,
-        count: c.n,
-        people: c.people,
-    }
-}
-
-fn review(r: &ReviewSpread) -> OrgMetricsReviewsDto {
-    OrgMetricsReviewsDto {
-        period: r.period.clone(),
-        reviewers: r.reviewers,
-        reviews: r.reviews,
-        half: r.half,
-        top: r.top.clone(),
-    }
-}
-
-/// Insight's part of the board, from what it answered.
-pub fn insight_dto(
-    answer: Option<Result<RepositoryActivity, ActivityUnavailable>>,
-    repositories: usize,
-) -> OrgMetricsInsightDto {
-    let state = |state: &str, detail: Option<String>| OrgMetricsInsightDto {
-        state: state.to_owned(),
-        detail,
-        truncated: false,
-        measures: Vec::new(),
-        reviews: Vec::new(),
-        ai_rows: None,
-    };
-    match answer {
-        None => state(
-            "absent",
-            Some("this deployment has no studio-insight gear".into()),
-        ),
-        Some(Err(ActivityUnavailable::Unconfigured)) => state(
-            "unconfigured",
-            Some("Insight is not configured here: STUDIO_INSIGHT_API_KEY is not set".into()),
-        ),
-        Some(Err(ActivityUnavailable::Unreachable(d))) => state("unreachable", Some(d)),
-        Some(Err(ActivityUnavailable::Failed(d))) => state("failed", Some(d)),
-        Some(Ok(_)) if repositories == 0 => state(
-            "no_repositories",
-            Some("no project in scope names a repository".into()),
-        ),
-        Some(Ok(a)) => OrgMetricsInsightDto {
-            state: "ok".into(),
-            detail: None,
-            truncated: a.truncated,
-            measures: measures(&a.cells)
-                .into_iter()
-                .map(|(key, (cur, prev, series))| OrgMetricsMeasureDto {
-                    key,
-                    current: cur.map(cell),
-                    previous: prev.map(cell),
-                    series: series
-                        .into_iter()
-                        .map(|c| OrgMetricsPointDto {
-                            bucket: c.bucket.clone(),
-                            total: c.total,
-                            median: c.median,
-                            count: c.n,
-                            people: c.people,
-                        })
-                        .collect(),
-                })
-                .collect(),
-            reviews: a.reviews.iter().map(review).collect(),
-            ai_rows: a.ai_rows,
-        },
-    }
-}
-
 /// How long one caller's board for one scope and range is reused.
 const ANSWER_TTL: std::time::Duration = std::time::Duration::from_secs(60);
 const CAPACITY: usize = 256;
@@ -613,42 +513,41 @@ impl Metrics {
                 .map(|p| crate::project_sources::read_repositories(am.as_ref(), ctx, p.id)),
         )
         .await;
+        // The kit that analyses repositories (the repository metrics port)
+        // says which of them it is asked about, and by what key.
+        let source = repository_metrics_port::registered();
         let repositories: Vec<String> = reads
             .into_iter()
             .flatten()
             .flatten()
-            .filter_map(|r| crate::insight::port::repository_key(&r))
+            .filter_map(|r| source.and_then(|s| s.source.repository_key(&r)))
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect();
 
         let insight = async {
-            let analytics = hub.get::<dyn RepositoryAnalytics>().ok()?;
-            Some(
-                analytics
-                    .activity(&ActivityQuery {
-                        repositories: repositories.clone(),
-                        previous_from: span.previous_from,
-                        current_from: span.current_from,
-                        to: span.to,
-                        bucket: span.bucket,
-                    })
-                    .await,
-            )
+            match source {
+                Some(s) => s.source.board(hub, &repositories, &span).await,
+                None => repository_metrics_port::absent(),
+            }
         };
 
         let tenants = scope.tenants(&in_scope);
         let money = async {
-            let usage = hub.get::<dyn OrganizationUsage>().ok()?;
-            if !usage.may_view(ctx, org).await {
+            // The kits' meters (the cost metering port) the caller may see
+            // the organization's costs through; none is hidden.
+            let meters = metering_port::viewable(hub, ctx, org).await;
+            if meters.is_empty() {
                 return None;
             }
+            let meters = meters.as_slice();
             let (pf, pt) = span.previous_window();
             let buckets = futures_util::future::join_all(span.buckets.iter().map(|b| {
                 let (f, t) = span.bucket_window(*b);
-                usage.usage(ctx, org, f, t)
+                metering_port::spent(meters, hub, ctx, org, f, t)
             }));
-            let (previous, buckets) = tokio::join!(usage.usage(ctx, org, pf, pt), buckets);
+            let (previous, buckets) =
+                tokio::join!(metering_port::spent(meters, hub, ctx, org, pf, pt), buckets);
             Some((previous, buckets))
         };
         let (insight, money) = tokio::join!(insight, money);
@@ -715,8 +614,8 @@ impl Metrics {
             range: range.label().into(),
             days: range.days(),
             bucket: match span.bucket {
-                ActivityBucket::Day => "day".into(),
-                ActivityBucket::Week => "week".into(),
+                Bucket::Day => "day".into(),
+                Bucket::Week => "week".into(),
             },
             current_from: span.current_from.to_string(),
             to: span.to.to_string(),
@@ -725,7 +624,7 @@ impl Metrics {
             buckets: span.buckets.iter().map(Date::to_string).collect(),
             projects: u32::try_from(in_scope.len()).unwrap_or(u32::MAX),
             project_ids: in_scope.iter().map(|p| p.id.to_string()).collect(),
-            insight: insight_dto(insight, repositories.len()),
+            insight,
             repositories,
             costs: costs.into(),
             spend,

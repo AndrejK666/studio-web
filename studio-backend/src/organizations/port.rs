@@ -55,5 +55,40 @@ impl ProjectsOf for TenantTreeProjects {
 /// The Overview port (ADR-0079 §4): what a kit's gear registers to put a
 /// block on an organization's Overview, and what it is given to compute it.
 pub use super::blocks::*;
+/// The project creation port (ADR-0079 §4): the steps and configuration
+/// fields a kit's gear registers for a new project.
+pub use super::creation_port::{
+    CreationField, CreationFieldSource, CreationStep, CreationStepRun, StepDone,
+};
+/// Which parts of a project's status and delivery path a kit owns (ADR-0079
+/// §4): what a kit's gear registers so the core names no kit.
+pub use super::kit_parts::{PathStage, ProjectKitParts, stage as path_stage};
+/// The cost metering port (ADR-0079 §4): what a kit's gear registers to say
+/// what an organization spent.
+pub use super::metering_port::{CostMeter, MeterSource, Metered, MeteredItem};
+/// The repository metrics port (ADR-0079 §4): what a kit's gear registers to
+/// answer the metrics board's repository half.
+pub use super::metrics::{
+    Bucket as MetricsBucket, OrgMetricsCellDto, OrgMetricsInsightDto, OrgMetricsMeasureDto,
+    OrgMetricsPointDto, OrgMetricsReviewsDto, Span as MetricsSpan,
+};
+pub use super::project_create::{
+    MadeRepo, Plan, StepError, retry as creation_retry, service_ctx as creation_service_ctx,
+};
+pub use super::repository_metrics_port::{
+    RepositoryMetrics, RepositoryMetricsSource, absent as absent_repository_metrics,
+    unanswered as unanswered_repository_metrics,
+};
+/// The rollup counts port (ADR-0079 §4): what a kit's gear publishes on the
+/// ClientHub to fill a project's row in the portfolio and the projects table.
+pub use super::rollup_port::{
+    ArtifactCounter, DocumentCounter, LastEvent, ProjectDocumentCounts, PullCounts,
+    RowSignalSource, RowSignals, SpecSummary,
+};
 /// How many days a project's activity counts look back.
 pub use super::rollups::ACTIVITY_DAYS;
+/// The project status port (ADR-0079 §4): what a kit's gear registers to
+/// say its facts about a project's status and delivery path.
+pub use super::status::{BuildFacts, FindingFacts, ModelFacts, Pull};
+pub use super::status_port::{StatusContributor, StatusPart, StatusSource};
+pub use super::status_read::{build_facts, deploys, product_record_facts, spec_queues};

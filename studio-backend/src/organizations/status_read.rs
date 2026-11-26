@@ -2,13 +2,12 @@
 //!
 //! The organization's own counts come from this gear in process (the
 //! project's rollup and its line of the organization's health). The rest is
-//! the other gears' answers, read in process through their ports -- the same
-//! reads their routes make -- as this gear's service identity in the
-//! project's organization: the status is computed in the background and kept
-//! (`status_view.rs`), with no reader's credentials. A read that fails is
-//! `None`, which the status words as not known.
-
-use std::collections::BTreeMap;
+//! the kits' answers, read in process through the project status port
+//! ([`super::status_port`]) -- the same reads their routes make -- as this
+//! gear's service identity in the project's organization: the status is
+//! computed in the background and kept (`status_view.rs`), with no reader's
+//! credentials. A read that fails is `None`, which the status words as not
+//! known.
 
 use serde_json::Value;
 
@@ -16,12 +15,7 @@ use toolkit::client_hub::ClientHub;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
-use super::status::{
-    BuildFacts, Deploy, FindingFacts, ModelFacts, PathFacts, ProductFacts, Pull, SpecQueues,
-};
-
-/// CI runs read for the last build, newest first.
-const RUNS: u32 = 50;
+use super::status::{BuildFacts, Deploy, PathFacts, ProductFacts, Pull, SpecQueues};
 
 fn u32_of(v: &Value) -> u32 {
     v.as_u64()
@@ -162,91 +156,6 @@ pub fn deploys(page: &Value) -> Vec<Deploy> {
         .collect()
 }
 
-/// The open pull requests with whom each waits on said as "Name (login)" when
-/// the login is a confirmed account of one of the organization's people, else
-/// as the login alone.
-pub fn named_pulls(
-    open: &[crate::artifact_ingest::port::OpenPull],
-    names: &BTreeMap<String, String>,
-) -> Vec<Pull> {
-    open.iter()
-        .map(|p| Pull {
-            draft: p.waiting == "draft",
-            waiting: p.waiting.clone(),
-            waiting_on: p
-                .waiting_on
-                .iter()
-                .map(|login| match names.get(&login.to_ascii_lowercase()) {
-                    Some(name) if name != login => format!("{name} ({login})"),
-                    _ => login.clone(),
-                })
-                .collect(),
-            days_since_update: p.days_since_update,
-        })
-        .collect()
-}
-
-/// The names of the organization's people behind the logins the pull
-/// requests wait on, keyed by the login lowercased, read the way the
-/// organization overview reads them (confirmed accounts of active members).
-async fn account_names(
-    hub: &ClientHub,
-    org: Uuid,
-    open: &[crate::artifact_ingest::port::OpenPull],
-) -> BTreeMap<String, String> {
-    use crate::user_profile::MemberAliases;
-    let mut out = BTreeMap::new();
-    let logins: Vec<String> = open
-        .iter()
-        .flat_map(|p| p.waiting_on.iter().cloned())
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .collect();
-    if logins.is_empty() {
-        return out;
-    }
-    let Ok(directory) = hub.get_scoped::<dyn MemberAliases>(
-        &toolkit::client_hub::ClientScope::gts_id(crate::user_profile::IDENTITY_INSTANCE_ID),
-    ) else {
-        return out;
-    };
-    let found = futures_util::future::join_all(
-        super::overview::ACCOUNT_KINDS
-            .iter()
-            .map(|kind| directory.members_by_alias(org, kind, &logins)),
-    )
-    .await;
-    for found in found.into_iter().filter_map(Result::ok) {
-        for (login, member) in found {
-            if let Some(name) = member.display_name {
-                out.entry(login).or_insert(name);
-            }
-        }
-    }
-    out
-}
-
-/// A CI run as `build_facts` reads a node's value.
-fn run_value(r: &crate::artifact_ingest::port::CiRun) -> Value {
-    serde_json::json!({"value": {
-        "branch": r.branch,
-        "status": r.status,
-        "conclusion": r.conclusion,
-        "sha": r.sha,
-        "created_at": r.created_at,
-    }})
-}
-
-/// The newest finished run on the main branch of `runs`, as the CI runs
-/// route reads them (`sort=updated&limit=50`): what the project's status
-/// and the delivery path (`project_path.rs`) both call the last build.
-pub fn last_build(mut runs: Vec<crate::artifact_ingest::port::CiRun>) -> BuildFacts {
-    runs.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-    runs.truncate(RUNS as usize);
-    let nodes: Vec<Value> = runs.iter().map(run_value).collect();
-    build_facts(&serde_json::json!({ "nodes": nodes }))
-}
-
 /// The product record as the path reads it: its facts, and the engine's
 /// last verdict kept on it (`checks.<profile>`).
 pub fn product_record_facts(
@@ -292,112 +201,27 @@ pub fn service_ctx(org: Uuid) -> anyhow::Result<SecurityContext> {
 /// Every read of the path and the signals, side by side, through the other
 /// gears' ports, as `ctx`.
 pub async fn read(hub: &ClientHub, ctx: &SecurityContext, project: Uuid) -> Read {
-    use crate::artifact_ingest::port::{DeliveryEvidence, OpenPullRequests};
-    let scope = project.to_string();
-    let documents = async {
-        let port = hub
-            .get::<dyn crate::documents::port::ProjectStatusFacts>()
-            .ok()?;
-        port.status_facts(ctx, project).await.ok()
-    };
-    let product = async {
-        let port = hub
-            .get::<dyn crate::product::port::ProjectProducts>()
-            .ok()?;
-        let record = port.product_record(ctx, &scope).await.ok()?;
-        Some(product_record_facts(record.as_ref()))
-    };
-    // The saved description's revision, as the delivery path reads it.
-    let revision = async {
-        let port = hub
-            .get::<dyn crate::product::port::ProjectProducts>()
-            .ok()?;
-        match port.latest_description(ctx, project).await.ok()? {
-            Some(d) => Some(d.revision.max(1)),
-            None => port
-                .saved_description(ctx, &scope)
-                .await
-                .ok()
-                .flatten()
-                .map(|_| 0),
-        }
-    };
-    let runs = async {
-        let port = hub.get::<dyn DeliveryEvidence>().ok()?;
-        let runs = port.ci_runs(ctx, &scope).await.ok()?;
-        Some(last_build(runs))
-    };
-    // Stages 5-9 as Releases says them, read as this gear.
-    let delivery = async {
-        let port = hub
-            .get::<dyn crate::environments::port::ProjectDeliveryStages>()
-            .ok()?;
-        port.delivery_stages(ctx, project).await.ok()
-    };
-    let deployments = async {
-        let port = hub
-            .get::<dyn crate::environments::port::ProjectDeployments>()
-            .ok()?;
-        port.deployments_page(ctx, project)
-            .await
-            .ok()
-            .map(|page| deploys(&page))
-    };
-    let open = async {
-        let port = hub.get::<dyn OpenPullRequests>().ok()?;
-        let open = port.open_pulls(ctx, &scope).await.ok()?;
-        let names = account_names(hub, ctx.subject_tenant_id(), &open).await;
-        Some(named_pulls(&open, &names))
-    };
-    let (documents, product, revision, build, deployments, pulls, delivery) = tokio::join!(
-        documents,
-        product,
-        revision,
-        runs,
-        deployments,
-        open,
-        delivery
-    );
-    let (product, product_check) = match product {
-        Some((facts, check)) => (Some(facts), check),
-        None => (None, None),
-    };
-    let (specs, model, findings) = match documents {
-        Some(d) => (
-            d.queues.as_deref().map(spec_queues),
-            d.model.map(|m| ModelFacts {
-                documents: m.documents,
-                extracted: m.extracted,
-                facts: m.facts,
-                running: m.running,
-            }),
-            d.findings.map(|f| FindingFacts {
-                open: f.open,
-                high: f.high,
-            }),
-        ),
-        None => (None, None, None),
-    };
+    let part = super::status_port::read_all(hub, ctx, project).await;
     Read {
         path: PathFacts {
             repositories: None,
             // Which repositories a sync read needs their graph nodes matched
             // to the config by connection and path; not read here.
             synced: None,
-            specs,
-            model,
-            findings,
+            specs: part.specs,
+            model: part.model,
+            findings: part.findings,
             // What the product is, proposed from the facts, is still the
             // portal's (product-kind.ts): the path leaves that step out.
             kind: None,
-            product,
-            build,
+            product: part.product,
+            build: part.build,
         },
-        deployments,
-        pulls,
-        product_check,
-        product_revision: revision,
-        delivery,
+        deployments: part.deployments,
+        pulls: part.pulls,
+        product_check: part.product_check,
+        product_revision: part.product_revision,
+        delivery: part.delivery,
     }
 }
 
@@ -462,29 +286,7 @@ mod tests {
     }
 
     #[test]
-    fn whom_a_pull_waits_on_reads_as_name_and_login_when_the_login_is_one_of_ours() {
-        let open = vec![crate::artifact_ingest::port::OpenPull {
-            waiting: "review".into(),
-            waiting_on: vec!["Ann-GH".into(), "stranger".into()],
-            ..Default::default()
-        }];
-        let names = std::collections::BTreeMap::from([("ann-gh".to_owned(), "Ann Lee".to_owned())]);
-        let p = &named_pulls(&open, &names)[0];
-        assert_eq!(p.waiting_on, ["Ann Lee (Ann-GH)", "stranger"]);
-    }
-
-    #[test]
-    fn pulls_and_deployments_read_as_the_signals_need() {
-        let open = vec![crate::artifact_ingest::port::OpenPull {
-            waiting: "draft".into(),
-            waiting_on: vec!["ann".into()],
-            days_since_update: Some(9),
-            ..Default::default()
-        }];
-        let p = &named_pulls(&open, &BTreeMap::new())[0];
-        assert!(p.draft);
-        assert_eq!(p.waiting_on, ["ann"]);
-        assert_eq!(p.days_since_update, Some(9));
+    fn deployments_read_as_the_signals_need() {
         let page = json!({"items": [{"state": "failed", "environment_name": "dev",
             "requested_at": "2026-11-01T00:00:00Z", "decided_at": null, "reason": ""}]});
         let d = &deploys(&page)[0];

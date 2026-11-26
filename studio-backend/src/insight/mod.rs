@@ -23,6 +23,7 @@ mod client;
 mod components;
 mod config;
 mod delivery;
+mod metrics_board; // its half of the metrics board (ADR-0079)
 pub mod port;
 mod rest;
 

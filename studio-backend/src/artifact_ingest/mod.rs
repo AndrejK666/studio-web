@@ -58,7 +58,9 @@ pub mod port;
 mod pr_links; // pull request → file links, resumable across runs
 mod pull_request_waits;
 mod rest;
+mod row_signals; // its answer to the rollup counts port (ADR-0079)
 mod service;
+mod status_part; // its part of a project's status (ADR-0079)
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -528,9 +530,10 @@ impl RestApiCapability for StudioArtifactIngestGear {
             // The portfolio's finding count, for whoever composes the rollup.
             ctx.client_hub()
                 .register::<dyn port::ArtifactCounter>(service.clone());
-            // The projects table's review and source columns, likewise.
+            // The projects table's review and source columns, likewise
+            // (the core's rollup counts port).
             ctx.client_hub()
-                .register::<dyn port::ProjectSignalSource>(service.clone());
+                .register::<dyn crate::organizations::port::RowSignalSource>(service.clone());
             // A project's issues, pull requests and commits, for the documents
             // gear to link to the requirements they name.
             ctx.client_hub()

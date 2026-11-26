@@ -4,6 +4,13 @@
 
 use super::*;
 
+// The kits as they declare the parts they own (`kit_parts.rs`).
+const GIT_KIT: &str = "project-git";
+const SPECS_KIT: &str = "project-specs";
+const DOMAIN_MODEL_KIT: &str = "project-domain-model";
+const PRODUCT_KIT: &str = "project-product";
+const DELIVERY_KIT: &str = "delivery";
+
 fn empty() -> PathFacts {
     PathFacts {
         repositories: Some(0),

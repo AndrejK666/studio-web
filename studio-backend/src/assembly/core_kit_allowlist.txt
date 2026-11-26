@@ -46,13 +46,6 @@ kit_registry -> artifact_ingest  # mna reads the artifact gear's REST routes
 kit_registry -> documents  # mna names studio-documents in a summary
 notify -> studio_theia  # error text names the IDE bridge gear
 
-# Overview blocks and rollups composed from kits' gears (migration step 2).
-organizations -> artifact_ingest  # rollups read the artifact gear
-organizations -> documents  # rollups read documents
-organizations -> environments  # rollups read deployments
-organizations -> insight  # Overview reads insight
-organizations -> product  # Overview reads the product
-organizations -> usage  # Overview reads costs
 
 # Kits named by slug (the kit registry itself is exempt).
 catalog_graph -> kit:project-product  # model_sink: the product type's model id

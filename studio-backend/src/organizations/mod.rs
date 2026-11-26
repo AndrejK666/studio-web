@@ -19,9 +19,15 @@ pub(crate) use access_grants::{
     ChangeError as AccessChangeError, save_document as save_access_document,
 };
 mod creation;
+/// The project creation port: kits' steps and fields of a new project (ADR-0079).
+mod creation_port;
 mod events;
+/// Which kit owns which part of a project's status and path (ADR-0079).
+mod kit_parts;
 pub mod logo;
 mod mcp;
+/// The cost metering port: what kits meter of an organization's spend (ADR-0079).
+mod metering_port;
 mod metrics;
 mod overview;
 pub(crate) mod project_create;
@@ -41,15 +47,21 @@ inventory::submit! {
     }
 }
 pub mod port;
+/// The repository metrics port: the metrics board's repository half (ADR-0079).
+mod repository_metrics_port;
 mod rest;
+/// The rollup counts port: what kits count per project for its row (ADR-0079).
+mod rollup_port;
 pub mod rollups;
 pub mod sdk;
 mod service;
 pub(crate) mod status;
+/// The project status port: kits' facts about a project (ADR-0079).
+mod status_port;
 pub(crate) mod status_read;
-/// What the project path (`crate::project_path`) reads of a product record and
-/// of CI runs, the same way the project status does.
-pub use status_read::{last_build, product_record_facts};
+/// What the project path (`crate::project_path`) reads of a product record, the
+/// same way the project status does.
+pub use status_read::product_record_facts;
 mod status_view; // a project's status kept, computed again in the background
 
 /// The types the kept project status needs in the model, for the kits' claims test.
@@ -208,18 +220,9 @@ impl RestApiCapability for StudioOrganizationsGear {
             .map(|am| {
                 Arc::new(rollups::Sources {
                     am,
-                    documents: ctx
-                        .client_hub()
-                        .get::<dyn crate::documents::port::DocumentCounter>()
-                        .ok(),
-                    artifacts: ctx
-                        .client_hub()
-                        .get::<dyn crate::artifact_ingest::port::ArtifactCounter>()
-                        .ok(),
-                    signals: ctx
-                        .client_hub()
-                        .get::<dyn crate::artifact_ingest::port::ProjectSignalSource>()
-                        .ok(),
+                    documents: ctx.client_hub().get::<dyn port::DocumentCounter>().ok(),
+                    artifacts: ctx.client_hub().get::<dyn port::ArtifactCounter>().ok(),
+                    signals: ctx.client_hub().get::<dyn port::RowSignalSource>().ok(),
                     roster: ctx
                         .client_hub()
                         .get_scoped::<dyn crate::user_profile::OrganizationRoster>(
@@ -377,3 +380,7 @@ fn build_service(ctx: &GearCtx) -> Option<Arc<OrganizationService>> {
         .with_hub(ctx.client_hub()),
     ))
 }
+
+#[cfg(test)]
+#[path = "ports_tests.rs"]
+mod ports_tests;
