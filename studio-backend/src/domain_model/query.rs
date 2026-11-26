@@ -31,6 +31,19 @@
 //! reach one relation away too: `{"delivers": {"status": {"_eq": "active"}}}`
 //! keeps the rows with such an object, as `EXISTS` over the edges in SQL.
 //!
+//! A query on a type reads the objects of every type that extends it too, as
+//! a relation pointing at it does; each row names its concrete type
+//! (`entity`), and `{"_type": {"_in": [...]}}` in a `where` narrows by it.
+//! A gear's own read ([`run_bulk`]) keeps to the type itself and the
+//! project subtypes chained onto it, because a gear's records of a base type
+//! are not its subtypes' (artifact ingest's `text-content` is not the
+//! documents gear's `text-chunk`).
+//!
+//! Each type a request reaches past its root, through `include` or a filter
+//! on related objects, is read under its own grant: the policy is asked once
+//! per type per request, and objects of a type the caller may not read are
+//! left out with a warning saying so.
+//!
 //! An `aggregate` counts the matches per group of up to three keys (a
 //! timestamp cut to its day, week or month), with sums, averages, minimums
 //! and maximums of the fields the model types as numbers or timestamps.
@@ -48,9 +61,11 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::{Arc, Mutex};
 use toolkit_security::SecurityContext;
+use uuid::Uuid;
 
-use super::access::Access;
+use super::access::{self, Access, AccessError, ObjectPolicy};
 use super::gts;
 use super::mirror::{DomainMirror, Group};
 use super::ontology::Ontology;
@@ -77,6 +92,30 @@ pub const REVERSE: char = '~';
 /// How deep `include` may nest. Each level is one traversal per relation, so
 /// this bounds the round trips one request can cost.
 pub const MAX_DEPTH: usize = 3;
+
+/// How many projects one request's `project_ids` may name.
+pub const MAX_PROJECT_IDS: usize = 200;
+
+/// The `where` key that tests an object's concrete type rather than a field.
+pub const TYPE_KEY: &str = "_type";
+
+/// A request named a project in `project_ids` the caller may not read: the
+/// whole request is refused rather than answered without it, so a screen
+/// never shows a partial portfolio as the whole one.
+#[derive(Debug)]
+pub struct ProjectNotReadable(pub String);
+
+impl std::fmt::Display for ProjectNotReadable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "project `{}` in `project_ids` is not one you may read: send only projects you can open",
+            self.0
+        )
+    }
+}
+
+impl std::error::Error for ProjectNotReadable {}
 
 // ── The request ───────────────────────────────────────────────────────────
 
@@ -367,6 +406,14 @@ enum Expr {
         op: Op,
         arg: Value,
     },
+    /// The object's concrete type is one of `names` (or, `negate`d, none of
+    /// them): `{"_type": {"_in": ["deals-project"]}}`.
+    TypeIs {
+        names: Vec<String>,
+        negate: bool,
+        /// The stored type ids `names` are, once the planner has found them.
+        type_ids: Vec<String>,
+    },
     /// Some object one declared relation away matches `filter`:
     /// `{"delivers": {"status": {"_eq": "active"}}}`.
     Related {
@@ -409,7 +456,7 @@ fn is_comparison(ops: &Map<String, Value>) -> bool {
     ops.is_empty()
         || ops.keys().any(|k| {
             Op::parse(k).is_some()
-                || (k.starts_with('_') && !matches!(k.as_str(), "_and" | "_or" | "_not"))
+                || (k.starts_with('_') && !matches!(k.as_str(), "_and" | "_or" | "_not" | TYPE_KEY))
         })
 }
 
@@ -434,9 +481,10 @@ fn parse_expr(v: &Value) -> Result<Expr, String> {
                 });
             }
             "_not" => parts.push(Expr::Not(Box::new(parse_expr(val)?))),
+            TYPE_KEY => parts.extend(parse_type(val)?),
             k if k.starts_with('_') => {
                 return Err(format!(
-                    "`{k}` is not a combinator; use _and, _or, _not, or a field name"
+                    "`{k}` is not a combinator; use _and, _or, _not, _type, or a field name"
                 ));
             }
             field => {
@@ -481,6 +529,46 @@ fn parse_expr(v: &Value) -> Result<Expr, String> {
     })
 }
 
+/// `{"_type": {"_eq": "x"}}`: tests of the object's concrete type, by name.
+/// `_eq` / `_neq` take one type, `_in` / `_nin` a list.
+fn parse_type(val: &Value) -> Result<Vec<Expr>, String> {
+    const USE: &str = "`_type` takes _eq or _neq with a type name, or _in or _nin with a list: \
+                       {\"_type\": {\"_in\": [\"deals-project\"]}}";
+    let ops = val.as_object().filter(|o| !o.is_empty()).ok_or(USE)?;
+    let mut out = Vec::new();
+    for (token, arg) in ops {
+        let (names, negate) = match token.as_str() {
+            "_eq" | "_neq" => (vec![arg.as_str().ok_or(USE)?.to_string()], token == "_neq"),
+            "_in" | "_nin" => (
+                arg.as_array()
+                    .ok_or(USE)?
+                    .iter()
+                    .map(|a| a.as_str().map(str::to_string).ok_or(USE))
+                    .collect::<Result<Vec<_>, _>>()?,
+                token == "_nin",
+            ),
+            _ => return Err(USE.to_string()),
+        };
+        out.push(Expr::TypeIs {
+            names,
+            negate,
+            type_ids: Vec::new(),
+        });
+    }
+    Ok(out)
+}
+
+/// Every `_type` test of an expression, mutably, for the planner to resolve;
+/// not those inside a filter on related objects, which test the related type.
+fn types_of_mut<'a>(e: &'a mut Expr, out: &mut Vec<&'a mut Expr>) {
+    match e {
+        Expr::And(list) | Expr::Or(list) => list.iter_mut().for_each(|e| types_of_mut(e, out)),
+        Expr::Not(e) => types_of_mut(e, out),
+        Expr::Cmp { .. } | Expr::Related { .. } => {}
+        Expr::TypeIs { .. } => out.push(e),
+    }
+}
+
 /// Every field an expression reads, by its first path segment.
 fn fields_of(e: &Expr, out: &mut Vec<String>) {
     match e {
@@ -488,7 +576,7 @@ fn fields_of(e: &Expr, out: &mut Vec<String>) {
         Expr::Not(e) => fields_of(e, out),
         Expr::Cmp { path, .. } => out.push(path[0].clone()),
         // Fields of the related type, checked against it by the planner.
-        Expr::Related { .. } => {}
+        Expr::Related { .. } | Expr::TypeIs { .. } => {}
     }
 }
 
@@ -498,7 +586,7 @@ fn related_of_mut<'a>(e: &'a mut Expr, out: &mut Vec<&'a mut Expr>) {
     match e {
         Expr::And(list) | Expr::Or(list) => list.iter_mut().for_each(|e| related_of_mut(e, out)),
         Expr::Not(e) => related_of_mut(e, out),
-        Expr::Cmp { .. } => {}
+        Expr::Cmp { .. } | Expr::TypeIs { .. } => {}
         Expr::Related { .. } => out.push(e),
     }
 }
@@ -508,7 +596,7 @@ fn has_related(e: &Expr) -> bool {
     match e {
         Expr::And(list) | Expr::Or(list) => list.iter().any(has_related),
         Expr::Not(e) => has_related(e),
-        Expr::Cmp { .. } => false,
+        Expr::Cmp { .. } | Expr::TypeIs { .. } => false,
         Expr::Related { .. } => true,
     }
 }
@@ -585,6 +673,9 @@ fn eval(e: &Expr, node: &ObjectNode, id: &Value) -> bool {
         Expr::Related { matched, .. } => matched
             .as_ref()
             .is_some_and(|m| m.contains(&node.instance_id)),
+        Expr::TypeIs {
+            type_ids, negate, ..
+        } => type_ids.contains(&node.type_id) != *negate,
     }
 }
 
@@ -770,6 +861,46 @@ fn resolve_relation(
     })
 }
 
+/// Resolve every `_type` test of `filter` against the types its rows can be,
+/// `entities`: a name that is not one of them is a 400 naming those that are.
+fn plan_types(
+    ontology: &Ontology,
+    entities: &[String],
+    label: &str,
+    filter: &mut Expr,
+) -> Result<(), QueryError> {
+    let mut found = Vec::new();
+    types_of_mut(filter, &mut found);
+    for e in found {
+        let Expr::TypeIs {
+            names, type_ids, ..
+        } = e
+        else {
+            continue;
+        };
+        let mut ids = Vec::new();
+        for name in names.iter() {
+            let resolved = ontology
+                .resolve_entity_id(name)
+                .filter(|r| entities.contains(r));
+            let Some(entity) = resolved else {
+                let mut known = entities.to_vec();
+                known.sort();
+                return Err(invalid(format!(
+                    "`_type` names `{name}`, which rows of `{label}` cannot be; they can be: {}",
+                    known.join(", ")
+                )));
+            };
+            let id = ontology.type_id_of(&entity);
+            if !ids.contains(&id) {
+                ids.push(id);
+            }
+        }
+        *type_ids = ids;
+    }
+    Ok(())
+}
+
 /// Find every relation filter of a root `where` in the model and check its
 /// fields against the related type. One hop: a related object's filter does
 /// not follow a relation again.
@@ -804,6 +935,7 @@ fn plan_related(
         for f in &used {
             check_field(&admitted, &r.target, f, &format!("the `where` on `{name}`"))?;
         }
+        plan_types(ontology, &r.targets, &r.target, inner)?;
         *hop = Some(RelatedHop {
             node_type_ids: r.node_type_ids(ontology),
             edge_type_id: r.edge_type_id,
@@ -833,6 +965,7 @@ fn plan(
             for f in &used {
                 check(f, "`where`")?;
             }
+            plan_types(ontology, entities, label, &mut e)?;
             if has_related(&e) {
                 // Under `include` the rows are filtered in memory per parent,
                 // where no relation read stands behind them to answer it.
@@ -1102,11 +1235,16 @@ impl Cursor {
     }
 }
 
+/// The entity a stored type id is: a Project subtype's chained id names the
+/// subtype.
+fn entity_named(ontology: &Ontology, type_id: &str) -> String {
+    ontology
+        .entity_of_type(type_id)
+        .unwrap_or_else(|| gts::type_leaf(type_id).to_string())
+}
+
 fn row(ontology: &Ontology, node: ObjectNode, plan: &Plan) -> Row {
-    // A Project subtype's row says the subtype: its chained id names it.
-    let entity = ontology
-        .entity_of_type(&node.type_id)
-        .unwrap_or_else(|| gts::type_leaf(&node.type_id).to_string());
+    let entity = entity_named(ontology, &node.type_id);
     let value = match &plan.fields {
         None => node.value,
         Some(fields) => {
@@ -1167,6 +1305,128 @@ impl Hops for DomainMirror {
     }
 }
 
+// ── Grants per type ───────────────────────────────────────────────────────
+
+/// What the caller may read of each type one request reaches. The root's
+/// rows are read under the grant the request was asked with; every other
+/// type an `include` or a filter on related objects reaches is asked of the
+/// policy on its own, once per request, so it is never read under the
+/// root's grant.
+pub(super) struct Grants<'a> {
+    /// The queried type: objects of it anywhere in the answer take `root`.
+    root_entity: String,
+    root: &'a Access,
+    policy: &'a dyn ObjectPolicy,
+    /// Each other type's answer, `None` where the policy refused it.
+    asked: Mutex<HashMap<String, Option<Arc<Access>>>>,
+    /// The types refused, in the order met, for the answer's warnings.
+    refused: Mutex<Vec<String>>,
+}
+
+/// One type's grant: the root's, its own, or none.
+enum Grant<'g> {
+    Root(&'g Access),
+    Own(Arc<Access>),
+    Refused,
+}
+
+impl Grant<'_> {
+    fn access(&self) -> Option<&Access> {
+        match self {
+            Self::Root(a) => Some(*a),
+            Self::Own(a) => Some(a.as_ref()),
+            Self::Refused => None,
+        }
+    }
+}
+
+impl<'a> Grants<'a> {
+    pub(super) fn new(root_entity: &str, root: &'a Access, policy: &'a dyn ObjectPolicy) -> Self {
+        Self {
+            root_entity: root_entity.to_string(),
+            root,
+            policy,
+            asked: Mutex::new(HashMap::new()),
+            refused: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// `entity`'s grant, asked of the policy the first time this request
+    /// meets the type. A refusal leaves its objects out; a policy that
+    /// cannot answer fails the request, as it does for the root.
+    async fn of(&self, ctx: &SecurityContext, entity: &str) -> Result<Grant<'a>, QueryError> {
+        if entity == self.root_entity {
+            return Ok(Grant::Root(self.root));
+        }
+        let kept = {
+            let asked = self
+                .asked
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            asked.get(entity).cloned()
+        };
+        let answer = match kept {
+            Some(answer) => answer,
+            None => {
+                let answer = match self.policy.access(ctx, access::READ, Some(entity)).await {
+                    Ok(a) => Some(Arc::new(a)),
+                    Err(AccessError::Unavailable(m)) => {
+                        return Err(QueryError::Failed(AccessError::Unavailable(m).into()));
+                    }
+                    Err(_) => None,
+                };
+                if answer.is_none() {
+                    self.refused
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .push(entity.to_string());
+                }
+                self.asked
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .insert(entity.to_string(), answer.clone());
+                answer
+            }
+        };
+        Ok(answer.map_or(Grant::Refused, Grant::Own))
+    }
+
+    /// The objects of `nodes` the caller may read, each by its own type's
+    /// grant, in their order.
+    async fn retain(
+        &self,
+        ctx: &SecurityContext,
+        ontology: &Ontology,
+        nodes: Vec<ObjectNode>,
+    ) -> Result<Vec<ObjectNode>, QueryError> {
+        let mut out = Vec::with_capacity(nodes.len());
+        for n in nodes {
+            let grant = self.of(ctx, &entity_named(ontology, &n.type_id)).await?;
+            if let Some(a) = grant.access()
+                && a.admits(ctx, &n).await
+            {
+                out.push(n);
+            }
+        }
+        Ok(out)
+    }
+
+    /// One warning per type whose objects were left out.
+    fn warnings(&self) -> Vec<String> {
+        self.refused
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .map(|e| {
+                format!(
+                    "objects of `{e}` are left out: you may not read that type, so relations \
+                     and filters that reach it do not show them"
+                )
+            })
+            .collect()
+    }
+}
+
 /// Follow each included relation for every row at once: one read per
 /// relation and level, the way a federated engine batches a join, then the
 /// next level over all the children together.
@@ -1174,7 +1434,7 @@ fn expand<'a>(
     hops: &'a dyn Hops,
     ctx: &'a SecurityContext,
     ontology: &'a Ontology,
-    access: &'a Access,
+    grants: &'a Grants<'a>,
     rows: &'a mut [Row],
     includes: &'a [IncludePlan],
 ) -> Step<'a> {
@@ -1191,8 +1451,9 @@ fn expand<'a>(
                 .collect();
             let hood = hops.hop(ctx, &seeds, inc.hop()).await?;
             // Every level, not only the root: a relation must not carry a
-            // caller into rows they may not read (ADR-0035 §5).
-            let reachable = access.retain(ctx, hood.nodes).await;
+            // caller into rows they may not read (ADR-0035 §5), each type
+            // under its own grant.
+            let reachable = grants.retain(ctx, ontology, hood.nodes).await?;
             let nodes: HashMap<&str, &ObjectNode> = reachable
                 .iter()
                 .map(|n| (n.instance_id.as_str(), n))
@@ -1228,7 +1489,7 @@ fn expand<'a>(
                 hops,
                 ctx,
                 ontology,
-                access,
+                grants,
                 &mut children,
                 &inc.plan.include,
             )
@@ -1645,7 +1906,7 @@ fn related_type_ids(e: &Expr, out: &mut Vec<String>) {
     match e {
         Expr::And(list) | Expr::Or(list) => list.iter().for_each(|e| related_type_ids(e, out)),
         Expr::Not(e) => related_type_ids(e, out),
-        Expr::Cmp { .. } => {}
+        Expr::Cmp { .. } | Expr::TypeIs { .. } => {}
         Expr::Related { hop, .. } => {
             for t in hop.iter().flat_map(|h| &h.node_type_ids) {
                 if !out.contains(t) {
@@ -1662,8 +1923,9 @@ fn related_type_ids(e: &Expr, out: &mut Vec<String>) {
 /// when the graph stopped a read early, so some rows may be missing.
 async fn answer_related(
     store: &dyn DomainStore,
+    ontology: &Ontology,
     ctx: &SecurityContext,
-    access: &Access,
+    grants: &Grants<'_>,
     filter: &mut Expr,
     seeds: &[String],
     warnings: &mut Vec<String>,
@@ -1691,7 +1953,7 @@ async fn answer_related(
                      past that point are missing"
                 ));
             }
-            let reachable = access.retain(ctx, hood.nodes).await;
+            let reachable = grants.retain(ctx, ontology, hood.nodes).await?;
             let fits: HashSet<String> = reachable
                 .into_iter()
                 .filter(|n| eval(inner, n, &Value::String(n.instance_id.clone())))
@@ -1722,28 +1984,65 @@ pub(super) async fn run_bulk(
     ctx: &SecurityContext,
     q: &Query,
     access: &Access,
+    policy: &dyn ObjectPolicy,
 ) -> Result<Outcome, QueryError> {
     run_with(
         store,
         ontology,
         ctx,
         q,
-        access,
+        (access, policy),
         Some(q.selection.limit.unwrap_or(BULK_LIMIT).min(BULK_LIMIT)),
     )
     .await
 }
 
 /// Answer a query against `ontology`, reading through `store`: from its read
-/// model when the tenant's is complete, from the graph otherwise.
+/// model when the tenant's is complete, from the graph otherwise. `access`
+/// is the caller's grant on the queried type; `policy` answers for every
+/// other type the query reaches.
 pub(super) async fn run(
     store: &dyn DomainStore,
     ontology: &Ontology,
     ctx: &SecurityContext,
     q: &Query,
     access: &Access,
+    policy: &dyn ObjectPolicy,
 ) -> Result<Outcome, QueryError> {
-    run_with(store, ontology, ctx, q, access, None).await
+    run_with(store, ontology, ctx, q, (access, policy), None).await
+}
+
+/// The types a query's root reads, the queried one first, and their stored
+/// type ids. A query reads every type that extends the queried one, as a
+/// relation to it does; a gear's read (`bulk`) only the type and the
+/// Project subtypes chained onto it, as it always has.
+fn root_types(ontology: &Ontology, entity: &str, bulk: bool) -> (Vec<String>, Vec<String>) {
+    if bulk {
+        let type_ids = ontology.type_ids_of(entity);
+        let mut entities = vec![entity.to_string()];
+        for t in &type_ids {
+            if let Some(e) = ontology.entity_of_type(t)
+                && !entities.contains(&e)
+            {
+                entities.push(e);
+            }
+        }
+        return (entities, type_ids);
+    }
+    let mut entities = vec![entity.to_string()];
+    for e in extending(ontology, entity) {
+        if !entities.contains(&e) {
+            entities.push(e);
+        }
+    }
+    let mut type_ids: Vec<String> = Vec::new();
+    for e in &entities {
+        let id = ontology.type_id_of(e);
+        if !type_ids.contains(&id) {
+            type_ids.push(id);
+        }
+    }
+    (entities, type_ids)
 }
 
 async fn run_with(
@@ -1751,20 +2050,18 @@ async fn run_with(
     ontology: &Ontology,
     ctx: &SecurityContext,
     q: &Query,
-    access: &Access,
+    (access, policy): (&Access, &dyn ObjectPolicy),
     bulk: Option<usize>,
 ) -> Result<Outcome, QueryError> {
     let entity = ontology
         .resolve_entity_id(&q.type_ref)
         .ok_or_else(|| invalid(format!("unknown domain type: {}", q.type_ref)))?;
+    let grants = Grants::new(&entity, access, policy);
     let mut warnings: Vec<String> = Vec::new();
-    let mut plan = plan(
-        ontology,
-        std::slice::from_ref(&entity),
-        &entity,
-        &q.selection,
-        0,
-    )?;
+    // What is the type: the queried one and what reads as it (see
+    // [`root_types`]).
+    let (root_entities, type_ids) = root_types(ontology, &entity, bulk.is_some());
+    let mut plan = plan(ontology, &root_entities, &entity, &q.selection, 0)?;
     // A gear's `limit: 0`: counts and groups, no rows.
     let counts_only = bulk == Some(0);
     if let Some(limit) = bulk {
@@ -1797,9 +2094,6 @@ async fn run_with(
         }
         (None, None) => None,
     };
-    // What is the type: `project` reads its kits' subtypes too (ADR-0073
-    // amendment), by their GTS ids chained onto Project's.
-    let type_ids = ontology.type_ids_of(&entity);
     if q.cursor.is_some() && q.offset.is_some_and(|o| o > 0) {
         return Err(invalid(
             "send `cursor` or `offset`, not both: they page differently",
@@ -1838,19 +2132,39 @@ async fn run_with(
             Some(admitted)
         };
         // A filter on related objects reads only those the caller may read,
-        // or it would say whether a hidden object matches: the same
-        // predicate, over the owners of the related types.
+        // or it would say whether a hidden object matches: each related
+        // type's own grant, as a predicate over the owners holding objects
+        // of it. `None` when every such type is readable whole.
         let related_owners = match &plan.filter {
-            Some(f) if !access.is_unconstrained() && has_related(f) => {
+            Some(f) if has_related(f) => {
                 let mut ids = Vec::new();
                 related_type_ids(f, &mut ids);
-                let mut admitted = Vec::new();
-                for owner in mirror.owners(tenant, &ids, None).await? {
-                    if access.admits_owner(ctx, owner).await {
-                        admitted.push(owner);
-                    }
+                let mut by_type: BTreeMap<String, Vec<Uuid>> = BTreeMap::new();
+                for (type_id, owner) in mirror.owners_by_type(tenant, &ids).await? {
+                    by_type.entry(type_id).or_default().push(owner);
                 }
-                Some(admitted)
+                let mut readable: Vec<(String, Option<Vec<Uuid>>)> = Vec::new();
+                let mut narrowed = false;
+                for (type_id, owners) in by_type {
+                    let grant = grants.of(ctx, &entity_named(ontology, &type_id)).await?;
+                    let Some(a) = grant.access() else {
+                        narrowed = true;
+                        continue;
+                    };
+                    if a.is_unconstrained() {
+                        readable.push((type_id, None));
+                        continue;
+                    }
+                    narrowed = true;
+                    let mut admitted = Vec::new();
+                    for owner in owners {
+                        if a.admits_owner(ctx, owner).await {
+                            admitted.push(owner);
+                        }
+                    }
+                    readable.push((type_id, Some(admitted)));
+                }
+                narrowed.then_some(readable)
             }
             _ => None,
         };
@@ -1930,7 +2244,8 @@ async fn run_with(
         };
         let next_cursor = next_of(&mut nodes);
         let mut rows: Vec<Row> = nodes.into_iter().map(|n| row(ontology, n, &plan)).collect();
-        expand(&*mirror, ctx, ontology, access, &mut rows, &plan.include).await?;
+        expand(&*mirror, ctx, ontology, &grants, &mut rows, &plan.include).await?;
+        warnings.extend(grants.warnings());
         return Ok(Outcome {
             rows: RowSet {
                 items: rows,
@@ -1978,7 +2293,8 @@ async fn run_with(
         && has_related(filter)
     {
         let seeds: Vec<String> = found.iter().map(|n| n.instance_id.clone()).collect();
-        complete &= answer_related(store, ctx, access, filter, &seeds, &mut warnings).await?;
+        complete &=
+            answer_related(store, ontology, ctx, &grants, filter, &seeds, &mut warnings).await?;
     }
 
     let matched = select(found, &plan);
@@ -2003,11 +2319,12 @@ async fn run_with(
         &ThroughStore(store),
         ctx,
         ontology,
-        access,
+        &grants,
         &mut rows,
         &plan.include,
     )
     .await?;
+    warnings.extend(grants.warnings());
     Ok(Outcome {
         rows: RowSet {
             items: rows,
@@ -2063,7 +2380,12 @@ mod tests {
     /// Three projects, two teams; `core` delivers apollo and gemini and has
     /// one member.
     async fn fixture() -> DomainModelService {
-        let s = DomainModelService::new(Arc::new(InMemoryDomainStore::default()));
+        fixture_on(Arc::new(InMemoryDomainStore::default())).await
+    }
+
+    /// [`fixture`]'s objects written into `store`.
+    async fn fixture_on(store: Arc<InMemoryDomainStore>) -> DomainModelService {
+        let s = DomainModelService::new(store);
         let apollo = object(
             &s,
             "project",
@@ -2888,5 +3210,227 @@ mod tests {
         }
         assert_eq!(bucket_of(Some(&json!(7)), Bucket::Day), Value::Null);
         assert_eq!(bucket_of(None, Bucket::Day), Value::Null);
+    }
+
+    // ── Subtypes, several projects, a grant per type ──────────────────────
+
+    /// A `file` and a `repository-file` (which extends it).
+    async fn files() -> DomainModelService {
+        let s = DomainModelService::new(Arc::new(InMemoryDomainStore::default()));
+        object(&s, "file", "plain", json!({"name": "plain"})).await;
+        object(&s, "repository-file", "tracked", json!({"name": "tracked"})).await;
+        s
+    }
+
+    #[tokio::test]
+    async fn a_base_type_reads_what_extends_it_and_type_narrows_by_it() {
+        let s = files().await;
+        let ask = |w: Value| query("file", json!({"where": w, "order_by": [{"field": "name"}]}));
+        let all = s
+            .query(
+                &ctx(),
+                &query("file", json!({"order_by": [{"field": "name"}]})),
+            )
+            .await
+            .unwrap();
+        assert_eq!(names(&all.rows), ["plain", "tracked"]);
+        let entities: Vec<&str> = all.rows.items.iter().map(|r| r.entity.as_str()).collect();
+        assert_eq!(
+            entities,
+            ["file", "repository-file"],
+            "each row names its type"
+        );
+        let cases: [(Value, Vec<&str>); 6] = [
+            (
+                json!({"_type": {"_eq": "repository-file"}}),
+                vec!["tracked"],
+            ),
+            (json!({"_type": {"_neq": "repository-file"}}), vec!["plain"]),
+            (
+                json!({"_type": {"_in": ["file", "repository-file"]}}),
+                vec!["plain", "tracked"],
+            ),
+            (json!({"_type": {"_nin": ["file"]}}), vec!["tracked"]),
+            (json!({"_not": {"_type": {"_eq": "file"}}}), vec!["tracked"]),
+            (json!({"_type": {"_in": []}}), vec![]),
+        ];
+        for (w, want) in cases {
+            let out = s.query(&ctx(), &ask(w.clone())).await.unwrap();
+            assert_eq!(names(&out.rows), want, "{w}");
+        }
+        // The subtype asked for itself answers only itself.
+        let own = s
+            .query(&ctx(), &query("repository-file", json!({})))
+            .await
+            .unwrap();
+        assert_eq!(names(&own.rows), ["tracked"]);
+    }
+
+    #[tokio::test]
+    async fn a_gears_read_keeps_to_the_type_itself() {
+        let s = files().await;
+        let out = s
+            .query_bulk(&ctx(), &query("file", json!({})))
+            .await
+            .unwrap();
+        assert_eq!(names(&out.rows), ["plain"]);
+    }
+
+    #[tokio::test]
+    async fn a_type_test_names_only_what_the_rows_can_be() {
+        let s = files().await;
+        let m = refusal(&s, "file", json!({"where": {"_type": {"_eq": "team"}}})).await;
+        assert!(m.contains("`team`") && m.contains("repository-file"), "{m}");
+        let m = refusal(&s, "file", json!({"where": {"_type": {"_gt": "file"}}})).await;
+        assert!(m.contains("`_type` takes"), "{m}");
+        let m = refusal(&s, "file", json!({"where": {"_type": {"_in": "file"}}})).await;
+        assert!(m.contains("`_type` takes"), "{m}");
+        let m = refusal(&s, "file", json!({"where": {"_types": {"_eq": "file"}}})).await;
+        assert!(m.contains("_type"), "{m}");
+    }
+
+    #[tokio::test]
+    async fn a_type_test_reaches_a_related_object_and_an_included_one() {
+        let s = fixture().await;
+        // Core delivers two plain projects.
+        let q = query(
+            "team",
+            json!({"where": {"delivers": {"_type": {"_eq": "project"}}}}),
+        );
+        assert_eq!(names(&s.query(&ctx(), &q).await.unwrap().rows), ["Core"]);
+        let q = query(
+            "team",
+            json!({"where": {"name": {"_eq": "Core"}},
+                   "include": {"delivers": {"where": {"_type": {"_neq": "project"}}}}}),
+        );
+        let out = s.query(&ctx(), &q).await.unwrap();
+        assert_eq!(out.rows.items[0].relations["delivers"].total, 0);
+    }
+
+    fn in_projects(ty: &str, projects: &[Uuid]) -> Query {
+        Query {
+            type_ref: ty.to_string(),
+            scopes: Some(projects.iter().map(Uuid::to_string).collect()),
+            selection: serde_json::from_value(json!({"order_by": [{"field": "name"}]})).unwrap(),
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn several_projects_read_at_once_each_one_readable() {
+        let (store, _, _) = two_projects().await;
+        let open = DomainModelService::new(store.clone());
+        let both = open
+            .query(&ctx(), &in_projects("project", &[MINE, THEIRS]))
+            .await
+            .unwrap();
+        assert_eq!(names(&both.rows), ["apollo", "gemini"]);
+
+        let s = DomainModelService::new(store).with_policy(Arc::new(OneProject));
+        let mine = s
+            .query(&ctx(), &in_projects("project", &[MINE]))
+            .await
+            .unwrap();
+        assert_eq!(names(&mine.rows), ["apollo"]);
+        // One project the caller may not read refuses the request whole.
+        match s
+            .query(&ctx(), &in_projects("project", &[MINE, THEIRS]))
+            .await
+        {
+            Err(QueryError::Failed(e)) => {
+                let refused = e.downcast_ref::<ProjectNotReadable>().expect("named");
+                assert_eq!(refused.0, THEIRS.to_string());
+            }
+            other => panic!("expected a refusal, got {other:?}"),
+        }
+        let many: Vec<Uuid> = (0..=MAX_PROJECT_IDS as u128).map(Uuid::from_u128).collect();
+        assert!(matches!(
+            s.query(&ctx(), &in_projects("project", &many)).await,
+            Err(QueryError::Invalid(m)) if m.contains("at most")
+        ));
+        // Not with `project_id`.
+        let mut q = in_projects("project", &[MINE]);
+        q.scope = Some(MINE.to_string());
+        assert!(matches!(
+            s.query(&ctx(), &q).await,
+            Err(QueryError::Invalid(_))
+        ));
+    }
+
+    /// Every type in the organization but `project`, noting each type it is
+    /// asked about.
+    #[derive(Default)]
+    struct NoProjects(std::sync::Mutex<Vec<String>>);
+    #[async_trait::async_trait]
+    impl ObjectPolicy for NoProjects {
+        async fn access(
+            &self,
+            ctx: &SecurityContext,
+            _action: &str,
+            entity: Option<&str>,
+        ) -> Result<Access, AccessError> {
+            self.0
+                .lock()
+                .unwrap()
+                .push(entity.unwrap_or_default().to_string());
+            if entity == Some("project") {
+                return Err(AccessError::Denied);
+            }
+            Ok(Access::new(ctx, AccessScope::allow_all(), None))
+        }
+    }
+
+    /// The fixture's objects, read through `policy`.
+    async fn fixture_through(policy: Arc<NoProjects>) -> DomainModelService {
+        let store = Arc::new(InMemoryDomainStore::default());
+        fixture_on(store.clone()).await;
+        DomainModelService::new(store).with_policy(policy)
+    }
+
+    #[tokio::test]
+    async fn an_included_type_is_read_under_its_own_grant() {
+        let s = fixture_through(Arc::new(NoProjects::default())).await;
+        let q = query(
+            "team",
+            json!({"where": {"name": {"_eq": "Core"}},
+                   "include": {"delivers": {}, "has_members": {}}}),
+        );
+        let out = s.query(&ctx(), &q).await.unwrap();
+        let core = &out.rows.items[0];
+        assert_eq!(
+            core.relations["delivers"].total, 0,
+            "projects are not theirs"
+        );
+        assert_eq!(names(&core.relations["has_members"]), ["AK"]);
+        assert!(
+            out.warnings.iter().any(|w| w.contains("`project`")),
+            "{:?}",
+            out.warnings
+        );
+        // A filter on related objects does not see them either.
+        let q = query(
+            "team",
+            json!({"where": {"delivers": {"status": {"_eq": "active"}}}}),
+        );
+        let out = s.query(&ctx(), &q).await.unwrap();
+        assert_eq!(out.rows.total, 0);
+        assert!(out.warnings.iter().any(|w| w.contains("`project`")));
+    }
+
+    #[tokio::test]
+    async fn each_type_is_asked_once_per_request() {
+        let policy = Arc::new(NoProjects::default());
+        let s = fixture_through(policy.clone()).await;
+        let q = query(
+            "team",
+            json!({"where": {"delivers": {"status": {"_eq": "active"}}},
+                   "include": {"delivers": {}, "has_members": {}}}),
+        );
+        s.query(&ctx(), &q).await.unwrap();
+        let asked = policy.0.lock().unwrap().clone();
+        let count = |e: &str| asked.iter().filter(|a| a.as_str() == e).count();
+        assert_eq!(count("team"), 1, "{asked:?}");
+        assert_eq!(count("project"), 1, "{asked:?}");
+        assert!(count("person") <= 1, "{asked:?}");
     }
 }

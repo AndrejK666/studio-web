@@ -47,9 +47,10 @@ const OR_LIST_MAX: usize = 16;
 #[derive(Default)]
 struct Sql {
     params: Vec<SqlValue>,
-    /// The owners whose objects a filter on related objects may read; `None`
-    /// is every owner in the tenant.
-    related_owners: Option<Vec<Uuid>>,
+    /// The related types a filter on related objects may read, each with
+    /// the owners whose objects of it it may read (`None`: every owner);
+    /// a type not listed is not read. `None` is every type and owner.
+    related_owners: Option<Vec<(String, Option<Vec<Uuid>>)>>,
 }
 
 impl Sql {
@@ -271,6 +272,24 @@ impl Sql {
                 format!("({})", parts.join(" OR "))
             }
             Expr::Not(e) => format!("(NOT {})", self.expr(e)),
+            Expr::TypeIs {
+                type_ids, negate, ..
+            } => {
+                // The column, unqualified: inside a filter on related objects
+                // it is the related object's, as `payload` is.
+                let is = if type_ids.is_empty() {
+                    "FALSE".to_string()
+                } else {
+                    let list = Value::Array(type_ids.iter().cloned().map(Value::String).collect());
+                    let p = self.param(SqlValue::Json(Some(Box::new(list))));
+                    format!("type_id = ANY(ARRAY(SELECT jsonb_array_elements_text({p}::jsonb)))")
+                };
+                if *negate {
+                    format!("(NOT ({is}))")
+                } else {
+                    format!("({is})")
+                }
+            }
             Expr::Related { hop, filter, .. } => match hop {
                 Some(hop) => self.related(hop, filter),
                 // The planner resolves every relation; one it did not is no match.
@@ -360,12 +379,29 @@ impl Sql {
         let types = self.param(SqlValue::Json(Some(Box::new(types))));
         let owners = match self.related_owners.clone() {
             None => String::new(),
-            Some(list) if list.is_empty() => " AND FALSE".to_string(),
-            Some(list) => {
-                let list =
-                    Value::Array(list.iter().map(|o| Value::String(o.to_string())).collect());
-                let p = self.param(SqlValue::Json(Some(Box::new(list))));
-                format!(" AND ro.owner_id::text IN (SELECT jsonb_array_elements_text({p}::jsonb))")
+            Some(readable) => {
+                let mut either = Vec::new();
+                for (type_id, owners) in readable {
+                    let t = self.param(SqlValue::String(Some(type_id)));
+                    match owners {
+                        None => either.push(format!("ro.type_id = {t}")),
+                        Some(list) if list.is_empty() => {}
+                        Some(list) => {
+                            let list = Value::Array(
+                                list.iter().map(|o| Value::String(o.to_string())).collect(),
+                            );
+                            let p = self.param(SqlValue::Json(Some(Box::new(list))));
+                            either.push(format!(
+                                "(ro.type_id = {t} AND ro.owner_id::text IN (SELECT jsonb_array_elements_text({p}::jsonb)))"
+                            ));
+                        }
+                    }
+                }
+                if either.is_empty() {
+                    " AND FALSE".to_string()
+                } else {
+                    format!(" AND ({})", either.join(" OR "))
+                }
             }
         };
         let inner = self.expr(filter);
@@ -383,10 +419,11 @@ impl Sql {
 }
 
 /// A `where` as one SQL condition, its filters on related objects reading
-/// only objects of `owners` (the PDP's answer for the related types).
-pub(super) fn condition_owned_by(e: &Expr, owners: &[Uuid]) -> Condition {
+/// only the types `readable` lists, each of the owners listed with it (the
+/// PDP's answer for each related type).
+pub(super) fn condition_owned_by(e: &Expr, readable: &[(String, Option<Vec<Uuid>>)]) -> Condition {
     let mut sql = Sql {
-        related_owners: Some(owners.to_vec()),
+        related_owners: Some(readable.to_vec()),
         ..Sql::default()
     };
     let text = sql.expr(e);
@@ -699,7 +736,10 @@ mod tests {
         }
     }
 
-    fn related(reverse: bool, owners: Option<Vec<uuid::Uuid>>) -> (String, usize) {
+    fn related(
+        reverse: bool,
+        owners: Option<Vec<(String, Option<Vec<uuid::Uuid>>)>>,
+    ) -> (String, usize) {
         use super::super::RelatedHop;
         let hop = RelatedHop {
             edge_type_id: "gts.cf.studio.domainrel.delivers.v1~".to_string(),
@@ -744,12 +784,25 @@ mod tests {
             backwards.contains("re.dst = studio_domain_objects.instance_id"),
             "{backwards}"
         );
-        // The PDP's owners narrow the related objects, and none reads none.
-        let (owned, n) = related(false, Some(vec![uuid::Uuid::nil()]));
-        assert!(owned.contains("ro.owner_id::text IN"), "{owned}");
-        assert_eq!(n, 5);
+        // Each related type's grant narrows its objects by owner, a type
+        // readable whole is read whole, and none reads none.
+        let (owned, n) = related(
+            false,
+            Some(vec![
+                ("a".to_string(), Some(vec![uuid::Uuid::nil()])),
+                ("b".to_string(), None),
+            ]),
+        );
+        assert!(
+            owned.contains("(ro.type_id = $4 AND ro.owner_id::text IN"),
+            "{owned}"
+        );
+        assert!(owned.contains(" OR ro.type_id = $6"), "{owned}");
+        assert_eq!(n, 7);
         let (nobody, _) = related(false, Some(vec![]));
         assert!(nobody.contains(" AND FALSE "), "{nobody}");
+        let (refused, _) = related(false, Some(vec![("a".to_string(), Some(vec![]))]));
+        assert!(refused.contains(" AND FALSE "), "{refused}");
     }
 
     /// A bucket casts nothing before the text has a timestamp's shape and a
