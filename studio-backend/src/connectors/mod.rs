@@ -45,7 +45,6 @@ mod graph_sync;
 #[cfg(feature = "graph")]
 mod graph_sync_task;
 pub(crate) mod gts;
-mod kubernetes; // a cluster an organization deploys into (ADR-0043)
 mod mcp;
 // This gear's MCP tools, collected by studio-mcp (ADR-0079).
 inventory::submit! {
@@ -96,7 +95,7 @@ use service::ConnectorService;
 /// Every driver instance id the assembly knows how to look for. Resolution is
 /// by GTS id through ClientHub, so an id whose plugin gear is not linked
 /// simply yields no driver.
-const KNOWN_DRIVERS: [&str; 14] = [
+const KNOWN_DRIVERS: [&str; 13] = [
     gts::GITLAB_INSTANCE_ID,
     gts::GITHUB_INSTANCE_ID,
     gts::BITBUCKET_INSTANCE_ID,
@@ -106,7 +105,6 @@ const KNOWN_DRIVERS: [&str; 14] = [
     gts::ZULIP_WEBHOOK_INSTANCE_ID,
     gts::DISCORD_INSTANCE_ID,
     gts::DISCORD_WEBHOOK_INSTANCE_ID,
-    gts::KUBERNETES_INSTANCE_ID,
     gts::GEAR_REPOSITORY_INSTANCE_ID,
     gts::REGISTRY_INSTANCE_ID,
     gts::RESEARCH_INSTANCE_ID,

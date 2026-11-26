@@ -27,10 +27,11 @@ use toolkit::client_hub::ClientHub;
 use tracing::{info, warn};
 use uuid::Uuid;
 
+use super::cluster_driver::ClusterAccess;
 use super::database;
 use super::model::{ChartRef, DatabaseMode, DeployImage, DeploymentAction};
 use super::preflight;
-use crate::connectors::sdk::{ClusterAccess, Connectors, RegistryAccess, same_registry};
+use crate::connectors::sdk::{Connectors, RegistryAccess, same_registry};
 use crate::tasks::sdk::{TaskContext, TaskHandler, TaskOutcome};
 
 // Installing a product's infra services before its release (ADR-0064 §5).
@@ -674,7 +675,7 @@ async fn make_namespace(
             "the cluster connection may not read namespace {namespace}, so whether it exists \
              cannot be told: a cluster administrator applies {}, or gives the connection's \
              account admin in {namespace} ({})",
-            crate::connectors::sdk::BOOTSTRAP_FILE,
+            super::cluster_driver::BOOTSTRAP_FILE,
             status.message
         )),
         Err(e) => Err(anyhow!("the cluster did not answer: {e}")),

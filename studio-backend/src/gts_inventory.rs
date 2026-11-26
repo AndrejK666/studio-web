@@ -244,7 +244,6 @@ pub fn plugin_instances() -> Vec<Value> {
         ("studio-connector", connectors::ZULIP_WEBHOOK_INSTANCE_ID),
         ("studio-connector", connectors::DISCORD_INSTANCE_ID),
         ("studio-connector", connectors::DISCORD_WEBHOOK_INSTANCE_ID),
-        ("studio-connector", connectors::KUBERNETES_INSTANCE_ID),
         ("studio-connector", connectors::REGISTRY_INSTANCE_ID),
         ("studio-connector", connectors::RESEARCH_INSTANCE_ID),
         ("studio-connector", connectors::ASSEMBLY_SERVICE_INSTANCE_ID),

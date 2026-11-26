@@ -24,7 +24,7 @@
 
 use k8s_openapi::api::core::v1::Namespace;
 
-use crate::connectors::sdk::{BOOTSTRAP_FILE, BOOTSTRAP_RIGHTS, ClusterRight, NAMESPACE_RIGHTS};
+use super::cluster_driver::{BOOTSTRAP_FILE, BOOTSTRAP_RIGHTS, ClusterRight, NAMESPACE_RIGHTS};
 
 /// A refusal: the precondition code a problem carries, and the sentence.
 pub type Refused = (&'static str, String);
@@ -174,10 +174,10 @@ pub fn token_refusal(label: &str, broad: &[String], allowed: bool) -> Option<Ref
 /// What a cluster's readiness stops: a partial bootstrap, or a cluster that
 /// gives namespaces when the project's are not among them.
 pub fn bootstrap_refusal(
-    r: &crate::connectors::sdk::Readiness,
+    r: &crate::environments::cluster_driver::Readiness,
     namespaces: &[&str],
 ) -> Option<Refused> {
-    use crate::connectors::sdk::Readiness;
+    use crate::environments::cluster_driver::Readiness;
     match r {
         Readiness::Bootstrapped { .. } => None,
         Readiness::Partial { missing } => Some((
@@ -375,7 +375,7 @@ mod tests {
 
     #[test]
     fn a_partial_cluster_is_refused_with_what_it_lacks() {
-        use crate::connectors::sdk::Readiness;
+        use crate::environments::cluster_driver::Readiness;
         let partial = Readiness::Partial {
             missing: vec!["create namespaces".into()],
         };

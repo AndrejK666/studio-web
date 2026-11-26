@@ -40,10 +40,6 @@ pub use super::driver::{ConnectorCategory, DriverIdentity};
 pub use super::gear_repository::PROVIDER as GEAR_REPOSITORY_PROVIDER;
 /// Whether a name is a gear repository's source id, as the engine takes it.
 pub use super::gear_repository::is_source_id;
-pub use super::kubernetes::{
-    BOOTSTRAP_FILE, BOOTSTRAP_RIGHTS, ClusterAccess, ClusterRight, NAMESPACE_RIGHTS, Readiness,
-    ReadinessReport, cluster_readiness,
-};
 pub use super::references::{Mention, NumberRef, RefKind, Relation, find as find_references};
 pub use super::registry::{
     CatalogVersion, Oci, RegistryAccess, RegistryCatalog, TokenScopes, catalog_for, same_registry,
@@ -73,7 +69,7 @@ pub use super::service::{
 /// so studio-connector looks for it without the core naming the kit.
 pub mod drivers {
     pub use super::super::driver::{
-        ConnectionAuth, ConnectorCategory, ConnectorDriver, DriverIdentity,
+        ConnectionAuth, ConnectorCategory, ConnectorDriver, DriverCheck, DriverIdentity,
     };
     /// The form a driver describes (`ConnectorDriver::form_fields`, `holder`).
     /// No kit's driver describes one of its own yet: the model providers'

@@ -35,6 +35,9 @@
 
 pub(crate) mod build; // a product built by Studio in the organization's cluster (ADR-0048 §9)
 mod build_records; // a project's build records, kept in its organization's model
+/// A cluster connection's driver, contributed through studio-connector's
+/// connector-driver port (ADR-0079).
+mod cluster_driver;
 mod database;
 mod deploy;
 mod failure; // why a build or a deploy failed, and the action that fixes it (#1054)
@@ -75,6 +78,12 @@ mod secret_preflight; // a secret the description reads: made, or the deploy ref
 mod service;
 mod store;
 mod workflow; // the build workflow proposed to a product's repository (ADR-0048)
+
+// One module per plugin gear: `#[toolkit::gear]` aliases its dependencies at
+// module scope, so two gears in one module collide (see connectors/plugin.rs).
+/// Kubernetes — the cluster an organization's environments deploy into.
+#[path = "plugins/kubernetes/mod.rs"]
+mod kubernetes_connector_plugin;
 
 use std::sync::{Arc, OnceLock};
 
