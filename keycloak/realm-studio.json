@@ -4,6 +4,12 @@
   "sslRequired": "external",
   "registrationAllowed": true,
   "accessTokenLifespan": 3600,
+  "ssoSessionIdleTimeout": 604800,
+  "ssoSessionMaxLifespan": 2592000,
+  "clientSessionIdleTimeout": 604800,
+  "clientSessionMaxLifespan": 2592000,
+  "ssoSessionIdleTimeoutRememberMe": 2592000,
+  "ssoSessionMaxLifespanRememberMe": 2592000,
   "users": [
     {
       "id": "00000000-0000-4000-8000-000000000a11",
