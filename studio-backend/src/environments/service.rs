@@ -830,7 +830,8 @@ impl EnvironmentService {
         // A cluster that does not answer is said in seconds, not after the
         // client's own minutes.
         let (level, facts) = tokio::time::timeout(std::time::Duration::from_secs(30), async {
-            let level = crate::environments::cluster_driver::cluster_readiness(&client, &given).await?;
+            let level =
+                crate::environments::cluster_driver::cluster_readiness(&client, &given).await?;
             let mut facts = Vec::new();
             for ns in &wanted {
                 facts.push(readiness::cluster_facts(&client, ns).await?);
@@ -880,16 +881,17 @@ impl EnvironmentService {
         let auth = auth.ok_or_else(|| {
             Refusal::Internal("the cluster connection was read without its credential".into())
         })?;
-        let access = crate::environments::cluster_driver::ClusterAccess::parse(&auth.base_url, &auth.token)
-            .map_err(|e| {
-                Refusal::Precondition(
-                    readiness::CLUSTER_CONNECTION_UNREADABLE,
-                    format!(
-                        "the environment's cluster connection '{}' cannot be used: {e:#}",
-                        seen.label.as_deref().unwrap_or_default()
-                    ),
-                )
-            })?;
+        let access =
+            crate::environments::cluster_driver::ClusterAccess::parse(&auth.base_url, &auth.token)
+                .map_err(|e| {
+                    Refusal::Precondition(
+                        readiness::CLUSTER_CONNECTION_UNREADABLE,
+                        format!(
+                            "the environment's cluster connection '{}' cannot be used: {e:#}",
+                            seen.label.as_deref().unwrap_or_default()
+                        ),
+                    )
+                })?;
         access.client().await.map_err(|e| {
             Refusal::Precondition(
                 "ENVIRONMENT_CLUSTER_UNREACHABLE",

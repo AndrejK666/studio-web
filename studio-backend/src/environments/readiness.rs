@@ -24,7 +24,9 @@
 
 use k8s_openapi::api::core::v1::Namespace;
 
-use crate::environments::cluster_driver::{BOOTSTRAP_FILE, BOOTSTRAP_RIGHTS, ClusterRight, NAMESPACE_RIGHTS};
+use crate::environments::cluster_driver::{
+    BOOTSTRAP_FILE, BOOTSTRAP_RIGHTS, ClusterRight, NAMESPACE_RIGHTS,
+};
 
 /// A refusal: the precondition code a problem carries, and the sentence.
 pub type Refused = (&'static str, String);

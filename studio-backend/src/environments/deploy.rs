@@ -27,11 +27,11 @@ use toolkit::client_hub::ClientHub;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use crate::environments::cluster_driver::ClusterAccess;
 use super::database;
 use super::model::{ChartRef, DatabaseMode, DeployImage, DeploymentAction};
 use super::preflight;
 use crate::connectors::sdk::{Connectors, RegistryAccess, same_registry};
+use crate::environments::cluster_driver::ClusterAccess;
 use crate::tasks::sdk::{TaskContext, TaskHandler, TaskOutcome};
 
 // Installing a product's infra services before its release (ADR-0064 §5).

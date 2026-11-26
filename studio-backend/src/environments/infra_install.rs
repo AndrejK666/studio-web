@@ -13,9 +13,9 @@ use std::sync::Arc;
 use anyhow::{Context, anyhow};
 use toolkit::client_hub::ClientHub;
 
-use crate::environments::cluster_driver::ClusterAccess;
 use super::{DeployPayload, HELM_TIMEOUT, PULL_SECRET, Scratch, helm};
 use crate::connectors::sdk::{RegistryAccess, same_registry};
+use crate::environments::cluster_driver::ClusterAccess;
 use crate::environments::infra::{self, InfraInstall, Install};
 use crate::environments::model;
 use crate::tasks::sdk::TaskContext;
