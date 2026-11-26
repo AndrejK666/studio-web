@@ -138,13 +138,18 @@ pub(super) struct Linking<'a> {
 ///
 /// The first portion is read whatever the deadline says, so every attempt
 /// gets somewhere even when the sync before the linking was slow.
+///
+/// Answers the marks it stored, by node instance id: a later write of the
+/// same node in this sync (its comments read, `item_comments`) must carry
+/// them, or it would put back the null it was listed with.
 pub(super) async fn link(
     run: &Linking<'_>,
     pending: Vec<Pending>,
     file_id: &(dyn Fn(&str) -> Option<String> + Sync),
     tally: &mut Tally,
     report: &(dyn Fn(&Tally) + Sync),
-) {
+) -> HashMap<String, Option<String>> {
+    let mut written: HashMap<String, Option<String>> = HashMap::new();
     let width = run.driver.item_read_concurrency().max(1);
     let portion = width * PORTION_PER_READ;
     let mut rest = pending;
@@ -213,7 +218,13 @@ pub(super) async fn link(
         }
         if stored_edges && !marked.is_empty() {
             match run.graph.upsert_nodes(run.ctx, &marked).await {
-                Ok(()) => tally.linked += marked.len(),
+                Ok(()) => {
+                    tally.linked += marked.len();
+                    written.extend(marked.iter().map(|n| {
+                        let mark = n.value.get(LINKED_FIELD).and_then(Value::as_str);
+                        (n.instance_id.clone(), mark.map(str::to_owned))
+                    }));
+                }
                 Err(e) => warn!(
                     error = %e,
                     repo = run.repo_full_path,
@@ -223,6 +234,7 @@ pub(super) async fn link(
         }
         report(tally);
     }
+    written
 }
 
 #[cfg(test)]

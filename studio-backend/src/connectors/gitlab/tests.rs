@@ -525,8 +525,6 @@ async fn the_same_iid_in_two_projects_stays_two_items() {
             "/api/v4/projects/acme%2Ftwo/merge_requests",
             Reply::json(json!([mr(22, 1, json!({}))])),
         )
-        .get("/api/v4/projects/acme%2Fone/issues", Reply::json(json!([])))
-        .get("/api/v4/projects/acme%2Ftwo/issues", Reply::json(json!([])))
         .get(
             "/api/v4/projects/acme%2Fone/merge_requests/1/notes",
             Reply::json(note(1001, "one")),
@@ -550,11 +548,11 @@ async fn the_same_iid_in_two_projects_stays_two_items() {
     assert_eq!((a[0].number, a[0].id.as_str()), (1, "11"));
     assert_eq!((b[0].number, b[0].id.as_str()), (1, "22"));
     let ca = driver
-        .list_comments(&auth, "acme/one", None, 1, 100)
+        .list_item_comments(&auth, "acme/one", None, true, 1)
         .await
         .unwrap();
     let cb = driver
-        .list_comments(&auth, "acme/two", None, 1, 100)
+        .list_item_comments(&auth, "acme/two", None, true, 1)
         .await
         .unwrap();
     assert_eq!(ca[0].body.as_deref(), Some("one"));
@@ -564,17 +562,6 @@ async fn the_same_iid_in_two_projects_stays_two_items() {
 #[tokio::test]
 async fn comments_are_peoples_notes_and_say_which_kind_of_item_they_are_on() {
     let mock = Mock::builder()
-        .get(
-            &format!("{PROJECT}/merge_requests"),
-            Reply::json(json!([mr(101, 5, json!({})), mr(102, 6, json!({}))])),
-        )
-        .get(
-            &format!("{PROJECT}/issues"),
-            Reply::json(
-                json!([{ "id": 900, "iid": 5, "title": "Bug", "state": "opened",
-                                  "web_url": "https://g.example/i/5" }]),
-            ),
-        )
         .get(
             &format!("{PROJECT}/merge_requests/5/notes"),
             Reply::json(json!([
@@ -587,7 +574,7 @@ async fn comments_are_peoples_notes_and_say_which_kind_of_item_they_are_on() {
             ])),
         )
         // A merge request whose notes are a feature this edition lacks:
-        // skipped, not fatal.
+        // none, not fatal.
         .get(
             &format!("{PROJECT}/merge_requests/6/notes"),
             Reply::status(402),
@@ -599,17 +586,18 @@ async fn comments_are_peoples_notes_and_say_which_kind_of_item_they_are_on() {
         )
         .start()
         .await;
-    let comments = mock
-        .driver()
-        .list_comments(
-            &mock.auth(),
-            "acme/platform/app",
-            Some("2026-11-15T00:00:00Z"),
-            1,
-            100,
-        )
-        .await
-        .unwrap();
+    let driver = mock.driver();
+    assert!(driver.comments_per_item());
+    let since = Some("2026-11-15T00:00:00Z");
+    let mut comments = Vec::new();
+    for (is_mr, iid) in [(true, 5), (true, 6), (false, 5)] {
+        comments.extend(
+            driver
+                .list_item_comments(&mock.auth(), "acme/platform/app", since, is_mr, iid)
+                .await
+                .unwrap(),
+        );
+    }
     let got: Vec<(&str, i64, Option<bool>)> = comments
         .iter()
         .map(|c| (c.id.as_str(), c.target_number, c.target_is_pull_request))
@@ -617,8 +605,45 @@ async fn comments_are_peoples_notes_and_say_which_kind_of_item_they_are_on() {
     assert_eq!(got, vec![("2", 5, Some(true)), ("4", 5, Some(false))]);
     assert_eq!(
         comments[0].url.as_deref(),
-        Some("https://g.example/acme/platform/app/-/merge_requests/5#note_2")
+        Some(format!("{}/acme/platform/app/-/merge_requests/5#note_2", mock.base).as_str())
     );
+    assert_eq!(
+        comments[1].url.as_deref(),
+        Some(format!("{}/acme/platform/app/-/issues/5#note_4", mock.base).as_str())
+    );
+}
+
+/// An item's notes are read to their end, however many pages: the walk used
+/// to stop at ten pages (1,000 notes) without a word.
+#[tokio::test]
+async fn every_page_of_an_items_notes_is_read() {
+    let notes_path = format!("{PROJECT}/merge_requests/7/notes");
+    let page = |from: i64| -> serde_json::Value {
+        (from..from + 100)
+            .map(|id| json!({ "id": id, "body": "n", "system": false }))
+            .collect()
+    };
+    // Twelve pages linked one to the next, past the old bound of ten; the
+    // route answers them in order.
+    let mut mock = Mock::builder().get(
+        &notes_path,
+        Reply::json(page(1000)).next(&format!("{notes_path}?page=2")),
+    );
+    for n in 2..=12i64 {
+        let reply = Reply::json(page(n * 1000));
+        mock = mock.then(if n < 12 {
+            reply.next(&format!("{notes_path}?page={}", n + 1))
+        } else {
+            reply
+        });
+    }
+    let mock = mock.start().await;
+    let comments = mock
+        .driver()
+        .list_item_comments(&mock.auth(), "acme/platform/app", None, true, 7)
+        .await
+        .unwrap();
+    assert_eq!(comments.len(), 1200);
 }
 
 #[tokio::test]

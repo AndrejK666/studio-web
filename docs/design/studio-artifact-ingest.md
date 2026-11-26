@@ -225,18 +225,30 @@ in every config profile, because the default 1,000 truncates a 400-seed chunk.
 
 - [x] `p2` - **ID**: `cpt-studio-constraint-artifact-ingest-bounds`
 
-Per sync: 10,000 files, 20,000 comments, 20,000 commits, the newest 100 CI
-runs of each of up to 20 active workflows (300 repository-wide when the
+A sync reads a repository's files, issues, pull requests, comments and
+commits whole: every listing is walked until the provider answers an empty
+page, and no count of files, items or pages stops it. Ceilings used to (10,000
+files, 20,000 comments and commits, 50 pages of 100 per channel), and a large
+repository came in cut short -- platform/alms/core at exactly 5,000 merge
+requests and 5,000 commits -- with nothing on the run to say so. What is left
+is a guard against a provider that never ends: a page that repeats the one
+before it, or 100,000 pages, stops the walk and is logged as an error naming
+the repository (`paging.rs`). Memory stays bounded by storing as it reads:
+each page of nodes is flushed as it comes, files 1,000 at a time.
+
+What is bounded is what is read again every sync and matters newest first:
+the newest 100 CI runs of each of up to 20 active workflows (300
+repository-wide when the
 workflows cannot be listed; read again every sync, so a run that was in
 progress shows how it ended; a failed read is kept on the repository node as
 `ci_error`, beside `ci_runs`), the newest 200 CI artifacts and 200 releases
-(read again every sync: artifacts expire, releases gain files), 50 pages of 100 per API channel, and review threads of at most 200 open pull requests. Nodes and
+(read again every sync: artifacts expire, releases gain files), and review
+threads of at most 200 open pull requests. Nodes and
 edges are flushed 1,000 per call (edges went from 5,000 after a large ingest
 took part in an OOM kill, studio-web#561), and a process runs at most
 `ingest.parallel` ingests at once (1..=8, default 1, `STUDIO_INGEST_PARALLEL`;
 one since #563, the compose stand runs three) while other task types
-proceed. A comment thread beyond the file cap is not counted, rather than
-exempting `.studio/` and reopening the memory hole the cap closes.
+proceed.
 
 ## 3. Technical Architecture
 
@@ -388,14 +400,26 @@ A sync larger than one attempt goes on in the next. An attempt works to a
 12-minute budget inside the queue's 15-minute lease. Linking pull requests to
 the files they changed (`modifies`, one provider call each, several in flight
 where the driver allows it -- six on GitLab, one on GitHub) stops 4 minutes
-short of that, the comments at it, and the rest of the sync stores what it
-has. Each pull request node carries `files_linked`, the head it was linked
-at; a sync asks only about the pull requests whose head moved or that were
-never linked, and writes each portion's edges, then its marks, as it goes.
-An attempt that stopped with pull requests left answers `Retry` with "linked
-X of Y" and the next attempt continues -- as does a retry by hand or the next
-scheduled sync, since the cursor is in the graph, not on the run. The last
-attempt ends `Done` with the count instead of failing.
+short of that, and the rest of the sync stores what it has. Each pull request
+node carries `files_linked`, the head it was linked at; a sync asks only about
+the pull requests whose head moved or that were never linked, and writes each
+portion's edges, then its marks, as it goes.
+
+Comments go the same way where the provider has no repository-wide listing of
+them. GitLab keeps notes on each merge request and issue, so its comments are
+read item by item, six in flight, stopping 2 minutes short of the deadline
+(`item_comments.rs`). Each issue and pull request node carries
+`comments_read`, its `updated_at` when its notes were read; a new or edited
+note touches its item, so a sync reads the notes only of the items that
+changed or were never read, and stores each portion's comment and author
+nodes, then their edges, then the marks. GitHub's repository-wide listing is
+paged and read whole within the attempt, up to the deadline.
+
+An attempt that stopped with pull requests or comments left answers `Retry`
+with "linked X of Y" or "read the comments of X of Y" and the next attempt
+continues -- as does a retry by hand or the next scheduled sync, since the
+cursor is in the graph, not on the run. The last attempt ends `Done` with the
+count instead of failing.
 
 ##### Responsibility boundaries
 

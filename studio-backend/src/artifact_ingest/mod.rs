@@ -26,6 +26,7 @@ mod graph;
 pub(crate) mod graph_backend;
 pub(crate) mod gts;
 mod index;
+mod item_comments; // comments read item by item, resumable across runs
 mod mcp;
 // This gear's MCP tools, collected by studio-mcp (ADR-0079).
 inventory::submit! {
@@ -51,6 +52,7 @@ mod model_store;
 mod outputs; // what the builds produced: CI artifacts and releases
 /// The Delivery block of an organization's Overview (ADR-0079 §4).
 pub mod overview_block;
+mod paging; // a provider's listing walked to its end
 pub mod port;
 mod pr_links; // pull request → file links, resumable across runs
 mod pull_request_waits;

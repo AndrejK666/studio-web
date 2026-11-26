@@ -26,7 +26,11 @@
       "required": ["number"],
       "additionalProperties": false
     },
-    "iteration": { "type": ["string", "null"], "description": "The milestone, sprint or fix version it is planned into, by name." }
+    "iteration": { "type": ["string", "null"], "description": "The milestone, sprint or fix version it is planned into, by name." },
+    "comments_read": {
+      "type": ["string", "null"],
+      "description": "When its comments were read (its updated_at then), where a provider's comments are read item by item (GitLab); null while they are still to be read. A sync reads them again only when the item changed. Added to v1 as an optional field."
+    }
   },
   "required": ["repo", "external_id", "number", "title", "state"],
   "additionalProperties": false

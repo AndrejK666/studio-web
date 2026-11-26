@@ -24,6 +24,7 @@ use toolkit_security::SecurityContext;
 use super::comment_threads;
 use super::graph::{GraphStore, GtsEdge, GtsNode};
 use super::gts;
+use super::paging::Pages;
 use crate::connectors::sdk::git_checkout;
 use crate::connectors::sdk::{
     ConnectionAuth, ConnectorDriver, DownloadTarget, Mention, NumberRef, PullRequestThreads,
@@ -35,18 +36,13 @@ use uuid::Uuid;
 use crate::documents::port::{DocumentClassifier, IngestedDocument, is_prose_path};
 use crate::tasks::sdk::SyncReporter;
 
-/// Hard cap on pages per channel — a runaway loop backstop, not a real limit.
-/// 200 pages of 100 reach [`MAX_COMMITS`]: at 50 a repository with more than
-/// 5000 merge requests or commits (platform/alms/core) was cut short without a
-/// word, and the commit cap below could never be reached.
-const MAX_PAGES: u32 = 200;
+/// Items asked for per page of a listing the sync reads whole (issues, pull
+/// requests, comments, commits). There is no count of pages or items past
+/// which the sync stops: it walks each listing to its end ([`Pages`]).
+/// Holding a large repository is the store's job, and the sync stores each
+/// page as it reads it, so what it keeps in memory is a page of nodes plus
+/// the relations and the number → node maps, not the repository.
 const PER_PAGE: u32 = 100;
-/// Backstop on file nodes per sync, so a giant monorepo can't flood the graph.
-const MAX_FILES: usize = 10_000;
-/// Backstops on comment/commit nodes per sync — the same "don't flood the
-/// graph" guard as files. Hitting one is logged (not silent truncation).
-const MAX_COMMENTS: usize = 20_000;
-const MAX_COMMITS: usize = 20_000;
 /// CI runs read per repository, newest first (ADR-0045): three pages. Runs
 /// are read again every sync, so this bounds every sync, not only the first.
 const MAX_RUN_PAGES: u32 = 3;
@@ -302,6 +298,19 @@ pub struct SyncSummary {
     /// from where this one stopped.
     #[serde(default)]
     pub links_left: usize,
+    /// Issues and pull requests whose comments are read at their current
+    /// state, by this sync or an earlier one, of `comment_items_total` it
+    /// listed -- where comments are read item by item
+    /// ([`super::item_comments`]); zero otherwise. Present while the reading
+    /// runs and on the final result.
+    #[serde(default)]
+    pub comment_items_done: usize,
+    #[serde(default)]
+    pub comment_items_total: usize,
+    /// Items this sync ran out of time to read the comments of. Not zero
+    /// means the sync is partial, as with `links_left`.
+    #[serde(default)]
+    pub comment_items_left: usize,
 }
 
 impl SyncSummary {
@@ -312,9 +321,10 @@ impl SyncSummary {
         serde_json::to_value(self).unwrap_or_else(|_| serde_json::json!({}))
     }
 
-    /// Whether the sync stopped with pull requests still to link.
+    /// Whether the sync stopped with pull requests still to link, or items
+    /// whose comments are still to be read.
     pub fn is_partial(&self) -> bool {
-        self.links_left > 0
+        self.links_left > 0 || self.comment_items_left > 0
     }
 }
 
@@ -322,6 +332,11 @@ impl SyncSummary {
 /// stops for this run, short of its deadline: what comes after (comments,
 /// commits, CI runs, storing the relations) needs the rest.
 const LINK_TAIL: std::time::Duration = std::time::Duration::from_secs(4 * 60);
+
+/// The same for comments read item by item, which come after the links:
+/// commits (every page of them), CI runs and storing the relations need the
+/// rest of the attempt.
+const COMMENTS_TAIL: std::time::Duration = std::time::Duration::from_secs(2 * 60);
 
 /// Put `repository` (the repository node's `full_path`) on each hit whose
 /// `repo` names one of `repos`.
@@ -783,10 +798,13 @@ impl IngestService {
     }
 
     /// [`Self::run_sync`] that keeps to `deadline`: the pull request → file
-    /// links stop [`LINK_TAIL`] before it and the comments at it, so the
-    /// writes that close the sync still fit in the run's lease. What the
-    /// links did not reach is `links_left` on the answer, and the next sync
-    /// -- the run's next attempt -- goes on from there ([`super::pr_links`]).
+    /// links stop [`LINK_TAIL`] before it, comments read item by item
+    /// [`COMMENTS_TAIL`] before it and a repository-wide comment listing at
+    /// it, so the writes that close the sync still fit in the run's lease.
+    /// What the links and the item comments did not reach is `links_left` and
+    /// `comment_items_left` on the answer, and the next sync -- the run's next
+    /// attempt -- goes on from there ([`super::pr_links`],
+    /// [`super::item_comments`]).
     #[allow(clippy::too_many_arguments)]
     pub async fn run_sync_until(
         &self,
@@ -858,6 +876,13 @@ impl IngestService {
         let mut users: HashMap<String, GtsNode> = HashMap::new();
         let mut links_pending: Vec<super::pr_links::Pending> = Vec::new();
         let mut links_carried = 0usize;
+        // The same for comments, where they are read item by item: the
+        // issues and pull requests whose comments are still to be read, how
+        // many are read at their current state already, and the marks the
+        // stored ones carry (`item_comments`).
+        let mut comments_pending: Vec<super::item_comments::Pending> = Vec::new();
+        let mut comments_carried = 0usize;
+        let mut comment_marks: HashMap<String, String> = HashMap::new();
         let mut file_paths: HashSet<String> = HashSet::new();
         // issue/PR number → its node instance id, so a comment (which only knows
         // the number it is on) can be linked to the right artifact node.
@@ -940,13 +965,82 @@ impl IngestService {
         )
         .await?;
 
+        // Which pull requests an earlier sync linked to their files, and at
+        // which head: those are not asked about again while the head stays
+        // (`pr_links`). And, where comments are read item by item, which
+        // issues and pull requests had them read, and at which state
+        // (`item_comments`). Unreadable reads as none done -- the slow way,
+        // never the wrong one.
+        let per_item_comments = driver.comments_per_item();
+        let link_marks = match self.graph.list(ctx, Some(gts::PULL_REQUEST_TYPE)).await {
+            Ok(stored) => {
+                if per_item_comments {
+                    comment_marks.extend(super::item_comments::stored_marks(&stored, &repo_id));
+                }
+                super::pr_links::stored_marks(&stored, &repo_id)
+            }
+            Err(e) => {
+                tracing::warn!(
+                    repo = repo_full_path,
+                    error = %e,
+                    "studio-artifact-ingest: could not read which pull requests are linked; linking them all again"
+                );
+                HashMap::new()
+            }
+        };
+        if per_item_comments {
+            match self.graph.list(ctx, Some(gts::ISSUE_TYPE)).await {
+                Ok(stored) => {
+                    comment_marks.extend(super::item_comments::stored_marks(&stored, &repo_id));
+                }
+                Err(e) => tracing::warn!(
+                    repo = repo_full_path,
+                    error = %e,
+                    "studio-artifact-ingest: could not read which issues had their comments read; reading them all again"
+                ),
+            }
+        }
+        // Mark an issue or pull request node with the state its comments were
+        // read at, when that is the state it is in now; otherwise mark it
+        // unread and queue it for the comment pass. Nothing where comments
+        // come as one listing.
+        let queue_comments = |node: &mut GtsNode,
+                              number: i64,
+                              is_pull_request: bool,
+                              updated_at: Option<&str>,
+                              pending: &mut Vec<super::item_comments::Pending>,
+                              carried: &mut usize| {
+            if !per_item_comments {
+                return;
+            }
+            let state = super::item_comments::fingerprint(updated_at);
+            let read = state
+                .as_deref()
+                .filter(|s| comment_marks.get(&node.instance_id).map(String::as_str) == Some(*s));
+            super::item_comments::mark(node, read);
+            if read.is_some() {
+                *carried += 1;
+            } else {
+                pending.push(super::item_comments::Pending {
+                    number,
+                    is_pull_request,
+                    node: node.clone(),
+                    fingerprint: state.clone(),
+                });
+            }
+        };
+
         progress.set("pulling issues…");
         let mut issues = 0usize;
-        for page in 1..=MAX_PAGES {
-            let batch = driver
-                .list_issues(&auth, repo_full_path, since, page, PER_PAGE)
+        let mut pages = Pages::new(repo_full_path, "issues");
+        while let Some(page) = pages.next_page() {
+            // Whether the provider's page held anything: GitHub's issue
+            // listing holds pull requests too, which the driver drops, so a
+            // page of only those is no issues but not the end.
+            let (batch, more) = driver
+                .list_issue_page(&auth, repo_full_path, since, page, PER_PAGE)
                 .await?;
-            if batch.is_empty() {
+            if !more || pages.repeats(batch.iter().map(|i| i.id.clone())) {
                 break;
             }
             issues += batch.len();
@@ -954,7 +1048,17 @@ impl IngestService {
                 let author = i.author.clone();
                 let number = i.number;
                 let parent = i.parent.clone();
-                let node = gts::issue_node(source_scope, &repo_id, connector_id, repo_full_path, i);
+                let updated_at = i.updated_at.clone();
+                let mut node =
+                    gts::issue_node(source_scope, &repo_id, connector_id, repo_full_path, i);
+                queue_comments(
+                    &mut node,
+                    number,
+                    false,
+                    updated_at.as_deref(),
+                    &mut comments_pending,
+                    &mut comments_carried,
+                );
                 edges.push(gts::artifact_of_edge(&node.instance_id, &repo_id));
                 author_edge(&mut edges, &mut users, &node.instance_id, author.as_deref());
                 if let Some(parent) = parent {
@@ -1014,29 +1118,14 @@ impl IngestService {
             .map(|t| (t.number, t))
             .collect();
 
-        // Which pull requests an earlier sync linked to their files, and at
-        // which head: those are not asked about again while the head stays
-        // (`pr_links`). Unreadable reads as none linked -- the slow way,
-        // never the wrong one.
-        let link_marks = match self.graph.list(ctx, Some(gts::PULL_REQUEST_TYPE)).await {
-            Ok(stored) => super::pr_links::stored_marks(&stored, &repo_id),
-            Err(e) => {
-                tracing::warn!(
-                    repo = repo_full_path,
-                    error = %e,
-                    "studio-artifact-ingest: could not read which pull requests are linked; linking them all again"
-                );
-                HashMap::new()
-            }
-        };
-
         progress.set("pulling pull requests…");
         let mut pull_requests = 0usize;
-        for page in 1..=MAX_PAGES {
+        let mut pages = Pages::new(repo_full_path, "pull requests");
+        while let Some(page) = pages.next_page() {
             let batch = driver
                 .list_pull_requests(&auth, repo_full_path, since, page, PER_PAGE)
                 .await?;
-            if batch.is_empty() {
+            if batch.is_empty() || pages.repeats(batch.iter().map(|p| p.id.clone())) {
                 break;
             }
             pull_requests += batch.len();
@@ -1075,6 +1164,7 @@ impl IngestService {
                     })
                     .collect();
                 let head = super::pr_links::fingerprint(&p);
+                let updated_at = p.updated_at.clone();
                 let mut node = gts::pull_request_node(
                     source_scope,
                     &repo_id,
@@ -1092,6 +1182,16 @@ impl IngestService {
                     .as_deref()
                     .filter(|h| link_marks.get(&pr_id).map(String::as_str) == Some(*h));
                 super::pr_links::mark(&mut node, carried);
+                // After the link mark and before the links take their copy:
+                // each pass's copy then carries the other's mark as listed.
+                queue_comments(
+                    &mut node,
+                    number,
+                    true,
+                    updated_at.as_deref(),
+                    &mut comments_pending,
+                    &mut comments_carried,
+                );
                 if carried.is_some() {
                     links_carried += 1;
                 } else {
@@ -1146,13 +1246,6 @@ impl IngestService {
                 0,
             )
             .await?;
-            if page == MAX_PAGES {
-                warn!(
-                    repo = repo_full_path,
-                    cap = MAX_PAGES * PER_PAGE,
-                    "studio-artifact-ingest: pull request cap reached — older ones not ingested"
-                );
-            }
         }
 
         edges.extend(item_link_edges(
@@ -1371,9 +1464,8 @@ impl IngestService {
 
         match on_disk {
             Some((_dir, walk, commit)) => {
-                // The walk stops at the same cap, and says so when it does.
-                listing_complete = walk.complete && walk.files.len() <= MAX_FILES;
-                for wf in walk.files.into_iter().take(MAX_FILES) {
+                listing_complete = walk.complete;
+                for wf in walk.files {
                     files += 1;
                     let file_id =
                         gts::file_instance_id(source_scope, connector_id, repo_full_path, &wf.path);
@@ -1440,10 +1532,8 @@ impl IngestService {
                     .await
                 {
                     Ok(listing) => {
-                        let blobs: Vec<_> =
-                            listing.files.into_iter().filter(|f| !f.is_dir).collect();
-                        listing_complete = !listing.truncated && blobs.len() <= MAX_FILES;
-                        for f in blobs.into_iter().take(MAX_FILES) {
+                        listing_complete = !listing.truncated;
+                        for f in listing.files.into_iter().filter(|f| !f.is_dir) {
                             files += 1;
                             let path = f.path.clone();
                             let file_id = gts::file_instance_id(
@@ -1461,6 +1551,23 @@ impl IngestService {
                                 repo_full_path,
                                 f,
                             ));
+                            if nodes.len() >= NODE_CHUNK {
+                                self.flush_and_report(
+                                    ctx,
+                                    progress,
+                                    &mut nodes,
+                                    &mut flushed,
+                                    workspace_id,
+                                    project_id,
+                                    "listing files…",
+                                    issues,
+                                    pull_requests,
+                                    files,
+                                    0,
+                                    0,
+                                )
+                                .await?;
+                            }
                         }
                     }
                     Err(e) => {
@@ -1652,7 +1759,7 @@ impl IngestService {
                 project_id,
                 deadline: deadline.map(|d| d.checked_sub(LINK_TAIL).unwrap_or(d)),
             };
-            super::pr_links::link(
+            let written = super::pr_links::link(
                 &linking,
                 std::mem::take(&mut links_pending),
                 &file_id,
@@ -1660,6 +1767,13 @@ impl IngestService {
                 &report,
             )
             .await;
+            // The comment pass writes some of these nodes again: with the
+            // link marks just stored, not the nulls they were listed with.
+            for p in comments_pending.iter_mut().filter(|p| p.is_pull_request) {
+                if let Some(mark) = written.get(&p.node.instance_id) {
+                    super::pr_links::mark(&mut p.node, mark.as_deref());
+                }
+            }
             info!(
                 repo = repo_full_path,
                 linked = links.linked,
@@ -1672,80 +1786,138 @@ impl IngestService {
         // Without files to link to (the listing failed) nothing is asked and
         // nothing is left for later: that is not a deadline.
 
-        // Comments on issues and PRs. Best-effort and paged; each links to the
-        // issue/PR node by number (`comment_on`) and to its author.
+        // Comments on issues and PRs, each linked to the issue/PR node it is
+        // on (`comment_on`) and to its author. Best-effort: a provider that
+        // will not list them costs the sync its comments, nothing else.
         progress.set("pulling comments…");
         let mut comments = 0usize;
-        for page in 1..=MAX_PAGES {
-            // A page of GitLab comments is a call per merge request and
-            // issue on it. Past the deadline the rest waits for the next
-            // sync, which reads comments again anyway: the run must still
-            // have time to store what it has.
-            if past(deadline) {
-                tracing::warn!(
-                    repo = repo_full_path,
-                    comments,
-                    "studio-artifact-ingest: out of time — remaining comments left for the next sync"
+        let mut comment_items = super::item_comments::Tally {
+            total: comments_carried + comments_pending.len(),
+            read: comments_carried,
+            ..Default::default()
+        };
+        if per_item_comments {
+            // Item by item (GitLab): only the items not read at their current
+            // state, several in flight, each portion stored as it is read, and
+            // the pass stops `COMMENTS_TAIL` short of the deadline. What it
+            // leaves, the next sync reads (`item_comments`).
+            let stored = flushed;
+            let report = |t: &super::item_comments::Tally| {
+                progress.set_with(
+                    format!("reading comments: {} of {} items read…", t.read, t.total),
+                    SyncSummary {
+                        issues,
+                        pull_requests,
+                        files,
+                        comments: t.comments,
+                        stored: stored + t.comments,
+                        comment_items_done: t.read,
+                        comment_items_total: t.total,
+                        comment_items_left: t.left,
+                        ..Default::default()
+                    }
+                    .as_detail(),
                 );
-                break;
-            }
-            let batch = match driver
-                .list_comments(&auth, repo_full_path, since, page, PER_PAGE)
-                .await
-            {
-                Ok(b) => b,
-                Err(e) => {
+            };
+            report(&comment_items);
+            let reading = super::item_comments::Reading {
+                graph: self.graph.as_ref(),
+                ctx,
+                driver: driver.as_ref(),
+                auth: &auth,
+                repo_full_path,
+                since,
+                repo_id: &repo_id,
+                source_scope,
+                connector_id,
+                provider,
+                workspace_id,
+                project_id,
+                deadline: deadline.map(|d| d.checked_sub(COMMENTS_TAIL).unwrap_or(d)),
+            };
+            super::item_comments::read(
+                &reading,
+                std::mem::take(&mut comments_pending),
+                &mut comment_items,
+                &report,
+            )
+            .await;
+            comments = comment_items.comments;
+            flushed += comment_items.comments;
+            info!(
+                repo = repo_full_path,
+                read = comment_items.read,
+                total = comment_items.total,
+                left = comment_items.left,
+                failed = comment_items.failed,
+                comments,
+                "studio-artifact-ingest: comments read item by item"
+            );
+        } else {
+            // One repository-wide listing (GitHub), walked to its end. Past
+            // the deadline the rest waits for the next sync, which reads
+            // comments again anyway: the run must still have time to store
+            // what it has.
+            let mut pages = Pages::new(repo_full_path, "comments");
+            while let Some(page) = pages.next_page() {
+                if past(deadline) {
                     tracing::warn!(
-                        error = %e,
                         repo = repo_full_path,
-                        "studio-artifact-ingest: comment listing failed — skipping comments"
+                        comments,
+                        "studio-artifact-ingest: out of time — remaining comments left for the next sync"
                     );
                     break;
                 }
-            };
-            if batch.is_empty() {
-                break;
-            }
-            comments += batch.len();
-            for c in batch {
-                let author = c.author.clone();
-                let target = match c.target_is_pull_request {
-                    Some(true) => pr_by_number.get(&c.target_number),
-                    Some(false) => issue_by_number.get(&c.target_number),
-                    None => by_number.get(&c.target_number),
+                let batch = match driver
+                    .list_comments(&auth, repo_full_path, since, page, PER_PAGE)
+                    .await
+                {
+                    Ok(b) => b,
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            repo = repo_full_path,
+                            "studio-artifact-ingest: comment listing failed — skipping comments"
+                        );
+                        break;
+                    }
+                };
+                if batch.is_empty() || pages.repeats(batch.iter().map(|c| c.id.clone())) {
+                    break;
                 }
-                .cloned();
-                let node =
-                    gts::comment_node(source_scope, &repo_id, connector_id, repo_full_path, c);
-                let comment_id = node.instance_id.clone();
-                if let Some(target_id) = target {
-                    edges.push(gts::comment_on_edge(&comment_id, &target_id));
+                comments += batch.len();
+                for c in batch {
+                    let author = c.author.clone();
+                    let target = match c.target_is_pull_request {
+                        Some(true) => pr_by_number.get(&c.target_number),
+                        Some(false) => issue_by_number.get(&c.target_number),
+                        None => by_number.get(&c.target_number),
+                    }
+                    .cloned();
+                    let node =
+                        gts::comment_node(source_scope, &repo_id, connector_id, repo_full_path, c);
+                    let comment_id = node.instance_id.clone();
+                    if let Some(target_id) = target {
+                        edges.push(gts::comment_on_edge(&comment_id, &target_id));
+                    }
+                    author_edge(&mut edges, &mut users, &comment_id, author.as_deref());
+                    nodes.push(node);
                 }
-                author_edge(&mut edges, &mut users, &comment_id, author.as_deref());
-                nodes.push(node);
-            }
-            self.flush_and_report(
-                ctx,
-                progress,
-                &mut nodes,
-                &mut flushed,
-                workspace_id,
-                project_id,
-                "pulling comments…",
-                issues,
-                pull_requests,
-                files,
-                comments,
-                0,
-            )
-            .await?;
-            if comments >= MAX_COMMENTS {
-                tracing::warn!(
-                    repo = repo_full_path,
-                    cap = MAX_COMMENTS,
-                    "studio-artifact-ingest: comment cap reached — remaining comments not ingested"
-                );
-                break;
+                self.flush_and_report(
+                    ctx,
+                    progress,
+                    &mut nodes,
+                    &mut flushed,
+                    workspace_id,
+                    project_id,
+                    "pulling comments…",
+                    issues,
+                    pull_requests,
+                    files,
+                    comments,
+                    0,
+                )
+                .await?;
             }
         }
 
@@ -1754,7 +1926,8 @@ impl IngestService {
         // commit — see the batching plan).
         progress.set("pulling commits…");
         let mut commits = 0usize;
-        for page in 1..=MAX_PAGES {
+        let mut pages = Pages::new(repo_full_path, "commits");
+        while let Some(page) = pages.next_page() {
             let batch = match driver
                 .list_commits(&auth, repo_full_path, since, page, PER_PAGE)
                 .await
@@ -1769,7 +1942,7 @@ impl IngestService {
                     break;
                 }
             };
-            if batch.is_empty() {
+            if batch.is_empty() || pages.repeats(batch.iter().map(|c| c.sha.clone())) {
                 break;
             }
             commits += batch.len();
@@ -1797,14 +1970,6 @@ impl IngestService {
                 commits,
             )
             .await?;
-            if commits >= MAX_COMMITS {
-                tracing::warn!(
-                    repo = repo_full_path,
-                    cap = MAX_COMMITS,
-                    "studio-artifact-ingest: commit cap reached — remaining commits not ingested"
-                );
-                break;
-            }
         }
         tracing::info!(
             repo = repo_full_path,
@@ -2218,6 +2383,9 @@ impl IngestService {
             links_done: links.linked,
             links_total: links.total,
             links_left: links.left,
+            comment_items_done: comment_items.read,
+            comment_items_total: comment_items.total,
+            comment_items_left: comment_items.left,
         })
     }
 
@@ -6171,3 +6339,7 @@ mod org_scope_tests;
 #[cfg(test)]
 #[path = "pr_links_tests.rs"]
 mod pr_links_tests;
+
+#[cfg(test)]
+#[path = "item_comments_tests.rs"]
+mod item_comments_tests;

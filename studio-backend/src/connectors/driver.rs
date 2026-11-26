@@ -1034,8 +1034,9 @@ pub trait ConnectorDriver: Send + Sync + 'static {
 
     /// Issues in one repository. `since` (RFC 3339) narrows to items updated at
     /// or after that instant for incremental sync; `page` is 1-based and
-    /// `per_page` caps one page — the caller pages until a short page comes
-    /// back. Defaulted so a non-source driver stays a small, local job.
+    /// `per_page` caps one page — the caller pages until an empty page comes
+    /// back ([`Self::list_issue_page`] says when an empty answer is not the
+    /// end). Defaulted so a non-source driver stays a small, local job.
     async fn list_issues(
         &self,
         auth: &ConnectionAuth,
@@ -1049,6 +1050,30 @@ pub trait ConnectorDriver: Send + Sync + 'static {
             "{} does not expose issues",
             self.display_name()
         ))
+    }
+
+    /// One page of [`Self::list_issues`], and whether the provider had
+    /// anything on that page at all.
+    ///
+    /// The two differ where the provider's issue listing holds more than
+    /// issues: GitHub's lists pull requests too, and the driver drops them, so
+    /// a page of nothing but pull requests answers no issues although the
+    /// listing goes on. The sync walks until this says the provider's page was
+    /// empty; walking until no issues came back stopped a repository's issues
+    /// at its first page of pull requests.
+    async fn list_issue_page(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        since: Option<&str>,
+        page: u32,
+        per_page: u32,
+    ) -> anyhow::Result<(Vec<RemoteIssue>, bool)> {
+        let issues = self
+            .list_issues(auth, repo_full_path, since, page, per_page)
+            .await?;
+        let more = !issues.is_empty();
+        Ok((issues, more))
     }
 
     /// Pull/merge requests in one repository. Same paging and `since` contract
@@ -1092,6 +1117,34 @@ pub trait ConnectorDriver: Send + Sync + 'static {
     /// round trips, and one after another they do not fit in a sync.
     fn item_read_concurrency(&self) -> usize {
         1
+    }
+
+    /// Whether this provider's comments are read item by item
+    /// ([`Self::list_item_comments`]) rather than as one repository-wide
+    /// listing ([`Self::list_comments`]).
+    ///
+    /// GitLab has no project-wide listing of notes: they hang off each merge
+    /// request and issue, one call per item. The sync then reads them per
+    /// item, several in flight, and marks each item read at the state it was
+    /// read in, so a sync that runs out of time leaves a cursor the next one
+    /// goes on from (`artifact_ingest::item_comments`).
+    fn comments_per_item(&self) -> bool {
+        false
+    }
+
+    /// The comments on one issue (`is_pull_request` false) or pull request,
+    /// every one of them, for a driver whose [`Self::comments_per_item`] is
+    /// true. `since` narrows as in [`Self::list_comments`]. Defaulted to none.
+    async fn list_item_comments(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        since: Option<&str>,
+        is_pull_request: bool,
+        number: i64,
+    ) -> anyhow::Result<Vec<RemoteComment>> {
+        let _ = (auth, repo_full_path, since, is_pull_request, number);
+        Ok(Vec::new())
     }
 
     /// Comments on issues and pull requests in one repository. `since` (RFC

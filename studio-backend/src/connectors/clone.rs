@@ -14,8 +14,12 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Backstop on files walked per clone, matched to the tree-API cap.
-const MAX_FILES: usize = 10_000;
+// No ceiling on the number of files a walk lists: it used to stop at 10,000,
+// and a larger repository came into the graph with the rest of its files
+// missing and nothing pruned, because the listing was not complete. What a
+// file costs a walk is its path and size; the text is only read for the files
+// the caller names (see [`walk`]).
+//
 // No ceiling on a file's size, and none on a walk's text. There used to be
 // both (256 KiB a file, 24 MiB a walk, from when the graph store lived in
 // memory), and a document over either was walked without its text, which the
@@ -38,8 +42,8 @@ pub struct WalkedFile {
 
 /// What a walk of a checkout found, and whether that is every file in it.
 ///
-/// `complete` is false when the walk stopped at [`MAX_FILES`] or could not
-/// read a directory or an entry on the way. A sync forgets the files a
+/// `complete` is false when the walk could not read a directory or an entry
+/// on the way. A sync forgets the files a
 /// repository no longer has by comparing against this list, and a directory
 /// the walk could not open looks, in the list, exactly like a directory
 /// somebody deleted — so the caller must know which one it has before it
@@ -546,14 +550,6 @@ pub fn walk(dir: &Path, read_text: &dyn Fn(&str) -> bool) -> anyhow::Result<Walk
                 complete = false;
                 continue;
             };
-            if out.len() >= MAX_FILES {
-                // There is at least one more entry, so the cap cut the walk
-                // short rather than landing exactly on the repository's size.
-                return Ok(Walk {
-                    files: out,
-                    complete: false,
-                });
-            }
             let path = entry.path();
             // Skip symlinks entirely — don't follow them or record them.
             let meta = match std::fs::symlink_metadata(&path) {

@@ -495,8 +495,9 @@ pub(crate) fn bounded_payload(value: &Value) -> Value {
     // Last resort: if still oversized (a giant title/label set), drop to the
     // identifying fields only so the batch never fails on one row.
     if too_big(&obj) {
-        // `files_linked` too: without it a pull request's files would be
-        // asked for again on every sync (`pr_links`).
+        // `files_linked` and `comments_read` too: without them a pull
+        // request's files, or an item's comments, would be asked for again
+        // on every sync (`pr_links`, `item_comments`).
         let keep = [
             "repo",
             "external_id",
@@ -505,6 +506,7 @@ pub(crate) fn bounded_payload(value: &Value) -> Value {
             "url",
             "state",
             "files_linked",
+            "comments_read",
         ];
         obj.retain(|k, _| keep.contains(&k.as_str()));
     }

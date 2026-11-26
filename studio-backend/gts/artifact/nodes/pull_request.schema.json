@@ -65,6 +65,10 @@
       "type": ["string", "null"],
       "description": "The head (head_sha, else merge_sha, else updated_at) at which its changed files were linked to it (modifies); null while they are still to be linked. A sync asks again only when the head moved. Added to v1 as an optional field."
     },
+    "comments_read": {
+      "type": ["string", "null"],
+      "description": "When its comments were read (its updated_at then), where a provider's comments are read item by item (GitLab); null while they are still to be read. A sync reads them again only when the item changed. Added to v1 as an optional field."
+    },
     "links": {
       "type": "array",
       "description": "Items the title and body name (ADR-0047); repo is null for this repository.",
