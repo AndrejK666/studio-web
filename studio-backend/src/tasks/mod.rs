@@ -304,6 +304,36 @@ pub struct PlatformSchedule {
     pub payload: serde_json::Value,
 }
 
+/// The schedules one gear asks for, contributed through the background-work
+/// port (ADR-0079 §4):
+/// `inventory::submit! { crate::tasks::sdk::ScheduleSet { … } }` in the
+/// gear's own module. `studio-scheduler` reads every submitted set
+/// ([`contributed_schedules`]) and names no gear.
+pub struct ScheduleSet {
+    /// The gear asking, for the log.
+    pub gear: &'static str,
+    /// Where its schedules come among the sets: lower first.
+    pub order: u16,
+    pub schedules: fn() -> Vec<PlatformSchedule>,
+}
+
+inventory::collect!(ScheduleSet);
+
+/// Every submitted set's schedules, the sets in their `order`.
+pub fn contributed_schedules() -> Vec<PlatformSchedule> {
+    let mut sets: Vec<&ScheduleSet> = inventory::iter::<ScheduleSet>.into_iter().collect();
+    sets.sort_by_key(|s| (s.order, s.gear));
+    sets.into_iter().flat_map(|s| (s.schedules)()).collect()
+}
+
+inventory::submit! {
+    ScheduleSet {
+        gear: "studio-tasks",
+        order: 0,
+        schedules: platform_schedules,
+    }
+}
+
 /// The schedules this gear asks for.
 pub fn platform_schedules() -> Vec<PlatformSchedule> {
     vec![PlatformSchedule {
@@ -587,6 +617,14 @@ impl toolkit::contracts::RestApiCapability for StudioTasksGear {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The scheduler ensures what the gears submit, in their order: this
+    /// gear's sweep, then the session reaper.
+    #[test]
+    fn the_contributed_schedules_are_every_gear_s_in_order() {
+        let names: Vec<&str> = contributed_schedules().iter().map(|s| s.name).collect();
+        assert_eq!(names, ["tasks-retention-sweep", "session-reaper"]);
+    }
 
     #[test]
     fn a_run_survives_the_queue_round_trip() {
