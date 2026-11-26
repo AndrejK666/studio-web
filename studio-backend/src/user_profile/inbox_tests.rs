@@ -10,7 +10,12 @@ use super::*;
 const REVIEW_REQUESTS: &str = "review-requests";
 const PULL_REQUESTS: &str = "pull-requests";
 
-fn items_of(workspace_id: &str, workspace_name: &str, reviews: Vec<Value>, pulls: Vec<Value>) -> Vec<Item> {
+fn items_of(
+    workspace_id: &str,
+    workspace_name: &str,
+    reviews: Vec<Value>,
+    pulls: Vec<Value>,
+) -> Vec<Item> {
     super::items_of(workspace_id, workspace_name, vec![reviews, pulls])
 }
 
@@ -393,7 +398,10 @@ fn studio_s_own_sources_are_read_only_where_their_kits_list_them() {
 
     // Both kits installed: both sources, each with its kit.
     let both = [specs.clone(), git.clone(), other.clone()];
-    assert_eq!(owner(Some(&both), REVIEW_REQUESTS), Some(Some(specs.clone())));
+    assert_eq!(
+        owner(Some(&both), REVIEW_REQUESTS),
+        Some(Some(specs.clone()))
+    );
     assert_eq!(owner(Some(&both), PULL_REQUESTS), Some(Some(git.clone())));
 
     // Without project-specs: no review requests.

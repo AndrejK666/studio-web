@@ -18,32 +18,30 @@ const DEFAULT_BUILDS: u64 = 20;
 /// The project-sources step's tool this gear serves: detach one repository
 /// (its own set, right after studio-organizations' sources in `tools/list`).
 pub fn source_tools() -> Vec<Tool> {
-    vec![
-        Tool {
-            name: "project_source_detach",
-            description: "Detach one repository from the project: it leaves the project's \
+    vec![Tool {
+        name: "project_source_detach",
+        description: "Detach one repository from the project: it leaves the project's \
                 sources and everything synced from it (issues, pull requests, files, specs' \
                 bindings) is forgotten, as one durable run. `clone_url` is the source's, from \
                 `project_sources`. Answers `run_id`; read the outcome with `task_run`. Ask \
                 your person first: it cannot be undone except by attaching and syncing the \
                 repository again.",
-            input_schema: || {
-                object(
-                    json!({
-                        "project_id": project_id(),
-                        "clone_url": { "type": "string", "description": "The source's clone URL." }
-                    }),
-                    &["project_id", "clone_url"],
-                )
-            },
-            effect: Effect::Destructive,
-            experimental: true,
-            run: Run::Post {
-                path: "/studio-artifact-ingest/v1/sources/detach",
-                query: &["project_id"],
-            },
+        input_schema: || {
+            object(
+                json!({
+                    "project_id": project_id(),
+                    "clone_url": { "type": "string", "description": "The source's clone URL." }
+                }),
+                &["project_id", "clone_url"],
+            )
         },
-    ]
+        effect: Effect::Destructive,
+        experimental: true,
+        run: Run::Post {
+            path: "/studio-artifact-ingest/v1/sources/detach",
+            query: &["project_id"],
+        },
+    }]
 }
 
 pub fn tools() -> Vec<Tool> {

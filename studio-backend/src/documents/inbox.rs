@@ -136,7 +136,9 @@ mod tests {
 
     #[test]
     fn a_review_is_keyed_as_the_portal_keys_it() {
-        let r = review_items(&json!([{ "id": "r1", "title": "PRD", "project_id": "p", "overdue": true }]));
+        let r = review_items(
+            &json!([{ "id": "r1", "title": "PRD", "project_id": "p", "overdue": true }]),
+        );
         assert_eq!(r[0]["key"], "review:r1");
         assert_eq!(r[0]["act"]["tool"], "review_verdict");
         let items = review_request_items("w", "W", vec![json!({"id": "r1", "title": "PRD"})]);

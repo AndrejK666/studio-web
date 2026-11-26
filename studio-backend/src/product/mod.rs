@@ -98,7 +98,9 @@ use types_registry_sdk::{RegisterResult, TypesRegistryClient};
 use service::ProductService;
 
 /// The metadata row an organization's plain explanations of gears are kept
-/// in. Only this gear writes it (`studio_authz_plugin::GEAR_HELD_METADATA`).
+/// in. Only this gear writes it (`studio_authz_plugin::GEAR_HELD_METADATA`);
+/// the inventory reads it through `gts_inventory::ProfileDeclaredType`.
+#[cfg(test)]
 pub use explanations::EXPLANATIONS_METADATA_TYPE;
 
 #[toolkit::gear(

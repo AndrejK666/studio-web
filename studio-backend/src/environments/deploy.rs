@@ -27,7 +27,7 @@ use toolkit::client_hub::ClientHub;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use super::cluster_driver::ClusterAccess;
+use crate::environments::cluster_driver::ClusterAccess;
 use super::database;
 use super::model::{ChartRef, DatabaseMode, DeployImage, DeploymentAction};
 use super::preflight;
@@ -675,7 +675,7 @@ async fn make_namespace(
             "the cluster connection may not read namespace {namespace}, so whether it exists \
              cannot be told: a cluster administrator applies {}, or gives the connection's \
              account admin in {namespace} ({})",
-            super::cluster_driver::BOOTSTRAP_FILE,
+            crate::environments::cluster_driver::BOOTSTRAP_FILE,
             status.message
         )),
         Err(e) => Err(anyhow!("the cluster did not answer: {e}")),

@@ -141,12 +141,9 @@ fn project_sources(api: Api, args: Map<String, Value>) -> ToolFuture {
         let found = readings();
         let read = found.iter().map(|r| (r.read)(api.clone(), project.clone()));
         let read = futures_util::future::join_all(read).await;
-        Ok(found
-            .iter()
-            .zip(read)
-            .fold(sources, |listed, (r, items)| {
-                with_reading(listed, r.key, items.as_ref())
-            }))
+        Ok(found.iter().zip(read).fold(sources, |listed, (r, items)| {
+            with_reading(listed, r.key, items.as_ref())
+        }))
     })
 }
 

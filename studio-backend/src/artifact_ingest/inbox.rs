@@ -187,8 +187,10 @@ mod tests {
 
     #[test]
     fn a_pull_request_is_keyed_as_the_portal_keys_it() {
-        let p = pull_items(&json!([{ "id": "x", "updated_at": "2026-11-05T00:00:00Z", "title": "Fix",
-            "repo": "o/r", "number": 7, "reason": "asked", "url": "https://g/7" }]));
+        let p = pull_items(
+            &json!([{ "id": "x", "updated_at": "2026-11-05T00:00:00Z", "title": "Fix",
+            "repo": "o/r", "number": 7, "reason": "asked", "url": "https://g/7" }]),
+        );
         assert_eq!(p[0]["key"], "pr:x@2026-11-05T00:00:00Z");
         assert_eq!(p[0]["act"]["open"], "https://g/7");
     }
