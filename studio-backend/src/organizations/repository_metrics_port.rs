@@ -60,7 +60,7 @@ pub trait RepositoryMetrics: Send + Sync {
 pub fn absent() -> OrgMetricsInsightDto {
     unanswered(
         "absent",
-        Some("this deployment has no studio-insight gear".into()),
+        Some("no kit in this deployment measures repositories".into()),
     )
 }
 
