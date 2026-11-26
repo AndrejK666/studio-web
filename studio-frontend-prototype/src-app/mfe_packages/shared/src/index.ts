@@ -333,9 +333,19 @@ export {
   type DomainQueryRow,
   type DomainRowSet,
   type DomainSelection,
+  type DomainFieldOf,
+  type DomainIncludeOf,
+  type DomainOrderByOf,
+  type DomainQueryOf,
+  type DomainResultOf,
+  type DomainRowOf,
+  type DomainSelectionOf,
+  type DomainValueOf,
   type SortDirection,
   type SortState as QuerySortState,
 } from './domain/domainQuery';
+// The generated model the typed query reads (scripts/gen-domain-client.mjs).
+export type { DomainEntities, DomainEntity, DomainRelations } from './domain/model.gen';
 export {
   DomainModelApiService,
   DOMAIN_MODEL_API_BASE_URL,

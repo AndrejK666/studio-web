@@ -15,6 +15,11 @@
  * - every page of a query: {@link fetchDomainAll} (keyset), and
  *   {@link PageCursors} for a table that pages by number over a server that
  *   pages by cursor.
+ *
+ * The query reads are typed by the body's `type` (`DomainQueryOf`): written
+ * as a literal, `{type: 'milestone', fields: ['name']}` is checked against the
+ * generated model and its rows' `value` is a `Milestone`; a type the
+ * generated model does not have (a kit's) reads untyped.
  */
 
 import { useMemo } from 'react';
@@ -23,9 +28,11 @@ import type { DomainTypesResponse } from '../domain/DomainModelApiService';
 import type {
   DomainMutation,
   DomainMutationResult,
+  DomainQueryOf,
   DomainQueryRequest,
   DomainQueryResult,
-  DomainQueryRow,
+  DomainResultOf,
+  DomainRowOf,
 } from '../domain/domainQuery';
 import { domainChanged, useStudioEventRefresh } from '../tasks/liveEvents';
 import { GATEWAY_BASE_URL, gateway, gatewayKey, withQuery } from './gateway';
@@ -85,12 +92,15 @@ export function domainQuerySend<T = DomainQueryResult>(orgId: string) {
   return gateway().send<T, DomainQueryRequest & { cursor?: string }>('POST', withQuery(QUERY_PATH, { organization_id: orgId }));
 }
 
-/** `POST /query` with `body`: a read, so a cacheable descriptor keyed by its body. */
-export function domainQuery<T extends Record<string, unknown> = Record<string, unknown>>(
+/**
+ * `POST /query` with `body`: a read, so a cacheable descriptor keyed by its
+ * body. `T` adds fields to the answer; `N`, the body's type, is inferred.
+ */
+export function domainQuery<T extends Record<string, unknown> = Record<string, unknown>, N extends string = string>(
   orgId: string,
-  body: DomainQueryRequest
-): EndpointDescriptor<DomainQueryResult & T> {
-  const send = domainQuerySend<DomainQueryResult & T>(orgId);
+  body: DomainQueryOf<N>
+): EndpointDescriptor<DomainResultOf<N> & T> {
+  const send = domainQuerySend<DomainResultOf<N> & T>(orgId);
   return {
     key: [...domainObjectsKey(orgId, body.type), body],
     fetch: ({ signal } = {}) => send.fetch(body, { signal }),
@@ -113,9 +123,9 @@ export function invalidateDomainObjects(cache: Pick<DomainCache, 'invalidateMany
  * `body: null` keeps it idle. Must render inside an MFE (it listens on the
  * shell's live channel).
  */
-export function useDomainQuery<T extends Record<string, unknown> = Record<string, unknown>>(
+export function useDomainQuery<T extends Record<string, unknown> = Record<string, unknown>, N extends string = string>(
   orgId: string | null | undefined,
-  body: DomainQueryRequest | null,
+  body: DomainQueryOf<N> | null,
   {
     enabled = true,
     live = true,
@@ -132,12 +142,12 @@ export function useDomainQuery<T extends Record<string, unknown> = Record<string
 ) {
   const bodyKey = body ? JSON.stringify(body) : '';
   const descriptor = useMemo(
-    () => domainQuery<T>(orgId ?? '', body ?? { type: '' }),
+    () => domainQuery<T, N>(orgId ?? '', body ?? ({ type: '' } as DomainQueryOf<N>)),
     // The body by value: a literal built in render is the same query.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [orgId, bodyKey]
   );
-  const result = useApiQuery<DomainQueryResult & T>(descriptor, { enabled: enabled && !!orgId && !!body });
+  const result = useApiQuery<DomainResultOf<N> & T>(descriptor, { enabled: enabled && !!orgId && !!body });
   const cache = useQueryCache();
   const watchKey = watch.join('\n');
   const matches = useMemo(
@@ -157,13 +167,13 @@ export function useDomainQuery<T extends Record<string, unknown> = Record<string
 const NEVER = () => false;
 
 /** Every row of a query, page after page by cursor (at most `max`). */
-export async function fetchDomainAll(
+export async function fetchDomainAll<N extends string = string>(
   orgId: string,
-  body: DomainQueryRequest,
+  body: DomainQueryOf<N>,
   { max, signal }: { max?: number; signal?: AbortSignal } = {}
-): Promise<AllPages<DomainQueryRow>> {
-  const send = domainQuerySend(orgId);
-  const first: DomainQueryRequest = { ...body, limit: body.limit ?? 200 };
+): Promise<AllPages<DomainRowOf<N>>> {
+  const send = domainQuerySend<DomainResultOf<N>>(orgId);
+  const first: DomainQueryOf<N> = { ...body, limit: body.limit ?? 200 };
   delete first.offset;
   return fetchAllCursorPages(
     (cursor, s) => send.fetch(cursor ? { ...first, cursor } : first, { signal: s }),
