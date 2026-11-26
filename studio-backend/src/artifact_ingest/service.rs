@@ -2383,16 +2383,15 @@ impl IngestService {
             // says how many pull requests: an item read before and unchanged
             // since is carried and its comments not read again, so what this
             // pass read alone is 0 on a quiet repository with thousands.
-            match self.graph.list(ctx, Some(gts::COMMENT_TYPE)).await {
-                Ok(stored) => {
-                    let held = stored
-                        .iter()
-                        .filter(|n| {
-                            n.value.get("repo").and_then(serde_json::Value::as_str)
-                                == Some(repo_id.as_str())
-                        })
-                        .count();
-                    comments = comments.max(held);
+            // Counted by the store: the model answers one repository's count
+            // rather than every comment of the organization.
+            match self
+                .graph
+                .count_of_repo(ctx, gts::COMMENT_TYPE, &repo_id)
+                .await
+            {
+                Ok(held) => {
+                    comments = comments.max(usize::try_from(held).unwrap_or(usize::MAX));
                 }
                 Err(e) => warn!(
                     repo = repo_full_path,
@@ -3161,10 +3160,11 @@ impl IngestService {
     /// next sync to try both. The reverse failure is harmless: a node whose
     /// bindings are already gone is simply forgotten on the next attempt.
     ///
-    /// It reads the whole file projection to do this. That read is the cost of
-    /// graph-storage not filtering on payload fields (see [`GraphStore::list`]),
-    /// and it is paid once per sync, after the file flush has already dropped
-    /// the cached projection.
+    /// It reads the repository's stored files ([`GraphStore::list_of_repo`]):
+    /// one query when the artifacts are domain objects; the whole file
+    /// projection on graph-storage, which cannot filter on payload fields
+    /// (see [`GraphStore::list`]), paid once per sync, after the file flush
+    /// has already dropped the cached projection.
     async fn prune_gone_files(
         &self,
         ctx: &SecurityContext,
@@ -3183,7 +3183,7 @@ impl IngestService {
             );
             return 0;
         }
-        let stored = match self.graph.list(ctx, Some(gts::FILE_TYPE)).await {
+        let stored = match self.graph.list_of_repo(ctx, gts::FILE_TYPE, repo_id).await {
             Ok(nodes) => nodes,
             Err(e) => {
                 warn!(
