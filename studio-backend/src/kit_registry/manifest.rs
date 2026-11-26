@@ -491,12 +491,6 @@ pub fn needs_id_ok(id: &str) -> bool {
     }
 }
 
-/// The GTS id of the domain type `entity_id` (`pull-request` →
-/// `gts.cf.studio.domain.pull_request.v1~`), as a screen's `needs` names it.
-pub fn domain_type_gts(entity_id: &str) -> String {
-    crate::domain_model::port::node_type_id(entity_id)
-}
-
 /// What a kit claims of one gear (ADR-0071 §2). One type, tool or write
 /// route belongs to one kit: two kits claiming the same is
 /// `KIT_MODEL_CONFLICT`.
@@ -655,6 +649,12 @@ pub struct ManifestScreen {
     /// for a timeline): where one is not installed, the shell hides it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub needs: Vec<String>,
+    /// The micro-frontend package that draws the screen (`activity-mfe`):
+    /// for a built-in kit, the portal's `mfe_packages/<package>`, whose
+    /// `mfe.json` names this kit as the screen's `presentation.kit`. One
+    /// package may draw several kits' screens.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mfe: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -851,7 +851,7 @@ const BUILTIN_MANIFESTS: &[(&str, &str)] = &[
     // (studio-spec-graph): its tools and write routes; opt-in, extends
     // Project model.
     ("spec-graph", include_str!("builtin/spec-graph.kit.json")),
-    // The API reference: a screen (`contents.rs`) and the route it reads.
+    // The API reference: a screen and the route it reads.
     (
         "studio-api-docs",
         include_str!("builtin/studio-api-docs.kit.json"),
@@ -863,7 +863,8 @@ const BUILTIN_MANIFESTS: &[(&str, &str)] = &[
 
 /// Built-in kit `slug`'s `kit.json`, when it has one.
 pub fn builtin_manifest(slug: &str) -> Option<KitManifest> {
-    builtin_manifest_text(slug).map(|body| read_kit_json(body).expect("a built-in kit.json reads"))
+    builtin_manifest_text(slug)
+        .map(|body| read_manifest(body, Shelf::Builtin).expect("a built-in kit.json reads"))
 }
 
 pub(crate) fn project_type_kit(slug: &str) -> Option<KitManifest> {
@@ -906,6 +907,19 @@ pub fn overlay_of(m: &KitManifest) -> Result<Option<KitOverlay>, String> {
 /// Read a `kit.json`, and check what can be checked without the model:
 /// the slug, the name, the levels, the screens and the functions.
 pub fn read_kit_json(body: &str) -> Result<KitManifest, String> {
+    read_manifest(body, Shelf::Organization)
+}
+
+/// Whose `kit.json` is read: a built-in kit's may also put a screen on the
+/// platform level (the platform's catalogue, the product menu), which every
+/// organization has and no organization's kit may name.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Shelf {
+    Builtin,
+    Organization,
+}
+
+fn read_manifest(body: &str, shelf: Shelf) -> Result<KitManifest, String> {
     if body.len() > MAX_MANIFEST_BYTES {
         return Err(format!(
             "{KIT_JSON} is {} bytes; a manifest is at most {MAX_MANIFEST_BYTES}",
@@ -914,11 +928,11 @@ pub fn read_kit_json(body: &str) -> Result<KitManifest, String> {
     }
     let manifest: KitManifest =
         serde_json::from_str(body).map_err(|e| format!("{KIT_JSON} does not read: {e}"))?;
-    check(&manifest)?;
+    check(&manifest, shelf)?;
     Ok(manifest)
 }
 
-fn check(m: &KitManifest) -> Result<(), String> {
+fn check(m: &KitManifest, shelf: Shelf) -> Result<(), String> {
     if let Some(v) = m.manifest_version.as_deref()
         && v.trim() != "1"
     {
@@ -952,10 +966,21 @@ fn check(m: &KitManifest) -> Result<(), String> {
                 s.label, s.kind
             ));
         }
-        if !m.levels.contains(&s.level) {
+        let platform = shelf == Shelf::Builtin && s.level == "platform";
+        if !platform && !m.levels.contains(&s.level) {
             return Err(format!(
                 "{KIT_JSON}: screen `{}` is on the {} level, which `levels` does not name",
                 s.label, s.level
+            ));
+        }
+    }
+    for s in &m.screens {
+        if let Some(package) = s.mfe.as_deref()
+            && super::bundles::package_name(&format!("mfe/{package}")).is_none()
+        {
+            return Err(format!(
+                "{KIT_JSON}: screen `{}`: mfe \"{package}\" is not a package name                  (lowercase letters, digits, `-`, `_`)",
+                s.label
             ));
         }
     }
@@ -1274,7 +1299,7 @@ pub fn read_cf_studio_kit(body: &str, want: Option<&str>) -> Result<KitManifest,
         kinds: contents.kinds,
         ..KitManifest::default()
     };
-    check(&manifest)?;
+    check(&manifest, Shelf::Organization)?;
     Ok(manifest)
 }
 

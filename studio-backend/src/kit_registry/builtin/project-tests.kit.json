@@ -8,6 +8,26 @@
   "levels": [
     "project"
   ],
+  "screens": [
+    {
+      "kind": "tab",
+      "level": "project",
+      "label": "Tests",
+      "route": "/tests",
+      "mfe": "tests-mfe"
+    },
+    {
+      "kind": "section",
+      "level": "project",
+      "label": "Open pull requests",
+      "route": "/tests",
+      "slot": "tests",
+      "needs": [
+        "gts.cf.studio.domain.pull_request.v1~"
+      ],
+      "mfe": "tests-mfe"
+    }
+  ],
   "requires": [
     "project-git",
     "project-specs"

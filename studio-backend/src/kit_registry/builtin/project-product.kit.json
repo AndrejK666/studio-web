@@ -8,6 +8,22 @@
   "levels": [
     "project"
   ],
+  "screens": [
+    {
+      "kind": "tab",
+      "level": "project",
+      "label": "Product",
+      "route": "/product",
+      "mfe": "product-mfe"
+    },
+    {
+      "kind": "tab",
+      "level": "project",
+      "label": "Components",
+      "route": "/project-components",
+      "mfe": "product-mfe"
+    }
+  ],
   "requires": [
     "components",
     "project-git",

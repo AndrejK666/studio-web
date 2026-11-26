@@ -8,6 +8,15 @@
   "levels": [
     "organization"
   ],
+  "screens": [
+    {
+      "kind": "tab",
+      "level": "organization",
+      "label": "Costs",
+      "route": "/costs",
+      "mfe": "costs-mfe"
+    }
+  ],
   "model": {
     "properties": [
       {

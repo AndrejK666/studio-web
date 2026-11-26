@@ -8,6 +8,15 @@
   "levels": [
     "organization"
   ],
+  "screens": [
+    {
+      "kind": "tab",
+      "level": "organization",
+      "label": "Reports",
+      "route": "/reports",
+      "mfe": "reports-mfe"
+    }
+  ],
   "model": {
     "types": [
       {

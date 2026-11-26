@@ -10,6 +10,15 @@
     "workspace",
     "project"
   ],
+  "screens": [
+    {
+      "kind": "section",
+      "level": "organization",
+      "label": "Studio AI",
+      "slot": "sidebar",
+      "mfe": "assistant-mfe"
+    }
+  ],
   "model": {
     "types": [
       {

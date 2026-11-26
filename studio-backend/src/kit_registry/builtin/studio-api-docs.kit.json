@@ -5,6 +5,16 @@
   "name": "Docs & API",
   "description": "The backend's API reference, grouped by the gear that serves it, opened from the product menu.",
   "publisher": "Constructor Fabric",
+  "screens": [
+    {
+      "kind": "section",
+      "level": "platform",
+      "label": "Docs & API",
+      "route": "/api-docs",
+      "slot": "product-menu",
+      "mfe": "api-docs-mfe"
+    }
+  ],
   "permissions": {
     "reads": [
       "GET /openapi.json"

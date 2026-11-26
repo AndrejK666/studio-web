@@ -9,6 +9,36 @@
     "organization",
     "project"
   ],
+  "screens": [
+    {
+      "kind": "tab",
+      "level": "platform",
+      "label": "Components",
+      "route": "/platform/components",
+      "mfe": "components-mfe"
+    },
+    {
+      "kind": "tab",
+      "level": "platform",
+      "label": "Repositories",
+      "route": "/platform/repositories",
+      "mfe": "components-mfe"
+    },
+    {
+      "kind": "tab",
+      "level": "platform",
+      "label": "Publication requests",
+      "route": "/platform/publication-requests",
+      "mfe": "components-mfe"
+    },
+    {
+      "kind": "tab",
+      "level": "organization",
+      "label": "Components",
+      "route": "/components",
+      "mfe": "components-mfe"
+    }
+  ],
   "model": {
     "types": [
       {

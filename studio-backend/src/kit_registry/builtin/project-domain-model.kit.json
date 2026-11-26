@@ -8,6 +8,22 @@
   "levels": [
     "project"
   ],
+  "screens": [
+    {
+      "kind": "tab",
+      "level": "project",
+      "label": "Project domain model",
+      "route": "/domain-model",
+      "mfe": "domain-model-mfe"
+    },
+    {
+      "kind": "tab",
+      "level": "project",
+      "label": "Open questions",
+      "route": "/issues",
+      "mfe": "issues-mfe"
+    }
+  ],
   "requires": [
     "project-specs"
   ],

@@ -9,6 +9,15 @@
     "organization",
     "project"
   ],
+  "screens": [
+    {
+      "kind": "tab",
+      "level": "project",
+      "label": "Activity",
+      "route": "/projects/activity",
+      "mfe": "activity-mfe"
+    }
+  ],
   "model": {
     "types": [
       {
