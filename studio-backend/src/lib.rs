@@ -154,50 +154,6 @@ enum Commands {
     /// listener. Regenerates `docs/gts-types.json`, which `cargo test`
     /// drift-checks (see `gts_inventory`).
     GtsTypes,
-    /// One step of a build in an organization's cluster (ADR-0048 §9): clone
-    /// the product's repository and gear sources, generate the profile and
-    /// make the tree buildable. Run by the build Job, not by people.
-    BuildPrepare {
-        #[arg(long)]
-        work: std::path::PathBuf,
-        #[arg(long)]
-        repo_url: String,
-        #[arg(long = "ref")]
-        git_ref: Option<String>,
-        /// Take only the product file from this ref (a `product/…` branch);
-        /// the code is `--ref`'s (ADR-0053 §4).
-        #[arg(long)]
-        description_ref: Option<String>,
-        /// The Studio revision whose text is in `STUDIO_PRODUCT_DESCRIPTION`
-        /// (ADR-0053 §2); for the log.
-        #[arg(long)]
-        description_revision: Option<i64>,
-        #[arg(long)]
-        product_file: String,
-        #[arg(long)]
-        profile: String,
-        /// A build of the repository's own Dockerfiles and chart, as JSON
-        /// (ADR-0054 §7); without it the product description is built.
-        #[arg(long)]
-        own: Option<String>,
-        /// `id=ref`: the description's `git(...)` source `id`, one of the
-        /// project's repositories, fetched at `ref` (ADR-0060 §3).
-        #[arg(long = "source-ref")]
-        source_refs: Vec<String>,
-        /// `dev` builds the profile as a development one (ADR-0060 §5).
-        #[arg(long)]
-        strictness: Option<String>,
-    },
-    /// The last step of a build in an organization's cluster: push the chart
-    /// beside the images and leave the manifest as the termination message.
-    BuildPublish {
-        #[arg(long)]
-        work: std::path::PathBuf,
-        #[arg(long)]
-        prefix: String,
-        #[arg(long)]
-        registry_config: std::path::PathBuf,
-    },
     /// Print the gears this binary links (JSON) and exit.
     ///
     /// Built from the code alone, like `gts-types`. `scripts/product-gdl.mjs`
@@ -227,9 +183,39 @@ enum Commands {
     },
 }
 
+/// A command a kit's gear brings to the `studio-backend` command line, the
+/// command-line port (ADR-0079 §4): registered in the gear's own module with
+/// `inventory::submit! { crate::CliCommand { … } }`. It runs before the
+/// configuration is read: no profile, no database, no listener (the build
+/// Job's steps).
+pub(crate) struct CliCommand {
+    /// Where it is listed among the kits' commands, lowest first.
+    pub order: u16,
+    /// The command as clap reads it: its name, arguments and help.
+    pub command: fn() -> clap::Command,
+    /// Run it with what was parsed.
+    pub run: fn(&clap::ArgMatches) -> Result<()>,
+}
+
+inventory::collect!(CliCommand);
+
 /// The `studio-backend` command line: parse it and run what it asks for.
 pub async fn run_cli() -> Result<()> {
-    let cli = Cli::parse();
+    use clap::{CommandFactory, FromArgMatches};
+    let mut kits: Vec<&CliCommand> = inventory::iter::<CliCommand>.into_iter().collect();
+    kits.sort_by_key(|k| k.order);
+    let mut command = Cli::command();
+    for kit in &kits {
+        command = command.subcommand((kit.command)());
+    }
+    let matches = command.get_matches();
+    // A kit's command: no profile, no database, no listener.
+    if let Some((name, args)) = matches.subcommand()
+        && let Some(kit) = kits.iter().find(|k| (k.command)().get_name() == name)
+    {
+        return (kit.run)(args);
+    }
+    let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
 
     // Emitted from the code alone, so it runs before the config is loaded: an
     // offline emit has to work in a checkout with no deployment profile, and
@@ -237,55 +223,6 @@ pub async fn run_cli() -> Result<()> {
     if matches!(cli.command, Some(Commands::Gears)) {
         println!("{}", assembly::gears_json()?);
         return Ok(());
-    }
-    // The build Job's steps: no profile, no database, no listener.
-    if let Some(Commands::BuildPrepare {
-        work,
-        repo_url,
-        git_ref,
-        description_ref,
-        description_revision,
-        product_file,
-        profile,
-        own,
-        source_refs,
-        strictness,
-    }) = &cli.command
-    {
-        // Studio's revision when the Job carries one (ADR-0053 §2), else only
-        // the file of a product branch (§4), else the checkout's own.
-        let studio_text = std::env::var(environments::build::DESCRIPTION_ENV)
-            .ok()
-            .filter(|t| !t.trim().is_empty());
-        let description = match (studio_text.as_deref(), description_ref.as_deref()) {
-            (Some(text), _) => environments::build::DescriptionFrom::Text {
-                revision: *description_revision,
-                text,
-            },
-            (None, Some(r)) => environments::build::DescriptionFrom::Ref(r),
-            (None, None) => environments::build::DescriptionFrom::Checkout,
-        };
-        return environments::build::prepare(
-            work,
-            repo_url,
-            git_ref.as_deref(),
-            &description,
-            product_file,
-            profile,
-            own.as_deref(),
-            &environments::build::SourceOptions::parse(source_refs, strictness.as_deref())?,
-        )
-        .inspect_err(environments::build::say_failure);
-    }
-    if let Some(Commands::BuildPublish {
-        work,
-        prefix,
-        registry_config,
-    }) = &cli.command
-    {
-        return environments::build::publish(work, prefix, registry_config)
-            .map(|_| ())
-            .inspect_err(environments::build::say_failure);
     }
     // A process of its own: no profile, no database.
     if let Some(Commands::ResearchEmulator(args)) = &cli.command {
@@ -363,8 +300,6 @@ pub async fn run_cli() -> Result<()> {
         Commands::Bootstrap { apply } => database_bootstrap::run(config, apply).await,
         // Both handled above, before the config was loaded.
         Commands::ApiContract { .. }
-        | Commands::BuildPrepare { .. }
-        | Commands::BuildPublish { .. }
         | Commands::GtsTypes
         | Commands::Gears
         | Commands::ResearchEmulator(_)

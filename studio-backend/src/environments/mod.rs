@@ -34,6 +34,7 @@
 //! are built and pushed before a deploy, by CI or by the desktop.
 
 pub(crate) mod build; // a product built by Studio in the organization's cluster (ADR-0048 §9)
+mod cli; // the build Job's steps on the command line (the command-line port, ADR-0079)
 mod build_records; // a project's build records, kept in its organization's model
 /// A cluster connection's driver, contributed through studio-connector's
 /// connector-driver port (ADR-0079).
