@@ -46,6 +46,7 @@ mod image_tasks; // delete, copy (promote, import) and sweep of image records
 pub(crate) mod images; // a project's images and charts as records (ADR-0062 §4)
 pub(crate) mod images_sink; // a pipeline's published images, recorded (ADR-0062 §4)
 pub(crate) mod infra; // a product's infra services, placed and installed with it (ADR-0064)
+mod inbox; // deploys awaiting approval in the Inbox tool (the Inbox port, ADR-0079)
 mod mcp;
 // This gear's MCP tools, collected by studio-mcp (ADR-0079).
 inventory::submit! {

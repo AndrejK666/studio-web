@@ -28,6 +28,7 @@ pub(crate) mod gts;
 mod index;
 mod item_comments; // comments read item by item, resumable across runs
 mod listing_cursor; // where the listings got to, resumable across runs
+mod inbox; // pull requests in a person's Inbox (the Inbox port, ADR-0079)
 mod mcp;
 // This gear's MCP tools, collected by studio-mcp (ADR-0079).
 inventory::submit! {

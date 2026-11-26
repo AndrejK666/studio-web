@@ -25,6 +25,7 @@ mod delivery;
 mod entity;
 pub(crate) mod gts;
 pub(crate) mod intake;
+mod inbox; // review requests in a person's Inbox (the Inbox port, ADR-0079)
 mod mcp;
 mod migrations;
 pub(crate) mod model;

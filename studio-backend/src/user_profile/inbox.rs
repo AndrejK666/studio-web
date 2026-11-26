@@ -8,15 +8,13 @@
 //! snoozed until a time (`me/inbox-marks`) — and the marks are applied here.
 //!
 //! Every item names its `source`, so a kit can add a source later without the
-//! shape changing. Studio reads two itself: `review-requests` (studio-documents,
-//! a review that waits on the person's verdict) and `pull-requests` (studio-
-//! artifact-ingest, a pull request whose next step is theirs). Each belongs to
-//! a kit, which declares it as a `studio` source in its `kit.json` —
-//! project-specs and project-git (ADR-0070 §7) — and is read only while that
-//! kit applies to the organization: without it the Inbox has no such items,
-//! and an item names the kit it came from. They are read through
-//! their REST routes as the caller (`crate::mcp::sdk::Api`), with the same
-//! `waiting_on=me` the portal sent, so the Inbox shows a person exactly what
+//! shape changing. A kit's gear that reads a source itself registers it
+//! through the Inbox port (`super::port::InboxSource`, ADR-0079 §4) --
+//! today `review-requests` (project-specs) and `pull-requests` (project-git)
+//! -- and declares it as a `studio` source in its `kit.json` (ADR-0070 §7):
+//! it is read only while that kit applies to the organization, and an item
+//! names the kit it came from. They are read through their REST routes as the
+//! caller (`crate::mcp::sdk::Api`), so the Inbox shows a person exactly what
 //! those routes show them.
 
 use serde_json::Value;
@@ -24,10 +22,6 @@ use time::OffsetDateTime;
 
 use crate::mcp::sdk::Api;
 
-/// The sources an Inbox reads today, in the order an item of each sorts when
-/// nothing else tells them apart.
-pub const REVIEW_REQUESTS: &str = "review-requests";
-pub const PULL_REQUESTS: &str = "pull-requests";
 /// The person's background runs that failed in the last [`FAILED_RUN_DAYS`]
 /// days (studio-tasks), an undelivered notification among them: the shell's
 /// own source, as the bell is.
@@ -80,76 +74,19 @@ pub struct Mark {
     pub until: Option<OffsetDateTime>,
 }
 
-/// A review request is one item for as long as it lives.
-pub fn review_key(r: &Value) -> String {
-    format!("review:{}", r["id"].as_str().unwrap_or_default())
-}
-
-/// A pull request is keyed with when it last changed.
-pub fn pull_key(p: &Value) -> String {
-    format!(
-        "pr:{}@{}",
-        p["id"].as_str().unwrap_or_default(),
-        p["updated_at"].as_str().unwrap_or_default()
-    )
-}
-
-/// A person's pull requests in the order they answer them: waiting on their
-/// review first, then on them as the author, merge, nobody, a draft; within
-/// one, the longest quiet first (`myPullsInOrder`).
-pub fn pulls_in_order(mut items: Vec<Value>) -> Vec<Value> {
-    let rank = |p: &Value| match p["waiting"].as_str() {
-        Some("review") => 0,
-        Some("author") => 1,
-        Some("merge") => 2,
-        Some("nobody") => 3,
-        Some("draft") => 4,
-        _ => 5,
-    };
-    let quiet = |p: &Value| p["days_since_update"].as_i64().unwrap_or(-1);
-    items.sort_by(|a, b| rank(a).cmp(&rank(b)).then(quiet(b).cmp(&quiet(a))));
-    items
-}
-
 fn text(v: &Value) -> Option<String> {
     v.as_str().filter(|s| !s.is_empty()).map(str::to_string)
 }
 
-/// A workspace's review requests and pull requests as items, reviews first,
-/// each list in its own order.
-pub fn items_of(
-    workspace_id: &str,
-    workspace_name: &str,
-    reviews: Vec<Value>,
-    pulls: Vec<Value>,
-) -> Vec<Item> {
-    let review = reviews.into_iter().map(|r| Item {
-        key: review_key(&r),
-        source: REVIEW_REQUESTS.to_owned(),
-        kit: None,
-        workspace_id: workspace_id.to_string(),
-        workspace_name: workspace_name.to_string(),
-        title: text(&r["title"]).unwrap_or_default(),
-        url: None,
-        due_at: text(&r["due_at"]),
-        overdue: r["overdue"].as_bool().unwrap_or(false),
-        record: r,
-        destination: None,
-    });
-    let pull = pulls_in_order(pulls).into_iter().map(|p| Item {
-        key: pull_key(&p),
-        source: PULL_REQUESTS.to_owned(),
-        kit: None,
-        workspace_id: workspace_id.to_string(),
-        workspace_name: workspace_name.to_string(),
-        title: text(&p["title"]).unwrap_or_default(),
-        url: text(&p["url"]),
-        due_at: None,
-        overdue: false,
-        record: p,
-        destination: None,
-    });
-    review.chain(pull).collect()
+/// A workspace's items of the registered sources' records, `rows` in the
+/// sources' order: a test's stand-in for a read.
+#[cfg(test)]
+pub fn items_of(workspace_id: &str, workspace_name: &str, rows: Vec<Vec<Value>>) -> Vec<Item> {
+    super::port::sources()
+        .into_iter()
+        .zip(rows)
+        .flat_map(|(s, rows)| (s.items)(workspace_id, workspace_name, rows))
+        .collect()
 }
 
 /// The failed runs (`GET /studio-tasks/v1/runs?state=failed` items) the
@@ -393,10 +330,11 @@ fn hides(mark: Option<&Mark>, now: OffsetDateTime) -> bool {
 }
 
 /// The open items in the order a person works through them — overdue first,
-/// then by due date, then reviews before pull requests, then as their lists
-/// gave them — and the items the marks hide, in the list's own order.
-/// `items` are every workspace's, reviews of all of them before the pull
-/// requests of all of them, as the portal concatenated them.
+/// then by due date, then a source that comes first at an equal due date
+/// (reviews) before the rest, then as their lists gave them — and the items
+/// the marks hide, in the list's own order. `items` are every workspace's,
+/// one source of all of them before the next source's, as the portal
+/// concatenated them.
 pub fn inbox(items: Vec<Item>, marks: &[Mark], now: OffsetDateTime) -> (Vec<Item>, Vec<Item>) {
     let mark_of = |key: &str| marks.iter().find(|m| m.item_key == key);
     let (hidden, mut open): (Vec<Item>, Vec<Item>) =
@@ -410,12 +348,15 @@ pub fn inbox(items: Vec<Item>, marks: &[Mark], now: OffsetDateTime) -> (Vec<Item
             .map_or(i128::MAX, |t| t.unix_timestamp_nanos())
     };
     // Stable: equal items keep the order they came in.
-    open.sort_by_key(|i| (!i.overdue, due(i), i.source != REVIEW_REQUESTS));
+    open.sort_by_key(|i| {
+        (
+            !i.overdue,
+            due(i),
+            !super::port::first_at_equal_due(&i.source),
+        )
+    });
     (open, hidden)
 }
-
-/// The most pull requests read for one workspace: pages of 200.
-const PULL_PAGES: usize = 10;
 
 /// How many workspaces' sources are read at once, and how many kit sources:
 /// each is a request through the gateway that takes pooled connections, and
@@ -441,44 +382,25 @@ fn scope(org: Option<&str>) -> Vec<(String, String)> {
         .unwrap_or_default()
 }
 
-/// The kind of source Studio's Inbox reads itself, which a built-in kit owns
-/// (`review-requests` with project-specs, `pull-requests` with project-git;
-/// ADR-0070 §7).
+/// The kind of source a kit's gear reads itself (`super::port::InboxSource`),
+/// which its kit lists to turn it on (`review-requests` with project-specs,
+/// `pull-requests` with project-git; ADR-0070 §7).
 pub const STUDIO: &str = "studio";
 
-/// Which of Studio's own sources the organization's kits turn on, each as
-/// its kit lists it; `None` for one no installed kit brings. `listed` is
-/// `None` when the kits' sources could not be read: then both are read, as
-/// they were before kits owned them, rather than an Inbox emptied by a
-/// failed read.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct Owned {
-    pub reviews: Option<Option<Value>>,
-    pub pulls: Option<Option<Value>>,
-}
-
-impl Owned {
-    /// Of the listed sources (`GET /studio-kits/v1/inbox-sources` items),
-    /// or every source on with no kit when they could not be read.
-    pub fn of(listed: Option<&[Value]>) -> Self {
-        let Some(listed) = listed else {
-            return Owned {
-                reviews: Some(None),
-                pulls: Some(None),
-            };
-        };
-        let find = |id: &str| {
-            listed
-                .iter()
-                .find(|s| s["kind"] == STUDIO && s["id"] == id)
-                .cloned()
-                .map(Some)
-        };
-        Owned {
-            reviews: find(REVIEW_REQUESTS),
-            pulls: find(PULL_REQUESTS),
-        }
-    }
+/// Whether the organization's kits turn on the registered source `id`: as
+/// its kit lists it, or `None` for one no installed kit brings. `listed` is
+/// `None` when the kits' sources could not be read: then every source is
+/// read, with no kit, as they were before kits owned them, rather than an
+/// Inbox emptied by a failed read.
+pub fn owner(listed: Option<&[Value]>, id: &str) -> Option<Option<Value>> {
+    let Some(listed) = listed else {
+        return Some(None);
+    };
+    listed
+        .iter()
+        .find(|s| s["kind"] == STUDIO && s["id"] == id)
+        .cloned()
+        .map(Some)
 }
 
 /// `items` as the source `owner` lists it: its kit and destination. `None`
@@ -619,71 +541,33 @@ pub async fn read(
             None
         }
     };
-    // Review requests are project-specs', pull requests project-git's: each
-    // is read only while its kit applies to the organization.
-    let owned = Owned::of(listed.as_deref());
-    let (with_reviews, with_pulls) = (owned.reviews.is_some(), owned.pulls.is_some());
+    // Each registered source is read only while its kit applies to the
+    // organization.
+    let sources = super::port::sources();
+    let owners: Vec<Option<Option<Value>>> = sources
+        .iter()
+        .map(|s| owner(listed.as_deref(), s.id))
+        .collect();
     // A few workspaces at once, in the order they were listed; in each, its
-    // review requests beside its pull requests.
+    // sources side by side.
     let spaces_ref = &spaces;
+    let (sources_ref, owners_ref) = (&sources, &owners);
     let per = futures_util::stream::iter(
         (0..spaces.len())
             .map(|i| {
                 let (id, name) = &spaces_ref[i];
                 async move {
-                    let q = vec![
-                        ("workspace_id".to_string(), id.clone()),
-                        ("waiting_on".to_string(), "me".to_string()),
-                    ];
-                    let reviews = async {
-                        if with_reviews {
-                            api.get("/studio-documents/v1/review-requests", &q).await
-                        } else {
-                            Ok(Value::Null)
-                        }
-                    };
-                    let pulls = async {
-                        let mut pulls: Vec<Value> = Vec::new();
-                        let mut pulls_failed = None;
-                        let mut known = true;
-                        let mut offset = 0usize;
-                        let pages = if with_pulls { PULL_PAGES } else { 0 };
-                        for _ in 0..pages {
-                            let mut pq = q.clone();
-                            pq.push(("limit".to_string(), "200".to_string()));
-                            pq.push(("offset".to_string(), offset.to_string()));
-                            match api
-                                .get("/studio-artifact-ingest/v1/open-pull-requests", &pq)
-                                .await
-                            {
-                                Ok(page) => {
-                                    let got = page["items"].as_array().cloned().unwrap_or_default();
-                                    known &= page["members_known"].as_bool().unwrap_or(true);
-                                    let total = page["total"].as_u64().unwrap_or(0);
-                                    offset += got.len();
-                                    let done = got.is_empty() || offset as u64 >= total;
-                                    pulls.extend(got);
-                                    if done {
-                                        break;
-                                    }
-                                }
-                                Err(e) => {
-                                    pulls_failed = Some(e.0);
-                                    break;
-                                }
+                    let reads = sources_ref.iter().zip(owners_ref).map(|(s, o)| {
+                        let read = o.is_some().then(|| (s.read)(api.clone(), id.clone()));
+                        async move {
+                            match read {
+                                Some(read) => read.await,
+                                None => super::port::WorkspaceRows::none(),
                             }
                         }
-                        (pulls, pulls_failed, known)
-                    };
-                    let (reviews, (pulls, pulls_failed, known)) = tokio::join!(reviews, pulls);
-                    (
-                        id.clone(),
-                        name.clone(),
-                        reviews,
-                        pulls,
-                        pulls_failed,
-                        known,
-                    )
+                    });
+                    let rows = futures_util::future::join_all(reads).await;
+                    (id.clone(), name.clone(), rows)
                 }
             })
             .collect::<Vec<_>>(),
@@ -703,30 +587,22 @@ pub async fn read(
     let kits = kit_sources(api, me, org, &spaces, listed.as_deref().unwrap_or_default());
     let (per, runs, kits) = tokio::join!(per, runs, kits);
     let mut members_known = true;
-    let mut reviews_all = Vec::new();
-    let mut pulls_all = Vec::new();
-    for (id, name, reviews, pulls, failed, known) in per {
-        members_known &= known;
-        // A backend without review requests answers 404: there are none.
-        let reviews = match reviews {
-            Ok(r) => r["items"].as_array().cloned().unwrap_or_default(),
-            Err(_) => Vec::new(),
-        };
-        if let Some(why) = failed {
-            unread.push(format!("{PULL_REQUESTS} in {name}: {why}"));
+    let mut by_source: Vec<Vec<Item>> = sources.iter().map(|_| Vec::new()).collect();
+    for (id, name, rows) in per {
+        for (j, read) in rows.into_iter().enumerate() {
+            members_known &= read.members_known;
+            if let Some(why) = read.failed {
+                unread.push(format!("{} in {name}: {why}", sources[j].id));
+            }
+            by_source[j].extend(owned_by(
+                (sources[j].items)(&id, &name, read.rows),
+                owners[j].as_ref().and_then(Option::as_ref),
+            ));
         }
-        reviews_all.extend(owned_by(
-            items_of(&id, &name, reviews, Vec::new()),
-            owned.reviews.as_ref().and_then(Option::as_ref),
-        ));
-        pulls_all.extend(owned_by(
-            items_of(&id, &name, Vec::new(), pulls),
-            owned.pulls.as_ref().and_then(Option::as_ref),
-        ));
     }
-    reviews_all.extend(pulls_all);
+    let mut items: Vec<Item> = by_source.into_iter().flatten().collect();
     match runs {
-        Ok(page) => reviews_all.extend(failed_run_items(
+        Ok(page) => items.extend(failed_run_items(
             page["items"].as_array().cloned().unwrap_or_default(),
             me,
             OffsetDateTime::now_utc(),
@@ -734,10 +610,10 @@ pub async fn read(
         Err(e) => unread.push(format!("{FAILED_RUNS}: {}", e.0)),
     }
     // The kits' items after the shell's own.
-    reviews_all.extend(kits.items);
+    items.extend(kits.items);
     unread.extend(kits.unread);
     Read {
-        items: reviews_all,
+        items,
         unread,
         members_known,
         workspaces: spaces.len(),
