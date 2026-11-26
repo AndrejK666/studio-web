@@ -45,6 +45,7 @@ interface Centred {
 
 export type GraphMode = 'neighbours' | 'depth' | 'whole';
 export const DEPTH = { min: 2, max: 4, start: 2 };
+const FACT_LAYER = ['fact', 'concept'];
 
 /** A 404 from the gear: the key is not in the project's graph (not built yet, or gone). */
 const missing = (e: unknown) => /\b404\b|not in the project's graph|not found/i.test(message(e));
@@ -76,7 +77,8 @@ export const GraphView: React.FC<{
   useEffect(() => {
     if (!ask || empty) return undefined;
     let live = true;
-    const everyType = counts ? Object.keys(counts).filter((k) => k !== 'fact').join(',') : '';
+    // the model's fact layer (facts, concepts) is thousands of nodes: the whole graph leaves it out
+    const everyType = counts ? Object.keys(counts).filter((k) => !FACT_LAYER.includes(k)).join(',') : '';
     const fetching =
       mode === 'depth' && current
         ? api.subgraph({ projectId, key: current, depth, types: '' }).fetch({ staleTime: 0 })

@@ -141,7 +141,7 @@ describe('GraphView', () => {
     }));
     Object.assign(service, { subgraph, overview });
     drawn.length = 0;
-    render(<GraphView projectId="p1" start={REQ} counts={{ requirement: 1, section: 1 }} t={t} />);
+    render(<GraphView projectId="p1" start={REQ} counts={{ requirement: 1, section: 1, fact: 9, concept: 5 }} t={t} />);
     fireEvent.click(screen.getByText('graph_mode_depth'));
     await waitFor(() => expect(subgraph).toHaveBeenCalledWith(expect.objectContaining({ key: REQ, depth: 2 })));
     await waitFor(() => expect(drawn.length).toBeGreaterThan(0));
