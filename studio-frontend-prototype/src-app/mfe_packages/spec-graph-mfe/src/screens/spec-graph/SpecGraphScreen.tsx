@@ -21,21 +21,22 @@ import {
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Skeleton } from '@gears-frontx/ui-kit';
 import { STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT, refusalText, useScreenAvailability } from '@constructor-studio/mfe-shared';
 import { SpecGraphApiService } from '../../api/SpecGraphApiService';
-import type { Decision, DocumentFindings, Finding, Ontology, SpecGraphProject } from '../../api/types';
+import type { Decision, DocumentFindings, Finding, Ontology, SpecGraphProject, Verdict } from '../../api/types';
 import { counts, documentsInOrder, place, without } from '../../model/findings';
 import { findingNode } from '../../model/graph';
 import { documentsOf, invalid, scopeOf, type Documents } from '../../model/scope';
 import { useSpecGraphTranslations } from '../../i18n';
-import { BuildChoice, GraphStatus, startBuild, type BuildOptions } from './GraphStatus';
+import { BuildChoice, DEFAULT_CAP, GraphStatus, startBuild, type BuildOptions } from './GraphStatus';
 import { GraphView } from './GraphView';
 import { OntologyView } from './OntologyView';
+import { QualityView } from './QualityView';
 import { PullsView } from './PullsView';
 import styles from './SpecGraphScreen.module.css';
 
 const DARK_HOST_THEMES = ['dark', 'dracula', 'dracula-large'];
 
 type Text = ReturnType<typeof useSpecGraphTranslations>['t'];
-type View = 'now' | 'stored' | 'pulls' | 'graph' | 'ontology';
+type View = 'now' | 'stored' | 'pulls' | 'graph' | 'ontology' | 'quality';
 
 /**
  * The domain type the Pull requests view shows (`sectionNeeds` in mfe.json):
@@ -43,7 +44,7 @@ type View = 'now' | 'stored' | 'pulls' | 'graph' | 'ontology';
  * offered; the rest of the screen does not need it.
  */
 export const PULL_REQUEST_TYPE = 'gts.cf.studio.domain.pull_request.v1~';
-type FindingsView = Exclude<View, 'pulls' | 'graph' | 'ontology'>;
+type FindingsView = Exclude<View, 'pulls' | 'graph' | 'ontology' | 'quality'>;
 
 /** One reading of the project, for one view and one ask. */
 interface Reading {
@@ -138,7 +139,8 @@ const ProjectSpecGraph: React.FC<{ projectId: string; t: Text }> = ({ projectId,
   }, [api, projectId]);
 
   useEffect(() => {
-    if (!setup?.registered || view === 'pulls' || view === 'graph' || view === 'ontology') return undefined;
+    if (!setup?.registered || view === 'pulls' || view === 'graph' || view === 'ontology' || view === 'quality')
+      return undefined;
     let live = true;
     const reading: Promise<Reading> =
       view === 'now'
@@ -231,6 +233,9 @@ const ProjectSpecGraph: React.FC<{ projectId: string; t: Text }> = ({ projectId,
           <Button variant={view === 'ontology' ? undefined : 'outline'} onClick={() => setView('ontology')}>
             {t('view_ontology')}
           </Button>
+          <Button variant={view === 'quality' ? undefined : 'outline'} onClick={() => setView('quality')}>
+            {t('view_quality')}
+          </Button>
           <Button variant="ghost" disabled={busy || !findingsView} onClick={() => setAsked((n) => n + 1)}>
             {busy ? t('reading') : t('refresh')}
           </Button>
@@ -246,7 +251,9 @@ const ProjectSpecGraph: React.FC<{ projectId: string; t: Text }> = ({ projectId,
               ? t('pulls_hint')
               : view === 'ontology'
                 ? t('ontology_hint')
-                : t('graph_view_hint')}
+                : view === 'quality'
+                  ? t('quality_hint')
+                  : t('graph_view_hint')}
       </p>
       {view === 'pulls' && (
         <PullsView
@@ -266,6 +273,7 @@ const ProjectSpecGraph: React.FC<{ projectId: string; t: Text }> = ({ projectId,
         />
       )}
       {view === 'ontology' && (ontology ? <OntologyView ontology={ontology} t={t} /> : <Skeleton className={styles.skeleton} />)}
+      {view === 'quality' && <QualityView key={graphRead} projectId={projectId} t={t} />}
       {error && <p className={styles.error}>{error}</p>}
       {findingsView && busy && !docs && <Skeleton className={styles.skeleton} />}
       {findingsView && docs && shown.length === 0 && <p className={styles.muted}>{t('nothing')}</p>}
@@ -283,6 +291,7 @@ const ProjectSpecGraph: React.FC<{ projectId: string; t: Text }> = ({ projectId,
                 graphBuilt={!!nodes}
                 t={t}
                 onDecide={decide}
+                onLabel={(f, verdict, note) => api.label(projectId, f.id).fetch({ verdict, rule: f.rule, note })}
                 onShow={(node) => {
                   setGraphStart(node);
                   setView('graph');
@@ -303,10 +312,26 @@ const FindingRow: React.FC<{
   graphBuilt: boolean;
   t: Text;
   onDecide: (f: Finding, d: Decision) => Promise<void>;
+  /** A label for the rule's calibration: it neither hides the finding nor records a decision. */
+  onLabel: (f: Finding, verdict: Verdict, note: string) => Promise<unknown>;
   onShow: (node: string) => void;
-}> = ({ path, finding: f, graphBuilt, t, onDecide, onShow }) => {
+}> = ({ path, finding: f, graphBuilt, t, onDecide, onLabel, onShow }) => {
   const node = graphBuilt ? findingNode(path, f) : null;
   const [deciding, setDeciding] = useState(false);
+  const [labelling, setLabelling] = useState(false);
+  const [verdict, setVerdict] = useState<Verdict>('not');
+  const [note, setNote] = useState('');
+  const [labelled, setLabelled] = useState<Verdict | null>(null);
+  const label = async () => {
+    setDeciding(true);
+    try {
+      await onLabel(f, verdict, note.trim());
+      setLabelled(verdict);
+      setLabelling(false);
+    } finally {
+      setDeciding(false);
+    }
+  };
   const act = async (d: Decision) => {
     setDeciding(true);
     await onDecide(f, d);
@@ -353,7 +378,42 @@ const FindingRow: React.FC<{
             {t('show_in_graph')}
           </Button>
         )}
+        {!labelling && !labelled && (
+          <Button size="sm" variant="link" onClick={() => setLabelling(true)} title={t('label_hint')}>
+            {t('label')}
+          </Button>
+        )}
+        {labelled && <Badge variant="outline">{t('labelled', { verdict: t(`verdict_${labelled}`) })}</Badge>}
       </div>
+      {labelling && (
+        <form
+          className={styles.labelForm}
+          onSubmit={(e) => {
+            e.preventDefault();
+            void label();
+          }}
+        >
+          {(['real', 'not', 'unsure'] as const).map((v) => (
+            <label key={v} className={styles.radio}>
+              <input type="radio" name={`verdict-${f.id}`} checked={verdict === v} onChange={() => setVerdict(v)} />
+              {t(`verdict_${v}`)}
+            </label>
+          ))}
+          <input
+            className={styles.input}
+            value={note}
+            placeholder={t('label_note')}
+            aria-label={t('label_note')}
+            onChange={(e) => setNote(e.target.value)}
+          />
+          <Button size="sm" type="submit" disabled={deciding}>
+            {t('label_save')}
+          </Button>
+          <Button size="sm" type="button" variant="ghost" onClick={() => setLabelling(false)}>
+            {t('label_cancel')}
+          </Button>
+        </form>
+      )}
     </div>
   );
 };
@@ -367,7 +427,7 @@ const SetupForm: React.FC<{ projectId: string; t: Text; onDone: (p: SpecGraphPro
   const [docs, setDocs] = useState<Documents>(documentsOf(undefined));
   const [named, setNamed] = useState(false);
   const [buildNow, setBuildNow] = useState(true);
-  const [build, setBuild] = useState<BuildOptions>({ facts: false, contradictions: false });
+  const [build, setBuild] = useState<BuildOptions>({ facts: false, contradictions: false, cap: DEFAULT_CAP });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // The label defaults to the first source's name (the repository the graph reads).

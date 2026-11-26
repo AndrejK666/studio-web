@@ -5,8 +5,10 @@
 
 import { BaseApiService, RestEndpointProtocol, RestProtocol } from '@gears-frontx/react';
 import type {
+  Calibration,
   Decision,
   GraphNode,
+  Metrics,
   Neighbors,
   Ontology,
   Picture,
@@ -15,6 +17,7 @@ import type {
   Review,
   ReviewRecord,
   Run,
+  Verdict,
   SpecGraphCheck,
   SpecGraphFindingList,
   SpecGraphProject,
@@ -139,5 +142,29 @@ export class SpecGraphApiService extends BaseApiService {
   /** The node and edge types, with the project's count of each node type. */
   readonly ontology = this.protocol(RestEndpointProtocol).queryWith<{ answer: Ontology }, { projectId: string }>(
     ({ projectId }) => `${BASE}/graph/ontology?${q({ project_id: projectId })}`
+  );
+
+  /** Stop a run: a queued one never starts, a running one's step is ended. */
+  cancelRun(projectId: string, runId: string) {
+    return this.protocol(RestEndpointProtocol).mutation<{ run: Run }, Record<string, never>>(
+      'POST',
+      `${BASE}/runs/${encodeURIComponent(runId)}/cancel?${q({ project_id: projectId })}`
+    );
+  }
+
+  /** A label on a finding, for its rule's calibration: it neither hides nor records a decision. */
+  label(projectId: string, fingerprint: string) {
+    return this.protocol(RestEndpointProtocol).mutation<unknown, { verdict: Verdict; rule: string; note?: string }>(
+      'PUT',
+      `${BASE}/findings/${encodeURIComponent(fingerprint)}/label?${q({ project_id: projectId })}`
+    );
+  }
+
+  readonly metrics = this.protocol(RestEndpointProtocol).queryWith<{ answer: Metrics }, { projectId: string }>(
+    ({ projectId }) => `${BASE}/metrics?${q({ project_id: projectId })}`
+  );
+
+  readonly calibration = this.protocol(RestEndpointProtocol).queryWith<{ answer: Calibration }, { projectId: string }>(
+    ({ projectId }) => `${BASE}/calibration?${q({ project_id: projectId })}`
   );
 }

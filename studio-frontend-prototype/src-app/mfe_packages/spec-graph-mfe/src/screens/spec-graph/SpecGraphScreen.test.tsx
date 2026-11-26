@@ -123,8 +123,56 @@ describe('SpecGraphScreen', () => {
     await waitFor(() => expect(start).toHaveBeenCalledTimes(2));
     expect(start.mock.calls.map((c) => c[0])).toEqual([
       { job: 'index', params: { facts: true, findings: true } },
-      { job: 'contradictions' },
+      { job: 'contradictions', params: { cap: 60 } },
     ]);
+    // the cap is the person's, and the bar says what it costs before it runs
+    expect(screen.getByText(/build_cost/).textContent).toContain('"usd":"0.45"');
+  });
+
+  it('labels a finding for calibration without hiding it, and shows the quality view', async () => {
+    const label = vi.fn((..._args: unknown[]) => Promise.resolve({}));
+    Object.assign(service, {
+      project: query({ project_id: 'p1', registered: true, project: { repository: { url: 'u', ref: 'main' } }, service: null }),
+      check: () => ({
+        fetch: () =>
+          Promise.resolve({
+            revision: 'abc',
+            count: 1,
+            blocking: 1,
+            dismissed: 0,
+            documents: [{ path: 'docs/a.md', detector: 'spec_graph', findings: [finding('f1', 'advise', 'contradiction.value')] }],
+          }),
+      }),
+      label: (_p: string, fp: string) => ({ fetch: (body: unknown) => label(fp, body) }),
+      metrics: query({
+        answer: {
+          findings: { total: 3, block: 2, advise: 1, by_rule: { 'link.resolves (block)': 2, 'contradiction.value (advise)': 1 } },
+          requirements_p1: { count: 10, realized_in_markup: 4, realized_with_judge: 5, share_in_markup: 0.4, share_with_judge: 0.5 },
+          conflicting_pairs: { pairs: 2, passages_not_linked: 1, same_document: 0 },
+        },
+      }),
+      calibration: query({
+        answer: {
+          rules: { 'contradiction.value': { real: 9, not: 1, unsure: 2, decided: 10, precision: 0.9, precision_lower_95: 0.6, may_block: false } },
+          threshold: { min_labels: 10, min_precision_lower: 0.7 },
+        },
+      }),
+    });
+    render(<SpecGraphScreen bridge={bridge()} />);
+    fireEvent.click(await screen.findByText('label'));
+    fireEvent.click(screen.getByLabelText('verdict_unsure'));
+    fireEvent.change(screen.getByLabelText('label_note'), { target: { value: 'two scopes' } });
+    fireEvent.click(screen.getByText('label_save'));
+    await waitFor(() =>
+      expect(label).toHaveBeenCalledWith('f1', { verdict: 'unsure', rule: 'contradiction.value', note: 'two scopes' })
+    );
+    expect(await screen.findByText(/labelled/)).toBeTruthy();
+    expect(screen.getByText('contradiction.value title')).toBeTruthy();       // still shown
+    fireEvent.click(screen.getByText('view_quality'));
+    expect(await screen.findByText('50%')).toBeTruthy();                     // p1 realized
+    const rows = screen.getAllByRole('row').map((r) => r.textContent);
+    expect(rows.find((r) => r?.includes('contradiction.value'))).toContain('9 / 1 / 2');
+    expect(rows.find((r) => r?.includes('contradiction.value'))).toContain('90% (≥ 60%)');
   });
 
   it('lists the findings now by document, blocking first, and a decision takes one out', async () => {

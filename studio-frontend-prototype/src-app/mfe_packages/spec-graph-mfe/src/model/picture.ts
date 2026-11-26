@@ -53,22 +53,14 @@ export interface Cluster {
   colour: string;
 }
 
-/** Twelve hues told apart without red/green or amber/orange pairs, then greys. */
-export const CLUSTER_COLOURS = [
-  '#2563eb',
-  '#d97706',
-  '#db2777',
-  '#7c3aed',
-  '#0891b2',
-  '#a16207',
-  '#be185d',
-  '#4f46e5',
-  '#0e7490',
-  '#9333ea',
-  '#1e40af',
-  '#b45309',
-];
-const SMALL = '#94a3b8';
+/**
+ * Eight hues for the eight largest communities, validated together (dataviz
+ * validate_palette, light and dark: CVD separation, normal-vision floor, lightness,
+ * chroma), in this fixed order; smaller communities share one grey, never a
+ * generated ninth hue.
+ */
+export const CLUSTER_COLOURS = ['#2563eb', '#d97706', '#db2777', '#7c3aed', '#0891b2', '#a16207', '#be185d', '#4f46e5'];
+export const SMALL = '#94a3b8';
 
 const sizeFor = (degree: number) => Math.min(16, 3 + Math.sqrt(degree) * 1.5);
 
@@ -164,7 +156,7 @@ export function clusters(g: PictureGraph, resolution = 0.6, minSize = 4): Cluste
     }
     const area = [...areas.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
     const leadLabel = g.getNodeAttribute(lead, 'label');
-    const colour = keys.length >= minSize ? CLUSTER_COLOURS[i % CLUSTER_COLOURS.length] : SMALL;
+    const colour = keys.length >= minSize && i < CLUSTER_COLOURS.length ? CLUSTER_COLOURS[i] : SMALL;
     for (const k of keys) g.setNodeAttribute(k, 'cluster', i);
     out.push({ id: i, lead, name: area ? `${area} · ${leadLabel}` : leadLabel, size: keys.length, colour });
     void c;

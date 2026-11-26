@@ -362,3 +362,38 @@
   height: 12px;
   border-radius: 3px;
 }
+
+/* Quality: headline numbers, then a table per rule. */
+.tiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 200px;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.tileValue {
+  font-size: var(--text-heading-1-size, 28px);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.num {
+  text-align: right !important;
+  font-variant-numeric: tabular-nums;
+}
+
+.labelForm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}

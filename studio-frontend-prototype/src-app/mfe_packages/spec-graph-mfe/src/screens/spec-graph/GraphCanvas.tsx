@@ -20,6 +20,7 @@ import {
   leaders,
   toGraph,
   type Cluster,
+  SMALL,
   type EdgeAttrs,
   type NodeAttrs,
 } from '../../model/picture';
@@ -231,8 +232,7 @@ const Legend: React.FC<{
   <div className={styles.legend}>
     {colouring === 'cluster'
       ? found
-          .filter((c) => c.size >= 4)
-          .slice(0, 12)
+          .filter((c) => c.colour !== SMALL)
           .map((c) => (
             <span key={c.id} className={styles.legendItem} title={c.name}>
               <span className={styles.swatch} style={{ background: c.colour }} />
@@ -245,6 +245,12 @@ const Legend: React.FC<{
             {type} {counts?.[type] != null && <span className={styles.muted}>({counts[type]})</span>}
           </span>
         ))}
+    {colouring === 'cluster' && found.some((c) => c.colour === SMALL) && (
+      <span className={styles.legendItem}>
+        <span className={styles.swatch} style={{ background: SMALL }} />
+        {t('graph_other_clusters', { count: found.filter((c) => c.colour === SMALL).length })}
+      </span>
+    )}
     <span className={styles.legendItem}>
       <span className={styles.swatch} style={{ background: '#7c3aed', height: 2 }} />
       {t('graph_judged_edge')}

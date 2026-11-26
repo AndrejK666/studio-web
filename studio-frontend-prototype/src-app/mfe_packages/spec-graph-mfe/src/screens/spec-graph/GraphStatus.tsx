@@ -28,7 +28,14 @@ const JOBS: Job[] = ['index', 'prepare', 'contradictions'];
 export interface BuildOptions {
   facts: boolean;
   contradictions: boolean;
+  /** At most this many candidate pairs the contradictions judge reads (each a few model calls). */
+  cap: number;
 }
+
+/** What one judged pair cost on insight (87 pairs, $0.64), and about how long. */
+export const PAIR_USD = 0.0075;
+export const PAIR_SECONDS = 2.6;
+export const DEFAULT_CAP = 60;
 
 /**
  * Start Build graph: an index run (the structure and the deterministic findings; with `facts`, the
@@ -38,7 +45,7 @@ export interface BuildOptions {
 export async function startBuild(api: SpecGraphApiService, projectId: string, o: BuildOptions): Promise<void> {
   const facts = o.facts || o.contradictions;
   await api.startRun(projectId).fetch({ job: 'index', params: { facts, findings: true } });
-  if (o.contradictions) await api.startRun(projectId).fetch({ job: 'contradictions' });
+  if (o.contradictions) await api.startRun(projectId).fetch({ job: 'contradictions', params: { cap: o.cap } });
 }
 
 const message = (e: unknown) => refusalText(e) ?? (e instanceof Error ? e.message : String(e));
@@ -63,7 +70,7 @@ export const GraphStatus: React.FC<{
 }> = ({ projectId, nodes, onChanged, t }) => {
   const api = apiRegistry.getService(SpecGraphApiService);
   const [runs, setRuns] = useState<Record<Job, Run[]>>({ index: [], prepare: [], contradictions: [] });
-  const [build, setBuild] = useState<BuildOptions>({ facts: false, contradictions: false });
+  const [build, setBuild] = useState<BuildOptions>({ facts: false, contradictions: false, cap: DEFAULT_CAP });
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
 
@@ -107,6 +114,21 @@ export const GraphStatus: React.FC<{
     return () => window.clearTimeout(id);
   }, [going, read, onChanged, tick]);
 
+  const cancel = async (r: Run) => {
+    setError(null);
+    try {
+      await api.cancelRun(projectId, r.id).fetch({});
+      await read();
+    } catch (e) {
+      setError(message(e));
+    }
+  };
+  const stop = (r: Run) => (
+    <Button size="sm" variant="link" onClick={() => void cancel(r)}>
+      {t('run_cancel')}
+    </Button>
+  );
+
   const start = async (job: 'index' | 'prepare') => {
     setError(null);
     try {
@@ -140,7 +162,9 @@ export const GraphStatus: React.FC<{
         <span className={styles.muted}>{t('status_built', { revision: built.revision.slice(0, 12) })}</span>
       )}
       {indexing ? (
-        <span className={styles.muted}>{t('status_indexing', { line: runLine(indexing, t) })}</span>
+        <span className={styles.muted}>
+          {t('status_indexing', { line: runLine(indexing, t) })} {stop(indexing)}
+        </span>
       ) : (
         <>
           <Button size="sm" variant={nodes === 0 ? undefined : 'outline'} onClick={() => void start('index')}>
@@ -149,7 +173,11 @@ export const GraphStatus: React.FC<{
           <BuildChoice value={build} onChange={setBuild} t={t} />
         </>
       )}
-      {judging && <span className={styles.muted}>{t('status_judging', { line: runLine(judging, t) })}</span>}
+      {judging && (
+        <span className={styles.muted}>
+          {t('status_judging', { line: runLine(judging, t) })} {stop(judging)}
+        </span>
+      )}
       {!judging && judged && (
         <span className={styles.muted}>
           {t('status_judged', { count: judged.result?.confirmed ?? 0, revision: (judged.revision ?? '').slice(0, 12) })}
@@ -160,7 +188,9 @@ export const GraphStatus: React.FC<{
       )}
       {failed && !indexing && <span className={styles.error}>{t('status_failed', { error: failed.error ?? '' })}</span>}
       {preparing ? (
-        <span className={styles.muted}>{t('status_preparing', { line: runLine(preparing, t) })}</span>
+        <span className={styles.muted}>
+          {t('status_preparing', { line: runLine(preparing, t) })} {stop(preparing)}
+        </span>
       ) : prepared ? (
         <span className={styles.muted}>
           {t('status_prepared', { revision: (prepared.revision ?? '').slice(0, 12) })}{' '}
@@ -205,5 +235,28 @@ export const BuildChoice: React.FC<{ value: BuildOptions; onChange: (v: BuildOpt
       />
       {t('build_contradictions')}
     </label>
+    {value.contradictions && (
+      <label className={styles.radio}>
+        {t('build_cap')}
+        <input
+          className={styles.input}
+          type="number"
+          min={5}
+          max={500}
+          step={5}
+          style={{ width: 80 }}
+          value={value.cap}
+          onChange={(e) =>
+            onChange({ ...value, cap: Math.max(5, Math.min(500, Number(e.target.value) || DEFAULT_CAP)) })
+          }
+        />
+        <span className={styles.muted}>
+          {t('build_cost', {
+            usd: (value.cap * PAIR_USD).toFixed(2),
+            minutes: Math.max(1, Math.round((value.cap * PAIR_SECONDS) / 60)),
+          })}
+        </span>
+      </label>
+    )}
   </>
 );

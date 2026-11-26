@@ -210,3 +210,29 @@ export interface SearchHit {
   line?: number;
   score?: number;
 }
+
+/** A person's label on one finding, for its rule's calibration. */
+export type Verdict = 'real' | 'not' | 'unsure';
+
+/** The project's spec quality in numbers (the service's `metrics` tool). */
+export interface Metrics {
+  findings: { total: number; block: number; advise: number; by_rule: Record<string, number>; checked_by_reading?: number };
+  requirements_p1?: {
+    count: number;
+    realized_in_markup: number;
+    realized_with_judge: number;
+    share_in_markup: number;
+    share_with_judge: number;
+  };
+  conflicting_pairs?: { pairs: number; passages_not_linked: number; same_document: number };
+}
+
+/** Each rule's precision from people's labels, and whether it has earned the right to block. */
+export interface Calibration {
+  rules: Record<
+    string,
+    { real: number; not: number; unsure: number; decided: number; precision: number | null; precision_lower_95: number | null; may_block: boolean }
+  >;
+  threshold: { min_labels: number; min_precision_lower: number };
+}
+

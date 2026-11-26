@@ -225,6 +225,18 @@ export const PullsView: React.FC<{
                       ? t('reviewing_model_at', { line: runLine(pending.run, t) })
                       : t('reviewing_model')
                     : t('reviewing')}
+                  {pending.run && !ended(pending.run) && (
+                    <Button
+                      size="sm"
+                      variant="link"
+                      onClick={() => {
+                        const run = pending.run;
+                        if (run) void api.cancelRun(projectId, run.id).fetch({}).catch((e: unknown) => setError(message(e)));
+                      }}
+                    >
+                      {t('run_cancel')}
+                    </Button>
+                  )}
                 </span>
               )}
               {pending?.pull.id !== p.id &&
