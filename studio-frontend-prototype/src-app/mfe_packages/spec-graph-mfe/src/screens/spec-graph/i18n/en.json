@@ -106,7 +106,7 @@
   "status_prepared": "Model reviews prepared at {revision}.",
   "status_prepare_again": "Prepare again",
   "status_prepare": "Prepare model reviews",
-  "status_prepare_hint": "Extract the facts of every document and embed them once, so each review with the model then takes about a minute. Minutes and model cost once (insight: about $0.50).",
+  "status_prepare_hint": "Extract the facts of every document and embed them once, so a review with the model then takes a few minutes and cents rather than a quarter of an hour. Minutes and model cost once.",
   "stage_rules": "rules",
   "stage_facts": "facts",
   "stage_embeddings": "embeddings",
@@ -117,9 +117,10 @@
   "state_failed": "failed",
   "state_cancelled": "cancelled",
   "state_interrupted": "interrupted",
-  "pulls_not_prepared": "Model reviews are not prepared: the first review with the model extracts the facts of every document (insight: about 16 minutes and $0.57). Prepare them once from the bar above, and each review then takes about a minute.",
+  "pulls_not_prepared": "Model reviews are not prepared: the first review with the model extracts the facts of every document (insight: 16 minutes and $0.57). Prepare them once from the bar above, and a review then takes a few minutes and cents.",
   "reviewing_model_at": "Reviewing with the model: {line}",
   "last_running": "running",
   "last_model": "With model: {what}, {at}",
-  "last_review": "Last review: {what}, {at}"
+  "last_review": "Last review: {what}, {at}",
+  "status_prepare_failed": "The last preparation failed: {error}"
 }

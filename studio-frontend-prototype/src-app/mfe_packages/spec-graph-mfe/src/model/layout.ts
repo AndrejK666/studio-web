@@ -6,8 +6,9 @@
  *
  * Around a centre node the start is radial (ring by hops from the centre) and
  * the centre stays fixed; for the whole graph each type starts on its own ring.
- * Repulsion is computed only between nodes in neighbouring cells of a grid, so a
- * picture of a thousand nodes lays out in well under a second.
+ * Repulsion reaches one grid cell and fades to nothing there, so it is computed
+ * only between nodes of neighbouring cells, and a picture of a thousand nodes
+ * lays out in well under a second.
  */
 
 import type { PictureEdge, PictureNode } from '../api/types';
@@ -110,7 +111,12 @@ export function layout(
               ey = hash(`${j}|${i}`) - 0.5;
               d2 = 0.25;
             }
-            const f = (spacing * spacing) / d2;
+            // within one cell only, fading to nothing at its edge: a cut-off by cells
+            // rather than by distance makes a force that jumps at cell borders, and nodes
+            // pile up along them
+            if (d2 >= cell * cell) continue;
+            const fade = 1 - Math.sqrt(d2) / cell;
+            const f = ((spacing * spacing) / d2) * fade * fade;
             dx[i] += ex * f;
             dy[i] += ey * f;
             dx[j] -= ex * f;
@@ -134,8 +140,8 @@ export function layout(
     const cap = spacing * 2 * cool + 1;
     for (let i = 0; i < n; i += 1) {
       if (i === fixed) continue;
-      dx[i] -= x[i] * 0.01;
-      dy[i] -= y[i] * 0.01;
+      dx[i] -= x[i] * 0.004;
+      dy[i] -= y[i] * 0.004;
       const d = Math.sqrt(dx[i] * dx[i] + dy[i] * dy[i]);
       const k = d > cap ? cap / d : 1;
       x[i] += dx[i] * k;

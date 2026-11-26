@@ -77,8 +77,9 @@ export class SpecGraphApiService extends BaseApiService {
     >('POST', `${BASE}/reviews?${q({ project_id: projectId })}`);
   }
 
+  /** A run; waits up to 5 s for it to end, so a page following it shows its progress as it goes. */
   readonly run = this.protocol(RestEndpointProtocol).queryWith<{ run: Run }, { projectId: string; runId: string }>(
-    ({ projectId, runId }) => `${BASE}/runs/${encodeURIComponent(runId)}?${q({ project_id: projectId, wait: '25' })}`
+    ({ projectId, runId }) => `${BASE}/runs/${encodeURIComponent(runId)}?${q({ project_id: projectId, wait: '5' })}`
   );
 
   /** The project's runs, newest first; a running one with its progress. */

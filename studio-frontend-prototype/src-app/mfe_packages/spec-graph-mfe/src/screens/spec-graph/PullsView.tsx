@@ -31,8 +31,8 @@ import { KitAbsentState } from '@constructor-studio/mfe-shared/page';
 
 type Text = ReturnType<typeof useSpecGraphTranslations>['t'];
 
-/** How many 25 s waits a model review is followed for: about forty minutes. */
-const MAX_WAITS = 96;
+/** How many 5 s waits a model review is followed for: about forty minutes. */
+const MAX_WAITS = 480;
 
 // The gear's own sentence (a 503 names what to configure), not the transport's status line.
 const message = (e: unknown) => refusalText(e) ?? (e instanceof Error ? e.message : String(e));

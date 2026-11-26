@@ -99,6 +99,7 @@ export const GraphStatus: React.FC<{
   const indexing = runs.index.find((r) => !ended(r));
   const preparing = runs.prepare.find((r) => !ended(r));
   const failed = runs.index[0]?.state === 'failed' ? runs.index[0] : null;
+  const prepareFailed = runs.prepare[0]?.state === 'failed' ? runs.prepare[0] : null;
   return (
     <div className={styles.status} aria-label={t('status_label')}>
       {nodes === null ? (
@@ -130,6 +131,9 @@ export const GraphStatus: React.FC<{
         <Button size="sm" variant="outline" onClick={() => void start('prepare')} title={t('status_prepare_hint')}>
           {t('status_prepare')}
         </Button>
+      )}
+      {prepareFailed && !preparing && (
+        <span className={styles.error}>{t('status_prepare_failed', { error: prepareFailed.error ?? '' })}</span>
       )}
       {error && <span className={styles.error}>{error}</span>}
     </div>

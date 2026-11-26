@@ -72,7 +72,9 @@ describe('GraphView', () => {
     fireEvent.change(screen.getAllByRole('textbox')[0], { target: { value: 'chat service' } });
     fireEvent.click(screen.getByText('graph_find'));
     fireEvent.click(await screen.findByTitle(SVC));
-    await waitFor(() => expect(screen.getAllByText('Chat service').length).toBeGreaterThan(1));
+    // the hits give way to the node's map
+    await waitFor(() => expect(screen.queryByTitle(SVC)).toBeNull());
+    expect(await screen.findByText('Chat service')).toBeTruthy();
   });
 
   it('says the graph is not built yet instead of opening on nothing', () => {

@@ -111,7 +111,10 @@ export const GraphView: React.FC<{
     };
   }, [api, projectId, current, mode, empty]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const open = (key: string) => setTrail((tr) => (tr[tr.length - 1] === key ? tr : [...tr, key]));
+  const open = (key: string) => {
+    setHits(null);   // the picture or the map takes the place of the hits
+    setTrail((tr) => (tr[tr.length - 1] === key ? tr : [...tr, key]));
+  };
   /** From a picture: Whole graph opens the node to a depth; Depth centres on it. */
   const openFromPicture = (key: string) => {
     open(key);

@@ -62,10 +62,17 @@ export const GraphPicture: React.FC<{
   const drag = useRef<{ x: number; y: number; box: typeof box } | null>(null);
   const svg = useRef<SVGSVGElement | null>(null);
   const zoom = fit.w / box.w;
-  const many = picture.nodes.length > 80;
-  const r = many ? 5 : 8;
+  const count = picture.nodes.length;
+  const many = count > 80;
+  // sizes in the layout's units, which the picture shows about 1:1 when it fits
+  const r = count > 300 ? 6 : many ? 8 : 10;
   const showLabel = (n: PictureNode) =>
-    n.key === centre || !many || zoom > 2.2 || (zoom > 1.2 && n.type !== 'section') || (laid.hops.get(n.key) ?? 9) <= (many ? 0 : 1);
+    n.key === centre ||
+    !many ||
+    zoom > 2.2 ||
+    (zoom > 1.2 && n.type !== 'section') ||
+    (count <= 60 && (laid.hops.get(n.key) ?? 9) <= 1) ||
+    (count > 60 && n.type === 'document');
 
   const scaleBy = (k: number, cx = box.x + box.w / 2, cy = box.y + box.h / 2) => {
     const w = Math.min(fit.w * 2, Math.max(fit.w / 20, box.w / k));
