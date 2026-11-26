@@ -35,6 +35,8 @@ export interface EdgeAttrs {
   kind: 'static' | 'analysis';
   /** The edge type (`links_to`, …). Not `type`: sigma reads `type` as the program that draws it. */
   relation: string;
+  /** Shown on the edge where edge labels are drawn (the ontology). */
+  label: string;
   color: string;
   size: number;
 }
@@ -92,14 +94,33 @@ export function toGraph(p: Picture): PictureGraph {
     const attrs: EdgeAttrs = {
       kind: e.kind,
       relation: e.type,
+      label: e.type,
       color: analysis ? '#7c3aed' : '#cbd5e1',
       size: analysis ? 1.2 : 0.6,
     };
     const at = g.edge(e.from, e.to);
-    if (at === undefined) g.addEdge(e.from, e.to, attrs);
-    else if (analysis) g.replaceEdgeAttributes(at, attrs);
+    if (at === undefined) {
+      g.addEdge(e.from, e.to, attrs);
+      continue;
+    }
+    // one edge per pair: its relations listed, a judge's edge drawn as one
+    const had = g.getEdgeAttributes(at);
+    const relation = had.relation.split(', ').includes(e.type) ? had.relation : `${had.relation}, ${e.type}`;
+    g.replaceEdgeAttributes(
+      at,
+      analysis || had.kind === 'analysis'
+        ? { ...attrs, kind: 'analysis', color: '#7c3aed', size: 1.2, relation, label: relation }
+        : { ...had, relation, label: relation },
+    );
   }
-  g.forEachNode((k) => g.setNodeAttribute(k, 'size', sizeFor(g.degree(k))));
+  const weights = new Map(p.nodes.filter((n) => n.weight != null).map((n) => [n.key, n.weight as number]));
+  g.forEachNode((k) =>
+    g.setNodeAttribute(
+      k,
+      'size',
+      weights.has(k) ? Math.min(24, 4 + Math.sqrt(weights.get(k) ?? 0) * 0.45) : sizeFor(g.degree(k)),
+    ),
+  );
   return g;
 }
 
@@ -200,4 +221,32 @@ export function colourBy(g: PictureGraph, by: 'type' | 'cluster', found: Cluster
 export function leaders(g: PictureGraph, count: number, centre?: string): Set<string> {
   const ranked = g.nodes().sort((a, b) => g.degree(b) - g.degree(a));
   return new Set([...(centre ? [centre] : []), ...ranked.slice(0, count)]);
+}
+
+/** The ontology as a picture: each node type a node (sized by this project's count), each edge type an edge. */
+export function ontologyPicture(o: {
+  nodes: Record<string, string>;
+  edges: Record<string, { from: string[]; to: string[]; kind: string }>;
+  counts?: Record<string, number>;
+}): Picture {
+  const counts = o.counts ?? {};
+  const types = [...new Set([...Object.keys(o.nodes), ...Object.keys(counts)])];
+  return {
+    nodes: types.map((type) => ({
+      key: type,
+      type,
+      name: `${type} (${counts[type] ?? 0})`,
+      weight: counts[type] ?? 0,
+    })),
+    edges: Object.entries(o.edges).flatMap(([name, e]) =>
+      e.from.flatMap((from) =>
+        e.to.map((to) => ({
+          from,
+          to,
+          type: name,
+          kind: (e.kind.startsWith('analysis') ? 'analysis' : 'static') as 'analysis' | 'static',
+        })),
+      ),
+    ),
+  };
 }

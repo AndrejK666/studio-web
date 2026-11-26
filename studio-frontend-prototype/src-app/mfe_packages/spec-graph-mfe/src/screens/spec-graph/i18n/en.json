@@ -130,5 +130,9 @@
   "graph_links": "{count} links",
   "graph_colour": "Colour",
   "graph_colour_cluster": "by cluster",
-  "graph_colour_type": "by type"
+  "graph_colour_type": "by type",
+  "ontology_as": "Show the ontology as",
+  "ontology_as_table": "Table",
+  "ontology_as_graph": "Graph",
+  "ontology_graph_hint": "Each node type is a node, sized by how many this project's graph holds; each edge type an edge between the types it connects (a judge's conclusion in purple). Types with 0 appear in later runs: facts and concepts with an index that extracts facts, findings with a contradictions run, the judges' edges with the realization and status judges."
 }

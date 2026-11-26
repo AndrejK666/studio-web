@@ -134,6 +134,8 @@ export interface PictureNode {
   name?: string | null;
   path?: string;
   line?: number;
+  /** What sizes the node instead of its links (the ontology: how many nodes of the type). */
+  weight?: number;
 }
 
 export interface PictureEdge {

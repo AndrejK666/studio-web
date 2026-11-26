@@ -55,7 +55,9 @@ export const GraphCanvas: React.FC<{
   colouring: Colouring;
   onOpen: (key: string) => void;
   t: Text;
-}> = ({ picture, layout, centre, colouring, onOpen, t }) => {
+  /** Label every node and every edge (a small picture: the ontology). */
+  labelAll?: boolean;
+}> = ({ picture, layout, centre, colouring, onOpen, t, labelAll = false }) => {
   const { g, found } = useLaidOut(picture, layout, centre);
   const box = useRef<HTMLDivElement | null>(null);
   const frame = useRef<HTMLDivElement | null>(null);
@@ -79,8 +81,11 @@ export const GraphCanvas: React.FC<{
     if (!el) return undefined;
     colourBy(g, colouring, found);
     // labelled while zoomed out: each cluster's lead document (whole graph), or the best-linked few (depth)
-    const shown =
-      layout === 'islands' ? new Set(found.filter((c) => c.size >= 4).map((c) => c.lead)) : leaders(g, 8, centre);
+    const shown = labelAll
+      ? new Set(g.nodes())
+      : layout === 'islands'
+        ? new Set(found.filter((c) => c.size >= 4).map((c) => c.lead))
+        : leaders(g, 8, centre);
     const ink = getComputedStyle(el).color || '#0f172a';
     let r: Sigma<NodeAttrs, EdgeAttrs> | null = null;
     let live = true;
@@ -97,12 +102,15 @@ export const GraphCanvas: React.FC<{
             labelFont: 'Inter Variable, Inter, ui-sans-serif, system-ui, sans-serif',
             labelColor: { color: ink },
             zIndex: true,
+            renderEdgeLabels: labelAll,
+            edgeLabelSize: 11,
+            edgeLabelColor: { color: '#64748b' },
             minCameraRatio: 0.03,
             maxCameraRatio: 3,
             defaultEdgeColor: '#cbd5e1',
             nodeReducer: (key, a) => {
               const hover = hoverRef.current;
-              const lead = shown.has(key) && (key === centre || ratioRef.current > 0.5);
+              const lead = shown.has(key) && (labelAll || key === centre || ratioRef.current > 0.5);
               if (!hover) return { ...a, forceLabel: lead, zIndex: lead ? 1 : 0 };
               if (key === hover || g.areNeighbors(key, hover))
                 return {
@@ -154,7 +162,7 @@ export const GraphCanvas: React.FC<{
       hoverRef.current = null;
       r?.kill();
     };
-  }, [g, found, layout, centre]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [g, found, layout, centre, labelAll]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const zoom = (k: number) => {
     const cam = sigma.current?.getCamera();

@@ -6,21 +6,47 @@
  * a project's documents; Studio's Project domain model is another thing.
  */
 
-import React from 'react';
-import { Badge, Card, CardContent, CardHeader, CardTitle } from '@gears-frontx/ui-kit';
+import React, { useMemo, useState } from 'react';
+import { Badge, Button, Card, CardContent, CardHeader, CardTitle } from '@gears-frontx/ui-kit';
 import type { Ontology } from '../../api/types';
 import { useSpecGraphTranslations } from '../../i18n';
 import { lookOf } from '../../model/look';
+import { ontologyPicture } from '../../model/picture';
+import { GraphCanvas } from './GraphCanvas';
 import styles from './SpecGraphScreen.module.css';
 
 type Text = ReturnType<typeof useSpecGraphTranslations>['t'];
 
 export const OntologyView: React.FC<{ ontology: Ontology; t: Text }> = ({ ontology, t }) => {
+  const [as, setAs] = useState<'table' | 'graph'>('table');
+  const picture = useMemo(() => ontologyPicture(ontology), [ontology]);
+  const toggle = (
+    <div className={styles.modes} role="group" aria-label={t('ontology_as')}>
+      <Button size="sm" variant={as === 'table' ? undefined : 'outline'} onClick={() => setAs('table')}>
+        {t('ontology_as_table')}
+      </Button>
+      <Button size="sm" variant={as === 'graph' ? undefined : 'outline'} onClick={() => setAs('graph')}>
+        {t('ontology_as_graph')}
+      </Button>
+    </div>
+  );
+  if (as === 'graph') {
+    return (
+      <>
+        {toggle}
+        <p className={styles.muted}>{t('ontology_graph_hint')}</p>
+        <GraphCanvas picture={picture} layout="around" colouring="type" onOpen={() => undefined} labelAll t={t} />
+      </>
+    );
+  }
   const counts = ontology.counts ?? {};
-  const nodeTypes = Object.keys(ontology.nodes).sort((a, b) => (counts[b] ?? 0) - (counts[a] ?? 0) || a.localeCompare(b));
+  const nodeTypes = Object.keys(ontology.nodes).sort(
+    (a, b) => (counts[b] ?? 0) - (counts[a] ?? 0) || a.localeCompare(b),
+  );
   const extra = Object.keys(counts).filter((k) => !(k in ontology.nodes));
   return (
     <>
+      {toggle}
       <Card className={styles.document}>
         <CardHeader>
           <CardTitle>{t('ontology_nodes')}</CardTitle>

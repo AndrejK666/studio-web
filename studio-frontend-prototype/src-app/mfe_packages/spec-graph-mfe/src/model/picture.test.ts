@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import type { Picture } from '../api/types';
-import { areaOf, clusters, colourBy, layoutAround, layoutIslands, leaders, toGraph, CLUSTER_COLOURS } from './picture';
+import {
+  areaOf,
+  clusters,
+  ontologyPicture,
+  colourBy,
+  layoutAround,
+  layoutIslands,
+  leaders,
+  toGraph,
+  CLUSTER_COLOURS,
+} from './picture';
 
 /** Two components of four documents each, linked once. */
 function twoAreas(): Picture {
@@ -119,5 +129,41 @@ describe('graph pictures for sigma', () => {
     layoutAround(g);
     layoutIslands(g);
     expect(g.order).toBe(0);
+  });
+
+  it('lists every relation of a pair on its one edge', () => {
+    const g = toGraph({
+      nodes: [
+        { key: 'a', type: 'document' },
+        { key: 'b', type: 'section' },
+      ],
+      edges: [
+        { from: 'a', to: 'b', type: 'has_section', kind: 'static' },
+        { from: 'a', to: 'b', type: 'links_to', kind: 'static' },
+        { from: 'a', to: 'b', type: 'links_to', kind: 'static' },
+      ],
+    });
+    expect(g.getEdgeAttribute(g.edge('a', 'b')!, 'label')).toBe('has_section, links_to');
+  });
+
+  it('draws the ontology: types sized by count, edge types between the types they connect', () => {
+    const p = ontologyPicture({
+      nodes: { document: 'A file', requirement: 'A requirement', design_element: 'An element' },
+      edges: {
+        defines: { from: ['document'], to: ['requirement', 'design_element'], kind: 'static (from the documents)' },
+        judged_realizes: { from: ['design_element'], to: ['requirement'], kind: "analysis (a judge's conclusion)" },
+      },
+      counts: { requirement: 225, document: 83, phantom_node: 49 },
+    });
+    expect(p.nodes.map((n) => n.name).sort()).toEqual([
+      'design_element (0)',
+      'document (83)',
+      'phantom_node (49)',
+      'requirement (225)',
+    ]);
+    expect(p.edges).toHaveLength(3);
+    const g = toGraph(p);
+    expect(g.getNodeAttribute('requirement', 'size')).toBeGreaterThan(g.getNodeAttribute('document', 'size'));
+    expect(g.getEdgeAttribute(g.edge('design_element', 'requirement')!, 'kind')).toBe('analysis');
   });
 });
