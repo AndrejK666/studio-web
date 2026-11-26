@@ -8,9 +8,12 @@ import type {
   Decision,
   GraphNode,
   Neighbors,
+  Ontology,
+  Picture,
   SearchHit,
   OpenPullRequest,
   Review,
+  ReviewRecord,
   Run,
   SpecGraphCheck,
   SpecGraphFindingList,
@@ -78,6 +81,30 @@ export class SpecGraphApiService extends BaseApiService {
     ({ projectId, runId }) => `${BASE}/runs/${encodeURIComponent(runId)}?${q({ project_id: projectId, wait: '25' })}`
   );
 
+  /** The project's runs, newest first; a running one with its progress. */
+  readonly runs = this.protocol(RestEndpointProtocol).queryWith<{ items: Run[]; total: number }, { projectId: string; job: string }>(
+    ({ projectId, job }) => `${BASE}/runs?${q({ project_id: projectId, job, limit: '5' })}`
+  );
+
+  /** Start a long job: `index` (params.facts) or `prepare`. */
+  startRun(projectId: string) {
+    return this.protocol(RestEndpointProtocol).mutation<
+      { run: Run },
+      { job: 'index' | 'prepare'; params?: Record<string, unknown> }
+    >('POST', `${BASE}/runs?${q({ project_id: projectId })}`);
+  }
+
+  /** The latest review of each pull request branch, to show again after a reload. */
+  readonly reviews = this.protocol(RestEndpointProtocol).queryWith<{ items: ReviewRecord[]; total: number }, { projectId: string }>(
+    ({ projectId }) => `${BASE}/reviews?${q({ project_id: projectId })}`
+  );
+
+  /** The project's Git sources (the first is the one the graph reads by default). */
+  readonly sources = this.protocol(RestEndpointProtocol).queryWith<
+    { items: { name: string }[] },
+    { projectId: string }
+  >(({ projectId }) => `/studio-git/v1/sources?${q({ project_id: projectId })}`);
+
   /** Search the project's graph (full text and vectors). */
   search(projectId: string) {
     return this.protocol(RestEndpointProtocol).mutation<
@@ -94,4 +121,22 @@ export class SpecGraphApiService extends BaseApiService {
     { answer: Neighbors },
     { projectId: string; key: string }
   >(({ projectId, key }) => `${BASE}/graph/neighbors?${q({ project_id: projectId, key })}`);
+
+  /** The graph around one node, `depth` hops out; `types` keeps only those nodes on the way. */
+  readonly subgraph = this.protocol(RestEndpointProtocol).queryWith<
+    { answer: Picture },
+    { projectId: string; key: string; depth: number; types: string }
+  >(({ projectId, key, depth, types }) =>
+    `${BASE}/graph/subgraph?${q({ project_id: projectId, key, depth: String(depth), ...(types ? { types } : {}) })}`
+  );
+
+  /** The whole graph, or the nodes of `types` (comma-separated) and the edges between them. */
+  readonly overview = this.protocol(RestEndpointProtocol).queryWith<{ answer: Picture }, { projectId: string; types: string }>(
+    ({ projectId, types }) => `${BASE}/graph/overview?${q({ project_id: projectId, ...(types ? { types } : {}) })}`
+  );
+
+  /** The node and edge types, with the project's count of each node type. */
+  readonly ontology = this.protocol(RestEndpointProtocol).queryWith<{ answer: Ontology }, { projectId: string }>(
+    ({ projectId }) => `${BASE}/graph/ontology?${q({ project_id: projectId })}`
+  );
 }

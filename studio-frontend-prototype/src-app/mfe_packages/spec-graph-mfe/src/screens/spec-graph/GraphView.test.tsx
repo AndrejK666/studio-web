@@ -74,4 +74,66 @@ describe('GraphView', () => {
     fireEvent.click(await screen.findByTitle(SVC));
     await waitFor(() => expect(screen.getAllByText('Chat service').length).toBeGreaterThan(1));
   });
+
+  it('says the graph is not built yet instead of opening on nothing', () => {
+    render(<GraphView projectId="p1" start={REQ} counts={{}} t={t} />);
+    expect(screen.getByText('graph_empty')).toBeTruthy();
+  });
+
+  it('says a node is not in the graph when the gear answers 404', async () => {
+    service.node = () => ({ fetch: () => Promise.reject(new Error('404 not found')) });
+    service.neighbors = () => ({ fetch: () => Promise.reject(new Error('404 not found')) });
+    render(<GraphView projectId="p1" start="doc:missing.md" counts={{ document: 3 }} t={t} />);
+    expect(await screen.findByText('graph_not_in_graph')).toBeTruthy();
+  });
+
+  it('draws the graph to a depth, 2 by default and up to 4, and the whole graph', async () => {
+    const subgraph = vi.fn(({ depth }: { depth: number }) => ({
+      fetch: () =>
+        Promise.resolve({
+          answer: {
+            key: REQ,
+            depth,
+            nodes: [
+              { key: REQ, type: 'requirement', name: 'Streaming Cancellation' },
+              { key: SVC, type: 'design_element', name: 'Chat service' },
+              { key: 'sec:gears/mini-chat/docs/PRD.md#x', type: 'section', name: 'X' },
+            ],
+            edges: [{ from: SVC, to: REQ, type: 'realizes', kind: 'static' }],
+          },
+        }),
+    }));
+    const overview = vi.fn(() => ({
+      fetch: () =>
+        Promise.resolve({
+          answer: { nodes: [{ key: 'doc:a.md', type: 'document', name: 'A' }], edges: [], counts: { document: 1 } },
+        }),
+    }));
+    Object.assign(service, { subgraph, overview });
+    render(<GraphView projectId="p1" start={REQ} counts={{ requirement: 1, section: 1 }} t={t} />);
+    fireEvent.click(screen.getByText('graph_mode_depth'));
+    await waitFor(() => expect(subgraph).toHaveBeenCalledWith(expect.objectContaining({ key: REQ, depth: 2 })));
+    expect(await screen.findByLabelText('Chat service')).toBeTruthy();
+    // sections fold into their documents
+    expect(screen.getByLabelText('PRD.md')).toBeTruthy();
+    fireEvent.change(screen.getByRole('slider'), { target: { value: '4' } });
+    await waitFor(() => expect(subgraph).toHaveBeenCalledWith(expect.objectContaining({ depth: 4 })));
+    fireEvent.click(screen.getByText('graph_mode_whole'));
+    await waitFor(() => expect(overview).toHaveBeenCalledWith({ projectId: 'p1', types: 'requirement,section' }));
+    expect(await screen.findByLabelText('A')).toBeTruthy();
+    // a node of the whole graph opens to a depth
+    fireEvent.click(screen.getByLabelText('A'));
+    await waitFor(() => expect(subgraph).toHaveBeenCalledWith(expect.objectContaining({ key: 'doc:a.md' })));
+  });
+
+  it('names the document of each section it finds', async () => {
+    service.search = () => ({
+      fetch: () =>
+        Promise.resolve({ answer: { hits: [{ key: 'sec:docs/auth/PRD.md#11-purpose', type: 'section', name: '1.1 Purpose', path: 'docs/auth/PRD.md' }] } }),
+    });
+    render(<GraphView projectId="p1" start={null} counts={{ section: 1 }} t={t} />);
+    fireEvent.change(screen.getAllByRole('textbox')[0], { target: { value: 'purpose' } });
+    fireEvent.click(screen.getByText('graph_find'));
+    expect(await screen.findByText('docs/auth/PRD.md')).toBeTruthy();
+  });
 });

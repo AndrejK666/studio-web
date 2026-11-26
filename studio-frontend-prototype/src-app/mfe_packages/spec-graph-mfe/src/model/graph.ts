@@ -12,7 +12,7 @@ export function label(key: string): string {
   if (key.startsWith('finding:')) return `finding ${key.split(':')[1] ?? ''}`.trim();
   if (key.startsWith('concept:')) return key.split(':').slice(2).join(':') || key;
   if (key.startsWith('fact:')) return `fact ${key.split(':')[1]?.split('/').pop() ?? ''}`.trim();
-  const cpt = /^cpt-cf-[a-z0-9]+(?:-[a-z0-9]+)*?-(fr|nfr|usecase|component|adr|algo|flow|feature|dod|principle|constraint|seq|actor|interface|contract|upreq|req|entity|state)-(.+)$/.exec(key);
+  const cpt = /^cpt-[a-z0-9]+(?:-[a-z0-9]+)*?-(fr|nfr|usecase|component|adr|algo|flow|feature|dod|principle|constraint|seq|actor|interface|contract|upreq|req|entity|state)-(.+)$/.exec(key);
   if (cpt) return `${cpt[1]} ${cpt[2]}`;
   return key.length > 48 ? `${key.slice(0, 45)}…` : key;
 }
@@ -69,4 +69,11 @@ export function side(
 export function findingNode(path: string | null, f: Finding): string | null {
   if (!path) return null;
   return f.anchor.section ? `sec:${path}#${f.anchor.section}` : `doc:${path}`;
+}
+
+/** The document a key names: `doc:<path>`, `sec:<path>#<anchor>`; else the node's own file. */
+export function documentOf(key: string, path?: string | null): string | null {
+  if (key.startsWith('doc:')) return key.slice(4);
+  if (key.startsWith('sec:')) return key.slice(4).split('#')[0] || null;
+  return path ?? null;
 }

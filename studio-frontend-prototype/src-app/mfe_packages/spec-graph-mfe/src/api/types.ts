@@ -95,12 +95,71 @@ export interface Review {
   fingerprints: string[];
 }
 
+/** What a running step last reported (`specq.progress`): `facts` 40 of 85, `embeddings`, `judging`. */
+export interface RunProgress {
+  stage: string;
+  done?: number | null;
+  total?: number | null;
+}
+
 export interface Run {
   id: string;
   job: string;
   state: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted';
   error: string | null;
-  result: (Partial<Review> & { stats?: { model_cost_usd?: number } }) | null;
+  created?: string;
+  started?: string | null;
+  finished?: string | null;
+  revision?: string;
+  params?: { base?: string; head?: string; head_rev?: string; facts?: boolean } | null;
+  progress?: RunProgress | null;
+  result: (Partial<Review> & { stats?: { model_cost_usd?: number }; cost_usd?: number }) | null;
+}
+
+/** The latest review of a pull request branch: the deterministic one kept, or the latest model run. */
+export interface ReviewRecord {
+  kind: 'review' | 'model';
+  base: string;
+  head: string;
+  head_rev?: string;
+  at?: string;
+  result?: Review;
+  run?: Run;
+}
+
+/** A node as the graph pictures show it. */
+export interface PictureNode {
+  key: string;
+  type: string;
+  name?: string | null;
+  path?: string;
+  line?: number;
+}
+
+export interface PictureEdge {
+  from: string;
+  to: string;
+  type: string;
+  kind: 'static' | 'analysis';
+}
+
+/** The graph around one node (`subgraph`) or the whole graph (`graph`). */
+export interface Picture {
+  key?: string;
+  depth?: number;
+  types?: string[];
+  counts?: Record<string, number>;
+  nodes: PictureNode[];
+  edges: PictureEdge[];
+  truncated?: boolean;
+}
+
+/** The spec graph's ontology, with the project's count of each node type. */
+export interface Ontology {
+  nodes: Record<string, string>;
+  edges: Record<string, { description: string; from: string[]; to: string[]; kind: string }>;
+  keys?: string;
+  counts?: Record<string, number>;
 }
 
 /** A node of the project's spec graph (the service's `node` tool). */

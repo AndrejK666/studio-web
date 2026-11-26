@@ -6109,12 +6109,19 @@ response	GET /studio-spec-graph/v1/findings	items	Vec<Value>	always
 response	GET /studio-spec-graph/v1/findings	total	u32	always
 response	GET /studio-spec-graph/v1/graph/neighbors	answer	Value	always
 response	GET /studio-spec-graph/v1/graph/node	answer	Value	always
+response	GET /studio-spec-graph/v1/graph/ontology	answer	Value	always
+response	GET /studio-spec-graph/v1/graph/overview	answer	Value	always
+response	GET /studio-spec-graph/v1/graph/subgraph	answer	Value	always
 response	GET /studio-spec-graph/v1/metrics	answer	Value	always
 response	GET /studio-spec-graph/v1/project	project	Value	always
 response	GET /studio-spec-graph/v1/project	project_id	String	always
 response	GET /studio-spec-graph/v1/project	registered	bool	always
 response	GET /studio-spec-graph/v1/project	repository	String	optional
 response	GET /studio-spec-graph/v1/project	service	Value	always
+response	GET /studio-spec-graph/v1/reviews	items	Vec<Value>	always
+response	GET /studio-spec-graph/v1/reviews	total	u32	always
+response	GET /studio-spec-graph/v1/runs	items	Vec<Value>	always
+response	GET /studio-spec-graph/v1/runs	total	u32	always
 response	GET /studio-spec-graph/v1/runs/{}	run	Value	always
 response	GET /studio-spec-mapping/v1/capabilities	items	Vec<{}>	always
 response	GET /studio-spec-mapping/v1/capabilities	items.key	String	always
@@ -10020,8 +10027,13 @@ route	GET /studio-spec-graph/v1/calibration
 route	GET /studio-spec-graph/v1/findings
 route	GET /studio-spec-graph/v1/graph/neighbors
 route	GET /studio-spec-graph/v1/graph/node
+route	GET /studio-spec-graph/v1/graph/ontology
+route	GET /studio-spec-graph/v1/graph/overview
+route	GET /studio-spec-graph/v1/graph/subgraph
 route	GET /studio-spec-graph/v1/metrics
 route	GET /studio-spec-graph/v1/project
+route	GET /studio-spec-graph/v1/reviews
+route	GET /studio-spec-graph/v1/runs
 route	GET /studio-spec-graph/v1/runs/{}
 route	GET /studio-spec-mapping/v1/capabilities
 route	GET /studio-spec-mapping/v1/decisions

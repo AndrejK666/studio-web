@@ -54,6 +54,13 @@ describe('SpecGraphScreen', () => {
     scope.project = 'p1';
     scope.available = null;
     for (const k of Object.keys(service)) delete service[k];
+    // The graph's state above every view: an empty graph, no runs, one Git source.
+    Object.assign(service, {
+      ontology: query({ answer: { nodes: {}, edges: {}, counts: {} } }),
+      runs: query({ items: [], total: 0 }),
+      reviews: query({ items: [], total: 0 }),
+      sources: query({ items: [{ name: 'insight' }] }),
+    });
   });
 
   it('asks for a project when none is open', () => {
@@ -70,12 +77,39 @@ describe('SpecGraphScreen', () => {
       check: () => ({ fetch: () => Promise.resolve({ revision: 'abc', count: 0, blocking: 0, dismissed: 0, documents: [] }) }),
     });
     render(<SpecGraphScreen bridge={bridge()} />);
-    fireEvent.change(await screen.findByDisplayValue('--docs-root docs --name docs .'), {
-      target: { value: 'gears/a gears/b' },
-    });
+    // One documentation directory by default, named after the project's first source.
+    expect(await screen.findByDisplayValue('insight')).toBeTruthy();
+    expect(screen.getByText('--docs-root docs --name insight .')).toBeTruthy();
+    fireEvent.click(screen.getByLabelText('setup_layout_gears'));
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'gears/a\ngears/b' } });
+    expect(screen.getByText('gears/a gears/b', { selector: 'code' })).toBeTruthy();
     fireEvent.click(screen.getByText('setup_submit'));
     await waitFor(() => expect(setup).toHaveBeenCalledWith({ scope: 'gears/a gears/b' }));
     expect(await screen.findByText('nothing')).toBeTruthy();
+  });
+
+  it('builds the graph from the bar, and offers Show in graph only once it is built', async () => {
+    const start = vi.fn((..._args: unknown[]) => Promise.resolve({ run: { id: 'r1', job: 'index', state: 'queued' } }));
+    Object.assign(service, {
+      project: query({ project_id: 'p1', registered: true, project: { repository: { url: 'u', ref: 'main' } }, service: null }),
+      check: () => ({
+        fetch: () =>
+          Promise.resolve({
+            revision: 'abc',
+            count: 1,
+            blocking: 1,
+            dismissed: 0,
+            documents: [{ path: 'docs/a.md', detector: 'spec_graph', findings: [finding('f1', 'block', 'link.resolves')] }],
+          }),
+      }),
+      startRun: () => ({ fetch: start }),
+    });
+    render(<SpecGraphScreen bridge={bridge()} />);
+    expect(await screen.findByText('status_empty')).toBeTruthy();
+    expect(await screen.findByText('link.resolves title')).toBeTruthy();
+    expect(screen.queryByText('show_in_graph')).toBeNull();
+    fireEvent.click(screen.getByText('status_build'));
+    await waitFor(() => expect(start).toHaveBeenCalledWith({ job: 'index', params: { facts: false } }));
   });
 
   it('lists the findings now by document, blocking first, and a decision takes one out', async () => {

@@ -212,6 +212,31 @@ pub struct NodeQuery {
 }
 
 #[derive(serde::Deserialize)]
+pub struct SubgraphQuery {
+    pub project_id: String,
+    pub key: String,
+    pub depth: Option<u32>,
+    /// Node type names, comma-separated: only those nodes on the way.
+    pub types: Option<String>,
+    pub limit: Option<u32>,
+}
+
+#[derive(serde::Deserialize)]
+pub struct OverviewQuery {
+    pub project_id: String,
+    /// Node type names, comma-separated; every type but sections and facts when absent.
+    pub types: Option<String>,
+    pub limit: Option<u32>,
+}
+
+#[derive(serde::Deserialize)]
+pub struct RunListQuery {
+    pub project_id: String,
+    pub job: Option<String>,
+    pub limit: Option<u32>,
+}
+
+#[derive(serde::Deserialize)]
 pub struct CalibrationQuery {
     pub project_id: String,
     pub rule: Option<String>,
@@ -297,10 +322,28 @@ pub struct SpecGraphReviewDto {
 #[derive(Debug)]
 #[toolkit_macros::api_dto(request)]
 pub struct SpecGraphRunRequest {
-    /// `index`, `contradictions`, `realization` or `status`.
+    /// `index`, `prepare` (the facts and embeddings a model review reads, made ahead),
+    /// `contradictions`, `realization` or `status`.
     pub job: String,
     /// The job's options: `facts` (index), `cap`, `skip_judged` (contradictions).
     pub params: Option<Value>,
+}
+
+/// A project's runs on the service, newest first; a running one with its `progress`.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct SpecGraphRunListDto {
+    pub items: Vec<Value>,
+    pub total: u32,
+}
+
+/// The latest review of each pull request branch: `{kind: review|model, base, head, head_rev,
+/// at, result | run}`, newest first.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct SpecGraphReviewListDto {
+    pub items: Vec<Value>,
+    pub total: u32,
 }
 
 /// A run on the service: `{id, job, state, revision, steps, result, error, log_tail}`.
@@ -593,11 +636,11 @@ async fn start_run(
     let project_id = reach(&st, &ctx, &q.project_id).await?;
     if !matches!(
         req.job.as_str(),
-        "index" | "contradictions" | "realization" | "status"
+        "index" | "prepare" | "contradictions" | "realization" | "status"
     ) {
         return Err(invalid(
             "job",
-            "index, contradictions, realization or status",
+            "index, prepare, contradictions, realization or status",
         ));
     }
     let body = json!({
@@ -652,6 +695,68 @@ async fn get_run(
     Ok(Json(SpecGraphRunDto {
         run: own_run(run, project_id)?,
     }))
+}
+
+async fn list_runs(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(st): Extension<Arc<State>>,
+    Query(q): Query<RunListQuery>,
+) -> ApiResult<JsonBody<SpecGraphRunListDto>> {
+    let project_id = reach(&st, &ctx, &q.project_id).await?;
+    let mut query = vec![
+        ("project", project_id.to_string()),
+        ("limit", q.limit.unwrap_or(20).min(100).to_string()),
+    ];
+    if let Some(job) = q.job.filter(|j| !j.is_empty()) {
+        query.push(("job", job));
+    }
+    let v = st
+        .client
+        .call(
+            Method::GET,
+            "/v1/runs",
+            &query,
+            None,
+            &CallHeaders::default(),
+        )
+        .await
+        .map_err(upstream)?;
+    let items: Vec<Value> = v
+        .get("runs")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|r| own_run(r.clone(), project_id).is_ok())
+        .collect();
+    let total = u32::try_from(items.len()).unwrap_or(u32::MAX);
+    Ok(Json(SpecGraphRunListDto { items, total }))
+}
+
+async fn list_reviews(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(st): Extension<Arc<State>>,
+    Query(q): Query<ProjectQuery>,
+) -> ApiResult<JsonBody<SpecGraphReviewListDto>> {
+    let project_id = reach(&st, &ctx, &q.project_id).await?;
+    let v = st
+        .client
+        .call(
+            Method::GET,
+            &project_path(project_id, "/reviews"),
+            &[],
+            None,
+            &CallHeaders::default(),
+        )
+        .await
+        .map_err(upstream)?;
+    let items: Vec<Value> = v
+        .get("reviews")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let total = u32::try_from(items.len()).unwrap_or(u32::MAX);
+    Ok(Json(SpecGraphReviewListDto { items, total }))
 }
 
 async fn cancel_run(
@@ -848,6 +953,64 @@ async fn get_graph_neighbors(
     }))
 }
 
+/// `a, b ,c` -> `["a", "b", "c"]`.
+fn type_list(raw: Option<&str>) -> Option<Vec<String>> {
+    let v: Vec<String> = raw?
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .collect();
+    (!v.is_empty()).then_some(v)
+}
+
+async fn get_subgraph(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(st): Extension<Arc<State>>,
+    Query(q): Query<SubgraphQuery>,
+) -> ApiResult<JsonBody<SpecGraphAnswerDto>> {
+    let project_id = reach(&st, &ctx, &q.project_id).await?;
+    let mut args = json!({"key": q.key, "depth": q.depth.unwrap_or(2).clamp(1, 4)});
+    if let Some(t) = type_list(q.types.as_deref()) {
+        args["types"] = json!(t);
+    }
+    if let Some(l) = q.limit {
+        args["limit"] = json!(l.min(1000));
+    }
+    Ok(Json(SpecGraphAnswerDto {
+        answer: tool(&st, "subgraph", project_id, args).await?,
+    }))
+}
+
+async fn get_overview(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(st): Extension<Arc<State>>,
+    Query(q): Query<OverviewQuery>,
+) -> ApiResult<JsonBody<SpecGraphAnswerDto>> {
+    let project_id = reach(&st, &ctx, &q.project_id).await?;
+    let mut args = json!({});
+    if let Some(t) = type_list(q.types.as_deref()) {
+        args["types"] = json!(t);
+    }
+    if let Some(l) = q.limit {
+        args["limit"] = json!(l.min(4000));
+    }
+    Ok(Json(SpecGraphAnswerDto {
+        answer: tool(&st, "graph", project_id, args).await?,
+    }))
+}
+
+async fn get_ontology(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(st): Extension<Arc<State>>,
+    Query(q): Query<ProjectQuery>,
+) -> ApiResult<JsonBody<SpecGraphAnswerDto>> {
+    let project_id = reach(&st, &ctx, &q.project_id).await?;
+    Ok(Json(SpecGraphAnswerDto {
+        answer: tool(&st, "ontology", project_id, json!({"counts": true})).await?,
+    }))
+}
+
 async fn get_metrics(
     Extension(ctx): Extension<SecurityContext>,
     Extension(st): Extension<Arc<State>>,
@@ -988,7 +1151,9 @@ pub fn register_routes(router: Router, openapi: &dyn OpenApiRegistry, state: Arc
     .summary("Start a long spec-graph job on a project: index, contradictions or a judge")
     .description(
         "A run on the spec-graph service at the head of the project's branch: `index` builds the \
-         project's graph (`params.facts: false` for the structure only), `contradictions` judges \
+         project's graph (`params.facts: false` for the structure only), `prepare` makes the \
+         facts and embeddings a review with the model reads, ahead of the first one (minutes and \
+         model cost once; the reviews after it take a minute), `contradictions` judges \
          the corpus (`params.cap`), `realization` and `status` run those judges. Minutes, and \
          model cost for all but a structure index. The same Idempotency-Key header answers the \
          same run. Follow it with GET /studio-spec-graph/v1/runs/{run_id}.",
@@ -1182,6 +1347,120 @@ pub fn register_routes(router: Router, openapi: &dyn OpenApiRegistry, state: Arc
     .error_500(openapi)
     .register(router, openapi);
 
+    let router = OperationBuilder::get("/studio-spec-graph/v1/graph/subgraph")
+    .operation_id("studio_spec_graph.get_subgraph")
+    .summary("The graph around one node of a project's spec graph")
+    .description(
+        "The nodes `depth` hops out from a node (1-4, default 2), both directions, and the edges \
+         between them: each node with its key, type, name and file; each edge static (from the \
+         documents) or analysis (a judge's conclusion). `types` (comma-separated node type names) \
+         keeps only those nodes on the way; at most `limit` nodes (300 by default, 1000 at most), \
+         `truncated` when there were more.",
+    )
+    .tag("StudioSpecGraph")
+    .authenticated()
+    .require_license_features::<License>([])
+    .query_param("project_id", true, "The project")
+    .query_param("key", true, "The node's key")
+    .query_param("depth", false, "Hops out, 1-4 (default 2)")
+    .query_param("types", false, "Node type names, comma-separated")
+    .query_param("limit", false, "At most this many nodes (default 300, at most 1000)")
+    .handler(get_subgraph)
+    .json_response_with_schema::<SpecGraphAnswerDto>(openapi, StatusCode::OK, "The nodes and edges")
+    .error_400(openapi)
+    .error_401(openapi)
+    .error_404(openapi)
+    .error_500(openapi)
+    .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-spec-graph/v1/graph/overview")
+    .operation_id("studio_spec_graph.get_graph_overview")
+    .summary("A project's whole spec graph, or the nodes of some types")
+    .description(
+        "Every node of the given types (comma-separated names) and the edges between them, with \
+         the count of each type in the graph. Without `types`, sections and facts are left out: \
+         they are most of the nodes. At most `limit` nodes (4000).",
+    )
+    .tag("StudioSpecGraph")
+    .authenticated()
+    .require_license_features::<License>([])
+    .query_param("project_id", true, "The project")
+    .query_param("types", false, "Node type names, comma-separated")
+    .query_param("limit", false, "At most this many nodes (4000)")
+    .handler(get_overview)
+    .json_response_with_schema::<SpecGraphAnswerDto>(openapi, StatusCode::OK, "The nodes and edges")
+    .error_400(openapi)
+    .error_401(openapi)
+    .error_404(openapi)
+    .error_500(openapi)
+    .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-spec-graph/v1/graph/ontology")
+        .operation_id("studio_spec_graph.get_graph_ontology")
+        .summary("The spec graph's ontology, with a project's count of each node type")
+        .description(
+            "The node types (document, section, requirement, design element, decision, …) and edge \
+         types the spec graph is built of, what each edge connects and whether it is static or a \
+         judge's conclusion, how keys are formed, and how many nodes of each type the project's \
+         graph holds.",
+        )
+        .tag("StudioSpecGraph")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("project_id", true, "The project")
+        .handler(get_ontology)
+        .json_response_with_schema::<SpecGraphAnswerDto>(openapi, StatusCode::OK, "The ontology")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-spec-graph/v1/runs")
+        .operation_id("studio_spec_graph.list_runs")
+        .summary("A project's runs, newest first")
+        .description(
+            "The project's runs on the spec-graph service (index, prepare, reviews with the model, \
+         judges), newest first, optionally of one `job`; a running one with its `progress` \
+         (stage, done, total).",
+        )
+        .tag("StudioSpecGraph")
+        .authenticated()
+        .require_license_features::<License>([])
+        .query_param("project_id", true, "The project")
+        .query_param("job", false, "Only runs of this job")
+        .query_param(
+            "limit",
+            false,
+            "At most this many (default 20, at most 100)",
+        )
+        .handler(list_runs)
+        .json_response_with_schema::<SpecGraphRunListDto>(openapi, StatusCode::OK, "The runs")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/studio-spec-graph/v1/reviews")
+    .operation_id("studio_spec_graph.list_reviews")
+    .summary("The latest review of each pull request branch")
+    .description(
+        "For each pull request branch reviewed: the latest deterministic review (its threads) and \
+         the latest review with the model (its run, finished or still going), newest first.",
+    )
+    .tag("StudioSpecGraph")
+    .authenticated()
+    .require_license_features::<License>([])
+    .query_param("project_id", true, "The project")
+    .handler(list_reviews)
+    .json_response_with_schema::<SpecGraphReviewListDto>(openapi, StatusCode::OK, "The reviews")
+    .error_400(openapi)
+    .error_401(openapi)
+    .error_404(openapi)
+    .error_500(openapi)
+    .register(router, openapi);
+
     let router = OperationBuilder::get("/studio-spec-graph/v1/metrics")
     .operation_id("studio_spec_graph.get_metrics")
     .summary("A project's spec quality in numbers")
@@ -1224,6 +1503,16 @@ mod tests {
         assert_eq!(source_name(&p), Some("gears-rust"));
         assert_eq!(source_name(&json!({"name": "api"})), Some("api"));
         assert_eq!(source_name(&Value::Null), None);
+    }
+
+    #[test]
+    fn type_lists_are_comma_separated_and_never_empty() {
+        assert_eq!(
+            type_list(Some(" document, requirement ,,")),
+            Some(vec!["document".to_owned(), "requirement".to_owned()])
+        );
+        assert_eq!(type_list(Some(" , ")), None);
+        assert_eq!(type_list(None), None);
     }
 
     #[test]

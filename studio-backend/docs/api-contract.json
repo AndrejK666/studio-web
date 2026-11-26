@@ -4472,6 +4472,57 @@
     },
     {
       "method": "GET",
+      "path": "/studio-spec-graph/v1/graph/ontology",
+      "operation_id": "studio_spec_graph.get_graph_ontology",
+      "tag": "StudioSpecGraph",
+      "summary": "The spec graph's ontology, with a project's count of each node type",
+      "authenticated": true,
+      "responses": [
+        "SpecGraphAnswerDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-spec-graph/v1/graph/overview",
+      "operation_id": "studio_spec_graph.get_graph_overview",
+      "tag": "StudioSpecGraph",
+      "summary": "A project's whole spec graph, or the nodes of some types",
+      "authenticated": true,
+      "responses": [
+        "SpecGraphAnswerDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-spec-graph/v1/graph/subgraph",
+      "operation_id": "studio_spec_graph.get_subgraph",
+      "tag": "StudioSpecGraph",
+      "summary": "The graph around one node of a project's spec graph",
+      "authenticated": true,
+      "responses": [
+        "SpecGraphAnswerDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/studio-spec-graph/v1/metrics",
       "operation_id": "studio_spec_graph.get_metrics",
       "tag": "StudioSpecGraph",
@@ -4496,6 +4547,40 @@
       "authenticated": true,
       "responses": [
         "SpecGraphProjectDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-spec-graph/v1/reviews",
+      "operation_id": "studio_spec_graph.list_reviews",
+      "tag": "StudioSpecGraph",
+      "summary": "The latest review of each pull request branch",
+      "authenticated": true,
+      "responses": [
+        "SpecGraphReviewListDto"
+      ],
+      "errors": [
+        "400",
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/studio-spec-graph/v1/runs",
+      "operation_id": "studio_spec_graph.list_runs",
+      "tag": "StudioSpecGraph",
+      "summary": "A project's runs, newest first",
+      "authenticated": true,
+      "responses": [
+        "SpecGraphRunListDto"
       ],
       "errors": [
         "400",

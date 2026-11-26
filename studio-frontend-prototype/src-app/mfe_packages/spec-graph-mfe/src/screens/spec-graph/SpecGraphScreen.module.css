@@ -247,3 +247,108 @@
   fill: var(--primary-foreground);
   font-weight: 600;
 }
+
+/* Graph pictures (GraphPicture): the whole graph, or a node's surroundings to a depth. */
+.picture {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.pictureSvg {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--background);
+  touch-action: none;
+  cursor: grab;
+}
+
+.pictureEdge {
+  stroke: var(--border);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.pictureNode {
+  cursor: pointer;
+}
+
+.pictureNode:hover > :not(text):not(title),
+.pictureNode:focus > :not(text):not(title) {
+  stroke: var(--foreground);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.pictureHalo {
+  fill: none;
+  stroke: var(--primary);
+  stroke-width: 2.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.pictureLabel {
+  fill: var(--foreground);
+  font-size: 11px;
+  paint-order: stroke;
+  stroke: var(--background);
+  stroke-width: 3px;
+  pointer-events: none;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  font-size: var(--text-small-size, 12px);
+}
+
+.legendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.modes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.slider {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-body-size);
+}
+
+.table th,
+.table td {
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.radio {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}

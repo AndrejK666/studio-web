@@ -44,6 +44,8 @@ studio-spec-graph spec_graph_calibration
 studio-spec-graph spec_graph_search
 studio-spec-graph spec_graph_node
 studio-spec-graph spec_graph_neighbors
+studio-spec-graph spec_graph_subgraph
+studio-spec-graph spec_graph_ontology
 studio-spec-graph spec_graph_metrics
 studio-organizations project_status
 studio-organizations project_create
