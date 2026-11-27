@@ -62,6 +62,7 @@ repository.
 - [rendered-markdown-diff.md](rendered-markdown-diff.md) — two versions of a document rendered side by side: where it opens from, how it compares, how other extensions call it.
 - [project-and-product.md](project-and-product.md) — a proposal: a project, the product it makes, the links between them, and the documents checked against the product.
 - [project-domain-model.md](project-domain-model.md) — a proposal: the project domain model (what a project's documents say; not the Studio domain model), and where the documents disagree about it.
+- [glasshouse-plan.md](glasshouse-plan.md) — a proposal: Glasshouse (a vendor opens its code to partner companies) as a Studio installation with partnership kits, and what the core is missing for it.
 - [spec-findings.md](spec-findings.md) — a proposal: what Studio reports about a specification, where in the text, and what a person can do with it.
 - [probe-calibration.md](probe-calibration.md) — measuring a findings producer against the fixes maintainers made after a snapshot (PROBE).
 - [mcp.md](mcp.md) — Studio over MCP: its domain model, requirements and spec-quality detectors as tools in an MCP client, with sign-in from the agent.
