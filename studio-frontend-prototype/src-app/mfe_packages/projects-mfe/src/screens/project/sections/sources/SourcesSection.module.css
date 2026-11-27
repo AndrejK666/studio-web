@@ -78,6 +78,12 @@
   color: var(--muted-foreground);
 }
 
+/* "23 specs · 154 doc files": wraps between its words, never mid-word. */
+.specsCount {
+  white-space: normal;
+  overflow-wrap: normal;
+}
+
 button.specsLink {
   --button-fg: var(--foreground);
   height: auto;

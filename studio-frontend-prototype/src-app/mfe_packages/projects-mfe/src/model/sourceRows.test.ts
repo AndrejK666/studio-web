@@ -65,7 +65,11 @@ const ACTIVITY: SourceActivityListDto = {
   days: 7,
 };
 
-const SPECS: SpecsPerSourceListDto = { items: [{ repo: 'n-api', specs: 12 }], total: 1, files_known: true };
+const SPECS: SpecsPerSourceListDto = {
+  items: [{ repo: 'n-api', specs: 12, doc_files: 40 }],
+  total: 1,
+  files_known: true,
+};
 
 function answers(overrides: Partial<SourcesAnswers> = {}): SourcesAnswers {
   return {
@@ -101,6 +105,7 @@ describe('a source in the config is a row', () => {
       shareMode: 'branch',
       nodeId: 'n-api',
       specs: 12,
+      docFiles: 40,
       activity: { open: 3, merged: 4, commits: 9, days: [0, 1, 0, 2, 0, 0, 1] },
       lastSync: { kind: 'synced', at: '2026-10-14T10:52:00Z' },
       sync: { kind: 'none' },
@@ -290,10 +295,29 @@ describe('a missing number is not zero', () => {
   it('specs are missing for every row when the files are not known, or the read failed', () => {
     expect(only(answers({ specs: { ...SPECS, files_known: false } })).specs).toBeNull();
     expect(only(answers({ specs: null })).specs).toBeNull();
+    // And so are the doc files they are a share of.
+    expect(only(answers({ specs: { ...SPECS, files_known: false } })).docFiles).toBeNull();
+    expect(only(answers({ specs: null })).docFiles).toBeNull();
+    expect(only(answers({ nodes: [] })).docFiles).toBeNull();
   });
 
   it('a node the specs per source does not list has none', () => {
-    expect(only(answers({ specs: { items: [], total: 0, files_known: true } })).specs).toBe(0);
+    const row = only(answers({ specs: { items: [], total: 0, files_known: true } }));
+    expect(row.specs).toBe(0);
+    expect(row.docFiles).toBe(0);
+  });
+
+  it('doc files are missing, not zero, from a server that does not count them', () => {
+    const row = only(answers({ specs: { items: [{ repo: 'n-api', specs: 3 }], total: 1, files_known: true } }));
+    expect(row.specs).toBe(3);
+    expect(row.docFiles).toBeNull();
+  });
+
+  it('a repository with doc files and no specs says both', () => {
+    const row = only(
+      answers({ specs: { items: [{ repo: 'n-api', specs: 0, doc_files: 68 }], total: 1, files_known: true } })
+    );
+    expect([row.specs, row.docFiles]).toEqual([0, 68]);
   });
 
   it('pull requests and commits are missing when the activity could not be read', () => {

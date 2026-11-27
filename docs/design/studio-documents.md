@@ -164,9 +164,33 @@ storage and does not need the registry to work.
 `classify.rs` uses nothing but the file and the type definitions: a winner
 needs a score of at least `0.45` and a lead of `0.08` over the runner-up, and
 anything else comes back undetermined with its candidates. Only prose paths
-(`md`, `markdown`, `txt`, `rst`, `adoc`, `asciidoc`, outside `.cf-studio`,
-`.claude` and `.github`, and not `CLAUDE.md` or `AGENTS.md`) can be
-documents; any other path is recorded as `not_a_document`. Asking the
+(`md`, `markdown`, `txt`, `rst`, `adoc`, `asciidoc`, outside the tooling
+directories `.cf-studio`, `.claude`, `.github`, `.cypilot`, `.cursor`,
+`.windsurf`, `.agents` and `.drover` at any depth, and not a root `CLAUDE.md`
+or `AGENTS.md`) can be documents; any other path is recorded as
+`not_a_document`.
+
+Between the front matter and the scoring sits the **convention table**
+(`classify::CONVENTIONS`): a spec layout declares a file's type by where it
+sits, so a repository written to it is read as written. A rule names the
+layout's directory (matched at any depth, e.g. `UI/openspec/`), a path pattern
+under it and a verdict; the first match wins. A type comes with confidence
+`0.9`, over the pipeline's default auto-confirm threshold; "not a spec"
+binds the file `not_a_document` with source `heuristic`. OpenSpec today:
+
+| Path under `openspec/` | Verdict |
+|---|---|
+| `changes/archive/**` | not a spec (history) |
+| `specs/**/spec.md` | `feature` (a living spec) |
+| `changes/<id>/proposal.md` | `prd` (the catalogue has no change-proposal type) |
+| `changes/<id>/design.md` | `design` |
+| `changes/<id>/tasks.md` | not a spec (a plan) |
+
+A front-matter declaration still outranks the layout, and a layout type the
+workspace's catalogue lacks falls through to scoring. A re-scan re-reads
+`unknown` and `detected` bindings, a Spec Quality guess on a path a layout
+names, and a `not_a_document` the scan wrote itself; a person's ruling
+(`manual`, a rejection, a confirmation by `person`) is never re-guessed. Asking the
 `purpose` detector about the leftover set is the caller's step, recorded with
 source `spec_quality`.
 The margin is there because two types that score alike are ambiguous, and
@@ -280,7 +304,9 @@ recorded `spec_finding` verdicts by the same rule as the rollup's
 `open_findings` — the binding's `confidence` and the repository's
 `repo_full_path`; `/spec-pipeline`
 answers what a project has of each type it declares; `/specs-per-source`
-counts per repository. `port::DocumentCounter` gives the portfolio rollup the
+counts per repository: `specs` (bindings `confirmed` or `manual`) and
+`doc_files` (bindings whose path the classifier reads as prose, whatever
+their state). `port::DocumentCounter` gives the portfolio rollup the
 same counts.
 
 ##### Responsibility boundaries

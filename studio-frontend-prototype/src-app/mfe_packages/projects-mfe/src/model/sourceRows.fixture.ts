@@ -15,6 +15,7 @@ export function sourceRow(overrides: Partial<SourceRow> = {}): SourceRow {
     shareMode: 'branch',
     nodeId: 'n-api',
     specs: 12,
+    docFiles: null,
     activity: null,
     lastSync: { kind: 'synced', at: '2026-10-14T10:52:00Z' },
     sync: { kind: 'none' },

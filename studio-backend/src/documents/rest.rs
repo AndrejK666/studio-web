@@ -9494,6 +9494,14 @@ pub struct SpecsPerSourceDto {
     /// Files in it that somebody DECIDED are documents. A scanner's guess is
     /// not a spec, and `not_a_document` is a decision that it never was.
     pub specs: u32,
+    /// Files in it that are writing at all, whatever they turned out to be:
+    /// a documentation extension (`md`, `markdown`, `txt`, `rst`, `adoc`,
+    /// `asciidoc`), outside tool configuration (`.claude/`, `.github/`,
+    /// `.cursor/` and the like, the root `CLAUDE.md`/`AGENTS.md`) and outside
+    /// a kit's templates and examples — the paths the classifier reads. What
+    /// `specs` is a share of: "0 specs · 68 doc files" says the writing is
+    /// there and none of it is bound yet.
+    pub doc_files: u32,
 }
 
 #[derive(Debug)]
@@ -9540,12 +9548,20 @@ async fn specs_per_source(
         _ => service.every_binding_under(&ctx, scope_id).await,
     }
     .map_err(internal)?;
-    // Only a file somebody decided about counts.
-    let decided: Vec<String> = bindings
-        .into_iter()
-        .filter(|b| matches!(b.state.as_str(), "confirmed" | "manual"))
-        .map(|b| b.node_id)
-        .collect();
+    // Only a file somebody decided about counts as a spec. Every file the
+    // classifier reads counts as a doc file (see `SpecsPerSourceDto::doc_files`),
+    // once however many scopes bound it. Both read off the bindings already
+    // in hand: no file listing, no content.
+    let mut decided: Vec<String> = Vec::new();
+    let mut doc_files: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for b in bindings {
+        if super::classify::is_prose_path(&b.path) {
+            doc_files.insert(b.node_id.clone());
+        }
+        if matches!(b.state.as_str(), "confirmed" | "manual") {
+            decided.push(b.node_id);
+        }
+    }
 
     // Which repository each of those files came from, asked for those files
     // alone: the scope's whole file listing used to be read to join it here.
@@ -9553,6 +9569,7 @@ async fn specs_per_source(
     // zero, because "no specs here" and "nobody could tell me" are different
     // sentences.
     let mut ids: Vec<String> = decided.clone();
+    ids.extend(doc_files.iter().cloned());
     ids.sort();
     ids.dedup();
     let (repo_of, files_known) = match quality.files() {
@@ -9563,16 +9580,27 @@ async fn specs_per_source(
         None => (std::collections::HashMap::new(), false),
     };
 
-    let mut counts: std::collections::BTreeMap<String, u32> = std::collections::BTreeMap::new();
+    // (specs, doc files) per repository.
+    let mut counts: std::collections::BTreeMap<String, (u32, u32)> =
+        std::collections::BTreeMap::new();
     for node_id in decided {
         if let Some(repo) = repo_of.get(&node_id) {
-            *counts.entry(repo.clone()).or_insert(0) += 1;
+            counts.entry(repo.clone()).or_default().0 += 1;
+        }
+    }
+    for node_id in &doc_files {
+        if let Some(repo) = repo_of.get(node_id) {
+            counts.entry(repo.clone()).or_default().1 += 1;
         }
     }
 
     let items: Vec<SpecsPerSourceDto> = counts
         .into_iter()
-        .map(|(repo, specs)| SpecsPerSourceDto { repo, specs })
+        .map(|(repo, (specs, doc_files))| SpecsPerSourceDto {
+            repo,
+            specs,
+            doc_files,
+        })
         .collect();
     Ok(Json(SpecsPerSourceListDto {
         total: u32::try_from(items.len()).unwrap_or(u32::MAX),

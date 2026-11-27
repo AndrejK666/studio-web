@@ -206,19 +206,35 @@ const SpecsCell: React.FC<{ row: SourcesTableRow; actions: SourceRowActions }> =
   actions,
 }) => {
   const t = useSourcesText();
+  // With the doc files known the count is a share, so both are words: "23 specs · 154 doc files",
+  // and "0 specs · 68 doc files" says the writing is there and none of it is bound yet.
+  const docFiles = row.kind === 'repository' && row.specs !== null ? row.docFiles : null;
+  const specs = docFiles === null ? row.specs : t.count('cell_specs', row.specs ?? 0);
+  const of =
+    docFiles === null ? null : (
+      <span className={styles.muted}>{` · ${t.count('cell_doc_files', docFiles)}`}</span>
+    );
   if (row.specs === null || row.specs === 0) {
-    return <span className={styles.muted}>{row.specs ?? MISSING}</span>;
+    return (
+      <span className={styles.specsCount}>
+        <span className={styles.muted}>{specs ?? MISSING}</span>
+        {of}
+      </span>
+    );
   }
   const uploads = row.kind === 'uploads';
   return (
-    <Button
-      variant="link"
-      className={styles.specsLink}
-      title={t(uploads ? 'menu_open_uploads' : 'menu_open_specs')}
-      onClick={() => (uploads ? actions.openUploads() : actions.openSpecs(row))}
-    >
-      {row.specs}
-    </Button>
+    <span className={styles.specsCount}>
+      <Button
+        variant="link"
+        className={styles.specsLink}
+        title={t(uploads ? 'menu_open_uploads' : 'menu_open_specs')}
+        onClick={() => (uploads ? actions.openUploads() : actions.openSpecs(row))}
+      >
+        {specs}
+      </Button>
+      {of}
+    </span>
   );
 };
 
@@ -526,7 +542,8 @@ export function sourceColumns({
     {
       id: 'specs',
       label: t('col_specs'),
-      width: '7rem',
+      // "23 specs · 154 doc files" on one line; a longer one wraps at its words.
+      width: '12rem',
       render: (row) => <SpecsCell row={row} actions={actions} />,
     },
     {

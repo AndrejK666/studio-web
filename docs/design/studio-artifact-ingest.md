@@ -498,7 +498,7 @@ one indexed query each. `/source-activity` (`GraphStore::repo_activity`) reads
 no payload: the pull requests as five columns, the repositories with commits as
 one `GROUP BY`, and only the commits whose `created_at` is in the window; the
 fold is `activity::repo_activity`, and `index_tests` compares the two.
-`/specs-per-source` asks for the decided files by id (`repos_of_files`).
+`/specs-per-source` asks for the decided and the prose files by id (`repos_of_files`).
 
 ##### Responsibility boundaries
 
