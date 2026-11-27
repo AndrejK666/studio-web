@@ -63,6 +63,24 @@ describe('the import as its syncs end', () => {
 });
 
 describe('a sync as its run reports', () => {
+  it('counts the nodes it wrote, not the ones the repository holds', () => {
+    let state = started('acme/api');
+    state = updated(state, 'acme/api', { state: 'running', result: { nodes_written: 12 } });
+    expect(imported(state).repos[0]?.written).toBe(12);
+
+    state = updated(state, 'acme/api', {
+      state: 'succeeded',
+      result: { stored: 5_000, nodes_written: 30 },
+    });
+    expect(imported(state).repos[0]?.written).toBe(30);
+  });
+
+  it('reads an older gear, which counted what it wrote as stored', () => {
+    let state = started('acme/api');
+    state = updated(state, 'acme/api', { state: 'running', result: { stored: 7 } });
+    expect(imported(state).repos[0]?.written).toBe(7);
+  });
+
   it('keeps its phase when a running event says none', () => {
     let state = started('acme/api');
     state = updated(state, 'acme/api', { state: 'running', phase: 'pulling issues…' });
@@ -83,7 +101,7 @@ describe('a sync as its run reports', () => {
     ],
   ])('forgets what it said last time, %s included, when it is retried', (_what, control) => {
     let state = started('acme/api');
-    state = updated(state, 'acme/api', { state: 'running', phase: 'pulling issues…', result: { stored: 40 } });
+    state = updated(state, 'acme/api', { state: 'running', phase: 'pulling issues…', result: { nodes_written: 40 } });
     state = updated(state, 'acme/api', { state: 'succeeded', summary: 'acme/api: done' });
     state = updated(state, 'acme/api', { state: 'failed', error: 'rate limited' });
     state = reducer(state, control);
@@ -95,7 +113,7 @@ describe('a sync as its run reports', () => {
       phase: null,
       summary: null,
       reason: null,
-      stored: 0,
+      written: 0,
       cancelling: false,
       refusal: null,
     });

@@ -115,6 +115,24 @@ const ATTEMPT_BUDGET: Duration = Duration::from_secs(12 * 60);
 /// repository's first sync can take a few of those besides a real failure.
 const ATTEMPTS: i16 = 8;
 
+/// The nodes of a finished sync, in words: how many the repository holds in
+/// the graph and how many of them this sync wrote -- few, when it carried
+/// what an earlier one read. Only the written ones when the store could not
+/// be counted.
+fn nodes_line(counts: &super::service::SyncSummary) -> String {
+    match counts.stored {
+        Some(held) => format!(
+            "{} in the graph, {} written by this sync",
+            plural(held, "node", "nodes"),
+            counts.nodes_written,
+        ),
+        None => format!(
+            "{} by this sync",
+            plural(counts.nodes_written, "node written", "nodes written")
+        ),
+    }
+}
+
 /// What a partial sync got through of the work it does in portions, in
 /// words: the listings read so far, the pull requests linked to their files
 /// and the items whose comments were read, each only when some of it is left.
@@ -422,14 +440,14 @@ impl TaskHandler for IngestTask {
             }
             Ok(counts) => {
                 let mut summary = format!(
-                    "{}: {}, {}, {}, {}, {}, {} stored",
+                    "{}: {}, {}, {}, {}, {}; {}",
                     payload.repo_full_path,
                     plural(counts.issues, "issue", "issues"),
                     plural(counts.pull_requests, "pull request", "pull requests"),
                     plural(counts.files, "file", "files"),
                     plural(counts.comments, "comment", "comments"),
                     plural(counts.commits, "commit", "commits"),
-                    plural(counts.stored, "node", "nodes"),
+                    nodes_line(&counts),
                 );
                 // Only when it happened: most syncs forget nothing, and "0
                 // deleted files forgotten" on every one of them is noise.
@@ -501,6 +519,24 @@ fn permanent_token_error(error: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_summary_says_what_the_repository_holds_and_what_this_sync_wrote() {
+        let counts = super::super::service::SyncSummary {
+            stored: Some(1_200),
+            nodes_written: 40,
+            ..Default::default()
+        };
+        assert_eq!(
+            nodes_line(&counts),
+            "1200 nodes in the graph, 40 written by this sync"
+        );
+        let uncounted = super::super::service::SyncSummary {
+            nodes_written: 1,
+            ..Default::default()
+        };
+        assert_eq!(nodes_line(&uncounted), "1 node written by this sync");
+    }
 
     #[test]
     fn ingest_slots_follow_config_within_bounds() {

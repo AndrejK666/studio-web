@@ -187,7 +187,8 @@ struct GitHubContributor {
     contributions: i64,
 }
 
-/// One comment from `/repos/{path}/issues/comments` (covers issues AND PRs).
+/// One comment from `/repos/{path}/issues/{number}/comments` (an issue's, or
+/// a pull request's conversation).
 #[derive(Deserialize)]
 struct GitHubComment {
     id: i64,
@@ -200,8 +201,6 @@ struct GitHubComment {
     created_at: Option<String>,
     #[serde(default)]
     updated_at: Option<String>,
-    /// API URL of the issue/PR the comment is on; ends with `/issues/{number}`.
-    issue_url: String,
 }
 
 /// The nested `commit` object inside a `/repos/{path}/commits` row.
@@ -1114,58 +1113,80 @@ impl ConnectorDriver for GitHubDriver {
         Ok(out)
     }
 
-    async fn list_comments(
+    fn comments_per_item(&self) -> bool {
+        // Read per item, as GitLab's are, so a sync carries the items whose
+        // comments it read at their current state and reads only the ones
+        // that moved (`artifact_ingest::item_comments`). The repository-wide
+        // `/issues/comments` listing had no such cursor: a sync without
+        // `since` walked every comment of the repository again.
+        true
+    }
+
+    async fn list_item_comments(
         &self,
         auth: &ConnectionAuth,
         repo_full_path: &str,
         since: Option<&str>,
-        page: u32,
-        per_page: u32,
+        is_pull_request: bool,
+        number: i64,
     ) -> anyhow::Result<Vec<RemoteComment>> {
-        // Newest created first, so a sync's stopped walk goes on from its
-        // page (`artifact_ingest::listing_cursor`).
-        let mut url = format!(
-            "{}/repos/{repo_full_path}/issues/comments?sort=created&direction=desc&per_page={}&page={}",
-            auth.root(),
-            per_page.clamp(1, 100),
-            page.max(1),
-        );
-        if let Some(s) = since.map(str::trim).filter(|s| !s.is_empty()) {
-            url.push_str("&since=");
-            url.push_str(s);
-        }
-        let res = self.request(&url, auth).send().await?;
-        let status = res.status();
-        if !status.is_success() {
-            let body = res.text().await.unwrap_or_default();
-            anyhow::bail!(
-                "GitHub {status}: {}",
-                body.chars().take(200).collect::<String>()
+        // A pull request is an issue to this endpoint: its conversation
+        // comments are listed here too. Every page, oldest first; nothing
+        // caps it. An item GitHub no longer has (404, 410) reads as none.
+        const PER_PAGE: usize = 100;
+        let since = since.map(str::trim).filter(|s| !s.is_empty());
+        let mut out: Vec<RemoteComment> = Vec::new();
+        let mut last_first: Option<i64> = None;
+        for page in 1u32.. {
+            let mut url = format!(
+                "{}/repos/{repo_full_path}/issues/{number}/comments?per_page={PER_PAGE}&page={page}",
+                auth.root(),
             );
+            if let Some(s) = since {
+                url.push_str("&since=");
+                url.push_str(s);
+            }
+            let res = self.request(&url, auth).send().await?;
+            let status = res.status();
+            if status == reqwest::StatusCode::NOT_FOUND || status == reqwest::StatusCode::GONE {
+                return Ok(Vec::new());
+            }
+            if !status.is_success() {
+                let body = res.text().await.unwrap_or_default();
+                anyhow::bail!(
+                    "GitHub {status}: {}",
+                    body.chars().take(200).collect::<String>()
+                );
+            }
+            let comments: Vec<GitHubComment> = res.json().await?;
+            let n = comments.len();
+            // A host answering the same page again would never end.
+            let first = comments.first().map(|c| c.id);
+            if first.is_some() && first == last_first {
+                tracing::error!(
+                    repo = repo_full_path,
+                    number,
+                    page,
+                    "github: comment pages repeat -- this item's comments are partial"
+                );
+                break;
+            }
+            last_first = first;
+            out.extend(comments.into_iter().map(|c| RemoteComment {
+                id: c.id.to_string(),
+                target_number: number,
+                target_is_pull_request: Some(is_pull_request),
+                author: c.user.map(|u| u.login),
+                body: c.body,
+                url: Some(c.html_url),
+                created_at: c.created_at,
+                updated_at: c.updated_at,
+            }));
+            if n < PER_PAGE {
+                break;
+            }
         }
-        let comments: Vec<GitHubComment> = res.json().await?;
-        Ok(comments
-            .into_iter()
-            .map(|c| {
-                // The issue/PR number is the last path segment of issue_url.
-                let target_number = c
-                    .issue_url
-                    .rsplit('/')
-                    .next()
-                    .and_then(|s| s.parse::<i64>().ok())
-                    .unwrap_or(0);
-                RemoteComment {
-                    id: c.id.to_string(),
-                    target_number,
-                    target_is_pull_request: None,
-                    author: c.user.map(|u| u.login),
-                    body: c.body,
-                    url: Some(c.html_url),
-                    created_at: c.created_at,
-                    updated_at: c.updated_at,
-                }
-            })
-            .collect())
+        Ok(out)
     }
 
     async fn list_commits(

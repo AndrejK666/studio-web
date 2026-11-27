@@ -282,7 +282,7 @@ describe('useSourcesLoad', () => {
       canCancel: true,
     });
 
-    lines.current = [{ ...running, phase: 'storing', stored: 40 }];
+    lines.current = [{ ...running, phase: 'storing', written: 40 }];
     sources.rerender();
     expect(triggerLoad).toHaveBeenCalledTimes(1);
   });

@@ -70,17 +70,17 @@ export interface ArtifactsView {
   refetch: () => void;
 }
 
-/** The stored count grows once per flushed chunk; it re-reads the artifacts at most this often. */
-const STORED_REFRESH_MS = 2_000;
+/** The written count grows once per flushed chunk; it re-reads the artifacts at most this often. */
+const WRITTEN_REFRESH_MS = 2_000;
 
 // @cpt-begin:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-11
-/** Re-reads when a run starts, since the gear writes its repository's node then, when one settles, and when the stored count grows. */
+/** Re-reads when a run starts, since the gear writes its repository's node then, when one settles, and when the written count grows. */
 function useImportRefresh(projectId: string, refetch: () => void): void {
   const importState = useProjectImport(projectId);
-  const stored = importState.repos.reduce((sum, repo) => sum + repo.stored, 0);
+  const written = importState.repos.reduce((sum, repo) => sum + repo.written, 0);
   const statuses = importState.repos.map((repo) => repo.status).join();
   const watching = importState.phase === 'running';
-  const seen = useRef<{ stored: number; statuses: string } | null>(null);
+  const seen = useRef<{ written: number; statuses: string } | null>(null);
   const pending = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latest = useRef(refetch);
 
@@ -98,20 +98,20 @@ function useImportRefresh(projectId: string, refetch: () => void): void {
 
   useEffect(() => {
     const last = seen.current;
-    if (last?.stored === stored && last.statuses === statuses) return;
-    seen.current = { stored, statuses };
-    if (!last && stored === 0 && !watching) return;
+    if (last?.written === written && last.statuses === statuses) return;
+    seen.current = { written, statuses };
+    if (!last && written === 0 && !watching) return;
     if (last?.statuses === statuses) {
       pending.current ??= setTimeout(() => {
         pending.current = null;
         latest.current();
-      }, STORED_REFRESH_MS);
+      }, WRITTEN_REFRESH_MS);
       return;
     }
     if (pending.current) clearTimeout(pending.current);
     pending.current = null;
     refetch();
-  }, [stored, statuses, watching, refetch]);
+  }, [written, statuses, watching, refetch]);
 }
 // @cpt-end:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-11
 

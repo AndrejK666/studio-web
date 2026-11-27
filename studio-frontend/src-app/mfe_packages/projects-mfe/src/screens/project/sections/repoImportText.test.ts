@@ -13,7 +13,7 @@ function row(status: RepoImportStatus, reason: Refusal | null = null): RepoImpor
     phase: null,
     summary: null,
     reason,
-    stored: 0,
+    written: 0,
     cancelling: false,
     refusal: null,
   };

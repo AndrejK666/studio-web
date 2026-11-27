@@ -402,8 +402,9 @@ token.
 A sync larger than one attempt goes on in the next. An attempt works to a
 12-minute budget inside the queue's 15-minute lease.
 
-The listings come first: issues, pull requests, GitHub's repository-wide
-comments, commits (`listing_cursor.rs`). Each asks for its pages until 90
+The listings come first: issues, pull requests, commits, and the comments of
+a provider that lists them repository-wide (none does today)
+(`listing_cursor.rs`). Each asks for its pages until 90
 seconds short of the deadline -- after at least one page past where it
 started, so every attempt gets somewhere -- and each page is stored as it is
 read. Where the walk is is kept on the repository node as `listing`: per
@@ -448,15 +449,26 @@ node carries `files_linked`, the head it was linked at; a sync asks only about
 the pull requests whose head moved or that were never linked, and writes each
 portion's edges, then its marks, as it goes.
 
-Comments go the same way where the provider has no repository-wide listing of
-them. GitLab keeps notes on each merge request and issue, so its comments are
-read item by item, six in flight, stopping 2 minutes short of the deadline
-(`item_comments.rs`). Each issue and pull request node carries
+Comments go the same way. GitLab keeps notes on each merge request and issue,
+and GitHub, which has a repository-wide listing, is read per item too so a
+sync need not walk every comment again: comments are read item by item, six
+in flight on GitLab and one on GitHub, stopping 2 minutes short of the
+deadline (`item_comments.rs`; GitHub's `/issues/{n}/comments`, which holds a
+pull request's conversation too, every page). Each issue and pull request
+node carries
 `comments_read`, its `updated_at` when its notes were read; a new or edited
 note touches its item, so a sync reads the notes only of the items that
 changed or were never read, and stores each portion's comment and author
-nodes, then their edges, then the marks. GitHub's repository-wide listing is
-one of the listings above.
+nodes, then their edges, then the marks. (On GitHub editing a comment may not
+touch its item; such an edit arrives with the item's next change.)
+
+The result counts what the repository holds, not what the pass wrote:
+`comments` and `stored` (the repository's nodes -- itself, its items, files
+and their text, comments, commits, CI runs and jobs, build artifacts and
+releases; not the people, who are the connection's) are counted from the
+store once the sync is over, so a sync that carried most items still says how
+many there are. `nodes_written` is what this pass wrote, and the only node count
+the progress ticks carry.
 
 An attempt that stopped with listings, pull requests or comments left answers
 `Retry` with "listed … so far", "linked X of Y" or "read the comments of X of

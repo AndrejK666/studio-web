@@ -1,6 +1,6 @@
 //! Comments read item by item, in portions a run can stop between and a later
-//! run continues from -- for a provider with no repository-wide listing of
-//! comments ([`ConnectorDriver::comments_per_item`]).
+//! run continues from -- for a provider that reads its comments per item
+//! ([`ConnectorDriver::comments_per_item`]): GitLab, and GitHub.
 //!
 //! ## Why
 //!
@@ -10,6 +10,11 @@
 //! note answered "no more". On a project with thousands of merge requests that
 //! read the notes of the newest few hundred items and stopped -- or stopped at
 //! the first quiet stretch -- and said nothing about it.
+//!
+//! GitHub has a repository-wide listing, and its driver walked it on every
+//! sync from the newest comment: a sync without `since` read every comment of
+//! the repository again, however few had moved. Read per item, a sync reads
+//! only the items that moved.
 //!
 //! ## Where the progress lives
 //!
