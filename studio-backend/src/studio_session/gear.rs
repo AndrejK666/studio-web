@@ -120,6 +120,10 @@ impl Gear for StudioSessionGear {
             }
         };
         let service = SessionService::new(cfg, driver);
+        // The platform-access port (ADR-0081) is studio-user's, published in
+        // its own `init`; it is resolved per launch, so the order the gears
+        // start in does not matter.
+        service.set_client_hub(ctx.client_hub()).await;
 
         // credstore client: resolves repo PATs for private clones (optional —
         // sessions without tokens work regardless).

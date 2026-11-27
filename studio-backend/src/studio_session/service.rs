@@ -10,7 +10,7 @@ use tokio::sync::RwLock;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
-use super::access::{NotReachable, WorkspaceAccess};
+use super::access::{NotReachable, TermsPending, WorkspaceAccess};
 use super::config::StudioSessionConfig;
 use super::driver::{AdoptedSession, LaunchSpec, LocalBind, SessionAddress, SessionDriver};
 
@@ -307,6 +307,10 @@ pub struct SessionService {
     /// authorization question nobody can answer is refused rather than waved
     /// through.
     access: RwLock<Option<Arc<dyn WorkspaceAccess>>>,
+    /// Where studio-user's platform-access port is found, per launch
+    /// (ADR-0081 §3): the terms a caller has yet to accept. Unwired, or no
+    /// port in the hub, gates nothing.
+    hub: RwLock<Option<Arc<toolkit::client_hub::ClientHub>>>,
     /// Wakes the background image keeper (see [`Self::image_keeper`]) for a
     /// refresh pull. Launch requests never pull inline: a registry pull of a
     /// ~1.5 GB image takes minutes and the gateway deadline is 30 s.
@@ -339,6 +343,7 @@ impl SessionService {
             credstore: RwLock::new(None),
             account_management: RwLock::new(None),
             access: RwLock::new(None),
+            hub: RwLock::new(None),
             pull_notify: tokio::sync::Notify::new(),
             activity,
         })
@@ -478,6 +483,57 @@ impl SessionService {
                 false
             }
         }
+    }
+
+    /// Where the platform-access port is resolved from, per launch.
+    pub async fn set_client_hub(&self, hub: Arc<toolkit::client_hub::ClientHub>) {
+        *self.hub.write().await = Some(hub);
+    }
+
+    /// The terms the caller has yet to accept in `workspace_id`'s
+    /// organization (ADR-0081 §3), as `audience vN`. Empty when studio-user
+    /// publishes no port here, when the organization cannot be found, or when
+    /// nothing is pending. A port that fails is an error: whether the caller
+    /// accepted the terms is then unknown, and unknown is not a yes.
+    pub async fn pending_terms(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Uuid,
+    ) -> anyhow::Result<Option<TermsPending>> {
+        let Some(hub) = self.hub.read().await.as_ref().map(Arc::clone) else {
+            return Ok(None);
+        };
+        let Ok(port) = hub.get_scoped::<dyn crate::user_profile::port::PlatformAccessPort>(
+            &toolkit::client_hub::ClientScope::gts_id(crate::user_profile::IDENTITY_INSTANCE_ID),
+        ) else {
+            return Ok(None);
+        };
+        let am = self
+            .account_management
+            .read()
+            .await
+            .as_ref()
+            .map(Arc::clone);
+        let Some(am) = am else {
+            return Ok(None);
+        };
+        let Some(org) =
+            crate::organizations::sdk::organization_of(am.as_ref(), ctx, workspace_id).await
+        else {
+            tracing::debug!(%workspace_id, "studio-session: no organization above the workspace; no terms to check");
+            return Ok(None);
+        };
+        let pending = port
+            .pending_terms(ctx, org)
+            .await
+            .context("whether the caller accepted the organization's terms")?;
+        Ok((!pending.is_empty()).then(|| TermsPending {
+            organization_id: org,
+            pending: pending
+                .into_iter()
+                .map(|t| format!("{} v{}", t.audience, t.version))
+                .collect(),
+        }))
     }
 
     pub async fn set_account_management(&self, client: Arc<dyn AccountManagementClient>) {
@@ -773,6 +829,12 @@ impl SessionService {
         // decision, and it is about the WORKSPACE (see `access.rs`).
         if !self.may_reach(ctx, workspace_id).await {
             return Err(NotReachable { workspace_id }.into());
+        }
+        // No IDE, so no code, until the organization's terms are accepted
+        // (ADR-0081 §3). Nothing published, nothing pending: a deployment
+        // that publishes no terms launches as before.
+        if let Some(pending) = self.pending_terms(ctx, workspace_id).await? {
+            return Err(pending.into());
         }
         // The IDE this launch runs: the deployment's (ADR-0080 §6). One that
         // cannot share a session among people runs one per person (§7), so
