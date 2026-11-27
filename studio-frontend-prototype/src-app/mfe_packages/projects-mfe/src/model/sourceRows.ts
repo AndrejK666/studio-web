@@ -101,6 +101,11 @@ export interface SourceRow {
   shareMode: 'branch' | 'pull_request';
   nodeId: string | null;
   specs: number | null;
+  /**
+   * The repository's doc files — what `specs` is a share of: prose outside tool configuration,
+   * whatever it turned out to be. `null` when unknown, or when the server does not count them.
+   */
+  docFiles: number | null;
   activity: SourceActivity | null;
   lastSync: SourceLastSync;
   sync: SourceSync;
@@ -279,7 +284,7 @@ function uploadsRow(uploads: SourcesAnswers['uploads']): UploadsRow | null {
 export function buildSourceRows(answers: SourcesAnswers): SourcesTableRow[] {
   const connections = answers.connections && new Map(answers.connections.map((c) => [c.id, c]));
   const specsKnown = answers.specs?.files_known === true;
-  const specsByNode = new Map(answers.specs?.items.map((item) => [item.repo, item.specs]));
+  const specsByNode = new Map(answers.specs?.items.map((item) => [item.repo, item]));
   const activityByNode = new Map(answers.activity?.items.map((item) => [item.repo, item]));
   const lines = new Map(answers.lines.map((line) => [pathKey(line.repo), line]));
   const runs = lastSyncRuns(answers.runs ?? []);
@@ -297,7 +302,10 @@ export function buildSourceRows(answers: SourcesAnswers): SourcesTableRow[] {
     const provider = node?.value.provider ?? connection?.provider ?? null;
     // @cpt-end:cpt-studiofrontend-algo-project-sources-rows:p2:inst-4
     // @cpt-begin:cpt-studiofrontend-algo-project-sources-rows:p2:inst-6
-    const specs = specsKnown && node ? (specsByNode.get(node.instance_id) ?? 0) : null;
+    const counted = specsKnown && node ? specsByNode.get(node.instance_id) : undefined;
+    const specs = specsKnown && node ? (counted?.specs ?? 0) : null;
+    // Unlisted is none of either; a listed repository without the field is a server that does not count them.
+    const docFiles = specsKnown && node ? (counted ? (counted.doc_files ?? null) : 0) : null;
     // @cpt-end:cpt-studiofrontend-algo-project-sources-rows:p2:inst-6
     // @cpt-begin:cpt-studiofrontend-algo-project-sources-rows:p2:inst-7
     const activity =
@@ -320,6 +328,7 @@ export function buildSourceRows(answers: SourcesAnswers): SourcesTableRow[] {
       shareMode: source.share_mode === 'pull_request' ? 'pull_request' : 'branch',
       nodeId: node?.instance_id ?? null,
       specs,
+      docFiles,
       activity,
       // @cpt-begin:cpt-studiofrontend-algo-project-sources-rows:p2:inst-8
       // Connections that could not be read say nothing about this one.

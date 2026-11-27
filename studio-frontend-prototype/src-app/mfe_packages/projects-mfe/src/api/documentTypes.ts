@@ -203,6 +203,11 @@ export interface SpecsPerSourceDto {
   repo: string;
   /** Files somebody decided are documents. */
   specs: number;
+  /**
+   * Its doc files, whatever they turned out to be: a documentation extension, outside tool
+   * configuration and a kit's templates. Absent from a server that does not count them.
+   */
+  doc_files?: number;
 }
 
 /** Mirrors `SpecsPerSourceListDto`. A repository it does not list has none. */

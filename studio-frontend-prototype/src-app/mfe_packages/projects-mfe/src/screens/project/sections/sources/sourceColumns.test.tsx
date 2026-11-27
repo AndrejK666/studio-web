@@ -307,6 +307,39 @@ describe('the Specs cell', () => {
     expect(screen.getByText('—')).toBeTruthy();
     expect(screen.queryByRole('button')).toBeNull();
   });
+
+  it('says the specs as a share of the doc files once those are known', () => {
+    const row = sourceRow({ specs: 23, docFiles: 154 });
+    const { container } = cell('specs', row);
+
+    expect(container.textContent).toBe('23 specs · 154 doc files');
+    fireEvent.click(screen.getByRole('button', { name: '23 specs' }));
+    expect(actions.openSpecs).toHaveBeenCalledWith(row);
+  });
+
+  it('reads no specs among doc files plainly, with nothing to open', () => {
+    const { container } = cell('specs', sourceRow({ specs: 0, docFiles: 68 }));
+    expect(container.textContent).toBe('0 specs · 68 doc files');
+    expect(screen.queryByRole('button')).toBeNull();
+    cleanup();
+
+    expect(cell('specs', sourceRow({ specs: 1, docFiles: 1 })).container.textContent).toBe(
+      '1 spec · 1 doc file'
+    );
+  });
+
+  it('is a dash, with no doc files, when the specs are missing', () => {
+    const { container } = cell('specs', sourceRow({ specs: null, docFiles: 12 }));
+    expect(container.textContent).toBe('—');
+  });
+
+  it('has the Russian plural forms of both counts', () => {
+    const t = dictionaryText(ru, 'ru');
+    expect(t.count('cell_specs', 0)).toBe('0 спецификаций');
+    expect(t.count('cell_specs', 2)).toBe('2 спецификации');
+    expect(t.count('cell_doc_files', 1)).toBe('1 файл документации');
+    expect(t.count('cell_doc_files', 68)).toBe('68 файлов документации');
+  });
 });
 
 /** The week's chart once its lazy chunk has arrived. */

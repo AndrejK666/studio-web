@@ -3926,17 +3926,26 @@ fn checkout_tenants(
 ///   offline scoring already had its turn on this file and did not settle it.
 ///   Discarding the expensive answer to re-run the cheap one that failed is
 ///   strictly worse than keeping it — the proposal still waits for a person.
+///
+/// A `not_a_document` the scan wrote itself (source `heuristic`: the path was
+/// not prose, or a spec layout called the file a plan or history) is nobody's
+/// ruling, so it is read again like any guess — a layout rule or a tooling
+/// directory added later reaches the files it names.
+///
+/// And a Spec Quality guess gives way when a spec layout names the file
+/// ([`super::classify::convention_for`]): offline reading does settle it then,
+/// on firmer ground than the detector's.
 fn keep_existing_verdict(prior: &document_binding::Model) -> Option<BindingState> {
     let state = BindingState::parse(&prior.state)?;
+    let source = prior.source.as_deref().and_then(DetectionSource::parse);
+    if state == BindingState::NotADocument && source == Some(DetectionSource::Heuristic) {
+        return None;
+    }
     if state.is_settled() {
         return Some(state);
     }
-    let detected_by_llm = prior
-        .source
-        .as_deref()
-        .and_then(DetectionSource::parse)
-        .is_some_and(|s| matches!(s, DetectionSource::SpecQuality));
-    detected_by_llm.then_some(state)
+    let detected_by_llm = matches!(source, Some(DetectionSource::SpecQuality));
+    (detected_by_llm && super::classify::convention_for(&prior.path).is_none()).then_some(state)
 }
 
 /// Whether a person, rather than the classifier, settled this binding.
@@ -3950,7 +3959,8 @@ fn ruled_by_person(prior: &document_binding::Model) -> bool {
     match BindingState::parse(&prior.state) {
         Some(BindingState::Manual) => true,
         Some(BindingState::Confirmed) => {
-            source != Some(DetectionSource::FrontMatter) && !auto_confirmed(prior)
+            prior.confirmed_by.as_deref() == Some(super::pipeline::CONFIRMED_BY_PERSON)
+                || (source != Some(DetectionSource::FrontMatter) && !auto_confirmed(prior))
         }
         Some(BindingState::NotADocument) => source != Some(DetectionSource::Heuristic),
         _ => false,
@@ -4525,13 +4535,22 @@ impl DocumentsService {
                 ),
                 None => {
                     let c = classify(&file.path, &file.content, &types);
-                    let state = if c.type_key.is_some() {
+                    // A spec layout's plan or history: known, and not a spec.
+                    // `heuristic`, like a path that is not prose, so it reads
+                    // as the scan's call and the next scan reads it again.
+                    let state = if c.not_a_spec {
+                        BindingState::NotADocument
+                    } else if c.type_key.is_some() {
                         BindingState::Detected
                     } else {
                         BindingState::Unknown
                     };
                     let confidence = c.type_key.as_ref().map(|_| c.confidence);
-                    let source = c.type_key.as_ref().map(|_| c.source);
+                    let source = if c.not_a_spec {
+                        Some(DetectionSource::Heuristic)
+                    } else {
+                        c.type_key.as_ref().map(|_| c.source)
+                    };
                     (c.type_key, state, confidence, source, c.candidates)
                 }
             };
@@ -6052,6 +6071,79 @@ mod reclassification_tests {
         assert!(keep_existing_verdict(&row("detected", Some("heuristic"))).is_none());
         assert!(keep_existing_verdict(&row("detected", Some("front_matter"))).is_none());
         assert!(keep_existing_verdict(&row("unknown", None)).is_none());
+    }
+
+    fn at(path: &str, mut row: document_binding::Model) -> document_binding::Model {
+        row.path = path.into();
+        row
+    }
+
+    /// The scan's own "not a document" (a path that was not prose, a layout's
+    /// plan or history) is a guess like any other, and a person's is not.
+    #[test]
+    fn the_scans_own_not_a_document_is_read_again() {
+        assert!(keep_existing_verdict(&row("not_a_document", Some("heuristic"))).is_none());
+        assert!(keep_existing_verdict(&row("not_a_document", Some("manual"))).is_some());
+        assert!(keep_existing_verdict(&row("not_a_document", None)).is_some());
+    }
+
+    /// Where a spec layout names the file, a detector's guess gives way to
+    /// it; anywhere else the guess still stands.
+    #[test]
+    fn a_spec_layout_outranks_a_detectors_guess() {
+        let guess = row("detected", Some("spec_quality"));
+        assert!(
+            keep_existing_verdict(&at("openspec/specs/login/spec.md", guess.clone())).is_none()
+        );
+        assert!(
+            keep_existing_verdict(&at("UI/openspec/changes/x/tasks.md", guess.clone())).is_none()
+        );
+        assert!(keep_existing_verdict(&at("docs/login.md", guess)).is_some());
+    }
+
+    /// A person's decision on a file a layout names, or in a tooling
+    /// directory, is never re-guessed: a re-scan keeps it, and a path that is
+    /// no longer a document path still keeps it.
+    #[test]
+    fn a_persons_decision_survives_layouts_and_tooling() {
+        for path in [
+            "openspec/specs/login/spec.md",
+            "openspec/changes/archive/a/proposal.md",
+            "openspec/changes/x/tasks.md",
+            "UI/.cursor/rules/style.md",
+            ".cypilot/notes.md",
+        ] {
+            let manual = at(path, row("manual", Some("manual")));
+            assert!(keep_existing_verdict(&manual).is_some(), "{path}");
+            assert!(ruled_by_person(&manual), "{path}");
+
+            let rejected = at(path, row("not_a_document", Some("manual")));
+            assert!(keep_existing_verdict(&rejected).is_some(), "{path}");
+            assert!(ruled_by_person(&rejected), "{path}");
+
+            // A person accepted a proposal: their word, whatever proposed it.
+            for source in ["heuristic", "front_matter", "spec_quality"] {
+                let mut confirmed = at(path, row("confirmed", Some(source)));
+                confirmed.confirmed_by = Some(super::super::pipeline::CONFIRMED_BY_PERSON.into());
+                assert!(
+                    keep_existing_verdict(&confirmed).is_some(),
+                    "{path} {source}"
+                );
+                assert!(ruled_by_person(&confirmed), "{path} {source}");
+            }
+        }
+    }
+
+    /// What the pipeline or a front matter confirmed is not a person's word:
+    /// a tooling path may still take it back.
+    #[test]
+    fn a_confirmation_nobody_gave_is_not_a_persons_ruling() {
+        let mut auto = at(".cursor/rules.md", row("confirmed", Some("heuristic")));
+        auto.confirmed_by = Some(super::super::pipeline::CONFIRMED_BY_AUTO.into());
+        assert!(!ruled_by_person(&auto));
+        let declared = at(".cursor/rules.md", row("confirmed", Some("front_matter")));
+        assert!(!ruled_by_person(&declared));
+        assert!(!ruled_by_person(&row("not_a_document", Some("heuristic"))));
     }
 }
 

@@ -7,6 +7,12 @@
 //!
 //! 1. **Declared** — the file's front matter names its type (`type: prd`).
 //!    Whoever wrote it already answered the question; take the answer.
+//!    Next to it, **declared by convention**: the file sits where a known spec
+//!    layout keeps one kind of document (OpenSpec's
+//!    `openspec/specs/<capability>/spec.md` is a living spec). The layout's
+//!    authors answered the question for every repository that follows it, so
+//!    nobody edits a file to say so — specs are read as written. See
+//!    [`CONVENTIONS`].
 //! 2. **Inferred** — score every candidate type on four independent signals
 //!    (which required sections the file actually contains, what its path is
 //!    called, what its title says, which front-matter keys it fills) and take
@@ -59,6 +65,11 @@ pub struct Classification {
     pub candidates: Vec<TypeCandidate>,
     /// False when the path is not prose at all (a `.png`, a `.rs`).
     pub is_prose: bool,
+    /// True when a spec layout says the file is writing but not a spec — a
+    /// plan, or history (see [`ConventionVerdict::NotASpec`]). `type_key` is
+    /// `None` then, and the binding is `not_a_document` rather than
+    /// `unknown`: nobody needs to look at it.
+    pub not_a_spec: bool,
 }
 
 /// Where a repository keeps instructions for its tools rather than its own
@@ -68,20 +79,138 @@ pub struct Classification {
 /// On Insight these were a third of "Needs review" (2026-10-05): 47 files
 /// under `.cf-studio/`, 43 under `.claude/`, and a kit's ADR example bound
 /// as one of the project's decisions.
-const TOOLING_DIRS: &[&str] = &[".cf-studio", ".claude", ".github"];
+///
+/// A directory counts at any depth, not only at the root: a monorepo keeps an
+/// agent's setup beside the package it works on (`UI/.cursor/`,
+/// `UI/.cypilot/`), and it is no more the project's writing there.
+const TOOLING_DIRS: &[&str] = &[
+    ".cf-studio",
+    ".claude",
+    ".github",
+    // Agent and editor setup: rules, prompts, skills, a kit's copy.
+    ".cypilot",
+    ".cursor",
+    ".windsurf",
+    ".agents",
+    ".drover",
+];
 
 /// Files at the repository root that brief an agent, not a reader.
 const TOOLING_FILES: &[&str] = &["claude.md", "agents.md"];
 
 /// True when `path` is tool configuration (see [`TOOLING_DIRS`]).
 fn is_tooling_path(path: &str) -> bool {
-    let path = path.trim_start_matches(['/', '\\']);
-    let mut segments = path.split(['/', '\\']);
-    let first = segments.next().unwrap_or_default();
-    if segments.next().is_some() {
-        return TOOLING_DIRS.contains(&first);
+    let segments: Vec<&str> = path.split(['/', '\\']).filter(|s| !s.is_empty()).collect();
+    let Some((file, dirs)) = segments.split_last() else {
+        return false;
+    };
+    if dirs.is_empty() {
+        return TOOLING_FILES.contains(&file.to_ascii_lowercase().as_str());
     }
-    TOOLING_FILES.contains(&first.to_ascii_lowercase().as_str())
+    dirs.iter()
+        .any(|d| TOOLING_DIRS.contains(&d.to_ascii_lowercase().as_str()))
+}
+
+/// Confidence of a type a spec layout declares: high enough for a project's
+/// pipeline to confirm it at the default threshold (0.8), and short of the
+/// 1.0 a file's own declaration earns.
+pub const CONVENTION_CONFIDENCE: f32 = 0.9;
+
+/// What a spec layout says a file in one of its places is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConventionVerdict {
+    /// A document of this catalogue type.
+    Type(&'static str),
+    /// Writing, but not a spec: a plan of work, or history kept for the
+    /// record. Known, so nobody is asked about it, and never counted.
+    NotASpec,
+}
+
+/// One place a spec layout keeps one kind of file.
+#[derive(Clone, Copy, Debug)]
+pub struct ConventionRule {
+    /// The layout's own directory, matched at any depth (`openspec`,
+    /// `UI/openspec`), ignoring case.
+    pub root: &'static str,
+    /// The path under `root`, one entry per segment: `*` is any one segment,
+    /// `**` any number of them (none included), anything else is that name,
+    /// ignoring case.
+    pub pattern: &'static [&'static str],
+    pub verdict: ConventionVerdict,
+    /// Why, in words, for the person reading the binding.
+    pub why: &'static str,
+}
+
+/// Spec layouts recognized by where a file sits. Data, not code: another
+/// layout is another few rows. The first rule that matches wins, so a
+/// narrower rule goes above a wider one.
+///
+/// OpenSpec: `specs/` holds the living specs, one capability per directory;
+/// `changes/<id>/` a change in flight — its proposal, its design and its task
+/// list — and `changes/archive/` the changes already applied.
+///
+/// A proposal is bound as `prd`: the catalogue has no change-proposal type,
+/// and a proposal (why, what changes, impact) is the requirements side of a
+/// change, which is what a PRD holds.
+pub const CONVENTIONS: &[ConventionRule] = &[
+    ConventionRule {
+        root: "openspec",
+        pattern: &["changes", "archive", "**"],
+        verdict: ConventionVerdict::NotASpec,
+        why: "OpenSpec archive: a change already applied, kept as history",
+    },
+    ConventionRule {
+        root: "openspec",
+        pattern: &["specs", "**", "spec.md"],
+        verdict: ConventionVerdict::Type("feature"),
+        why: "OpenSpec layout: a living spec (openspec/specs/<capability>/spec.md)",
+    },
+    ConventionRule {
+        root: "openspec",
+        pattern: &["changes", "*", "proposal.md"],
+        verdict: ConventionVerdict::Type("prd"),
+        why: "OpenSpec layout: a change proposal (openspec/changes/<id>/proposal.md)",
+    },
+    ConventionRule {
+        root: "openspec",
+        pattern: &["changes", "*", "design.md"],
+        verdict: ConventionVerdict::Type("design"),
+        why: "OpenSpec layout: a change's design (openspec/changes/<id>/design.md)",
+    },
+    ConventionRule {
+        root: "openspec",
+        pattern: &["changes", "*", "tasks.md"],
+        verdict: ConventionVerdict::NotASpec,
+        why: "OpenSpec layout: a change's task list, a plan rather than a spec",
+    },
+];
+
+/// Whether `segments` match `pattern` (see [`ConventionRule::pattern`]).
+fn glob_segments(pattern: &[&str], segments: &[&str]) -> bool {
+    match pattern.split_first() {
+        None => segments.is_empty(),
+        Some((&"**", rest)) => {
+            (0..=segments.len()).any(|skip| glob_segments(rest, &segments[skip..]))
+        }
+        Some((head, rest)) => match segments.split_first() {
+            Some((seg, tail)) => {
+                (*head == "*" || seg.eq_ignore_ascii_case(head)) && glob_segments(rest, tail)
+            }
+            None => false,
+        },
+    }
+}
+
+/// The first rule of [`CONVENTIONS`] that `path` follows, if any.
+pub fn convention_for(path: &str) -> Option<&'static ConventionRule> {
+    let segments: Vec<&str> = path.split(['/', '\\']).filter(|s| !s.is_empty()).collect();
+    CONVENTIONS.iter().find(|rule| {
+        segments
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.eq_ignore_ascii_case(rule.root))
+            .any(|(i, _)| glob_segments(rule.pattern, &segments[i + 1..]))
+    })
 }
 
 /// Directories inside a kit that hold its scaffolding: the artifact
@@ -299,6 +428,7 @@ pub fn classify(path: &str, content: &str, types: &[DocumentType]) -> Classifica
             source: DetectionSource::Heuristic,
             candidates: Vec::new(),
             is_prose: false,
+            not_a_spec: false,
         };
     }
 
@@ -314,7 +444,45 @@ pub fn classify(path: &str, content: &str, types: &[DocumentType]) -> Classifica
                 why: "declared in front matter".to_string(),
             }],
             is_prose: true,
+            not_a_spec: false,
         };
+    }
+
+    // A layout's declaration is the next best thing: the file sits where the
+    // layout keeps one kind of document. A type the catalogue lacks (a
+    // workspace that removed it) falls through to scoring.
+    if let Some(rule) = convention_for(path) {
+        match rule.verdict {
+            ConventionVerdict::NotASpec => {
+                return Classification {
+                    type_key: None,
+                    confidence: 0.0,
+                    source: DetectionSource::Heuristic,
+                    candidates: Vec::new(),
+                    is_prose: true,
+                    not_a_spec: true,
+                };
+            }
+            ConventionVerdict::Type(key) if types.iter().any(|t| t.key == key) => {
+                return Classification {
+                    type_key: Some(key.to_string()),
+                    confidence: CONVENTION_CONFIDENCE,
+                    // Recorded as `heuristic`: the stored source is a closed
+                    // set (a CHECK on the legacy bindings table), and a layout
+                    // rule is our reading of the path, not the file speaking
+                    // for itself. The candidate's `why` names the rule.
+                    source: DetectionSource::Heuristic,
+                    candidates: vec![TypeCandidate {
+                        type_key: key.to_string(),
+                        confidence: CONVENTION_CONFIDENCE,
+                        why: rule.why.to_string(),
+                    }],
+                    is_prose: true,
+                    not_a_spec: false,
+                };
+            }
+            ConventionVerdict::Type(_) => {}
+        }
     }
 
     let mut candidates: Vec<TypeCandidate> = types
@@ -347,6 +515,7 @@ pub fn classify(path: &str, content: &str, types: &[DocumentType]) -> Classifica
         source: DetectionSource::Heuristic,
         candidates,
         is_prose: true,
+        not_a_spec: false,
     }
 }
 
@@ -395,7 +564,7 @@ mod tests {
             assert!(!c.is_prose, "{path} should not be classified");
             assert_eq!(c.type_key, None);
         }
-        // Only at the root, and only those directories.
+        // Only those directories, and the agent briefs only at the root.
         for path in [
             "docs/CLAUDE.md",
             "docs/.claude-notes.md",
@@ -607,5 +776,167 @@ mod tests {
         let content = filled(&["Symptoms", "Diagnosis", "Recovery"]);
         let c = classify("ops/runbook-postgres.md", &content, &types);
         assert_eq!(c.type_key.as_deref(), Some("runbook"));
+    }
+
+    /// An OpenSpec file as people write it: no front matter, OpenSpec's own
+    /// headings, nothing of the catalogue's templates.
+    const OPENSPEC_TEXT: &str = "# Login\n\n## Requirements\n\n### Requirement: Sign in\n\nThe system SHALL let a user sign in.\n";
+
+    #[test]
+    fn an_openspec_living_spec_is_a_feature_by_where_it_sits() {
+        let types = builtin_types();
+        let c = classify("openspec/specs/login/spec.md", OPENSPEC_TEXT, &types);
+        assert_eq!(c.type_key.as_deref(), Some("feature"));
+        assert_eq!(c.confidence, CONVENTION_CONFIDENCE);
+        assert_eq!(c.source, DetectionSource::Heuristic);
+        assert!(!c.not_a_spec);
+        assert!(
+            c.candidates[0].why.contains("OpenSpec"),
+            "{:?}",
+            c.candidates
+        );
+        // High enough for a project's pipeline at its default threshold.
+        assert!(c.confidence >= crate::documents::pipeline::DEFAULT_THRESHOLD);
+    }
+
+    #[test]
+    fn an_openspec_change_has_a_proposal_a_design_and_a_plan() {
+        let types = builtin_types();
+        let proposal = classify(
+            "openspec/changes/add-2fa/proposal.md",
+            OPENSPEC_TEXT,
+            &types,
+        );
+        assert_eq!(proposal.type_key.as_deref(), Some("prd"));
+        assert_eq!(proposal.confidence, CONVENTION_CONFIDENCE);
+
+        let design = classify("openspec/changes/add-2fa/design.md", OPENSPEC_TEXT, &types);
+        assert_eq!(design.type_key.as_deref(), Some("design"));
+
+        let tasks = classify(
+            "openspec/changes/add-2fa/tasks.md",
+            "- [ ] 1.1 Do it\n",
+            &types,
+        );
+        assert!(tasks.is_prose);
+        assert!(tasks.not_a_spec);
+        assert_eq!(tasks.type_key, None);
+    }
+
+    /// The archive is history: every file in it, proposal and spec alike,
+    /// is known and never counted.
+    #[test]
+    fn the_openspec_archive_is_history_not_current_specs() {
+        let types = builtin_types();
+        for path in [
+            "openspec/changes/archive/2025-01-01-add-2fa/proposal.md",
+            "openspec/changes/archive/2025-01-01-add-2fa/design.md",
+            "openspec/changes/archive/2025-01-01-add-2fa/specs/login/spec.md",
+            "openspec/changes/archive/README.md",
+        ] {
+            let c = classify(path, OPENSPEC_TEXT, &types);
+            assert!(c.not_a_spec, "{path} is history");
+            assert_eq!(c.type_key, None, "{path}");
+        }
+    }
+
+    #[test]
+    fn an_openspec_directory_counts_at_any_depth() {
+        let types = builtin_types();
+        for (path, want) in [
+            ("UI/openspec/specs/login/spec.md", Some("feature")),
+            ("UI/openspec/changes/add-2fa/proposal.md", Some("prd")),
+            ("packages/web/OpenSpec/changes/x/design.md", Some("design")),
+            ("UI\\openspec\\specs\\login\\spec.md", Some("feature")),
+        ] {
+            let c = classify(path, OPENSPEC_TEXT, &types);
+            assert_eq!(c.type_key.as_deref(), want, "{path}");
+        }
+        assert!(
+            classify(
+                "UI/openspec/changes/archive/a/proposal.md",
+                OPENSPEC_TEXT,
+                &types
+            )
+            .not_a_spec
+        );
+        assert!(classify("UI/openspec/changes/x/tasks.md", OPENSPEC_TEXT, &types).not_a_spec);
+    }
+
+    /// Only the layout's own places: a `spec.md` elsewhere, or a file the
+    /// layout does not name, is read on the usual terms.
+    #[test]
+    fn files_outside_the_layouts_places_are_scored_as_usual() {
+        for path in [
+            "docs/specs/login/spec.md",
+            "openspec/project.md",
+            "openspec/AGENTS.md",
+            "openspec/changes/add-2fa/notes.md",
+            "openspec/changes/add-2fa/specs/login/spec.md",
+            "openspec/specs/login/notes.md",
+            "not-openspec/specs/login/spec.md",
+        ] {
+            assert!(
+                convention_for(path).is_none(),
+                "{path} is not a layout place"
+            );
+        }
+        let types = builtin_types();
+        let c = classify("openspec/project.md", OPENSPEC_TEXT, &types);
+        assert!(!c.not_a_spec);
+        assert_ne!(c.confidence, CONVENTION_CONFIDENCE);
+    }
+
+    /// The file's own word still wins over where it sits.
+    #[test]
+    fn front_matter_outranks_the_layout() {
+        let types = builtin_types();
+        let content = format!("---\ntype: adr\n---\n\n{OPENSPEC_TEXT}");
+        let c = classify("openspec/changes/x/design.md", &content, &types);
+        assert_eq!(c.type_key.as_deref(), Some("adr"));
+        assert_eq!(c.source, DetectionSource::FrontMatter);
+    }
+
+    /// A layout naming a type the workspace's catalogue lacks proposes
+    /// nothing it cannot validate; scoring has its usual turn.
+    #[test]
+    fn a_layout_type_missing_from_the_catalogue_falls_through() {
+        let types: Vec<DocumentType> = builtin_types()
+            .into_iter()
+            .filter(|t| t.key != "feature")
+            .collect();
+        let c = classify("openspec/specs/login/spec.md", OPENSPEC_TEXT, &types);
+        assert_ne!(c.type_key.as_deref(), Some("feature"));
+        assert!(!c.not_a_spec);
+    }
+
+    #[test]
+    fn agent_and_editor_setup_is_tooling_at_any_depth() {
+        for path in [
+            ".cypilot/config/rules.md",
+            ".cursor/rules/style.md",
+            ".windsurf/rules.md",
+            ".agents/skills/review/SKILL.md",
+            ".drover/plan.md",
+            "UI/.cypilot/kits/sdlc/README.md",
+            "UI/.cursor/rules/style.md",
+            "UI/.claude/commands/x.md",
+            "packages/web/.github/PULL_REQUEST_TEMPLATE.md",
+            "UI\\.windsurf\\rules.md",
+            "/.cursor/rules.md",
+        ] {
+            assert!(is_tooling_path(path), "{path} is tooling");
+            assert!(!is_prose_path(path), "{path} is not a document path");
+        }
+        for path in [
+            "docs/cursor.md",
+            "docs/.cursor-notes.md",
+            "UI/README.md",
+            "UI/CLAUDE.md",
+            "agents/overview.md",
+        ] {
+            assert!(!is_tooling_path(path), "{path} is not tooling");
+            assert!(is_prose_path(path), "{path} is a document path");
+        }
     }
 }
