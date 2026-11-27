@@ -15,7 +15,7 @@
 
 import { useMemo } from 'react';
 import { apiRegistry, useApiQuery, useAppSelector } from '@gears-frontx/react';
-import { kitIn, useDomainTypes } from '@constructor-studio/mfe-shared';
+import { useDomainTypes } from '@constructor-studio/mfe-shared';
 import { InstalledKitsApiService } from '@/app/api/InstalledKitsApiService';
 import type { ModelTypesSummary } from '@/app/api/ModelTypesApiService';
 import { APP_CONTEXT_SLICE_KEY, type AppContextState } from '@/app/slices/appContextSlice';
@@ -146,8 +146,8 @@ export function screenShows(
   types: ReadonlySet<string> | null = null
 ): boolean {
   const kit = screen.presentation.kit;
-  // A kit named by a retired slug shows where everything it resolves to is
-  // installed (ADR-0071 §8, mfe-shared `kitIn`).
-  if (kit && installed !== null && !kitIn(installed, kit)) return false;
+  // A kit named by a retired slug (ADR-0071 §8) is in `installed` wherever
+  // everything it resolves to is: the installer lists it in `effective`.
+  if (kit && installed !== null && !installed.has(kit)) return false;
   return types === null || typesNeeded(screen).every((t) => types.has(t));
 }

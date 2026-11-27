@@ -42,6 +42,7 @@ import { connectEditorBridge, type EditorMessage, type EditorTheme } from '@/app
 import type { FrameHook } from '@/app/mfe/MfeHandlerIframe';
 import { showNotice } from '@/app/mfe/notifyAction';
 import { publishFrameUrl } from '@/app/mfe/sharedContext';
+import type { ArtifactAddress } from '@/app/mfe/screenLevels';
 import { readAppContext } from '@/app/slices/appContextSlice';
 import { readSessionProfile } from '@/app/slices/appSessionSlice';
 import { DEFAULT_THEME_ID } from '@/app/themes/default';
@@ -85,8 +86,13 @@ export interface EditorScope {
   projectId: string | null;
   orgId: string | null;
   editor: boolean;
-  /** What the editor shows; only a file or a Studio document is told to the IDE. */
+  /** What the editor shows; told to the IDE when its kind is one the editor opens. */
   artifact: StudioArtifact | null;
+  /**
+   * The kinds the editor opens and how the IDE addresses each, as the editor's
+   * kit declares them (`presentation.opens`, ADR-0079); empty off the editor.
+   */
+  opens: ReadonlyMap<string, ArtifactAddress>;
 }
 
 export interface EditorSession {
@@ -102,7 +108,7 @@ export interface EditorSession {
 
 type Outcome = { ready: true } | { ready: false; failure: EditorSessionFailure };
 type Launched = { ready: true; url: string; sessionId: string } | { ready: false; failure: EditorSessionFailure };
-/** What the IDE is told to open: a file, or a Studio document with the workspace that addresses it. */
+/** What the IDE is told to open: a file by its path, or an item with the workspace that addresses it. */
 type Opened = { artifact: StudioArtifact; workspaceId?: string };
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -146,7 +152,7 @@ export function createEditorSession(app: FrontXApp): EditorSession {
   let stopWait: (() => void) | null = null;
   /** The project's sources as last read: where each repository is checked out. */
   let projectSources: readonly ProjectSource[] = [];
-  /** The file or document the editor shows, told to the IDE when it changes and to every new frame. */
+  /** The file or item the editor shows, told to the IDE when it changes and to every new frame. */
   let opened: Opened | null = null;
   /** The bridge to the editor's frame, and whether the IDE in it has answered. */
   let bridge: ReturnType<typeof connectEditorBridge> | null = null;
@@ -413,20 +419,21 @@ export function createEditorSession(app: FrontXApp): EditorSession {
   };
 
   // @cpt-begin:cpt-studiofrontend-flow-editor-bridge-open:p1:inst-5
-  const showArtifact = (artifact: StudioArtifact | null): void => {
+  const showArtifact = (artifact: StudioArtifact | null, opens: ReadonlyMap<string, ArtifactAddress>): void => {
     let next: Opened | null = null;
-    if (artifact?.kind === 'file' && artifact.path) next = { artifact };
-    // The IDE addresses a document by the workspace the Specs list reads it from. A link opened in a fresh
-    // tab may not have that workspace yet, so the document waits for it: held before, it would be taken
+    const address = artifact ? opens.get(artifact.kind) : undefined;
+    if (artifact && address === 'path' && artifact.path) next = { artifact };
+    // The IDE addresses such an item by the workspace the project's lists read it from. A link opened in a
+    // fresh tab may not have that workspace yet, so the item waits for it: held before, it would be taken
     // as told by the pass that brings the workspace.
     const workspaceId = readAppContext(app).workspace?.id;
-    if (artifact?.kind === 'document' && workspaceId) next = { artifact, workspaceId };
-    // A document is the same one by its id and workspace (its title is no address), a file by where it
-    // sits. The workspace can move under the same document: a link that names the project alone starts
-    // on the shell's default workspace, then moves to the project's own.
+    if (artifact && address === 'workspace' && workspaceId) next = { artifact, workspaceId };
+    // An item is the same one by its kind, id and workspace (its title is no address), a file by where it
+    // sits. The workspace can move under the same item: a link that names the project alone starts on the
+    // shell's default workspace, then moves to the project's own.
     const [now, was] = [next?.artifact, opened?.artifact];
     const same =
-      now?.kind === 'document' || was?.kind === 'document'
+      next?.workspaceId !== undefined || opened?.workspaceId !== undefined
         ? now?.kind === was?.kind && now?.artifactId === was?.artifactId && next?.workspaceId === opened?.workspaceId
         : now?.repository === was?.repository && now?.path === was?.path;
     if (same) return;
@@ -520,7 +527,7 @@ export function createEditorSession(app: FrontXApp): EditorSession {
   };
   // @cpt-end:cpt-studiofrontend-flow-editor-bridge-open:p1:inst-4
 
-  const sync = ({ projectId, orgId, editor, artifact }: EditorScope): void => {
+  const sync = ({ projectId, orgId, editor, artifact, opens }: EditorScope): void => {
     if (projectId !== project) {
       if (project !== null) publishFrameUrl(app, null);
       live = null;
@@ -536,7 +543,7 @@ export function createEditorSession(app: FrontXApp): EditorSession {
       entered = false;
       return;
     }
-    showArtifact(artifact);
+    showArtifact(artifact, opens);
     if (entered || !projectId || !orgId) return;
     entered = true;
     if (!inFlight) void launch(projectId, orgId, false);

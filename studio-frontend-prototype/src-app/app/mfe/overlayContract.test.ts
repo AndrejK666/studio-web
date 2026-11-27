@@ -31,7 +31,6 @@ import {
 // eslint-disable-next-line @typescript-eslint/no-restricted-imports -- a test reaching the check itself, not app code
 import { validateContract } from '@gears-frontx/mfes';
 import { helloKitManifest } from '@frontx-test-utils/helloKitManifest';
-import { KIT_ALIASES } from '@constructor-studio/mfe-shared';
 import { SHELL_SCHEMAS } from './schemas';
 import { buildStudioOverlayDomain, buildStudioScreenDomain, buildStudioSidebarDomain } from './bootstrap';
 import { toManifestConfig } from './runtimeKits';
@@ -106,6 +105,14 @@ const REQUEST_FROM_HOST_ENTRIES: Record<string, string[]> = {
 };
 
 const MFE_PACKAGES = path.resolve(__dirname, '../../mfe_packages');
+
+/** The built-in kits' slugs, from their manifests (`studio-backend/src/kit_registry/builtin`). */
+const BUILTIN_KITS = path.resolve(__dirname, '../../../../studio-backend/src/kit_registry/builtin');
+function builtinKitSlugs(): string[] {
+  return readdirSync(BUILTIN_KITS)
+    .filter((name) => name.endsWith('.kit.json'))
+    .map((name) => (JSON.parse(readFileSync(path.join(BUILTIN_KITS, name), 'utf8')) as { slug: string }).slug);
+}
 
 /** The MFE packages whose own sources call `requestFromHost`; mfe-shared only defines it. */
 function packagesCallingRequestFromHost(): string[] {
@@ -269,11 +276,12 @@ describe('generated MFE manifest', () => {
       }
     });
 
-    it("names no retired kit slug (ADR-0071 §8): every screen's kit is a current one", () => {
-      const retired = Object.keys(KIT_ALIASES);
+    it("names no retired kit slug (ADR-0071 §8): every screen's kit is a current built-in one", () => {
+      const current = builtinKitSlugs();
+      expect(current.length).toBeGreaterThan(0);
       expect(
         extensions
-          .filter((ext) => retired.includes(ext.presentation?.kit ?? ''))
+          .filter((ext) => ext.presentation?.kit !== undefined && !current.includes(ext.presentation.kit))
           .map((ext) => `${ext.id}: ${ext.presentation?.kit}`)
       ).toEqual([]);
     });

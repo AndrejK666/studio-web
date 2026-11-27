@@ -73,6 +73,13 @@
           "type": "array",
           "items": { "type": "string", "pattern": "^gts\\.cf\\.studio\\.(domain|kit\\.[a-z0-9_]+)\\.[a-z0-9_]+\\.v1~$" },
           "$comment": "Domain types (GTS ids, as in needs) a section inside the screen shows that another kit brings (ADR-0071 §5): the screen itself always shows. The shell reads whether each is installed and publishes it in the screens-available property (types); the screen hides the section where one is not, and shows it while that is not yet known."
+        },
+        "opens": {
+          "type": "object",
+          "propertyNames": { "pattern": "^[a-z][A-Za-z0-9]*$" },
+          "additionalProperties": { "type": "string", "enum": ["path", "workspace"] },
+          "minProperties": 1,
+          "$comment": "The artifact kinds this screen opens (one camelCase word each, as the artifact-open action takes them), and how its editor frame is told about each: path, a file in one of the project's checkouts; workspace, an item by its id in the workspace the project reads it from. The screen that declares it is where an artifact opens (ADR-0079): the kit that brings the editor says so here, and the shell names neither its screen nor the kinds."
         }
       },
       "required": [

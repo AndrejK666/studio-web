@@ -19,9 +19,6 @@ export const ROUTE_NAME = /^[a-z][a-z0-9-]*$/;
 /** The root domain key the shell projects. A valid `name`; `route.test.ts` proves it. */
 export const SCREEN_DOMAIN_KEY = 'screen' as DomainKey;
 
-/** The editor's token: the project-level screen an artifact opens on */
-export const EDITOR_SCREEN_TOKEN = 'space';
-
 export interface ShellRoute {
   token: string;
   org?: string;

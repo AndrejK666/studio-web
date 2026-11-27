@@ -16,7 +16,7 @@ import {
   useDomainExtensions,
   FRONTX_SCREEN_DOMAIN,
 } from '@gears-frontx/react';
-import { AccountsApiService, errorMessage, kitIn } from '@constructor-studio/mfe-shared';
+import { AccountsApiService, errorMessage } from '@constructor-studio/mfe-shared';
 import { InstalledKitsApiService } from '@/app/api/InstalledKitsApiService';
 import { useMountedExtensions } from '@/app/mfe/domainOccupancy';
 import type { StudioScreenExtension } from '@/app/mfe/screenLevels';
@@ -88,7 +88,8 @@ async function kitAt(place: Place, kit: string): Promise<boolean> {
   try {
     const summary = await apiRegistry.getService(InstalledKitsApiService).installed(scope).fetch();
     if (!summary) return true;
-    return kitIn(new Set(summary.effective.map((k) => k.kit_slug)), kit);
+    // A retired slug (ADR-0071 §8) is in `effective` wherever everything it resolves to applies.
+    return summary.effective.some((k) => k.kit_slug === kit);
   } catch (error) {
     console.warn('[chain] could not read the kits of the place picked:', errorMessage(error));
     return true;

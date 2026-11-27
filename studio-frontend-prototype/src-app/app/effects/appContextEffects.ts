@@ -22,8 +22,8 @@ import {
 import { createContextCatalogs } from '@/app/effects/contextCatalogs';
 import type { EditorSession } from '@/app/effects/editorSessionEffects';
 import { startRouting, type RoutingHandle } from '@/app/routing/startRouting';
-import { entryTokenOf, groupOfToken, tokenOf } from '@/app/routing/screenTokens';
-import { EDITOR_SCREEN_TOKEN, type ShellRoute } from '@/app/routing/route';
+import { editorGroupOf, entryTokenOf, groupOfToken, tokenOf } from '@/app/routing/screenTokens';
+import type { ShellRoute } from '@/app/routing/route';
 import { openOnMyDesktop } from '@/app/desktop/openOnMyDesktop';
 import { showNotice } from '@/app/mfe/notifyAction';
 import { readSessionProfile } from '@/app/slices/appSessionSlice';
@@ -110,7 +110,7 @@ export function registerAppContextEffects(app: FrontXApp, editorSession: EditorS
     if (!current) return undefined;
     const inScope = current.project ? 'project' : current.workspace ? 'workspace' : currentGroupLevel();
     if (inScope !== level) return undefined;
-    if (current.token === EDITOR_SCREEN_TOKEN) return { token: current.token };
+    if (current.token === editorGroupOf(routing?.groups() ?? [])?.token) return { token: current.token };
     const token = tokenToKeep(current, level);
     if (!token) return undefined;
     return token === current.token && current.section ? { token, section: current.section } : { token };
@@ -229,11 +229,13 @@ export function registerAppContextEffects(app: FrontXApp, editorSession: EditorS
       }
       if (!routing) return;
     }
-    if (!groupOfToken(routing.groups(), EDITOR_SCREEN_TOKEN)) {
-      console.warn(`[shell] artifact open: no screen answers to "${EDITOR_SCREEN_TOKEN}"`);
+    // The screen an artifact opens on is the one whose kit declares what it opens (ADR-0079).
+    const editorGroup = editorGroupOf(routing.groups());
+    if (!editorGroup) {
+      console.warn('[shell] artifact open: no screen declares the artifacts it opens');
       return;
     }
-    const route = routeFor(EDITOR_SCREEN_TOKEN, 'project', {
+    const route = routeFor(editorGroup.token, 'project', {
       project: projectId,
       artifact: artifactId,
       repository,

@@ -59,6 +59,11 @@ const FILE: StudioArtifact = { artifactId: 'a1', repository: 'acme/web', path: '
 const WORKSPACE = 'w1';
 /** A Studio document: no repository, and its title where a file has its path. */
 const DOCUMENT: StudioArtifact = { artifactId: 'd1', repository: '', path: 'Payments PRD', kind: 'document' };
+/** What the editor's kit declares it opens (space-mfe's `presentation.opens`). */
+const OPENS: ReadonlyMap<string, 'path' | 'workspace'> = new Map([
+  ['file', 'path'],
+  ['document', 'workspace'],
+]);
 const PROFILE = { id: 'u1', displayName: 'Ada Lovelace', email: 'ada@acme.test' };
 const VIEWER = { sub: 'u1', name: 'Ada Lovelace', email: 'ada@acme.test', kind: 'person' };
 const ANSWER_DEADLINE_MS = 2 * 60_000;
@@ -217,8 +222,8 @@ function harness({ profile = PROFILE as typeof PROFILE | null, projectName = 'We
 
   const editor = createEditorSession(app);
   const open = (projectId = PROJECT, artifact: StudioArtifact | null = FILE): void =>
-    editor.sync({ projectId, orgId: ORG, editor: true, artifact });
-  const leave = (projectId = PROJECT): void => editor.sync({ projectId, orgId: ORG, editor: false, artifact: null });
+    editor.sync({ projectId, orgId: ORG, editor: true, artifact, opens: OPENS });
+  const leave = (projectId = PROJECT): void => editor.sync({ projectId, orgId: ORG, editor: false, artifact: null, opens: new Map() });
 
   // The iframe handler: one frame per address, told to the session's hook
   // before it loads; leaving the editor unmounts it, coming back mounts a new
@@ -644,7 +649,7 @@ describe('createEditorSession', () => {
     h.open();
     await vi.waitFor(() => expect(h.stream.onEvent).not.toBeNull());
 
-    h.editor.sync({ projectId: 'p2', orgId: ORG, editor: false, artifact: null });
+    h.editor.sync({ projectId: 'p2', orgId: ORG, editor: false, artifact: null, opens: new Map() });
     expect(published()).toEqual([null]);
     expect(h.state().phase).toBe('idle');
     await vi.waitFor(() => expect(h.disconnect).toHaveBeenCalled());
@@ -724,7 +729,7 @@ describe('createEditorSession', () => {
     h.open();
     await vi.waitFor(() => expect(h.launch).toHaveBeenCalled());
 
-    h.editor.sync({ projectId: 'p2', orgId: ORG, editor: false, artifact: null });
+    h.editor.sync({ projectId: 'p2', orgId: ORG, editor: false, artifact: null, opens: new Map() });
     answer.resolve(session('running'));
     await settle();
 
