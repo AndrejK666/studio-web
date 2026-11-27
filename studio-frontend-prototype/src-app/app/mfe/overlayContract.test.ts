@@ -513,8 +513,9 @@ describe('generated MFE manifest', () => {
         'Gear match',
         'Activity',
         'Timeline',
-        // The project's People (team-mfe): the shell's since ADR-0071 step 6.
-        'People',
+        // The project's team (team-mfe): the shell's since ADR-0071 step 6,
+        // labelled Team again by the 2026-11-18 stand walk (#1111).
+        'Team',
         // What the Studio domain model records about the project (admin-mfe's
         // generic screen, ADR-0066; the prototype drew it on Overview).
         'Attributes',
@@ -528,9 +529,12 @@ describe('generated MFE manifest', () => {
       const tabs = resolveLevelMenu(screens as StudioScreenExtension[], 'admin');
       expect(tabs.map((ext) => ext.presentation.label)).toEqual([
         'Organizations',
-        'People',
+        // Members and Connections: the People and Integrations sections,
+        // relabelled by the 2026-11-18 stand walk (#1111); their sections
+        // and routes keep the old names.
+        'Members',
         'Access',
-        'Integrations',
+        'Connections',
         'Secrets',
         // The Studio domain model (admin-mfe, order 60, ADR-0066): before
         // Objects, where the prototype's Admin had "Domain model". Not the

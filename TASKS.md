@@ -140,10 +140,15 @@ done, **P2** can wait.
   Messages to claude-0e expire unread (the two sessions run in different
   permission modes). Pass it by hand: the list under "Run the combined gate".
 
-- [ ] Fix the shell's `editorSessionEffects` test @andrejk666
+- [x] Fix the shell's `editorSessionEffects` test @andrejk666
 
   Red since 8fe24027b (follow a run the event stream never mentions). The
   test expects the old behaviour; update it or the effect.
+
+  Fixed by f128a5ca7 (the test's stream now mentions the run); confirmed
+  green 2026-11-27 on 8d4bbf80d with the whole shell suite (1038 passed, 1
+  skipped) after the overlayContract labels and the two cold-import timeouts
+  were fixed on `AndrejK666/fe-test-debts`.
 
 - [x] Point `gears-matcher.yml` at the fork's registry @andrejk666
 

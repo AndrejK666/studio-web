@@ -15,9 +15,9 @@ release).
 | Section | From the prototype (00828880) | Gears |
 |---|---|---|
 | Organizations | `OrganizationsTable` (`org-admin.tsx`), `OrganizationsView` (`App.tsx`) | account-management, studio-user, studio-organizations (logo) |
-| People | `OrgMembersView` (`org-admin.tsx`), `MemberDirectoryForm` (`people-profile.tsx`) | studio-user, studio-identity |
+| Members (section `people`) | `OrgMembersView` (`org-admin.tsx`), `MemberDirectoryForm` (`people-profile.tsx`) | studio-user, studio-identity |
 | Access | `AccessView` (`App.tsx`), `access.ts` | account-management (metadata), studio-organizations (catalogue), studio-user, resource-group |
-| Integrations (and Organization › Connections) | `ConnectorsView`, `AddConnector`, `ConnectionList`, `EditConnection`, `RepoBrowser` (`App.tsx`), `connector-logos.tsx`, `kubeconfig-field.tsx` | studio-connector, studio-environments, account-management (project config), studio-components-catalog (sync) |
+| Connections (section `integrations`; and Organization › Connections) | `ConnectorsView`, `AddConnector`, `ConnectionList`, `EditConnection`, `RepoBrowser` (`App.tsx`), `connector-logos.tsx`, `kubeconfig-field.tsx` | studio-connector, studio-environments, account-management (project config), studio-components-catalog (sync) |
 | Secrets | `SecretsView` (`App.tsx`) | credstore, account-management, studio-connector |
 | Studio domain model | `DomainModelAdmin` (`domain-model-admin.tsx`), `domain-origin.ts`, the pure part of `domain-runtime.ts` (studio-frontend-poc/) | studio-domain-model |
 | Objects | `ObjectTypes` (`object-types.tsx`) | studio-components-catalog, types-registry |

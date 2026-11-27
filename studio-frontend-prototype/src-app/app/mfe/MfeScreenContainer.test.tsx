@@ -1,10 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
+// Static, not inside the first test: the cold import of the container's module
+// graph is paid at collection, where no test timeout applies; inside the first
+// test it took past 5 s on a loaded machine.
+import { MfeScreenContainer } from './MfeScreenContainer';
 
-const mockBootstrapMFE = vi.fn();
-const mockUseFrontX = vi.fn();
-const mockScreenDomain = { id: 'screen-domain' };
-const mockEmit = vi.hoisted(() => vi.fn());
+// Hoisted: the container is imported statically above, so the mock factories
+// run before this module's own top-level code.
+const { mockBootstrapMFE, mockUseFrontX, mockScreenDomain, mockEmit } = vi.hoisted(() => ({
+  mockBootstrapMFE: vi.fn(),
+  mockUseFrontX: vi.fn(),
+  mockScreenDomain: { id: 'screen-domain' },
+  mockEmit: vi.fn(),
+}));
 
 vi.mock('./bootstrap', () => ({
   bootstrapMFE: (...args: never[]) => mockBootstrapMFE(...args),
@@ -96,17 +104,16 @@ describe('MfeScreenContainer', () => {
           resolveBootstrap = resolve;
         }),
     );
-    const { MfeScreenContainer } = await import('./MfeScreenContainer');
 
     render(<MfeScreenContainer />);
 
     expect(screen.queryByTestId('extension-domain-slot')).toBeNull();
 
-    resolveBootstrap?.();
+    // Settled inside the test, so its render is not left to land in the next one.
+    await act(async () => resolveBootstrap?.());
   });
 
   it('bootstraps the MFE runtime only once across re-renders', async () => {
-    const { MfeScreenContainer } = await import('./MfeScreenContainer');
 
     const { rerender } = render(<MfeScreenContainer />);
     rerender(<MfeScreenContainer />);
@@ -119,7 +126,6 @@ describe('MfeScreenContainer', () => {
   });
 
   it('renders the screen-domain ExtensionDomainSlot after bootstrap succeeds', async () => {
-    const { MfeScreenContainer } = await import('./MfeScreenContainer');
 
     render(<MfeScreenContainer />);
 
@@ -137,7 +143,6 @@ describe('MfeScreenContainer', () => {
   // Which screen opens is the address's to say: the container only tells the
   // effects that the slot is there and the manifests are in (ADR-0028).
   it('asks the effects to start routing once the slot reports its root', async () => {
-    const { MfeScreenContainer } = await import('./MfeScreenContainer');
 
     render(<MfeScreenContainer />);
 
@@ -151,7 +156,6 @@ describe('MfeScreenContainer', () => {
     mockBootstrapMFE.mockRejectedValue(error);
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    const { MfeScreenContainer } = await import('./MfeScreenContainer');
     render(<MfeScreenContainer />);
 
     // A blank content area is the one thing this must not be: the shell has no
@@ -162,9 +166,8 @@ describe('MfeScreenContainer', () => {
     expect(errorSpy).toHaveBeenCalled();
   });
 
-  it('says nothing of the sort while bootstrap is still pending', async () => {
+  it('says nothing of the sort while bootstrap is still pending', () => {
     mockBootstrapMFE.mockImplementation(() => new Promise<void>(() => {}));
-    const { MfeScreenContainer } = await import('./MfeScreenContainer');
 
     render(<MfeScreenContainer />);
 
