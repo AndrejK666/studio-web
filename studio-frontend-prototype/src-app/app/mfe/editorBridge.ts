@@ -12,6 +12,8 @@
  * the frame is another realm, and its origin is the one of its own `src`.
  */
 
+import { onFrameMessage } from '@constructor-studio/mfe-shared';
+
 export type EditorTheme = 'light' | 'dark';
 
 /** Who is at the keyboard, as the IDE's `PortalViewer` takes it. */
@@ -63,7 +65,6 @@ export const INIT_REPEAT_MS = 2_000;
 const OPENS: ReadonlySet<EditorMessage['type']> = new Set(['studio.openInEditor', 'studio.openDocument']);
 
 export function connectEditorBridge(frame: HTMLIFrameElement, options: EditorBridgeOptions) {
-  const portal = frame.ownerDocument.defaultView;
   // Every document the frame shows is on its address's origin: the gate
   // redirects relatively, and serves its splash at the same address.
   const origin = new URL(frame.src).origin;
@@ -89,9 +90,8 @@ export function connectEditorBridge(frame: HTMLIFrameElement, options: EditorBri
     sendInit();
   };
 
-  const onMessage = (event: MessageEvent): void => {
-    if (event.source !== frame.contentWindow || event.origin !== origin) return;
-    const { type, name } = (event.data ?? {}) as { type?: unknown; name?: unknown };
+  const onData = (data: unknown): void => {
+    const { type, name } = (data ?? {}) as { type?: unknown; name?: unknown };
     if (typeof type !== 'string' || !type.startsWith('studio.')) return;
     if (!answered) {
       // Any `studio.*` is the answer: the IDE replies to the first init it
@@ -108,7 +108,8 @@ export function connectEditorBridge(frame: HTMLIFrameElement, options: EditorBri
   };
 
   frame.addEventListener('load', onLoad);
-  portal?.addEventListener('message', onMessage);
+  // Only the frame's own window, from its own origin.
+  const stopListening = onFrameMessage(frame, origin, onData);
 
   return {
     /** Sent at once after the answer; until then only the latest of each type waits, and one open of either kind. */
@@ -124,7 +125,7 @@ export function connectEditorBridge(frame: HTMLIFrameElement, options: EditorBri
       clearInterval(repeat);
       waiting.clear();
       frame.removeEventListener('load', onLoad);
-      portal?.removeEventListener('message', onMessage);
+      stopListening();
     },
   };
 }

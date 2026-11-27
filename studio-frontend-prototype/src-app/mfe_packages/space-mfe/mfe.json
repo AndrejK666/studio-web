@@ -22,7 +22,11 @@
         "route": "/space",
         "order": 25,
         "level": "project",
-        "kit": "ide"
+        "kit": "ide",
+        "opens": {
+          "file": "path",
+          "document": "workspace"
+        }
       }
     }
   ]

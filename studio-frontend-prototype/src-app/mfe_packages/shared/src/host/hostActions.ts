@@ -29,24 +29,20 @@ export const STUDIO_ACTION_WORKSPACES_PUBLISH =
 export const STUDIO_ACTION_ARTIFACT_OPEN =
   'gts.frontx.mfes.comm.action.v1~constructor_studio.context.artifact.open.v1~';
 
-export const STUDIO_ARTIFACT_KINDS = [
-  'repo',
-  'file',
-  'issue',
-  'pullRequest',
-  'commit',
-  'comment',
-  'user',
-  /** A Studio document (`studio-documents`), not a node of the artifact gear: its title rides in `path`. */
-  'document',
-] as const;
+/**
+ * What an artifact kind may be: one camelCase word, as it rides in the
+ * address. The kinds themselves are the kits' (ADR-0079): the MFE that lists
+ * an artifact names its kind, and the screen it opens on declares which kinds
+ * it opens and how (`presentation.opens`). The action and property schemas
+ * hold the same pattern.
+ */
+export const STUDIO_ARTIFACT_KIND_PATTERN = /^[a-z][A-Za-z0-9]*$/;
 
-export type StudioArtifactKind = (typeof STUDIO_ARTIFACT_KINDS)[number];
-
-const ARTIFACT_KINDS: ReadonlySet<string> = new Set(STUDIO_ARTIFACT_KINDS);
+/** An artifact's kind (`file`, or one a kit names): see `STUDIO_ARTIFACT_KIND_PATTERN`. */
+export type StudioArtifactKind = string;
 
 export function isStudioArtifactKind(value: unknown): value is StudioArtifactKind {
-  return typeof value === 'string' && ARTIFACT_KINDS.has(value);
+  return typeof value === 'string' && STUDIO_ARTIFACT_KIND_PATTERN.test(value);
 }
 
 export interface StudioArtifact {

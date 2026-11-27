@@ -26,7 +26,6 @@ export {
   type ScreenAvailability,
   type ShellTab,
 } from './host/screens';
-export { KIT_ALIASES, kitIn, resolveKit } from './host/kitAliases';
 export { STUDIO_MFE_ENTRY_IFRAME } from './host/hostTypes';
 export {
   STUDIO_ACTION_CONTEXT_PUBLISH,
@@ -39,7 +38,7 @@ export {
   openScreen,
   openPlace,
   type StudioPlace,
-  STUDIO_ARTIFACT_KINDS,
+  STUDIO_ARTIFACT_KIND_PATTERN,
   STUDIO_NOTICE_KINDS,
   STUDIO_EXTENSION_WORKSPACE_CREATE,
   STUDIO_EXTENSION_CONNECTION_CREATE,
@@ -417,5 +416,6 @@ export {
   type ComponentType,
 } from './components/componentType';
 
+export { onFrameMessage } from './frames/frameMessages';
 // A list on the kit's DataGrid (#1076) has its own entry, `@constructor-studio/mfe-shared/grid`
 // (`grid.ts`), so importing this one does not load the kit's DataGrid.

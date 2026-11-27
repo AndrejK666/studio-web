@@ -193,7 +193,7 @@ describe('registerAppContextEffects', () => {
 
     it('keeps the IDE, without the artifact open in it', async () => {
       handle.groups.mockReturnValue(
-        groupScreens([...screens, screen('space.main', '/space', 'project', { placement: 'hidden' })])
+        groupScreens([...screens, screen('space.main', '/space', 'project', { placement: 'hidden', opens: { file: 'path', document: 'workspace' } })])
       );
       handle.navigation.currentRoute.mockReturnValue({ ...IN_PROJECT, token: 'space', section: undefined, artifact: 'n-1' });
       await emit('app/context/place/requested', { organizationId: 'o1', workspaceId: 'w1', projectId: 'p2', keep: true });
@@ -337,7 +337,7 @@ describe('registerAppContextEffects', () => {
 
     it('pushes the editor with the artifact, keeping the level context', async () => {
       handle.groups.mockReturnValue(
-        groupScreens([...screens, screen('space.main', '/space', 'project', { placement: 'hidden' })])
+        groupScreens([...screens, screen('space.main', '/space', 'project', { placement: 'hidden', opens: { file: 'path', document: 'workspace' } })])
       );
       await emit('app/context/artifact/requested', REQUEST);
       expect(handle.navigation.navigate).toHaveBeenCalledWith(
@@ -358,7 +358,7 @@ describe('registerAppContextEffects', () => {
 
     it('opens a file on the member’s own desktop when the project is open there, and says where', async () => {
       handle.groups.mockReturnValue(
-        groupScreens([...screens, screen('space.main', '/space', 'project', { placement: 'hidden' })])
+        groupScreens([...screens, screen('space.main', '/space', 'project', { placement: 'hidden', opens: { file: 'path', document: 'workspace' } })])
       );
       (state as Record<string, unknown>)['app/session'] = { profile: { id: 'me' } };
       openOnMyDesktop.mockResolvedValueOnce('ThinkPad');
@@ -371,7 +371,7 @@ describe('registerAppContextEffects', () => {
 
     it('asks no desktop when this tab’s editor already has the project up', async () => {
       handle.groups.mockReturnValue(
-        groupScreens([...screens, screen('space.main', '/space', 'project', { placement: 'hidden' })])
+        groupScreens([...screens, screen('space.main', '/space', 'project', { placement: 'hidden', opens: { file: 'path', document: 'workspace' } })])
       );
       state['app/context'].project = { id: 'p1', name: 'P' };
       (state as Record<string, unknown>)['app/editor-session'] = { phase: 'ready', failure: null, shown: true };
@@ -402,7 +402,7 @@ describe('registerAppContextEffects', () => {
 
     beforeEach(() => {
       handle.groups.mockReturnValue(
-        groupScreens([...screens, screen('space.main', '/space', 'project', { placement: 'hidden' })])
+        groupScreens([...screens, screen('space.main', '/space', 'project', { placement: 'hidden', opens: { file: 'path', document: 'workspace' } })])
       );
       handle.navigation.currentRoute.mockReturnValue(IN_EDITOR);
     });
@@ -427,7 +427,7 @@ describe('registerAppContextEffects', () => {
 
     it('drops the switch, without throwing, when the level has no entry point to leave for', async () => {
       const orgOnly = screens.filter((candidate) => levelOf(candidate) === 'organization');
-      const hidden = screen('space.main', '/space', 'project', { placement: 'hidden' });
+      const hidden = screen('space.main', '/space', 'project', { placement: 'hidden', opens: { file: 'path', document: 'workspace' } });
       (app.mfeRegistry!.getExtensionsForDomain as Mock).mockReturnValue([...orgOnly, hidden]);
       handle.groups.mockReturnValue(groupScreens([...orgOnly, hidden]));
       await emit('app/context/project/changed', { projectId: 'p2' });

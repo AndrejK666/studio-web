@@ -16,7 +16,9 @@ import {
   UNDECLARED_ORDER,
   entryPointOf,
   levelOf,
+  opensOf,
   sectionOf,
+  type ArtifactAddress,
   type ScreenLevel,
   type StudioScreenExtension,
 } from '@/app/mfe/screenLevels';
@@ -83,4 +85,22 @@ export function entryTokenOf(
 ): string | undefined {
   const entry = entryPointOf(extensions, level);
   return entry ? tokenOf(entry) : undefined;
+}
+
+/**
+ * The group an artifact opens on: the one whose screen declares the kinds it
+ * opens (`presentation.opens`, ADR-0079). The kit that brings the editor says
+ * so in its manifest; without such a kit there is none.
+ */
+export function editorGroupOf(groups: readonly ScreenGroup[]): ScreenGroup | undefined {
+  return groups.find((group) => group.members.some((member) => opensOf(member).size > 0));
+}
+
+/** What the editor group opens, by kind, with how each is addressed: its screens' declarations together. */
+export function editorOpens(group: ScreenGroup | undefined): ReadonlyMap<string, ArtifactAddress> {
+  const out = new Map<string, ArtifactAddress>();
+  for (const member of group?.members ?? []) {
+    for (const [kind, address] of opensOf(member)) if (!out.has(kind)) out.set(kind, address);
+  }
+  return out;
 }

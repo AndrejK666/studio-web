@@ -10,7 +10,6 @@ import { STUDIO_ACTION_CHAIN_DONE, STUDIO_ACTION_CHAIN_FAILED } from './chainOut
 import {
   STUDIO_ACTION_NOTIFY,
   STUDIO_ACTION_WORKSPACES_PUBLISH,
-  STUDIO_ARTIFACT_KINDS,
   isStudioArtifactKind,
   notify,
   requestFromHost,
@@ -20,12 +19,12 @@ import {
 } from './hostActions';
 
 describe('isStudioArtifactKind', () => {
-  it('accepts every declared kind', () => {
-    for (const kind of STUDIO_ARTIFACT_KINDS) expect(isStudioArtifactKind(kind)).toBe(true);
+  it('accepts any one camelCase word: the kits name the kinds', () => {
+    for (const kind of ['file', 'repo', 'pullRequest', 'specFinding2']) expect(isStudioArtifactKind(kind)).toBe(true);
   });
 
   it('refuses anything else, including a near miss and a non-string', () => {
-    for (const value of ['spec_finding', 'File', '', undefined, null, 1, {}]) {
+    for (const value of ['spec_finding', 'File', 'pull-request', 'a/b', '', undefined, null, 1, {}]) {
       expect(isStudioArtifactKind(value)).toBe(false);
     }
   });

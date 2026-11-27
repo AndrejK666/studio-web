@@ -1,6 +1,8 @@
-import type { StudioArtifactKind } from '@constructor-studio/mfe-shared';
-
-/** `GET /nodes`. Keyed by the shell's artifact kinds but a Studio document, which is no node: a missing or extra one does not compile. */
+/**
+ * `GET /nodes`, keyed by the artifact kind each node type opens as. The kinds
+ * are this package's to name (ADR-0079: the shell takes any one camelCase
+ * word); a Studio document, which is no node, opens as `document`.
+ */
 export const ARTIFACT_NODE_TYPES = {
   repo: 'gts.cf.studio.artifact.repo.v1~',
   file: 'gts.cf.studio.artifact.file.v1~',
@@ -10,7 +12,7 @@ export const ARTIFACT_NODE_TYPES = {
   commit: 'gts.cf.studio.artifact.commit.v1~',
   comment: 'gts.cf.studio.artifact.comment.v1~',
   user: 'gts.cf.studio.artifact.user.v1~',
-} as const satisfies Record<Exclude<StudioArtifactKind, 'document'>, string>;
+} as const satisfies Record<string, string>;
 
 export type ArtifactKind = keyof typeof ARTIFACT_NODE_TYPES;
 

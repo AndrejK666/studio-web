@@ -994,7 +994,8 @@ built in memory within those limits, then sent.
 
 ADR-0071 §6 cut the built-in kits by function, and step 5 merged four of
 them under other slugs. For one release the old slugs are aliases
-(`kit_registry/aliases.rs`, the portal's mirror `mfe-shared` `kitAliases`):
+(`kit_registry/aliases.rs`; the portal keeps no table of its own, it reads
+the retired slugs from `effective`, below):
 
 | Retired slug | Resolves to |
 | --- | --- |
@@ -1024,7 +1025,9 @@ loses it. Catalogue (`components`) writes no connection any more.
   every tenant's. A request naming a retired slug acts on what it resolves to.
 - **Old clients.** `GET /installed-kits` and `KitPresence` list a retired
   slug in `effective` (`retired: true`) wherever everything it resolves to
-  applies.
+  applies. The portal reads it there: a screen whose manifest still names a
+  retired slug shows where `effective` lists it (ADR-0079: the shell names
+  no kit, so it keeps no alias table).
 - **The model.** The `kit-rename` sweep (`DomainObjects::rename_kit_marks`,
   run first and last in every kit reconciliation and once per organization
   at start) moves `meta.kit`, `left_by.kit`, a property's and a lifecycle's
@@ -1036,9 +1039,9 @@ loses it. Catalogue (`components`) writes no connection any more.
 - **Removal (step 7, #1089).** One release after step 5 reached every
   environment — the sweep has run in every organization and no portal,
   desktop, Theia or script reads or sends a retired slug — the table, its
-  readers (the store's migration, `with_retired`, the request mapping, the
-  portal's `kitIn`) and the old slugs in tests and docs go. Until then
-  `aliases_tests.rs` and `kitAliases.test.ts` list every alias with that
+  readers (the store's migration, `with_retired`, the request mapping) and
+  the old slugs in tests and docs go. Until then
+  `aliases_tests.rs` lists every alias with that
   note, and the backend test fails on a Studio version past `REMOVE_AFTER`;
   `no_code_names_a_retired_slug_outside_the_alias_readers` holds every other
   backend file free of a quoted retired slug, and the portal's contract test
@@ -1060,9 +1063,7 @@ loses it. Catalogue (`components`) writes no connection any more.
   2. Keep the `kit-rename` sweep (`sweep.rs`, `rename_kit_marks`) only if
      another merge is planned; it is idempotent and costs one model read per
      reconciliation.
-  3. In the portal: `mfe-shared` `kitAliases.ts` and its test, `kitIn` in
-     `screenShows` and `kitAvailable` (back to `has`).
-  4. The retired slugs in tests (`MAY_NAME_A_RETIRED_SLUG`), fixtures and
+  3. The retired slugs in tests (`MAY_NAME_A_RETIRED_SLUG`), fixtures and
      docs (this section's table becomes history in ADR-0071).
 
 ### 3.16 The M&A due diligence kit
