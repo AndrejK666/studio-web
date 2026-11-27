@@ -3935,10 +3935,22 @@ fn checkout_tenants(
 /// And a Spec Quality guess gives way when a spec layout names the file
 /// ([`super::classify::convention_for`]): offline reading does settle it then,
 /// on firmer ground than the detector's.
+///
+/// A layout's own confirmation is read again too: the rule is the evidence,
+/// so a file that left the layout's place, or a rule since changed, does not
+/// keep a type nobody gave it. So is a type the pipeline confirmed on a file a
+/// layout names: the layout's answer is firmer than a score over a
+/// threshold, and for the layout's history (`changes/archive/`) it is "not a
+/// spec" where the pipeline had confirmed one.
 fn keep_existing_verdict(prior: &document_binding::Model) -> Option<BindingState> {
     let state = BindingState::parse(&prior.state)?;
     let source = prior.source.as_deref().and_then(DetectionSource::parse);
     if state == BindingState::NotADocument && source == Some(DetectionSource::Heuristic) {
+        return None;
+    }
+    if convention_confirmed(prior)
+        || (auto_confirmed(prior) && super::classify::convention_for(&prior.path).is_some())
+    {
         return None;
     }
     if state.is_settled() {
@@ -3950,17 +3962,20 @@ fn keep_existing_verdict(prior: &document_binding::Model) -> Option<BindingState
 
 /// Whether a person, rather than the classifier, settled this binding.
 ///
-/// `Confirmed` is written by both: by a person accepting a proposal, and by
-/// [`settle`] for a front matter that declares its type and conforms. The
-/// source tells them apart, since only the latter is `front_matter` and
-/// confirmed without anybody looking.
+/// `Confirmed` is written by a person accepting a proposal, and without
+/// anybody looking by [`settle`] for a front matter that declares its type
+/// and conforms, by a spec layout's rule, and by the project's pipeline. The
+/// source tells the front matter apart (`front_matter`), `confirmed_by` the
+/// other two (`convention`, `auto`).
 fn ruled_by_person(prior: &document_binding::Model) -> bool {
     let source = prior.source.as_deref().and_then(DetectionSource::parse);
     match BindingState::parse(&prior.state) {
         Some(BindingState::Manual) => true,
         Some(BindingState::Confirmed) => {
             prior.confirmed_by.as_deref() == Some(super::pipeline::CONFIRMED_BY_PERSON)
-                || (source != Some(DetectionSource::FrontMatter) && !auto_confirmed(prior))
+                || (source != Some(DetectionSource::FrontMatter)
+                    && !auto_confirmed(prior)
+                    && !convention_confirmed(prior))
         }
         Some(BindingState::NotADocument) => source != Some(DetectionSource::Heuristic),
         _ => false,
@@ -3971,6 +3986,12 @@ fn ruled_by_person(prior: &document_binding::Model) -> bool {
 fn auto_confirmed(prior: &document_binding::Model) -> bool {
     prior.state == BindingState::Confirmed.as_str()
         && prior.confirmed_by.as_deref() == Some(super::pipeline::CONFIRMED_BY_AUTO)
+}
+
+/// Whether a spec layout's rule, not a person, confirmed this binding.
+fn convention_confirmed(prior: &document_binding::Model) -> bool {
+    prior.state == BindingState::Confirmed.as_str()
+        && prior.confirmed_by.as_deref() == Some(super::pipeline::CONFIRMED_BY_CONVENTION)
 }
 
 /// Stable digest of a document's content.
@@ -4523,7 +4544,7 @@ impl DocumentsService {
                 continue;
             }
 
-            let (type_key, state, confidence, source, candidates) = match keep {
+            let (type_key, state, confidence, source, candidates, by_convention) = match keep {
                 Some(state) => (
                     prior.and_then(|p| p.type_key.clone()),
                     state,
@@ -4532,6 +4553,7 @@ impl DocumentsService {
                     prior
                         .map(|p| parse_candidates(&p.candidates))
                         .unwrap_or_default(),
+                    false,
                 ),
                 None => {
                     let c = classify(&file.path, &file.content, &types);
@@ -4551,7 +4573,14 @@ impl DocumentsService {
                     } else {
                         c.type_key.as_ref().map(|_| c.source)
                     };
-                    (c.type_key, state, confidence, source, c.candidates)
+                    (
+                        c.type_key,
+                        state,
+                        confidence,
+                        source,
+                        c.candidates,
+                        c.by_convention,
+                    )
                 }
             };
 
@@ -4563,9 +4592,25 @@ impl DocumentsService {
             // The declaration is the author's ruling; the template check is
             // the evidence it holds. Either one missing, it stays a proposal.
             let state = settle(state, source, report.as_ref().map(|r| r.conforms));
-            // A proposal the project trusts enough is confirmed now, and the
-            // binding says it was the pipeline, not a person, that did.
-            let (state, confirmed_by) = if state == BindingState::Detected {
+            // **A file a spec layout names is bound too.** The layout's
+            // authors declared what lives there for every repository that
+            // follows it, which is as explicit as a front matter, so it is
+            // confirmed here, on every project, pipeline or not. The binding
+            // says the layout did it (`convention`), so a person's word still
+            // reads as theirs and the next sync reads the rule again.
+            //
+            // Unlike a front matter it does not wait on the template check: a
+            // layout keeps its own headings, not the catalogue's, and the
+            // check's result is kept on the binding (`conforms`) all the same.
+            //
+            // Otherwise a proposal the project trusts enough is confirmed
+            // now, and the binding says it was the pipeline, not a person.
+            let (state, confirmed_by) = if state == BindingState::Detected && by_convention {
+                (
+                    BindingState::Confirmed,
+                    Some(super::pipeline::CONFIRMED_BY_CONVENTION.to_owned()),
+                )
+            } else if state == BindingState::Detected {
                 super::pipeline::auto_settle(state, confidence, settings.as_ref())
             } else if keep.is_some() {
                 (state, prior.and_then(|p| p.confirmed_by.clone()))
@@ -6144,6 +6189,53 @@ mod reclassification_tests {
         let declared = at(".cursor/rules.md", row("confirmed", Some("front_matter")));
         assert!(!ruled_by_person(&declared));
         assert!(!ruled_by_person(&row("not_a_document", Some("heuristic"))));
+        let mut layout = at(
+            "openspec/specs/login/spec.md",
+            row("confirmed", Some("heuristic")),
+        );
+        layout.confirmed_by = Some(super::super::pipeline::CONFIRMED_BY_CONVENTION.into());
+        assert!(!ruled_by_person(&layout));
+    }
+
+    /// A layout's confirmation is the rule's, so each sync reads the rule
+    /// again; a person's on the same file stands.
+    #[test]
+    fn a_layouts_confirmation_is_read_again() {
+        let mut layout = at(
+            "openspec/specs/login/spec.md",
+            row("confirmed", Some("heuristic")),
+        );
+        layout.confirmed_by = Some(super::super::pipeline::CONFIRMED_BY_CONVENTION.into());
+        assert!(keep_existing_verdict(&layout).is_none());
+
+        let mut person = layout.clone();
+        person.confirmed_by = Some(super::super::pipeline::CONFIRMED_BY_PERSON.into());
+        assert!(keep_existing_verdict(&person).is_some());
+        // Confirmed before `confirmed_by` existed: a person's, as ever.
+        let mut legacy = layout.clone();
+        legacy.confirmed_by = None;
+        assert!(keep_existing_verdict(&legacy).is_some());
+        assert!(ruled_by_person(&legacy));
+    }
+
+    /// What the pipeline confirmed on a file a layout names gives way to the
+    /// layout: in its archive that is "not a spec". Elsewhere it stands
+    /// while the text does.
+    #[test]
+    fn the_pipelines_confirmation_gives_way_to_a_layout() {
+        let auto = |path: &str| {
+            let mut r = at(path, row("confirmed", Some("heuristic")));
+            r.confirmed_by = Some(super::super::pipeline::CONFIRMED_BY_AUTO.into());
+            r
+        };
+        for path in [
+            "openspec/changes/archive/2025-01-01-a/proposal.md",
+            "openspec/changes/archive/2025-01-01-a/specs/login/spec.md",
+            "openspec/specs/login/spec.md",
+        ] {
+            assert!(keep_existing_verdict(&auto(path)).is_none(), "{path}");
+        }
+        assert!(keep_existing_verdict(&auto("docs/login.md")).is_some());
     }
 }
 

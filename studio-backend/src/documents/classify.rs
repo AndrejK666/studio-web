@@ -70,6 +70,11 @@ pub struct Classification {
     /// `None` then, and the binding is `not_a_document` rather than
     /// `unknown`: nobody needs to look at it.
     pub not_a_spec: bool,
+    /// True when a spec layout's rule ([`CONVENTIONS`]) decided, either way:
+    /// a type it declares, or [`Self::not_a_spec`]. A declared type is bound
+    /// as `confirmed` like a front matter's, without a person or a pipeline
+    /// (`DocumentsService::classify_ingested`).
+    pub by_convention: bool,
 }
 
 /// Where a repository keeps instructions for its tools rather than its own
@@ -111,9 +116,11 @@ fn is_tooling_path(path: &str) -> bool {
         .any(|d| TOOLING_DIRS.contains(&d.to_ascii_lowercase().as_str()))
 }
 
-/// Confidence of a type a spec layout declares: high enough for a project's
-/// pipeline to confirm it at the default threshold (0.8), and short of the
-/// 1.0 a file's own declaration earns.
+/// Confidence of a type a spec layout declares: short of the 1.0 a file's own
+/// declaration earns, since the layout speaks for the file rather than the
+/// file for itself. It does not gate the binding: a layout's type is bound
+/// as `confirmed` whatever a project's pipeline threshold, as a front
+/// matter's is.
 pub const CONVENTION_CONFIDENCE: f32 = 0.9;
 
 /// What a spec layout says a file in one of its places is.
@@ -429,6 +436,7 @@ pub fn classify(path: &str, content: &str, types: &[DocumentType]) -> Classifica
             candidates: Vec::new(),
             is_prose: false,
             not_a_spec: false,
+            by_convention: false,
         };
     }
 
@@ -445,6 +453,7 @@ pub fn classify(path: &str, content: &str, types: &[DocumentType]) -> Classifica
             }],
             is_prose: true,
             not_a_spec: false,
+            by_convention: false,
         };
     }
 
@@ -461,6 +470,7 @@ pub fn classify(path: &str, content: &str, types: &[DocumentType]) -> Classifica
                     candidates: Vec::new(),
                     is_prose: true,
                     not_a_spec: true,
+                    by_convention: true,
                 };
             }
             ConventionVerdict::Type(key) if types.iter().any(|t| t.key == key) => {
@@ -468,9 +478,12 @@ pub fn classify(path: &str, content: &str, types: &[DocumentType]) -> Classifica
                     type_key: Some(key.to_string()),
                     confidence: CONVENTION_CONFIDENCE,
                     // Recorded as `heuristic`: the stored source is a closed
-                    // set (a CHECK on the legacy bindings table), and a layout
-                    // rule is our reading of the path, not the file speaking
-                    // for itself. The candidate's `why` names the rule.
+                    // set (a CHECK on the legacy bindings table, and the
+                    // contract's enum), and a layout rule is our reading of
+                    // the path, not the file speaking for itself. What tells
+                    // it apart is `by_convention`, which the binding keeps as
+                    // `confirmed_by: convention`, and the candidate's `why`,
+                    // which names the rule.
                     source: DetectionSource::Heuristic,
                     candidates: vec![TypeCandidate {
                         type_key: key.to_string(),
@@ -479,6 +492,7 @@ pub fn classify(path: &str, content: &str, types: &[DocumentType]) -> Classifica
                     }],
                     is_prose: true,
                     not_a_spec: false,
+                    by_convention: true,
                 };
             }
             ConventionVerdict::Type(_) => {}
@@ -516,6 +530,7 @@ pub fn classify(path: &str, content: &str, types: &[DocumentType]) -> Classifica
         candidates,
         is_prose: true,
         not_a_spec: false,
+        by_convention: false,
     }
 }
 
@@ -790,13 +805,14 @@ mod tests {
         assert_eq!(c.confidence, CONVENTION_CONFIDENCE);
         assert_eq!(c.source, DetectionSource::Heuristic);
         assert!(!c.not_a_spec);
+        // The layout decided: the binding is confirmed on that, not on the
+        // confidence clearing a pipeline's threshold.
+        assert!(c.by_convention);
         assert!(
             c.candidates[0].why.contains("OpenSpec"),
             "{:?}",
             c.candidates
         );
-        // High enough for a project's pipeline at its default threshold.
-        assert!(c.confidence >= crate::documents::pipeline::DEFAULT_THRESHOLD);
     }
 
     #[test]
@@ -836,6 +852,7 @@ mod tests {
         ] {
             let c = classify(path, OPENSPEC_TEXT, &types);
             assert!(c.not_a_spec, "{path} is history");
+            assert!(c.by_convention, "{path}");
             assert_eq!(c.type_key, None, "{path}");
         }
     }
@@ -884,6 +901,7 @@ mod tests {
         let types = builtin_types();
         let c = classify("openspec/project.md", OPENSPEC_TEXT, &types);
         assert!(!c.not_a_spec);
+        assert!(!c.by_convention);
         assert_ne!(c.confidence, CONVENTION_CONFIDENCE);
     }
 
@@ -895,6 +913,7 @@ mod tests {
         let c = classify("openspec/changes/x/design.md", &content, &types);
         assert_eq!(c.type_key.as_deref(), Some("adr"));
         assert_eq!(c.source, DetectionSource::FrontMatter);
+        assert!(!c.by_convention);
     }
 
     /// A layout naming a type the workspace's catalogue lacks proposes
@@ -908,6 +927,7 @@ mod tests {
         let c = classify("openspec/specs/login/spec.md", OPENSPEC_TEXT, &types);
         assert_ne!(c.type_key.as_deref(), Some("feature"));
         assert!(!c.not_a_spec);
+        assert!(!c.by_convention);
     }
 
     #[test]

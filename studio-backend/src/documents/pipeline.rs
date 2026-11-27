@@ -56,6 +56,10 @@ use crate::derived_view::{Derive, Derived, ViewSpec};
 pub const CONFIRMED_BY_AUTO: &str = "auto";
 /// `confirmed_by` of a type a person confirmed.
 pub const CONFIRMED_BY_PERSON: &str = "person";
+/// `confirmed_by` of a type a spec layout declares
+/// (`super::classify::CONVENTIONS`): confirmed by the sync that read it, with
+/// or without a pipeline, the way a front matter's declaration is.
+pub const CONFIRMED_BY_CONVENTION: &str = "convention";
 /// The settings' key in `project.config`.
 pub const CONFIG_KEY: &str = "spec_pipeline";
 /// A proposal at or over this confidence is confirmed by default.

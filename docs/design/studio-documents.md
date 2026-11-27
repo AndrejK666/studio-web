@@ -131,7 +131,9 @@ type, and so does one Spec Quality typed: that answer cost an LLM round trip,
 and the offline scoring already had its turn and did not settle it. Only the
 conformance is refreshed against the current text. A file whose front matter
 declares its type and whose text passes that type's template is bound as
-`confirmed` without a person; either one missing, it stays a proposal.
+`confirmed` without a person; either one missing, it stays a proposal. A file a
+spec layout names (below) is the same kind of declaration and is bound as
+`confirmed` too, on every project, pipeline or not.
 
 #### The server joins the specs and their text
 
@@ -174,9 +176,15 @@ Between the front matter and the scoring sits the **convention table**
 (`classify::CONVENTIONS`): a spec layout declares a file's type by where it
 sits, so a repository written to it is read as written. A rule names the
 layout's directory (matched at any depth, e.g. `UI/openspec/`), a path pattern
-under it and a verdict; the first match wins. A type comes with confidence
-`0.9`, over the pipeline's default auto-confirm threshold; "not a spec"
-binds the file `not_a_document` with source `heuristic`. OpenSpec today:
+under it and a verdict; the first match wins. A layout's type is a
+declaration as explicit as a front matter's, so it is bound at once as
+`confirmed` with `confirmed_by: convention`, with no person and no pipeline;
+the template check is recorded (`conforms`) but does not gate it, since a
+layout keeps its own headings. The source stays `heuristic` (a `CHECK` on the
+table and the contract's enum close the set), the confidence is `0.9`, and the
+candidate's reason names the rule (e.g. "OpenSpec layout: a living spec").
+"Not a spec" binds the file `not_a_document` with source `heuristic`. OpenSpec
+today:
 
 | Path under `openspec/` | Verdict |
 |---|---|
@@ -189,8 +197,12 @@ binds the file `not_a_document` with source `heuristic`. OpenSpec today:
 A front-matter declaration still outranks the layout, and a layout type the
 workspace's catalogue lacks falls through to scoring. A re-scan re-reads
 `unknown` and `detected` bindings, a Spec Quality guess on a path a layout
-names, and a `not_a_document` the scan wrote itself; a person's ruling
-(`manual`, a rejection, a confirmation by `person`) is never re-guessed. Asking the
+names, a `not_a_document` the scan wrote itself, a layout's own confirmation
+(`convention`, so a changed rule or a moved file does not keep its type) and a
+pipeline confirmation (`auto`) on a path a layout names, which is how an
+archive file an earlier pipeline run confirmed becomes "not a spec". A
+person's ruling (`manual`, a rejection, a confirmation by `person`, or a
+confirmation from before `confirmed_by` existed) is never re-guessed. Asking the
 `purpose` detector about the leftover set is the caller's step, recorded with
 source `spec_quality`.
 The margin is there because two types that score alike are ambiguous, and
@@ -596,6 +608,7 @@ the `CHECK` and `UNIQUE` constraints are kept verbatim.
 | `requirements` | TEXT | JSON list of the file's non-functional statements (`m0013`) |
 | `inferred_capabilities` | TEXT | JSON list of what its functional requirements imply, with the requirements behind each, when its front matter declares none (`m0014`) |
 | `content_sha` | TEXT | digest, so a stale verdict is distinguishable |
+| `confirmed_by` | TEXT | who confirmed a `confirmed` binding: `person`, `auto` (the project's pipeline) or `convention` (a spec layout's rule); `NULL` for a front matter's or one from before `m0031` |
 | `created_at`, `updated_at` | TIMESTAMPTZ | |
 
 **PK**: `id`
