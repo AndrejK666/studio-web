@@ -40,6 +40,16 @@ The first builds the branch, publishes `gears-matcher:sha-<commit>` and deploys 
 image already published. The cluster pulls without credentials, so the `gears-matcher` package must be
 public, as Studio's are (a package `GITHUB_TOKEN` creates starts private).
 
+The fork publishes to its own registry and deploys nothing:
+
+```bash
+gh workflow run gears-matcher.yml -R AndrejK666/studio-web --ref main
+# then, by hand, with the fork's package and its pull Secret:
+helm upgrade gears-matcher deploy/helm/gears-matcher -n studio-dev -f deploy/helm/gears-matcher/values-dev.yaml \
+  --set image.repository=ghcr.io/andrejk666/studio-web/gears-matcher --set-string image.tag=sha-<40 hex> \
+  --set 'imagePullSecrets[0].name=ghcr-pull'
+```
+
 Made by hand once per environment, before the first deploy:
 
 - **The database**, owned by the runtime role (the service creates its table at start):

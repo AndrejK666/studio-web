@@ -50,9 +50,14 @@ persistence:
   size: 10Gi
   storageClass: ""         # empty leaves it to the cluster default
   existingClaim: ""
-  # A root init container chowns /data to runAsUser:runAsGroup before the service starts:
-  # a fresh Cinder claim is root:root and ignores fsGroup. false where the volume honours fsGroup.
-  claimOwner: true
+  # A root init container chowns /data to runAsUser:runAsGroup before the service starts: a Cinder
+  # claim whose class sets no fsType is root:root and ignores fsGroup (#854). PodSecurity
+  # "restricted" warns about a root container, so it runs only when needed:
+  #   fresh  - only in the rollout that creates the claim (helm `lookup` finds none yet)
+  #   always - every rollout (re-hand a claim that was replaced by hand)
+  #   never  - the volume honours fsGroup (a class that sets fsType, e.g. cinder-postgres)
+  # (true and false, the old values, mean fresh and never.)
+  claimOwner: fresh
 
 resources:
   requests: { cpu: 100m, memory: 512Mi }

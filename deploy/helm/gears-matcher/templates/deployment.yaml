@@ -7,6 +7,8 @@
 
   Init containers, all the same image:
   - `claim-owner` hands the claim's mount point to uid 10001: a Cinder claim ignores fsGroup (#854).
+    Root, so rendered only when persistence.claimOwner asks for it (`fresh`: the rollout that creates
+    the claim; the ownership stays on the volume after).
   - `database` (database.create) creates the database as the bootstrap role, owned by the runtime role.
   - `checkout` clones or fetches the catalogue (catalogue.url, .branch) onto the claim.
 */}}
@@ -21,6 +23,11 @@ spec:
     type: Recreate
   selector:
     matchLabels: {{- include "gears-matcher.selectorLabels" . | nindent 6 }}
+  {{- $claimOwner := .Values.persistence.claimOwner | default "fresh" }}
+  {{- if not (has $claimOwner (list "fresh" "always" "never")) }}
+  {{- fail (printf "persistence.claimOwner must be fresh, always or never, not %q" $claimOwner) }}
+  {{- end }}
+  {{- $ownClaim := or (eq $claimOwner "always") (and (eq $claimOwner "fresh") (not (lookup "v1" "PersistentVolumeClaim" .Release.Namespace (include "gears-matcher.fullname" .)))) }}
   template:
     metadata:
       labels: {{- include "gears-matcher.labels" . | nindent 8 }}
@@ -40,6 +47,11 @@ spec:
         seccompProfile: { type: RuntimeDefault }
         fsGroup: 10001
       initContainers:
+        {{- if $ownClaim }}
+        # PodSecurity "restricted" (the namespaces' warn level) cannot be met here: it requires
+        # runAsNonRoot and allows no capability but NET_BIND_SERVICE, and handing a root-owned mount
+        # point to another user takes root with CAP_CHOWN. Everything else is narrowed, which keeps
+        # it inside "baseline" (the enforced level).
         - name: claim-owner
           image: {{ include "gears-matcher.image" . | quote }}
           imagePullPolicy: IfNotPresent
@@ -55,6 +67,7 @@ spec:
           resources:
             requests: { cpu: 10m, memory: 16Mi }
             limits: { cpu: 100m, memory: 64Mi }
+        {{- end }}
         {{- if $db.create }}
         - name: database
           image: {{ include "gears-matcher.image" . | quote }}

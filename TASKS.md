@@ -145,11 +145,13 @@ done, **P2** can wait.
   Red since 8fe24027b (follow a run the event stream never mentions). The
   test expects the old behaviour; update it or the effect.
 
-- [ ] Point `gears-matcher.yml` at the fork's registry @andrejk666
+- [x] Point `gears-matcher.yml` at the fork's registry @andrejk666
 
-  The workflow publishes only to upstream's registry, so the matcher goes to
-  Dev by hand. Add the fork's `ghcr.io/andrejk666` as a target, or a manual
-  dispatch input for it.
+  Done 2026-11-27: "Run workflow" in the fork publishes
+  `ghcr.io/andrejk666/studio-web/gears-matcher:sha-<commit>` (owner
+  lowercased; no `edge`, no deploy, fork pushes still only build). The Dev
+  upgrade stays by hand with `image.repository` and `ghcr-pull`
+  (deploy/README.md). Unrun on GitHub yet: the first dispatch is the check.
 
 ## P2
 
@@ -159,11 +161,18 @@ done, **P2** can wait.
   migration could remove them once the rehome has finished everywhere.
   Proposal only; not built.
 
-- [ ] Portal nginx keeps the backend's old address @andrejk666
+- [x] Portal nginx keeps the backend's old address @andrejk666
 
   After a backend restart the portal answers 502 until it restarts too.
   Resolve the upstream per request (a `resolver` plus a variable in
   `proxy_pass`).
+
+  Done in 173558b6a (docker/15-backend-upstream.envsh: resolver from
+  /etc/resolv.conf, the name made absolute for k8s). Checked 2026-11-27:
+  `nginx -t` passes; in a compose-style network the portal followed a
+  backend replaced at a new IP without a restart; Dev and Test (image
+  sha-0a9d5400) log the cluster DNS 10.254.0.10 and the absolute Service
+  name. `studio-frontend/` (FrontX) still writes the host into proxy_pass.
 
 - [ ] Rotate the GHCR token @andrejk666
 

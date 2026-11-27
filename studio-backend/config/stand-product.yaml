@@ -604,6 +604,13 @@ gears:
             header: "Authorization"
             prefix: "Bearer "
             secret_ref: "openai-key"
+      # A thread's summary is generated with this catalogue model (the `id`
+      # of a static-mini-chat-model-policy-plugin entry below). Left empty the
+      # gear asks for `gpt-4.1-mini`, which no catalogue here lists, so every
+      # summary task was rejected (model_unavailable). Change it together with
+      # the catalogue. A literal: this block expands no environment variables.
+      thread_summary_worker:
+        summary_model_id: "gpt-5.2"
 
   static-mini-chat-model-policy-plugin:
     config:
