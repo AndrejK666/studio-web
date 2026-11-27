@@ -1,0 +1,8 @@
+{
+  "name": "@constructor-studio/ide-bridge",
+  "version": "2.0.0",
+  "private": true,
+  "description": "The IDE bridge protocol (ADR-0080 §4): control calls, events and frame messages between Studio and any IDE.",
+  "main": "protocol.json",
+  "files": ["protocol.json"]
+}

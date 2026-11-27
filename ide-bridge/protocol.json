@@ -1,0 +1,83 @@
+{
+  "$comment": "The one source of the IDE bridge's names (ADR-0080 §4). The backend, the Theia side, the VS Code extension and the portal's ide kit each have a contract test against this file.",
+  "protocol": 2,
+  "control": {
+    "v1": {
+      "path": "/internal/theia/v1",
+      "header": "X-CFS-Theia-Token",
+      "tokenEnv": "STUDIO_THEIA_S2S_TOKEN"
+    },
+    "v2": {
+      "path": "/internal/ide/v2",
+      "header": "X-CFS-Ide-Token",
+      "tokenEnv": "STUDIO_IDE_CONTROL_TOKEN"
+    },
+    "methods": {
+      "getRuntimeStatus": null,
+      "getSession": null,
+      "getRepositories": "repositories",
+      "enqueueOperation": "operations",
+      "getOperationDeltas": "operations",
+      "retryOperation": "operations",
+      "openInEditor": "open_file",
+      "openDocument": "open_document",
+      "notifyEditor": "notify",
+      "installKit": "install_kit"
+    }
+  },
+  "capabilities": [
+    "open_file",
+    "open_document",
+    "notify",
+    "repositories",
+    "operations",
+    "install_kit",
+    "shared_session",
+    "idle_report",
+    "desktop",
+    "frame_channel"
+  ],
+  "events": {
+    "ingressHeaders": ["X-CFS-Theia-Token", "X-CFS-Ide-Token"],
+    "v1Prefix": "theia.",
+    "v2Prefix": "ide.",
+    "kinds": [
+      "operation",
+      "audit",
+      "repositories-changed",
+      "workspace-snapshot-changed",
+      "workspace-activity",
+      "open-artifact"
+    ]
+  },
+  "frame": {
+    "v1": {
+      "init": "studio.init",
+      "theme": "studio.theme",
+      "token": "studio.token",
+      "openInEditor": "studio.openInEditor",
+      "openDocument": "studio.openDocument",
+      "openProduct": "studio.openProduct",
+      "openGear": "studio.openGear",
+      "openGraph": "studio.openGraph",
+      "notify": "studio.notify",
+      "status": "studio.status",
+      "documentSaved": "studio.documentSaved",
+      "openComponent": "studio.openComponent"
+    },
+    "v2": {
+      "init": "ide.init",
+      "theme": "ide.theme",
+      "token": "ide.token",
+      "openInEditor": "ide.openInEditor",
+      "openDocument": "ide.openDocument",
+      "openProduct": "ide.openProduct",
+      "openGear": "ide.openGear",
+      "openGraph": "ide.openGraph",
+      "notify": "ide.notify",
+      "status": "ide.status",
+      "documentSaved": "ide.documentSaved",
+      "openArtifact": "ide.openArtifact"
+    }
+  }
+}
