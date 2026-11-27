@@ -56,94 +56,7 @@ interface Leak {
 }
 
 /** Matches of the rules above that are still in the shell. Only remove lines. */
-const KNOWN_LEAKS: Leak[] = [
-  {
-    file: "app/routing/route.ts",
-    literal: "space",
-    why: "EDITOR_SCREEN_TOKEN: the screen an artifact opens on is the ide kit's",
-  },
-  {
-    file: "app/effects/editorSessionEffects.ts",
-    literal: "document",
-    why: "the editor session opens a project-specs document by the artifact kind",
-  },
-  {
-    file: "mfe_packages/shared/src/host/hostActions.ts",
-    literal: "pullRequest",
-    why: "STUDIO_ARTIFACT_KINDS: project-git's pull request as a host artifact kind",
-  },
-  {
-    file: "mfe_packages/shared/src/host/hostActions.ts",
-    literal: "comment",
-    why: "STUDIO_ARTIFACT_KINDS: project-git's comment",
-  },
-  {
-    file: "mfe_packages/shared/src/host/hostActions.ts",
-    literal: "document",
-    why: "STUDIO_ARTIFACT_KINDS: project-specs' document",
-  },
-  {
-    file: "app/mfe/schemas/action_context_artifact_open.v1.json",
-    literal: "pullRequest",
-    why: "the artifact-open action schema mirrors STUDIO_ARTIFACT_KINDS",
-  },
-  {
-    file: "app/mfe/schemas/action_context_artifact_open.v1.json",
-    literal: "comment",
-    why: "mirrors STUDIO_ARTIFACT_KINDS",
-  },
-  {
-    file: "app/mfe/schemas/action_context_artifact_open.v1.json",
-    literal: "document",
-    why: "mirrors STUDIO_ARTIFACT_KINDS",
-  },
-  {
-    file: "app/mfe/schemas/shared_property_context_artifact.v1.json",
-    literal: "pullRequest",
-    why: "the context-artifact property schema mirrors STUDIO_ARTIFACT_KINDS",
-  },
-  {
-    file: "app/mfe/schemas/shared_property_context_artifact.v1.json",
-    literal: "comment",
-    why: "mirrors STUDIO_ARTIFACT_KINDS",
-  },
-  {
-    file: "app/mfe/schemas/shared_property_context_artifact.v1.json",
-    literal: "document",
-    why: "mirrors STUDIO_ARTIFACT_KINDS",
-  },
-  {
-    file: "app/mfe/editorBridge.ts",
-    literal: "message",
-    why: "not a kit: the DOM `message` event, which shares its word with assistant's `message` type",
-  },
-  // The retired-slug table (ADR-0071 §8), removed with the backend's in step 7 (#1089).
-  {
-    file: "mfe_packages/shared/src/host/kitAliases.ts",
-    literal: "project-domain-model",
-    why: "KIT_ALIASES target",
-  },
-  {
-    file: "mfe_packages/shared/src/host/kitAliases.ts",
-    literal: "project-git",
-    why: "KIT_ALIASES target",
-  },
-  {
-    file: "mfe_packages/shared/src/host/kitAliases.ts",
-    literal: "project-lifecycle",
-    why: "KIT_ALIASES target",
-  },
-  {
-    file: "mfe_packages/shared/src/host/kitAliases.ts",
-    literal: "project-product",
-    why: "KIT_ALIASES target",
-  },
-  {
-    file: "mfe_packages/shared/src/host/kitAliases.ts",
-    literal: "delivery",
-    why: "KIT_ALIASES target",
-  },
-];
+const KNOWN_LEAKS: Leak[] = [];
 
 /** Leaks the matcher cannot see, pinned by hand (a substring of the file). */
 const UNSEEN_LEAKS: Leak[] = [
@@ -298,7 +211,16 @@ describe("the shell names no kit (ADR-0079)", () => {
     expect(names.get("space")).toBe("screen token of kit ide");
     expect(names.has("project-git")).toBe(true);
     expect(names.has("pullRequest")).toBe(true);
-    expect(found.has(key("app/routing/route.ts", "space"))).toBe(true);
+    // And the shell's literals are read: its own route key, and a kit's
+    // token in code, but not in a comment.
+    expect(
+      literals(
+        fs.readFileSync(path.join(SRC_APP, "app/routing/route.ts"), "utf8"),
+        false,
+      ),
+    ).toContain("screen");
+    expect(literals("const a = 'space'; // 'ide'", false)).toEqual(["space"]);
+    expect(shellFiles().length).toBeGreaterThan(0);
   });
 
   it("finds no kit named in the shell beyond KNOWN_LEAKS", () => {

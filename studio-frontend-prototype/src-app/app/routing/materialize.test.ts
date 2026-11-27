@@ -36,6 +36,12 @@ import type { EditorSession } from '@/app/effects/editorSessionEffects';
 import { createMaterializer } from './materialize';
 import { unresolvedScreenOf } from './unresolvedScreen';
 
+/** What the editor screen declares it opens (space-mfe's manifest), as the session is told it. */
+const EDITOR_OPENS = new Map([
+  ['file', 'path'],
+  ['document', 'workspace'],
+]);
+
 const screens = [
   screen('org.workspaces', '/organization/workspaces', 'organization', { section: 'workspaces', order: 20 }),
   screen('people', '/people', 'organization', { order: 30 }),
@@ -43,7 +49,7 @@ const screens = [
   screen('projects.main', '/projects', 'workspace', { order: 20 }),
   screen('projects.overview', '/projects/overview', 'project', { section: 'overview', order: 10 }),
   screen('projects.artifacts', '/projects/artifacts', 'project', { section: 'artifacts', order: 20 }),
-  screen('space.main', '/space', 'project', { placement: 'hidden' }),
+  screen('space.main', '/space', 'project', { placement: 'hidden', opens: { file: 'path', document: 'workspace' } }),
 ];
 
 const ORG = { id: 'o1', name: 'Org' };
@@ -154,11 +160,17 @@ describe('materialize', () => {
       const { materialize, transition, navigation } = setup(IN_EDITOR, { ...ready, projects: [ATLAS] }, screens, session);
 
       materialize();
-      expect(session.sync).toHaveBeenLastCalledWith({ projectId: 'p1', orgId: 'o1', editor: true, artifact: ARTIFACT });
+      expect(session.sync).toHaveBeenLastCalledWith({
+        projectId: 'p1',
+        orgId: 'o1',
+        editor: true,
+        artifact: ARTIFACT,
+        opens: EDITOR_OPENS,
+      });
 
       navigation.navigate({ token: 'projects', org: 'o1', workspace: 'w1', project: 'p1', section: 'artifacts' }, 'push');
       transition();
-      expect(session.sync).toHaveBeenLastCalledWith({ projectId: 'p1', orgId: 'o1', editor: false, artifact: null });
+      expect(session.sync).toHaveBeenLastCalledWith({ projectId: 'p1', orgId: 'o1', editor: false, artifact: null, opens: new Map() });
     });
 
     it('clears the artifact when the address goes back to the artifact list', () => {
@@ -209,6 +221,7 @@ describe('materialize', () => {
         orgId: 'o1',
         editor: true,
         artifact: { artifactId: 'd-1', repository: '', path: 'Payments; v2', kind: 'document' },
+        opens: EDITOR_OPENS,
       });
       expect(mocks.mountScreen).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 'space.main' }));
       expect(writes).not.toHaveBeenCalled();

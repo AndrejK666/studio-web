@@ -17,6 +17,7 @@ import {
   isAboveWorkspace,
   levelOf,
   sectionOf,
+  type ArtifactAddress,
   type ScreenLevel,
   type StudioScreenExtension,
 } from '@/app/mfe/screenLevels';
@@ -36,8 +37,8 @@ import {
 } from '@/app/slices/appContextSlice';
 import type { ContextCatalogs } from '@/app/effects/contextCatalogs';
 import type { EditorSession } from '@/app/effects/editorSessionEffects';
-import { EDITOR_SCREEN_TOKEN, routesEqual, type ShellRoute } from './route';
-import { groupOfExtension, groupOfToken, type ScreenGroup } from './screenTokens';
+import { routesEqual, type ShellRoute } from './route';
+import { editorGroupOf, editorOpens, groupOfExtension, groupOfToken, type ScreenGroup } from './screenTokens';
 import type { ShellNavigation } from './navigation';
 import { unresolvedScreenOf } from './unresolvedScreen';
 
@@ -70,6 +71,9 @@ export function screenFor(
       : group.members.find((member) => levelOf(member) === level && answersSection(member, section));
   return target && target.entry !== group.owner.entry ? target : group.owner;
 }
+
+/** What a screen that is not the editor opens: nothing. */
+const NOTHING_OPENS: ReadonlyMap<string, ArtifactAddress> = new Map();
 
 // @cpt-dod:cpt-studiofrontend-dod-shell-levels-artifact-address:p1
 function artifactOf(route: ShellRoute): StudioArtifact | null {
@@ -488,8 +492,9 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
     // opened, dropped when the address lands elsewhere.
     if (wanted.view && next.section === route.section) next.view = wanted.view;
 
-    // Artifact: only the editor, and only inside a project, carries one.
-    const isEditor = group?.token === EDITOR_SCREEN_TOKEN;
+    // Artifact: only the editor, and only inside a project, carries one. The
+    // editor is the screen whose kit declares what it opens (ADR-0079).
+    const isEditor = group !== undefined && group === editorGroupOf(groups);
     const artifact = next.project && isEditor ? artifactOf(wanted) : null;
     if (artifact) {
       next.artifact = artifact.artifactId;
@@ -529,6 +534,7 @@ export function createMaterializer(deps: MaterializerDeps): Materializer {
       orgId: next.org ?? null,
       editor: isEditor && next.project !== undefined,
       artifact,
+      opens: isEditor ? editorOpens(group) : NOTHING_OPENS,
     });
 
     if (!routesEqual(next, address)) navigation.navigate(next, 'replace');

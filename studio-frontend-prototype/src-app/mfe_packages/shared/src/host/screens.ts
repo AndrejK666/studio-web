@@ -16,7 +16,6 @@
 import { useMemo } from 'react';
 import { useSharedProperty, type ChildMfeBridge } from '@gears-frontx/react';
 import { STUDIO_SHARED_PROPERTY_SCREENS_AVAILABLE } from './hostProperties';
-import { kitIn } from './kitAliases';
 
 export interface AvailableScreens {
   /** The routes of the screens that show where the person is. */
@@ -97,8 +96,9 @@ export function routeAvailable(available: AvailableScreens | null, route: string
 /** Whether the kit `slug` is installed where the person is: unknown counts as yes. */
 export function kitAvailable(available: AvailableScreens | null, slug: string | null | undefined): boolean {
   if (!slug) return true;
-  // A retired slug counts where everything it resolves to is (ADR-0071 §8).
-  return available === null || available.kits === null || kitIn(new Set(available.kits), slug);
+  // A retired slug (ADR-0071 §8) is in `kits` already: the installer lists it in `effective`
+  // where everything it resolves to applies, so the portal keeps no alias table of its own.
+  return available === null || available.kits === null || available.kits.includes(slug);
 }
 
 /**

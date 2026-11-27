@@ -9,7 +9,7 @@ vi.mock('@gears-frontx/react', async (importOriginal) => ({
 
 import artifactOpenSchema from './schemas/action_context_artifact_open.v1.json';
 import artifactSelectedSchema from './schemas/shared_property_context_artifact.v1.json';
-import { STUDIO_ARTIFACT_KINDS } from '@constructor-studio/mfe-shared';
+import { STUDIO_ARTIFACT_KIND_PATTERN } from '@constructor-studio/mfe-shared';
 import {
   artifactRequestOf,
   createArtifactOpenHandler,
@@ -198,15 +198,13 @@ describe('artifact open request', () => {
     expect(mockEmit).not.toHaveBeenCalled();
   });
 
-  it('names the same kinds as the property the shell answers with', () => {
-    expect(artifactSelectedSchema.properties.value.properties.kind.enum).toEqual(
-      artifactOpenSchema.properties.payload.properties.kind.enum
+  it('takes the same kinds as the property the shell answers with', () => {
+    expect(artifactSelectedSchema.properties.value.properties.kind.pattern).toEqual(
+      artifactOpenSchema.properties.payload.properties.kind.pattern
     );
   });
 
-  it('names the kinds mfe-shared declares — the ones projects-mfe keys its types by', () => {
-    expect([...artifactOpenSchema.properties.payload.properties.kind.enum].sort()).toEqual(
-      [...STUDIO_ARTIFACT_KINDS].sort()
-    );
+  it('takes the kinds mfe-shared does: one camelCase word, named by the kits', () => {
+    expect(artifactOpenSchema.properties.payload.properties.kind.pattern).toBe(STUDIO_ARTIFACT_KIND_PATTERN.source);
   });
 });

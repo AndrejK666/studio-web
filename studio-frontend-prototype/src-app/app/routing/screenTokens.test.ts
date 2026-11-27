@@ -4,8 +4,16 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { parseGrammar, serializeGrammar, type ExtensionToken } from '@gears-frontx/routing';
 import { screen } from '@frontx-test-utils/screenFixture';
-import { EDITOR_SCREEN_TOKEN, SCREEN_DOMAIN_KEY } from './route';
-import { entryTokenOf, groupOfExtension, groupOfToken, groupScreens, tokenOf } from './screenTokens';
+import { SCREEN_DOMAIN_KEY } from './route';
+import {
+  editorGroupOf,
+  editorOpens,
+  entryTokenOf,
+  groupOfExtension,
+  groupOfToken,
+  groupScreens,
+  tokenOf,
+} from './screenTokens';
 import type { StudioScreenExtension } from '@/app/mfe/screenLevels';
 
 const projectsList = screen('projects.main', '/projects', 'workspace', { order: 20 });
@@ -97,8 +105,13 @@ describe('the real manifests', () => {
     }
   });
 
-  it('register space-mfe as the one owner of the editor token', () => {
-    const space = groupOfToken(groupScreens(extensions), EDITOR_SCREEN_TOKEN);
+  it('register space-mfe as the one screen an artifact opens on, by what its manifest says it opens', () => {
+    const space = editorGroupOf(groupScreens(extensions));
+    expect(space?.token).toBe('space');
+    expect([...editorOpens(space)]).toEqual([
+      ['file', 'path'],
+      ['document', 'workspace'],
+    ]);
     expect(space?.members.map((member) => member.id)).toEqual([
       'gts.frontx.mfes.ext.extension.v1~frontx.screensets.layout.screen.v1~constructor_studio.screensets.layout.leveled_screen.v1~constructor_studio.space.screens.main.v1',
     ]);
@@ -113,5 +126,24 @@ describe('the real manifests', () => {
     expect(groupOfToken(groupScreens(extensions), 'organization')?.owner.presentation.route).toBe(
       '/organization/overview'
     );
+  });
+});
+
+describe('the screen an artifact opens on', () => {
+  it('is the one whose manifest declares what it opens, whatever its token', () => {
+    const editor = screen('ed', '/editor', 'project', { placement: 'hidden', opens: { file: 'path', note: 'workspace' } });
+    const group = editorGroupOf(groupScreens([projectsList, projectsOverview, editor]));
+    expect(group?.token).toBe('editor');
+    expect([...editorOpens(group)]).toEqual([
+      ['file', 'path'],
+      ['note', 'workspace'],
+    ]);
+  });
+
+  it('is none where no screen declares one, and an address the shell does not know counts for nothing', () => {
+    expect(editorGroupOf(groupScreens([projectsList, projectsOverview]))).toBeUndefined();
+    const odd = screen('odd', '/odd', 'project', { opens: { file: 'url' } });
+    expect(editorGroupOf(groupScreens([projectsList, odd]))).toBeUndefined();
+    expect(editorOpens(undefined).size).toBe(0);
   });
 });

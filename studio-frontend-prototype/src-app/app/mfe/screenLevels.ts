@@ -81,6 +81,33 @@ export interface LeveledPresentation {
    * the shell names no kit's screen.
    */
   sidebar?: boolean;
+  /**
+   * The artifact kinds this screen opens, and how its editor frame addresses
+   * each (`ArtifactAddress`). The screen that declares it is where an
+   * artifact opens: the kit that brings the editor says so in its manifest,
+   * so the shell names neither its screen nor the kinds (ADR-0079).
+   */
+  opens?: Readonly<Record<string, string>>;
+}
+
+/**
+ * How the editor's frame is told about an artifact it opens: `path`, a file
+ * in one of the project's checkouts; `workspace`, an item by its id in the
+ * workspace the project reads it from.
+ */
+export type ArtifactAddress = 'path' | 'workspace';
+
+const ARTIFACT_ADDRESSES: ReadonlySet<string> = new Set<ArtifactAddress>(['path', 'workspace']);
+
+/** The kinds a screen opens (`presentation.opens`), each with how it is addressed; empty for most screens. */
+export function opensOf(extension: StudioScreenExtension): ReadonlyMap<string, ArtifactAddress> {
+  const declared: unknown = extension.presentation.opens;
+  const out = new Map<string, ArtifactAddress>();
+  if (typeof declared !== 'object' || declared === null || Array.isArray(declared)) return out;
+  for (const [kind, address] of Object.entries(declared)) {
+    if (typeof address === 'string' && ARTIFACT_ADDRESSES.has(address)) out.set(kind, address as ArtifactAddress);
+  }
+  return out;
 }
 
 /** The audience a platform administrator's screen declares. */

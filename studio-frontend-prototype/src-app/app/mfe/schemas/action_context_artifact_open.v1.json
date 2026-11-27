@@ -30,17 +30,9 @@
           "$comment": "Checkout-relative path of a file — what studio.openInEditor takes. A Studio document's title, which names its tab in the IDE. Empty for kinds that have no path."
         },
         "kind": {
-          "enum": [
-            "repo",
-            "file",
-            "issue",
-            "pullRequest",
-            "commit",
-            "comment",
-            "user",
-            "document"
-          ],
-          "$comment": "STUDIO_ARTIFACT_KINDS in mfe-shared (host/hostActions.ts), not the gear's type ids. #320 writes this token into the address; a file and a Studio document open in the editor."
+          "type": "string",
+          "pattern": "^[a-z][A-Za-z0-9]*$",
+          "$comment": "One camelCase word: STUDIO_ARTIFACT_KIND_PATTERN in mfe-shared (host/hostActions.ts), not the gear's type ids. The kits name the kinds (ADR-0079); the screen an artifact opens on declares which it opens and how (presentation.opens). #320 writes this token into the address."
         }
       },
       "required": [
