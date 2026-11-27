@@ -505,9 +505,25 @@ impl Service {
     /// stops working — including service accounts, which have a tenant and no
     /// memberships. Dropping it is a separate step, after the things that still
     /// depend on it are gone (ADR-0018 §3).
+    ///
+    /// Except the platform root, whose subtree is every organization: as the
+    /// home of anyone but a service it counts no more here than in
+    /// [`Self::reaches_target`]. A platform administrator reaches it through
+    /// their membership of the root; anyone else whose token names the root
+    /// reaches only the organizations they are a member of.
     async fn reachable_tenants(&self, request: &EvaluationRequest, tid: Uuid) -> Vec<Uuid> {
-        let mut tids = vec![tid];
-        extend_unique(&mut tids, &self.memberships(request).await);
+        let memberships = self.memberships(request).await;
+        // The sync's token arrives untyped through the gateway (see
+        // `could_be_the_sync`); only then is it worth asking who the sync is.
+        let is_sync = tid == PLATFORM_ROOT
+            && !memberships.contains(&tid)
+            && request.subject.subject_type.is_none()
+            && self.mirror_sync_subject().await == Some(request.subject.id);
+        let mut tids = Vec::new();
+        if home_in_reach(tid, request.subject.subject_type.as_deref(), is_sync) {
+            tids.push(tid);
+        }
+        extend_unique(&mut tids, &memberships);
         tids
     }
 
@@ -1460,6 +1476,20 @@ fn tenant_constraints(request: &EvaluationRequest, tids: &[Uuid]) -> Vec<Constra
 
 /// static-authz behaviour: allow, clamped to the context tenant (+ subtree).
 /// Append the ones that are not already there, preserving order.
+/// Does the tenant a request arrived with join the clamp?
+///
+/// Any tenant but the platform root does. The root does for a service — a
+/// gear acting as itself, a client-credentials token — and for the artifact
+/// sync, which has a tenant and no memberships. For anyone else the root's
+/// subtree, every organization, is reached through a membership of the root
+/// (a platform administrator) or not at all: an organization's objects need
+/// its membership.
+fn home_in_reach(tid: Uuid, subject_type: Option<&str>, is_sync: bool) -> bool {
+    tid != PLATFORM_ROOT
+        || is_sync
+        || matches!(subject_type, Some("service" | SERVICE_SUBJECT_TYPE))
+}
+
 fn extend_unique(into: &mut Vec<Uuid>, more: &[Uuid]) {
     for id in more {
         if !into.contains(id) {
@@ -1469,6 +1499,11 @@ fn extend_unique(into: &mut Vec<Uuid>, more: &[Uuid]) {
 }
 
 fn tenant_clamp(request: &EvaluationRequest, tids: &[Uuid]) -> EvaluationResponse {
+    // No tenant at all reaches nothing a tenant owns; a resource that
+    // declares no tenant property is not narrowed by one either way.
+    if tids.is_empty() && !tenant_constraints(request, &[Uuid::nil()]).is_empty() {
+        return deny();
+    }
     EvaluationResponse {
         decision: true,
         context: EvaluationResponseContext {
@@ -2642,3 +2677,7 @@ mod target_tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "root_home_tests.rs"]
+mod root_home_tests;
