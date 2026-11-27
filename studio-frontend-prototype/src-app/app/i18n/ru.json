@@ -11,7 +11,7 @@
   "editor_session_reason_read": "Не удалось прочитать состояние сессии.",
   "editor_session_reason_unanswered": "Редактор не ответил.",
   "editor_session_reason_unexpected": "В редакторе произошла непредвиденная ошибка.",
-  "editor_component_unavailable": "Каталога компонентов в портале пока нет.",
+  "artifact_open_unavailable": "В этой Studio нечем открыть {kind}.",
   "level_tabs": "Разделы",
   "level_switch_organization": "Сменить организацию",
   "level_back_to_projects": "К проектам",

@@ -6,6 +6,7 @@
  */
 
 import { createSlice, type FrontXApp, type ReducerPayload } from '@gears-frontx/react';
+import type { EditorRuntime } from '@/app/ports/editorPort';
 
 export type EditorSessionPhase = 'idle' | 'launching' | 'ready' | 'failed';
 
@@ -52,11 +53,16 @@ export interface EditorSessionState {
   shown: boolean;
   /** The project's sources that could not be cloned, as last read. */
   clones: EditorCloneProblem[];
+  /**
+   * The IDE the session runs and what it can do (ADR-0080 §2), as its launch
+   * answered; `null` until then, and for a backend that does not say.
+   */
+  runtime: EditorRuntime | null;
 }
 
 const SLICE_KEY = 'app/editor-session' as const;
 
-const initialState: EditorSessionState = { phase: 'idle', failure: null, shown: false, clones: [] };
+const initialState: EditorSessionState = { phase: 'idle', failure: null, shown: false, clones: [], runtime: null };
 
 const {
   slice,
@@ -66,6 +72,7 @@ const {
   editorSessionFailed,
   editorSessionShown,
   editorSessionClones,
+  editorSessionRuntime,
 } = createSlice({
   name: SLICE_KEY,
   initialState,
@@ -74,6 +81,10 @@ const {
       state.phase = 'idle';
       state.failure = null;
       state.clones = [];
+      state.runtime = null;
+    },
+    editorSessionRuntime: (state: EditorSessionState, action: ReducerPayload<EditorRuntime | null>) => {
+      state.runtime = action.payload;
     },
     editorSessionClones: (state: EditorSessionState, action: ReducerPayload<EditorCloneProblem[]>) => {
       state.clones = action.payload;
@@ -111,6 +122,7 @@ export {
   editorSessionFailed,
   editorSessionShown,
   editorSessionClones,
+  editorSessionRuntime,
 };
 export const EDITOR_SESSION_SLICE_KEY = SLICE_KEY;
 

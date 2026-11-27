@@ -127,6 +127,16 @@ pub struct LocalBind {
 pub struct LaunchSpec {
     /// The IDE image (`config.image`).
     pub image: String,
+    /// The IDE the session runs (ADR-0080): the port its gate holds in the
+    /// container and the container's name come from it, and its id is on the
+    /// session as the [`crate::ide_runtime::LABEL`] label.
+    pub runtime: &'static crate::ide_runtime::IdeRuntime,
+    /// The session's directory name under the workspaces root: the
+    /// workspace id for a shared session, the workspace id and a suffix of
+    /// its own for a one-person session (ADR-0080 §7). The Docker driver gets
+    /// the full path in `workspace_host_dir`; a shared Kubernetes claim uses
+    /// this as the subPath.
+    pub workspace_dir: String,
     /// `STUDIO_*` variables the entrypoint reads.
     pub env: Vec<String>,
     /// Host directory to mount at `/workspace` (Docker). The Kubernetes
@@ -169,14 +179,40 @@ pub struct AdoptedSession {
     /// `STUDIO_SESSION_TOKEN` recovered from the runtime (empty if the driver
     /// cannot read it back — the session is then adopted ungated).
     pub session_token: String,
-    /// `STUDIO_THEIA_S2S_TOKEN` recovered the same way (empty when the bridge
-    /// was off for this session, or when the driver cannot read it back).
-    /// Without it an adopted session keeps running but the backend can no
-    /// longer issue control calls to its Theia node.
+    /// The control token recovered the same way, from the env its runtime
+    /// names ([`adopted_control_token`]); empty when the bridge was off for
+    /// this session, or when the driver cannot read it back. Without it an
+    /// adopted session keeps running but the backend can no longer issue
+    /// control calls to its IDE.
     pub control_token: String,
+    /// The [`crate::ide_runtime::LABEL`] label as the runtime has it: `None`
+    /// for a session launched before the label existed.
+    pub ide: Option<String>,
+    /// The `cf.studio.owner` label: the person a one-person session is for
+    /// (ADR-0080 §7); `None` for a shared one.
+    pub owner: Option<String>,
     /// Human-readable source summaries, rebuilt from the session's env by
     /// [`adopted_sources`].
     pub sources: Vec<String>,
+}
+
+/// The control token a session was launched with, read back from the env its
+/// runtime names, first found wins (ADR-0080 §4: a session started before the
+/// switch to v2 keeps its bridge). Empty for a runtime this build no longer
+/// has: nothing here could speak to it.
+pub fn adopted_control_token<'a>(
+    ide_label: Option<&str>,
+    env_value: impl Fn(&str) -> Option<&'a str>,
+) -> String {
+    crate::ide_runtime::of_label(ide_label)
+        .and_then(|runtime| {
+            runtime
+                .adopt_token_envs
+                .iter()
+                .find_map(|name| env_value(name).filter(|v| !v.is_empty()))
+        })
+        .unwrap_or_default()
+        .to_string()
 }
 
 /// Rebuild a session's source summaries from the env it was launched with.
@@ -243,7 +279,25 @@ pub trait SessionDriver: Send + Sync {
 
 #[cfg(test)]
 mod tests {
-    use super::adopted_sources;
+    use super::{adopted_control_token, adopted_sources};
+
+    #[test]
+    fn adoption_reads_the_token_from_the_env_the_runtime_names() {
+        let env = [
+            ("STUDIO_THEIA_S2S_TOKEN", "v1-token"),
+            ("STUDIO_IDE_CONTROL_TOKEN", "v2-token"),
+        ];
+        let lookup = |name: &str| env.iter().find(|(k, _)| *k == name).map(|(_, v)| *v);
+        // No label: the session predates it and is the default runtime's,
+        // whose token env comes first.
+        assert_eq!(adopted_control_token(None, lookup), "v1-token");
+        assert_eq!(adopted_control_token(Some("vscode"), lookup), "v2-token");
+        // A runtime this build no longer has: nothing could speak to it.
+        assert_eq!(adopted_control_token(Some("emacs"), lookup), "");
+        // A v2-only session of the default runtime still keeps its bridge.
+        let v2_only = |name: &str| (name == "STUDIO_IDE_CONTROL_TOKEN").then_some("v2-token");
+        assert_eq!(adopted_control_token(None, v2_only), "v2-token");
+    }
 
     const TWO: &str = r#"[{"name":"docs","dir":"docs","url":"https://git/docs.git","branch":null,"token":"secret"},
                           {"name":"api","dir":"api","url":"https://git/api.git","branch":"main","token":null}]"#;

@@ -16,7 +16,8 @@ pub mod models;
 pub use client::TheiaControlClientV1;
 pub use models::{
     EnqueueOperation, EnqueueOperationResult, InstallKit, InstallKitResult, NotifyEditor,
-    NotifyEditorResult, OpenInEditor, OpenInEditorResult, OperationDeltas, OperationSnapshot,
+    NotifyEditorResult, OpenDocument, OpenDocumentResult, OpenInEditor, OpenInEditorResult,
+    OperationDeltas, OperationSnapshot,
     RepositoryDescriptor, RuntimeStatus, SessionInfo, SessionTarget,
 };
 

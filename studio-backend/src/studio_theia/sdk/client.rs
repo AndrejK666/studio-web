@@ -72,6 +72,14 @@ pub trait TheiaControlClientV1: Send + Sync {
         request: &OpenInEditor,
     ) -> Result<OpenInEditorResult, TheiaControlError>;
 
+    /// Open a portal document in the running IDE (ADR-0080 §4).
+    async fn open_document(
+        &self,
+        ctx: &SecurityContext,
+        target: &SessionTarget,
+        request: &OpenDocument,
+    ) -> Result<OpenDocumentResult, TheiaControlError>;
+
     /// Show a Studio message in the running IDE (new editor command §4).
     ///
     /// `shown: false` means the session is up but nobody has its tab open. That

@@ -74,6 +74,7 @@ SPLASH
 node /tmp/splash.js &
 SPLASH_PID=$!
 
+# >>> studio:git-config
 # The workspace is a bind mount owned by the host; git refuses to touch
 # repositories owned by another uid without this.
 git config --global --add safe.directory '*'
@@ -92,6 +93,7 @@ git config --global user.email "${STUDIO_GIT_AUTHOR_EMAIL:-studio@constructor.te
 # answers only for hosts this workspace uses — see docker/git-credentials.mjs.
 git config --global credential.useHttpPath true
 git config --global credential.helper '!node /usr/local/lib/studio-git-credentials.mjs'
+# <<< studio:git-config
 
 # ── Workspace sources (multi-repo) ────────────────────────────────────────
 # STUDIO_SOURCES is a JSON array of {name, url, branch?, token?} injected by
@@ -171,6 +173,7 @@ clone_workspace_sources() {
 # repository in and check the tree out over whatever was there. The guard is
 # an `origin` remote: a directory we initialized ourselves has none, a real
 # clone does — so this runs once and never touches an adopted workspace again.
+# >>> studio:root-adoption
 if [ -n "${STUDIO_ROOT_URL:-}" ]; then
     if [ ! -d "$WORKSPACE/.git" ] || ! git -C "$WORKSPACE" remote get-url origin >/dev/null 2>&1; then
         echo "[entrypoint] adopting workspace root ${STUDIO_ROOT_URL}"
@@ -193,6 +196,7 @@ if [ -n "${STUDIO_ROOT_URL:-}" ]; then
         rm -rf "$ROOT_TMP"
     fi
 fi
+# <<< studio:root-adoption
 
 # Kubernetes sessions receive a fresh emptyDir at /workspace, not the
 # studio-backend host directory where the managed manifest was prepared.
@@ -321,7 +325,14 @@ const bearerApiOk = (req) =>
 // the node checks itself — so it bypasses the browser session-cookie gate. When
 // the bridge is off the node mounts no such route and simply 404s, so this is
 // safe for normal sessions.
-const controlApiOk = (req) => req.url.startsWith("/internal/theia/v1/");
+//
+// v2 (ADR-0080 §4) is the IDE-neutral spelling, /internal/ide/v2/* with
+// X-CFS-Ide-Token. It goes to whichever local process serves it: the Theia
+// node itself (the default, 3004), or a VS Code session's studio-bridge
+// extension on its own loopback port (STUDIO_IDE_CONTROL_PORT).
+const CONTROL_V2 = { host: "127.0.0.1", port: Number(process.env.STUDIO_IDE_CONTROL_PORT || 3004) };
+const controlV2 = (req) => req.url.startsWith("/internal/ide/v2/");
+const controlApiOk = (req) => req.url.startsWith("/internal/theia/v1/") || controlV2(req);
 
 // Theia's webview shell, which the cookie can never reach.
 //
@@ -391,7 +402,7 @@ http
         "<h3>403 — session token required</h3><p>Open this session from the Studio portal.</p>",
       );
     }
-    let target = { ...TARGET, path: req.url };
+    let target = { ...(controlV2(req) ? CONTROL_V2 : TARGET), path: req.url };
     if (GW && req.url.startsWith("/studio-api/")) {
       const headers = { ...req.headers, host: GW.host };
       return req.pipe(
@@ -427,6 +438,12 @@ http
       // Theia went away mid-response: the status line is already out, so all
       // that is left is to end this one response.
       if (res.headersSent) return res.destroy();
+      // A v2 control call is the backend's, not a browser's: it gets an
+      // answer it can read, not the splash page.
+      if (controlV2(req)) {
+        res.writeHead(503, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        return res.end(JSON.stringify({ error: "the IDE's control API is not answering yet" }));
+      }
       // The gate is healthy while Theia is still binding its private port.
       // Returning 502 here makes Cloudflare replace this useful splash with
       // its own Bad Gateway page, even though the session is starting

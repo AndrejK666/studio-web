@@ -29,9 +29,13 @@ vi.mock('@/app/i18n/shellTranslations', () => ({
 
 import { EditorBar } from './EditorBar';
 
-function inEditor(phase: 'launching' | 'ready' | 'failed' | 'idle' = 'ready', shown = true): void {
+function inEditor(
+  phase: 'launching' | 'ready' | 'failed' | 'idle' = 'ready',
+  shown = true,
+  runtime: { id: string; capabilities: string[] } | null = null
+): void {
   store.state = {
-    'app/editor-session': { phase, failure: null, shown },
+    'app/editor-session': { phase, failure: null, shown, runtime },
     'app/context': { project: { id: 'p1', name: 'Web portal' } },
     'app/session': { profile: { id: 'me' } },
   };
@@ -121,5 +125,18 @@ describe('EditorBar', () => {
     } finally {
       Object.defineProperty(window, 'location', { configurable: true, value: location });
     }
+  });
+
+  it('offers no desktop hand-off for an IDE without a desktop app (ADR-0080 §2)', () => {
+    inEditor('ready', true, { id: 'vscode', capabilities: ['open_file', 'open_document'] });
+    render(<EditorBar />);
+    expect(screen.queryByText('editor_desktop')).toBeNull();
+    expect(screen.getByText('editor_reload')).toBeTruthy();
+  });
+
+  it('offers it where the runtime says it has one', () => {
+    inEditor('ready', true, { id: 'theia', capabilities: ['desktop'] });
+    render(<EditorBar />);
+    expect(screen.getByText('editor_desktop')).toBeTruthy();
   });
 });

@@ -59,28 +59,7 @@ interface Leak {
 const KNOWN_LEAKS: Leak[] = [];
 
 /** Leaks the matcher cannot see, pinned by hand (a substring of the file). */
-const UNSEEN_LEAKS: Leak[] = [
-  {
-    file: "app/mfe/editorBridge.ts",
-    literal: "'studio.openDocument'",
-    why: "the IDE bridge opens a project-specs document (documentId)",
-  },
-  {
-    file: "app/mfe/editorBridge.ts",
-    literal: "'studio.openComponent'",
-    why: "the IDE asks the shell to open a components-kit component",
-  },
-  {
-    file: "app/i18n/en.json",
-    literal: '"editor_component_unavailable"',
-    why: "the shell says the components kit's catalogue is missing",
-  },
-  {
-    file: "app/i18n/ru.json",
-    literal: '"editor_component_unavailable"',
-    why: "the shell says the components kit's catalogue is missing",
-  },
-];
+const UNSEEN_LEAKS: Leak[] = [];
 
 interface KitJson {
   slug: string;

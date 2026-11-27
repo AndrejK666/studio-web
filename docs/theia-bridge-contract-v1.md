@@ -10,6 +10,13 @@ invent new payload shapes for anything that already exists there — it re-expos
 a subset over a server-to-server transport. New editor commands (§4) are the only
 genuinely new shapes, and they are added to `studio-protocol.ts` first.
 
+**v2 (ADR-0080).** The same methods, plus `openDocument`, for any IDE:
+`POST /internal/ide/v2/{method}` with `X-CFS-Ide-Token` (env
+`STUDIO_IDE_CONTROL_TOKEN`); events on that header are republished as
+`ide.<kind>`; frame messages are `ide.*`. The names live in one file,
+`ide-bridge/protocol.json`, which every side tests against. Theia answers v1
+and v2 for one release; the backend keeps dialling Theia on v1.
+
 ## 1. Transport & envelope
 
 - **Direction studio → Theia:** HTTP/1.1 + JSON, on the container's **internal

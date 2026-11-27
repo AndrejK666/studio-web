@@ -27,6 +27,13 @@ pub struct TheiaForwardedEvent {
     pub session_id: Uuid,
     /// Which runtime `session_id` is: `container` or `desktop`.
     pub runtime: &'static str,
+    /// The bridge protocol the event came in on (ADR-0080 §4): 1 for a
+    /// Theia container or desktop on `X-CFS-Theia-Token` (republished as
+    /// `theia.<kind>`, as always), 2 for an IDE on `X-CFS-Ide-Token`
+    /// (republished as `ide.<kind>`).
+    pub protocol: u8,
+    /// The session's IDE runtime id, when the credential names one.
+    pub ide: Option<&'static str>,
     /// Event kind: `operation` | `audit` | `repositories-changed` |
     /// `workspace-snapshot-changed` | `workspace-activity`.
     pub kind: String,
@@ -43,7 +50,8 @@ pub trait TheiaEventSink: Send + Sync {
     async fn accept(&self, event: TheiaForwardedEvent);
 }
 
-/// The forwarded kinds [`StudioEventsSink`] republishes, as `theia.<kind>`.
+/// The forwarded kinds [`StudioEventsSink`] republishes from a v1 bridge, as
+/// `theia.<kind>`.
 ///
 /// Each is a row in `docs/events-catalog.md` (the test below holds the two
 /// together). A kind the bridge sends that is not here is traced and dropped:
@@ -57,6 +65,31 @@ const REPUBLISHED_KINDS: &[&str] = &[
     "workspace-snapshot-changed",
     "workspace-activity",
 ];
+
+/// The kinds it republishes from a v2 bridge, as `ide.<kind>`: the v1 kinds
+/// and `open-artifact`, an IDE asking the portal to open something
+/// (`ide-bridge/protocol.json`, `events.kinds`).
+#[cfg_attr(feature = "theia-event-broker", allow(dead_code))]
+const REPUBLISHED_KINDS_V2: &[&str] = &[
+    "operation",
+    "audit",
+    "repositories-changed",
+    "workspace-snapshot-changed",
+    "workspace-activity",
+    "open-artifact",
+];
+
+/// The `studio-events` kind a forwarded event is republished as, or `None`
+/// when its protocol does not carry that kind.
+#[cfg_attr(feature = "theia-event-broker", allow(dead_code))]
+fn republished_kind(protocol: u8, kind: &str) -> Option<String> {
+    let (prefix, kinds) = if protocol >= 2 {
+        ("ide.", REPUBLISHED_KINDS_V2)
+    } else {
+        ("theia.", REPUBLISHED_KINDS)
+    };
+    kinds.contains(&kind).then(|| format!("{prefix}{kind}"))
+}
 
 /// Default sink: republish onto the `studio-events` channel, so a forwarded
 /// Theia event reaches the portal like any other studio event.
@@ -96,13 +129,14 @@ impl TheiaEventSink for StudioEventsSink {
             payload_bytes = event.payload.to_string().len(),
             "studio-theia: received forwarded Theia event"
         );
-        if !REPUBLISHED_KINDS.contains(&event.kind.as_str()) {
+        let Some(kind) = republished_kind(event.protocol, &event.kind) else {
             tracing::warn!(
                 kind = %event.kind,
+                protocol = event.protocol,
                 "studio-theia: not republished, the kind is not in docs/events-catalog.md"
             );
             return;
-        }
+        };
         let Ok(events) = self
             .hub
             .get::<dyn crate::studio_events::StudioEventPublisher>()
@@ -112,18 +146,26 @@ impl TheiaEventSink for StudioEventsSink {
         events.publish(
             crate::studio_events::StudioEvent::new(
                 event.tenant_id,
-                format!("theia.{}", event.kind),
+                kind,
                 "workspace",
                 event.workspace_id.to_string(),
                 "studio-theia",
             )
-            .with_payload(serde_json::json!({
-                "workspace_id": event.workspace_id,
-                "session_id": event.session_id,
-                "runtime": event.runtime,
-                "sequence": event.sequence,
-                "event": event.payload,
-            })),
+            .with_payload({
+                let mut payload = serde_json::json!({
+                    "workspace_id": event.workspace_id,
+                    "session_id": event.session_id,
+                    "runtime": event.runtime,
+                    "sequence": event.sequence,
+                    "event": event.payload,
+                });
+                // v2 names the IDE beside the event; a v1 event stays as it
+                // always was.
+                if event.protocol >= 2 {
+                    payload["ide"] = serde_json::json!(event.ide);
+                }
+                payload
+            }),
         );
     }
 }
@@ -290,7 +332,46 @@ pub use broker::EventBrokerEventSink;
 
 #[cfg(test)]
 mod tests {
-    use super::REPUBLISHED_KINDS;
+    use super::{REPUBLISHED_KINDS, REPUBLISHED_KINDS_V2, republished_kind};
+
+    /// The `ide.*` kinds are the catalogue's and the bridge protocol's.
+    #[test]
+    fn the_v2_kinds_are_the_catalogues_and_the_protocols() {
+        let published: std::collections::BTreeSet<String> = REPUBLISHED_KINDS_V2
+            .iter()
+            .map(|kind| format!("ide.{kind}"))
+            .collect();
+        assert_eq!(
+            published,
+            crate::api_contract::events::documented_kinds("ide."),
+            "docs/events-catalog.md and the IDE sink disagree on the `ide.*` kinds"
+        );
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../ide-bridge/protocol.json");
+        let protocol: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let kinds: Vec<&str> = protocol["events"]["kinds"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|k| k.as_str().unwrap())
+            .collect();
+        assert_eq!(kinds, REPUBLISHED_KINDS_V2);
+    }
+
+    /// A Theia container is republished as it always was; an IDE on v2 as
+    /// `ide.*`, and only v2 carries `open-artifact`.
+    #[test]
+    fn the_protocol_picks_the_prefix() {
+        assert_eq!(republished_kind(1, "operation").as_deref(), Some("theia.operation"));
+        assert_eq!(republished_kind(2, "operation").as_deref(), Some("ide.operation"));
+        assert_eq!(
+            republished_kind(2, "open-artifact").as_deref(),
+            Some("ide.open-artifact")
+        );
+        assert_eq!(republished_kind(1, "open-artifact"), None);
+        assert_eq!(republished_kind(2, "made-up"), None);
+    }
 
     /// The `theia.*` kinds the sink republishes are the ones the events
     /// catalogue lists, no more and no fewer.

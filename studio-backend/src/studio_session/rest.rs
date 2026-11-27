@@ -177,6 +177,23 @@ pub struct SessionDto {
     /// database — then the caller polls this endpoint as it always did.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ready_run_id: Option<String>,
+    /// The IDE the session runs and what it can do (ADR-0080). Absent for a
+    /// session whose IDE this build no longer has.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ide: Option<SessionIdeDto>,
+}
+
+/// The IDE a session runs (ADR-0080), for a portal deciding what to offer.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct SessionIdeDto {
+    /// `theia` or `vscode`.
+    pub id: String,
+    /// What a person calls it.
+    pub label: String,
+    /// What it can be asked to do (`ide-bridge/protocol.json`,
+    /// `capabilities`): a portal does not offer what is not listed.
+    pub capabilities: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -203,6 +220,15 @@ fn to_dto(svc: &SessionService, s: Session) -> SessionDto {
         sources: s.sources,
         // Only a launch queues a probe; a plain read is not waiting for one.
         ready_run_id: None,
+        ide: s.ide.map(|runtime| SessionIdeDto {
+            id: runtime.id.to_owned(),
+            label: runtime.label.to_owned(),
+            capabilities: runtime
+                .capability_names()
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
+        }),
     }
 }
 

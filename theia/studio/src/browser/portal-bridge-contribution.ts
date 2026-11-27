@@ -47,6 +47,7 @@ import { StudioRuntimeService, type StudioRuntimeSession } from '../common/studi
 import { StudioDocumentOpener } from './studio-document-opener';
 import { StudioWorkspaceName } from './studio-workspace-name';
 import { StudioDocumentResourceResolver } from './studio-document-resource';
+import { FRAME_V1, FRAME_V2, frameType, readFrameType } from '../common/ide-bridge-names';
 
 /**
  * The person the portal has signed in, as `studio.init` and `studio.token`
@@ -203,6 +204,12 @@ export class PortalBridgeContribution implements FrontendApplicationContribution
     protected layoutReady = false;
     protected readonly deferredOpens: (() => void)[] = [];
     protected portalOrigin: string | undefined;
+    /**
+     * The protocol the portal speaks (ADR-0080 §4): `studio.*` is 1, `ide.*`
+     * is 2. Taken from the last message it sent, so the IDE answers each
+     * portal in its own spelling for the release both are served.
+     */
+    protected portalProtocol: 1 | 2 = 1;
     protected lastDirty = -1;
     /** `<scope>|<token>` the IDE's chat was last configured for. */
     protected lastAiToken = '';
@@ -223,7 +230,10 @@ export class PortalBridgeContribution implements FrontendApplicationContribution
         if (!name || window.parent === window || !this.portalOrigin) {
             return false;
         }
-        window.parent.postMessage({ type: 'studio.openComponent', name }, this.portalOrigin);
+        const message = this.portalProtocol === 2
+            ? { type: FRAME_V2.openArtifact, kind: 'component', ref: name }
+            : { type: FRAME_V1.openComponent, name };
+        window.parent.postMessage(message, this.portalOrigin);
         return true;
     }
 
@@ -257,7 +267,7 @@ export class PortalBridgeContribution implements FrontendApplicationContribution
                 return;
             }
             window.parent.postMessage({
-                type: 'studio.documentSaved',
+                type: frameType('documentSaved', this.portalProtocol),
                 workspaceId: ref.workspaceId,
                 documentId: ref.documentId,
             }, this.portalOrigin);
@@ -272,11 +282,17 @@ export class PortalBridgeContribution implements FrontendApplicationContribution
                 : !isAllowedPortalOrigin(event.origin, session, ownOrigin)) {
                 return;
             }
-            const msg = event.data as PortalMessage;
-            if (!msg || typeof msg.type !== 'string' || !msg.type.startsWith('studio.')) {
+            const raw = event.data as PortalMessage;
+            const spoken = raw && typeof raw.type === 'string' ? readFrameType(raw.type) : undefined;
+            if (!spoken) {
                 return;
             }
+            // One set of handlers below, in the v1 spelling: a v2 message is
+            // read as its v1 twin, and the answer goes out in the version the
+            // portal spoke.
+            const msg: PortalMessage = { ...raw, type: (FRAME_V1 as Record<string, string>)[spoken.role] ?? raw.type };
             this.portalOrigin = event.origin;
+            this.portalProtocol = spoken.protocol;
             if ((msg.type === 'studio.init' || msg.type === 'studio.theme') && msg.theme) {
                 this.applyPortalTheme(msg.theme);
             }
@@ -601,6 +617,6 @@ export class PortalBridgeContribution implements FrontendApplicationContribution
             return;
         }
         this.lastDirty = dirty;
-        window.parent.postMessage({ type: 'studio.status', dirty }, this.portalOrigin);
+        window.parent.postMessage({ type: frameType('status', this.portalProtocol), dirty }, this.portalOrigin);
     }
 }

@@ -31,6 +31,9 @@ mod graph_error; // a gear refusal said in full: CanonicalError plus its field v
 mod gts_audit; // `gts-audit`: diff the live registries against that inventory (ADR-0013)
 mod gts_inventory; // every GTS document the assembly registers, built offline for the drift test
 mod ide_bridge; // a workspace's IDE as the core reaches it: a port the IDE kit's gear fills (ADR-0079)
+mod ide_runtime; // the IDE a session runs: image, port, control endpoint, capabilities; a port IDE kits fill (ADR-0080)
+mod ide_theia; // the ide-theia kit's runtime: the Theia session image (ADR-0080)
+mod ide_vscode; // the ide-vscode kit's runtime: openvscode-server with the studio-bridge extension (ADR-0080)
 mod idempotency; // the Idempotency-Key request header every 202 operation takes, parsed once
 mod identity_directory; // platform-admin view of assigned and unassigned Keycloak identities
 mod insight; // integration seam to Constructor Insight (external decision-intelligence service)

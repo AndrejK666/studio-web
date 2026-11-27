@@ -7,6 +7,7 @@
 
 import { BaseApiService, RestEndpointProtocol, RestProtocol } from '@gears-frontx/react';
 import type { SessionSource } from '@constructor-studio/mfe-shared';
+import type { EditorRuntime } from '@/app/ports/editorPort';
 
 export const STUDIO_SESSION_API_BASE_URL = '/cf/studio-session/v1';
 
@@ -23,6 +24,8 @@ export interface StudioSession {
   sources: string[];
   /** The `session.await_ready` run, on a launch's answer while `starting`. */
   ready_run_id?: string;
+  /** The IDE the session runs and its capability flags (ADR-0080 §2); absent from a backend before it: Theia, all of them. */
+  ide?: EditorRuntime;
 }
 
 /** The part of `CreateSessionRequest` the portal sends. */

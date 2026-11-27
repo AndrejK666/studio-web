@@ -208,6 +208,20 @@ export interface StudioRuntimeClient {
      * `notifyEditor`). Optional for the same reason as `onOpenInEditor`: only a
      * browser client has a UI to show it in. */
     onNotifyEditor?(request: StudioNotifyEditorRequest): void;
+    /** Open a portal document in the running IDE (ADR-0080 control
+     * `openDocument`). Optional: only a browser client can open it. */
+    onOpenDocument?(request: StudioOpenDocumentRequest): void;
+}
+
+/** A portal document to open, by the tenant that stores it and its id. */
+export interface StudioOpenDocumentRequest {
+    readonly workspaceId: string;
+    readonly documentId: string;
+    readonly title?: string;
+}
+
+export interface StudioOpenDocumentResult {
+    readonly opened: boolean;
 }
 
 export interface StudioOpenInEditorRequest {

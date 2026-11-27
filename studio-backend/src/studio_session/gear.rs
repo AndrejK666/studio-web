@@ -50,7 +50,7 @@ impl Default for StudioSessionGear {
 #[async_trait]
 impl Gear for StudioSessionGear {
     async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
-        let cfg: StudioSessionConfig = ctx.config_or_default()?;
+        let mut cfg: StudioSessionConfig = ctx.config_or_default()?;
         // The bridge finds a desktop session through this (ADR-0027 phases 4
         // and 5); like the leases themselves it needs no driver.
         ctx.client_hub()
@@ -74,7 +74,18 @@ impl Gear for StudioSessionGear {
             info!("studio-session: disabled by config — session APIs will answer 503");
             return Ok(()); // service stays unset; REST mounts the disabled stub
         }
+        // The IDE the next launch runs, and its image (ADR-0080 §6). The
+        // drivers keep the image warm, so it is settled before they start.
+        let runtime = match crate::ide_runtime::resolve(cfg.ide.as_deref()) {
+            Ok(runtime) => runtime,
+            Err(e) => {
+                warn!("studio-session: {e:#} — sessions disabled for this run");
+                return Ok(());
+            }
+        };
+        cfg.image = cfg.image_for(runtime);
         info!(
+            ide = runtime.id,
             image = %cfg.image,
             ports = format!("{}-{}", cfg.port_range_start, cfg.port_range_end),
             "studio-session: initializing"
@@ -159,9 +170,9 @@ impl Gear for StudioSessionGear {
             Err(e) => warn!("studio-session: could not list existing containers: {e:#}"),
         }
 
-        // Publish the in-process discovery client for the studio-theia bridge
-        // gear (ADR-0022). Registering unconditionally is harmless: when
-        // `theia_control_enabled` is off, resolution returns None.
+        // Publish the in-process discovery client for the IDE bridge gear
+        // (ADR-0022). Registering unconditionally is harmless: when
+        // `ide_control_enabled` is off, resolution returns None.
         ctx.client_hub()
             .register::<dyn crate::studio_session::sdk::StudioSessionDiscoveryClientV1>(Arc::new(
                 crate::studio_session::sdk::StudioSessionDiscoveryLocalClient::new(service.clone()),

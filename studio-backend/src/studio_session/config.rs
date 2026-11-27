@@ -92,10 +92,19 @@ pub struct StudioSessionConfig {
     /// clear error beats a session that never starts.
     #[serde(default)]
     pub k8s_node_name: Option<String>,
-    /// Docker image for a Theia session. Default: the legacy CI-published one;
-    /// Kubernetes deployments inject this repository's matching immutable image.
-    /// when absent; a locally-built `cf-studio-theia:latest` also works.
-    #[serde(default = "default_image")]
+    /// The IDE a session runs (ADR-0080 §6): an IDE runtime's id, `theia` or
+    /// `vscode`. Unset: the runtime that declares itself the default (Theia).
+    /// A session keeps the IDE it started with; this picks the next launch's.
+    ///
+    /// A plain key for now: the deployment's composition switch (ADR-0079 §5,
+    /// the kits a deployment turns on) sets it once that switch lands.
+    #[serde(default)]
+    pub ide: Option<String>,
+    /// The session image. Empty: the chosen IDE runtime's own image (for
+    /// Theia the legacy CI-published `cf-studio-theia:edge`). Kubernetes
+    /// deployments inject this repository's matching immutable image; a
+    /// locally-built `cf-studio-theia:latest` also works.
+    #[serde(default)]
     pub image: String,
     /// Refresh the image on every launch attempt — for mutable tags like
     /// `edge`, where pull-on-missing alone would pin a stale image forever.
@@ -202,13 +211,14 @@ pub struct StudioSessionConfig {
     #[serde(default = "default_orca_port")]
     pub orca_port: u16,
 
-    /// Enable the Theia backend-control bridge (ADR-0022): mint a per-session
-    /// S2S control token, inject it into the container as
-    /// `STUDIO_THEIA_S2S_TOKEN`, and let the studio-theia gear discover the
-    /// session's internal control endpoint. Default off; the Theia node must
-    /// also serve the control API for calls to succeed.
-    #[serde(default)]
-    pub theia_control_enabled: bool,
+    /// Enable the IDE's backend-control bridge (ADR-0022): mint a per-session
+    /// S2S control token, inject it into the container in the env the IDE
+    /// runtime names (`STUDIO_THEIA_S2S_TOKEN` for Theia), and let the bridge
+    /// gear discover the session's internal control endpoint. Default off; the
+    /// IDE must also serve the control API for calls to succeed. Still read
+    /// as `theia_control_enabled`, its name before ADR-0080.
+    #[serde(default, alias = "theia_control_enabled")]
+    pub ide_control_enabled: bool,
 
     /// Host studio-backend uses to DIAL a Loopback session — both the
     /// readiness probe that moves it from `starting` to `running` and the
@@ -237,7 +247,8 @@ impl Default for StudioSessionConfig {
             k8s_workspace_storage_class: None,
             k8s_workspace_shared_claim: None,
             k8s_node_name: None,
-            image: default_image(),
+            ide: None,
+            image: String::new(),
             always_pull: default_always_pull(),
             registry_user_env: default_registry_user_env(),
             registry_token_env: default_registry_token_env(),
@@ -256,7 +267,7 @@ impl Default for StudioSessionConfig {
             agent_secrets: default_agent_secrets(),
             orca_enabled: false,
             orca_port: default_orca_port(),
-            theia_control_enabled: false,
+            ide_control_enabled: false,
             control_reach_host: default_control_reach_host(),
         }
     }
@@ -267,9 +278,6 @@ fn default_enabled() -> bool {
 }
 fn default_driver() -> String {
     "docker".into()
-}
-fn default_image() -> String {
-    "ghcr.io/constructorfabric/studio-web/cf-studio-theia:edge".into()
 }
 fn default_always_pull() -> bool {
     true // the default image tag (edge) is mutable
@@ -282,6 +290,15 @@ fn default_registry_token_env() -> String {
 }
 
 impl StudioSessionConfig {
+    /// The image a session of `runtime` starts from: the configured one, else
+    /// the runtime's own.
+    pub fn image_for(&self, runtime: &crate::ide_runtime::IdeRuntime) -> String {
+        match self.image.trim() {
+            "" => runtime.default_image.to_owned(),
+            configured => configured.to_owned(),
+        }
+    }
+
     /// Registry credentials for the image pull, when both env vars are set.
     pub fn registry_credentials(&self) -> Option<bollard::auth::DockerCredentials> {
         let read = |name: &str| {
@@ -393,6 +410,43 @@ impl StudioSessionConfig {
 #[cfg(test)]
 mod tests {
     use super::StudioSessionConfig;
+
+    /// The bridge switch kept its old name for the configs that spell it so
+    /// (ADR-0080: the old keys are read for one release).
+    #[test]
+    fn the_bridge_switch_is_read_under_its_old_name_too() {
+        for key in ["theia_control_enabled", "ide_control_enabled"] {
+            let cfg: StudioSessionConfig =
+                serde_json::from_value(serde_json::json!({ key: true })).unwrap();
+            assert!(cfg.ide_control_enabled, "{key}");
+        }
+        assert!(!StudioSessionConfig::default().ide_control_enabled);
+    }
+
+    /// No IDE named is the default runtime's, and no image named is the
+    /// runtime's own: a deployment that only says `ide: vscode` gets the
+    /// VS Code image, and one that says nothing is today's Theia.
+    #[test]
+    fn the_image_is_the_configured_one_or_the_runtimes_own() {
+        let cfg = StudioSessionConfig::default();
+        let theia = crate::ide_runtime::resolve(cfg.ide.as_deref()).unwrap();
+        assert_eq!(
+            cfg.image_for(theia),
+            "ghcr.io/constructorfabric/studio-web/cf-studio-theia:edge"
+        );
+        let cfg: StudioSessionConfig =
+            serde_json::from_value(serde_json::json!({ "ide": "vscode" })).unwrap();
+        let vscode = crate::ide_runtime::resolve(cfg.ide.as_deref()).unwrap();
+        assert_eq!(vscode.id, "vscode");
+        assert_eq!(
+            cfg.image_for(vscode),
+            "ghcr.io/constructorfabric/studio-web/cf-studio-vscode:edge"
+        );
+        let cfg: StudioSessionConfig =
+            serde_json::from_value(serde_json::json!({ "image": " cf-studio-theia:local " }))
+                .unwrap();
+        assert_eq!(cfg.image_for(theia), "cf-studio-theia:local");
+    }
 
     /// The chart sizes a namespace quota from these four numbers, and shows the
     /// arithmetic in `deploy/helm/studio-web/values.yaml`:

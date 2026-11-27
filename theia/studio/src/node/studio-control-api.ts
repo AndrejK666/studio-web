@@ -25,15 +25,18 @@ import {
     StudioNotifyEditorResult,
     StudioOpenInEditorRequest,
     StudioOpenInEditorResult,
+    StudioOpenDocumentRequest,
+    StudioOpenDocumentResult,
     StudioKitInstallRequest,
     StudioKitInstallResult,
     StudioRetryOperationRequest,
     StudioRuntimeSession
 } from '../common/studio-protocol';
+import { IDE_CONTROL, IDE_PROTOCOL_VERSION, THEIA_CAPABILITIES } from '../common/ide-bridge-names';
 
-export const STUDIO_CONTROL_BASE_PATH = '/internal/theia/v1';
-export const STUDIO_CONTROL_TOKEN_HEADER = 'x-cfs-theia-token';
-export const STUDIO_CONTROL_TOKEN_ENV = 'STUDIO_THEIA_S2S_TOKEN';
+export const STUDIO_CONTROL_BASE_PATH = IDE_CONTROL.v1.path;
+export const STUDIO_CONTROL_TOKEN_HEADER = IDE_CONTROL.v1.header;
+export const STUDIO_CONTROL_TOKEN_ENV = IDE_CONTROL.v1.tokenEnv;
 
 export interface StudioControlRuntimeStatus {
     readonly ready: boolean;
@@ -65,26 +68,49 @@ export interface StudioControlContext {
     retryOperation(request: StudioRetryOperationRequest): Promise<StudioOperationSnapshot>;
     openInEditor(request: StudioOpenInEditorRequest): Promise<StudioOpenInEditorResult>;
     notifyEditor(request: StudioNotifyEditorRequest): Promise<StudioNotifyEditorResult>;
+    openDocument(request: StudioOpenDocumentRequest): Promise<StudioOpenDocumentResult>;
     installKit(request: StudioKitInstallRequest): Promise<StudioKitInstallResult>;
 }
 
 /**
- * Mount the control API on `app`. Returns `false` (and mounts nothing) when the
- * S2S token is not configured, leaving the IDE untouched.
+ * Mount the control API on `app`, at both protocol versions (ADR-0080 §4):
+ *
+ * - v1, `/internal/theia/v1` with `X-CFS-Theia-Token`, the token from
+ *   STUDIO_THEIA_S2S_TOKEN — what every backend so far dials;
+ * - v2, `/internal/ide/v2` with `X-CFS-Ide-Token`, the token from
+ *   STUDIO_IDE_CONTROL_TOKEN, else the v1 one — the IDE-neutral spelling a
+ *   VS Code session serves too.
+ *
+ * The same handlers answer both. Returns `false` (and mounts nothing) when no
+ * token is configured, leaving the IDE untouched.
  */
 export function mountStudioControlApi(app: express.Application, context: StudioControlContext): boolean {
-    const token = (process.env[STUDIO_CONTROL_TOKEN_ENV] ?? '').trim();
-    if (!token) {
-        return false;
+    const legacy = (process.env[IDE_CONTROL.v1.tokenEnv] ?? '').trim();
+    const neutral = (process.env[IDE_CONTROL.v2.tokenEnv] ?? '').trim() || legacy;
+    if (legacy) {
+        app.use(IDE_CONTROL.v1.path, controlRouter(context, legacy, IDE_CONTROL.v1.header));
     }
+    if (neutral) {
+        app.use(IDE_CONTROL.v2.path, controlRouter(context, neutral, IDE_CONTROL.v2.header));
+    }
+    return !!(legacy || neutral);
+}
 
+/** What `getRuntimeStatus` adds for a v2 caller: which IDE this is and what it does. */
+export function theiaRuntimeStatus(status: StudioControlRuntimeStatus): StudioControlRuntimeStatus & {
+    runtime: 'theia'; protocol: number; capabilities: readonly string[];
+} {
+    return { ...status, runtime: 'theia', protocol: IDE_PROTOCOL_VERSION, capabilities: THEIA_CAPABILITIES };
+}
+
+function controlRouter(context: StudioControlContext, token: string, header: string): express.Router {
     const router = express.Router();
     router.use(express.json({ limit: '2mb' }));
 
     // S2S token gate. The browser never holds this token, so serving the
     // control API on the session's own port stays safe for the MVP.
     router.use((req, res, next) => {
-        const presented = (req.header(STUDIO_CONTROL_TOKEN_HEADER) ?? '').trim();
+        const presented = (req.header(header) ?? '').trim();
         if (!presented || presented !== token) {
             res.status(401).json({ error: 'invalid or missing control token' });
             return;
@@ -92,7 +118,7 @@ export function mountStudioControlApi(app: express.Application, context: StudioC
         next();
     });
 
-    handle(router, '/getRuntimeStatus', async () => context.runtimeStatus());
+    handle(router, '/getRuntimeStatus', async () => theiaRuntimeStatus(context.runtimeStatus()));
 
     handle(router, '/getSession', async () => {
         const session = await context.getSession();
@@ -163,6 +189,15 @@ export function mountStudioControlApi(app: express.Application, context: StudioC
         source: optionalString(req.body?.source)
     }));
 
+    // openDocument opens a portal document (the `studio-doc:` resolver) in the
+    // running IDE — the backend-channel twin of the frame's openDocument. A
+    // `content` the caller sends is ignored: Theia reads the row itself.
+    handle(router, '/openDocument', async req => context.openDocument({
+        workspaceId: asString(req.body?.workspaceId),
+        documentId: asString(req.body?.documentId),
+        title: optionalString(req.body?.title)
+    }));
+
     handle(router, '/installKit', async req => context.installKit({
         kitSlug: asString(req.body?.kitSlug),
         version: asString(req.body?.version),
@@ -170,8 +205,7 @@ export function mountStudioControlApi(app: express.Application, context: StudioC
         shelfFiles: req.body?.shelfFiles
     }));
 
-    app.use(STUDIO_CONTROL_BASE_PATH, router);
-    return true;
+    return router;
 }
 
 function handle(

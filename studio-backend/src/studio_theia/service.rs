@@ -78,8 +78,11 @@ impl TheiaService {
         &self.commands
     }
 
-    /// POST `{base}/internal/theia/v1/{method}` under the resolved session
-    /// endpoint, with the S2S token header, and decode the JSON response.
+    /// POST `{base}{control path}/{method}` under the resolved session
+    /// endpoint, with the S2S token on the runtime's header, and decode the
+    /// JSON response. Theia is dialled on v1, which every Theia image
+    /// answers; another IDE on v2 (ADR-0080 §4). A method the session's IDE
+    /// has not flagged is refused here, in a sentence, before any call.
     pub async fn call<Req, Resp>(
         &self,
         ctx: &SecurityContext,
@@ -92,11 +95,17 @@ impl TheiaService {
         Resp: DeserializeOwned,
     {
         let endpoint = self.resolver.resolve(ctx, target).await?;
-        let url = format!("{}/internal/theia/v1/{method}", endpoint.base_url);
+        if let Some(needed) = crate::ide_runtime::method_capability(method)
+            && !endpoint.runtime.can(needed)
+        {
+            return Err(cannot(endpoint.runtime, needed));
+        }
+        let control = endpoint.runtime.control;
+        let url = format!("{}{}/{method}", endpoint.base_url, control.path);
         let response = self
             .http
             .post(&url)
-            .header("X-CFS-Theia-Token", &endpoint.token)
+            .header(control.header, &endpoint.token)
             .json(body)
             .send()
             .await
@@ -108,9 +117,10 @@ impl TheiaService {
                 .await
                 .ok()
                 .and_then(|body| extract_upstream_detail(&body));
+            let ide = endpoint.runtime.label;
             let detail = upstream_detail.map_or_else(
-                || format!("Theia control '{method}' returned HTTP {status}"),
-                |message| format!("Theia control '{method}' returned HTTP {status}: {message}"),
+                || format!("{ide} control '{method}' returned HTTP {status}"),
+                |message| format!("{ide} control '{method}' returned HTTP {status}: {message}"),
             );
             return Err(CanonicalError::service_unavailable()
                 .with_detail(detail)
@@ -121,6 +131,19 @@ impl TheiaService {
             .await
             .map_err(|e| upstream_error(method, e))
     }
+}
+
+/// "this IDE (VS Code) cannot install a kit", as the refusal a caller shows:
+/// the request is fine and the IDE is up, it is the kind of IDE that cannot
+/// do it. Said as the bridge says every other refusal, so it reaches the
+/// caller as that sentence and never as a 404 from inside the IDE.
+fn cannot(
+    runtime: &crate::ide_runtime::IdeRuntime,
+    capability: crate::ide_runtime::Capability,
+) -> TheiaControlError {
+    CanonicalError::service_unavailable()
+        .with_detail(runtime.cannot(capability))
+        .create()
 }
 
 fn extract_upstream_detail(body: &str) -> Option<String> {
@@ -140,7 +163,7 @@ fn extract_upstream_detail(body: &str) -> Option<String> {
 
 fn upstream_error(method: &str, e: reqwest::Error) -> TheiaControlError {
     CanonicalError::service_unavailable()
-        .with_detail(format!("Theia control '{method}' failed: {e}"))
+        .with_detail(format!("IDE control '{method}' failed: {e}"))
         .create()
 }
 

@@ -25,7 +25,6 @@ const WS_LABEL: &str = "cf.studio.workspace_id";
 const TENANT_LABEL: &str = "cf.studio.tenant_id";
 const PORT_LABEL: &str = "cf.studio.port";
 const LAUNCH_LABEL: &str = "cf.studio.launch_id";
-const THEIA_PORT: &str = "3003/tcp";
 
 pub struct DockerDriver {
     docker: Docker,
@@ -110,7 +109,7 @@ impl SessionDriver for DockerDriver {
         let host_config = HostConfig {
             binds: Some(binds),
             port_bindings: Some(HashMap::from([(
-                THEIA_PORT.to_string(),
+                format!("{}/tcp", spec.runtime.container_port),
                 Some(vec![PortBinding {
                     host_ip: Some(self.cfg.bind_host.clone()),
                     host_port: Some(spec.port.to_string()),
@@ -228,8 +227,10 @@ impl SessionDriver for DockerDriver {
             };
             let container_id = c.id.clone().unwrap_or_default();
             // Recover what the container was started with: the gate token, the
-            // Theia control token, and the sources the summary is built from.
+            // IDE's control token, and the sources the summary is built from.
             let env = self.adopted_env(&container_id).await;
+            let ide = labels.get(crate::ide_runtime::LABEL).cloned();
+            let owner = labels.get(super::service::OWNER_LABEL).cloned();
             out.push(AdoptedSession {
                 workspace_id: ws,
                 tenant_id: tenant,
@@ -243,9 +244,11 @@ impl SessionDriver for DockerDriver {
                 session_token: env_value(&env, "STUDIO_SESSION_TOKEN")
                     .unwrap_or_default()
                     .to_string(),
-                control_token: env_value(&env, "STUDIO_THEIA_S2S_TOKEN")
-                    .unwrap_or_default()
-                    .to_string(),
+                control_token: super::driver::adopted_control_token(ide.as_deref(), |name| {
+                    env_value(&env, name)
+                }),
+                ide,
+                owner,
                 sources: super::driver::adopted_sources(
                     env_value(&env, "STUDIO_ROOT_URL"),
                     env_value(&env, "STUDIO_SOURCES"),

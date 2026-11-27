@@ -14,7 +14,7 @@
 // @cpt-dod:cpt-studiofrontend-dod-editor-bridge-file:p1
 // @cpt-dod:cpt-studiofrontend-dod-editor-bridge-component:p1
 
-import { apiRegistry, type AuthSession, type FrontXApp } from '@gears-frontx/react';
+import { apiRegistry, eventBus, type AuthSession, type FrontXApp } from '@gears-frontx/react';
 import {
   AccountsApiService,
   ConnectorsApiService,
@@ -38,9 +38,9 @@ import {
 } from '@constructor-studio/mfe-shared';
 import { StudioSessionApiService, type StudioSession } from '@/app/api';
 import { shellPort } from '@/app/ports/shellPorts';
-import { connectEditorBridge, type EditorMessage, type EditorTheme } from '@/app/mfe/editorBridge';
+import type { EditorChannel, EditorOpen, EditorRuntime, EditorTheme } from '@/app/ports/editorPort';
+import { liveChannel } from '@/app/live/liveChannel';
 import type { FrameHook } from '@/app/mfe/MfeHandlerIframe';
-import { showNotice } from '@/app/mfe/notifyAction';
 import { publishFrameUrl } from '@/app/mfe/sharedContext';
 import type { ArtifactAddress } from '@/app/mfe/screenLevels';
 import { readAppContext } from '@/app/slices/appContextSlice';
@@ -53,6 +53,7 @@ import {
   editorSessionLaunching,
   editorSessionReady,
   editorSessionReset,
+  editorSessionRuntime,
   editorSessionShown,
   readEditorSession,
   type EditorSessionFailure,
@@ -154,8 +155,10 @@ export function createEditorSession(app: FrontXApp): EditorSession {
   let projectSources: readonly ProjectSource[] = [];
   /** The file or item the editor shows, told to the IDE when it changes and to every new frame. */
   let opened: Opened | null = null;
-  /** The bridge to the editor's frame, and whether the IDE in it has answered. */
-  let bridge: ReturnType<typeof connectEditorBridge> | null = null;
+  /** The channel to the editor's frame (the `editor.connect` port's), and whether the IDE in it has answered. */
+  let bridge: EditorChannel | null = null;
+  /** The IDE the live session runs, as its launch said; told to the channel of every frame. */
+  let runtime: EditorRuntime | null = null;
   let answered = false;
   let answerTimer: ReturnType<typeof setTimeout> | undefined;
   let token: string | undefined;
@@ -328,6 +331,8 @@ export function createEditorSession(app: FrontXApp): EditorSession {
       return { ready: false, failure: launchRefusal(error) };
     }
     if (superseded()) return null;
+    runtime = session.ide ?? null;
+    dispatch(editorSessionRuntime(runtime));
 
     const { url } = session;
     const sessionId = session.id;
@@ -404,18 +409,20 @@ export function createEditorSession(app: FrontXApp): EditorSession {
     clearAnswerTimer();
   };
 
-  const openMessage = ({ artifact, workspaceId }: Opened): EditorMessage => {
+  /** What the IDE is asked to open, as `{ kind, ref }` and how the editor addresses the kind; the kit says it. */
+  const openTarget = ({ artifact, workspaceId }: Opened): EditorOpen => {
     if (workspaceId) {
       return {
-        type: 'studio.openDocument',
+        kind: artifact.kind,
+        ref: artifact.artifactId,
+        address: 'workspace',
         workspaceId,
-        documentId: artifact.artifactId,
         ...(artifact.path ? { title: artifact.path } : {}),
       };
     }
     // Without its directory the IDE looks in every root and one level below, and the first match wins.
     const directory = checkoutDirectory(projectSources, artifact.repository);
-    return { type: 'studio.openInEditor', path: directory ? `${directory}/${artifact.path}` : artifact.path };
+    return { kind: artifact.kind, ref: directory ? `${directory}/${artifact.path}` : artifact.path, address: 'path' };
   };
 
   // @cpt-begin:cpt-studiofrontend-flow-editor-bridge-open:p1:inst-5
@@ -438,7 +445,7 @@ export function createEditorSession(app: FrontXApp): EditorSession {
         : now?.repository === was?.repository && now?.path === was?.path;
     if (same) return;
     opened = next;
-    if (next) bridge?.post(openMessage(next));
+    if (next) bridge?.open(openTarget(next));
   };
   // @cpt-end:cpt-studiofrontend-flow-editor-bridge-open:p1:inst-5
 
@@ -465,16 +472,32 @@ export function createEditorSession(app: FrontXApp): EditorSession {
     // With the viewer, always: a token without one makes the IDE forget who is at the keyboard.
     // A session that ends is not told: the bridge has no message that takes a token back, and the
     // sign-in screen that follows replaces the shell, the frame with it.
-    if (next) bridge?.post({ type: 'studio.token', apiToken: next, ...person() });
+    if (next) {
+      const { viewer, workspaceName } = person();
+      bridge?.token(next, viewer, workspaceName);
+    }
   };
 
   // @cpt-begin:cpt-studiofrontend-flow-editor-bridge-open:p1:inst-4
   const frame: FrameHook = (element, entry) => {
     if (!isEditorFrame(entry)) return undefined;
     bridge?.dispose();
+    bridge = null;
     answered = false;
-    const mine = connectEditorBridge(element, {
-      init: () => ({
+    const connect = shellPort('editor.connect');
+    if (!connect || !project) {
+      // No kit talks to this frame: there is nobody to wait for an answer from.
+      answered = true;
+      clearAnswerTimer();
+      dispatch(editorSessionReady());
+      return undefined;
+    }
+    const projectId = project;
+    const mine = connect({
+      frame: element,
+      projectId,
+      runtime,
+      greeting: () => ({
         theme: theme(),
         workspaceId: project ?? '',
         ...(token ? { apiToken: token } : {}),
@@ -491,14 +514,19 @@ export function createEditorSession(app: FrontXApp): EditorSession {
         dispatch(editorSessionLaunching());
         armAnswerTimer();
       },
-      onOpenComponent: () => {
-        // TODO(#583): open the component's page once the portal has one.
-        showNotice({ kind: 'info', text: app.i18nRegistry.t('shell:editor_component_unavailable') });
+      // The IDE asks for an artifact: opened as any artifact-open is, on the screen that declares its kind.
+      onOpenArtifact: (kind, ref) => {
+        if (bridge !== mine) return;
+        eventBus.emit('app/context/artifact/requested', { projectId, kind, artifactId: ref, repository: '', path: ref });
       },
+      listen: (listener) =>
+        liveChannel()?.subscribe((event) =>
+          listener({ kind: event.kind, subjectType: event.subject_type, subjectId: event.subject_id, payload: event.payload })
+        ) ?? (() => undefined),
     });
     bridge = mine;
-    if (opened) mine.post(openMessage(opened));
-    const unsubscribeTheme = app.themeRegistry.subscribe(() => mine.post({ type: 'studio.theme', theme: theme() }));
+    if (opened) mine.open(openTarget(opened));
+    const unsubscribeTheme = app.themeRegistry.subscribe(() => mine.theme(theme()));
     // Every renewal; the read only until one is heard, and only for this frame.
     let heard = false;
     const unsubscribeAuth = app.auth?.subscribe?.((event) => {
@@ -531,6 +559,7 @@ export function createEditorSession(app: FrontXApp): EditorSession {
     if (projectId !== project) {
       if (project !== null) publishFrameUrl(app, null);
       live = null;
+      runtime = null;
       abandon();
       project = projectId;
       entered = false;

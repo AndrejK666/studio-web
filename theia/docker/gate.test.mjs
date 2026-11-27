@@ -19,7 +19,7 @@ await writeFile(gatePath, match[1], 'utf8');
 
 const token = 'integration-test-token';
 const child = spawn(process.execPath, [gatePath], {
-  env: { ...process.env, STUDIO_SESSION_TOKEN: token, STUDIO_GATEWAY_URL: '' },
+  env: { ...process.env, STUDIO_SESSION_TOKEN: token, STUDIO_GATEWAY_URL: '', STUDIO_IDE_CONTROL_PORT: '3005' },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
 let gateStderr = '';
@@ -80,6 +80,36 @@ try {
   assert.match(String(starting.response.headers['cache-control']), /no-store/);
   assert.match(starting.body, /Constructor Studio is starting the IDE/);
   console.log('session gate keeps redirect and IDE boot splash CDN-safe');
+
+  // The control API needs no cookie (the IDE side checks its own token):
+  // v1 goes to the IDE on 3004 as before, v2 to the control port the session
+  // names (a VS Code session's studio-bridge extension), ADR-0080 §4.
+  const answering = (port, name) => {
+    const server = http.createServer((req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ by: name, url: req.url, token: req.headers['x-cfs-ide-token'] ?? null }));
+    });
+    return new Promise((resolve) => server.listen(port, '127.0.0.1', () => resolve(server)));
+  };
+  const down = await request('/internal/ide/v2/getRuntimeStatus');
+  assert.equal(down.response.statusCode, 503, 'a control call to a control port nobody holds is a 503, not the splash');
+  assert.match(down.body, /not answering/);
+  const ide = await answering(3004, 'ide');
+  const bridge = await answering(3005, 'bridge');
+  try {
+    const v1 = await request('/internal/theia/v1/getRuntimeStatus');
+    assert.equal(v1.response.statusCode, 200);
+    assert.equal(JSON.parse(v1.body).by, 'ide');
+    const v2 = await request('/internal/ide/v2/getRuntimeStatus', { 'X-CFS-Ide-Token': 'abc' });
+    assert.equal(v2.response.statusCode, 200);
+    assert.deepEqual(JSON.parse(v2.body), { by: 'bridge', url: '/internal/ide/v2/getRuntimeStatus', token: 'abc' });
+    const page = await request('/internal/ide/v3/getRuntimeStatus');
+    assert.equal(page.response.statusCode, 403, 'only the two control paths skip the cookie');
+  } finally {
+    await new Promise((resolve) => ide.close(resolve));
+    await new Promise((resolve) => bridge.close(resolve));
+  }
+  console.log('session gate passes control v1 to the IDE and v2 to the control port');
 
   // A closed tab ends the IDE websocket while Theia is still writing to it.
   // On a stand that killed the gate with an unhandled EPIPE, and the session

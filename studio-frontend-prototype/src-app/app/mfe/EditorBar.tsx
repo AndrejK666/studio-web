@@ -21,6 +21,7 @@ import { useShellText } from '@/app/i18n/shellTranslations';
 import { APP_CONTEXT_SLICE_KEY, type AppContextState } from '@/app/slices/appContextSlice';
 import { APP_SESSION_SLICE_KEY, type AppSessionState } from '@/app/slices/appSessionSlice';
 import { EDITOR_SESSION_SLICE_KEY, type EditorSessionState } from '@/app/slices/editorSessionSlice';
+import { editorCan } from '@/app/ports/editorPort';
 
 /** How often the desktops are read when the backend does not say (its heartbeat). */
 const DEFAULT_HEARTBEAT_SECS = 30;
@@ -93,6 +94,8 @@ export function EditorBar() {
 
   if (!session?.shown || !project) return null;
   const up = session.phase === 'ready' || session.phase === 'launching';
+  // The desktop hand-off is the runtime's to offer (ADR-0080 §2): an IDE without a desktop app has none.
+  const desktop = editorCan(session.runtime, 'desktop');
   const names = desktopNames(desktops, me, {
     unnamed: t('editor_desktop_unnamed'),
     you: (device) => t('editor_desktop_you', { device }),
@@ -140,11 +143,12 @@ export function EditorBar() {
         </Button>
       )}
       <span className="ml-auto inline-flex flex-wrap items-center gap-2">
-        {names.length > 0 && (
+        {desktop && names.length > 0 && (
           <span className="text-muted-foreground" data-desktop-presence>
             {t.count('editor_desktop_open_on', names.length, { names: names.join(', ') })}
           </span>
         )}
+        {desktop && (
         <Button
           variant="outline"
           size="sm"
@@ -161,7 +165,8 @@ export function EditorBar() {
         >
           {t('editor_desktop')}
         </Button>
-        {missing && (
+        )}
+        {desktop && missing && (
           <span className="text-muted-foreground" data-desktop-missing>
             {t('editor_desktop_missing')}{' '}
             <a className="underline" href={DESKTOP_DOWNLOAD_URL} target="_blank" rel="noreferrer">

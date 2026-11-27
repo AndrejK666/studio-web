@@ -22,7 +22,7 @@ import {
 import { createContextCatalogs } from '@/app/effects/contextCatalogs';
 import type { EditorSession } from '@/app/effects/editorSessionEffects';
 import { startRouting, type RoutingHandle } from '@/app/routing/startRouting';
-import { editorGroupOf, entryTokenOf, groupOfToken, tokenOf } from '@/app/routing/screenTokens';
+import { editorGroupOf, entryTokenOf, groupOfToken, groupOpening, tokenOf } from '@/app/routing/screenTokens';
 import type { ShellRoute } from '@/app/routing/route';
 import { openOnMyDesktop } from '@/app/desktop/openOnMyDesktop';
 import { showNotice } from '@/app/mfe/notifyAction';
@@ -229,13 +229,14 @@ export function registerAppContextEffects(app: FrontXApp, editorSession: EditorS
       }
       if (!routing) return;
     }
-    // The screen an artifact opens on is the one whose kit declares what it opens (ADR-0079).
-    const editorGroup = editorGroupOf(routing.groups());
-    if (!editorGroup) {
-      console.warn('[shell] artifact open: no screen declares the artifacts it opens');
+    // The screen an artifact opens on is the one whose kit declares it opens that kind (ADR-0079).
+    const opening = groupOpening(routing.groups(), kind);
+    if (!opening) {
+      // Said in the shell's own words: no kit's name, the kind is the request's (ADR-0080 §4).
+      showNotice({ kind: 'info', text: app.i18nRegistry.t('shell:artifact_open_unavailable', { kind }) });
       return;
     }
-    const route = routeFor(editorGroup.token, 'project', {
+    const route = routeFor(opening.token, 'project', {
       project: projectId,
       artifact: artifactId,
       repository,

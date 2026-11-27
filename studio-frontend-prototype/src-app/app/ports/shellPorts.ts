@@ -10,6 +10,7 @@
  * nothing to say, never with an error the shell shows.
  */
 
+import type { EditorConnect } from '@/app/ports/editorPort';
 import type { EditorCloneProblem } from '@/app/slices/editorSessionSlice';
 
 export interface ShellPorts {
@@ -23,6 +24,11 @@ export interface ShellPorts {
    * (ADR-0027 §5); rejects when the desktop could not be told.
    */
   'desktop.openFile': (desktopSessionId: string, relativePath: string) => Promise<void>;
+  /**
+   * Talk to the editor's frame (ADR-0080 §4): the kit that brings the IDE
+   * knows its messages; the shell only asks it to open `{ kind, ref }`.
+   */
+  'editor.connect': EditorConnect;
 }
 
 export type ShellPortName = keyof ShellPorts;

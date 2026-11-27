@@ -175,6 +175,7 @@ mod tests {
             session_id: Uuid::new_v4(),
             tenant_id: Uuid::new_v4(),
             workspace_id: Uuid::new_v4(),
+            ide: None,
         };
         let id = Uuid::new_v4();
         let event = command_event(

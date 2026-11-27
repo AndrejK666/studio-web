@@ -141,12 +141,26 @@ the portal's contract.
 | `theia.repositories-changed` | the workspace's repository set changed | `workspace_id`, `session_id`, `runtime`, `sequence`, `event` |
 | `theia.workspace-snapshot-changed` | the workspace snapshot changed | `workspace_id`, `session_id`, `runtime`, `sequence`, `event` |
 | `theia.workspace-activity` | activity heartbeat | `workspace_id`, `session_id`, `runtime`, `sequence`, `event` |
+| `ide.operation` | an operation the IDE ran | `workspace_id`, `session_id`, `runtime`, `ide`, `sequence`, `event` |
+| `ide.audit` | an audit record from the session | `workspace_id`, `session_id`, `runtime`, `ide`, `sequence`, `event` |
+| `ide.repositories-changed` | the workspace's repository set changed | `workspace_id`, `session_id`, `runtime`, `ide`, `sequence`, `event` |
+| `ide.workspace-snapshot-changed` | the workspace snapshot changed | `workspace_id`, `session_id`, `runtime`, `ide`, `sequence`, `event` |
+| `ide.workspace-activity` | activity heartbeat | `workspace_id`, `session_id`, `runtime`, `ide`, `sequence`, `event` |
+| `ide.open-artifact` | the IDE asks the portal to open an artifact (`event` is `{ kind, ref }`) | `workspace_id`, `session_id`, `runtime`, `ide`, `sequence`, `event` |
 
 `event` is the forwarded callback argument verbatim; `sequence` is `null` for
 the kinds the bridge does not order. `runtime` is `container` for a session the
 backend launched (`session_id` is that session) and `desktop` for a desktop
 Studio (ADR-0027 phase 4: `session_id` is its desktop session). A kind the bridge forwards that is not in
 this table is not republished (`studio_theia::sink::REPUBLISHED_KINDS`).
+
+`theia.*` and `ide.*` are the same events in the bridge protocol's two
+versions (ADR-0080 §4, `ide-bridge/protocol.json`): an IDE posting on
+`X-CFS-Theia-Token` (Theia, v1) is republished as `theia.<kind>`, one posting
+on `X-CFS-Ide-Token` (v2, VS Code) as `ide.<kind>`, with `ide` naming the
+session's IDE runtime. A subscriber reads both for one release, after which v1
+goes. `ide.open-artifact` has no v1 row: a Theia frame asks the portal for that
+over `postMessage` instead.
 
 **These kinds break rule E2** — hyphens rather than snake_case, and a noun
 (`theia.operation`) rather than a past-tense verb. They are pass-through from

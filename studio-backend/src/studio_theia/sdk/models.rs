@@ -143,6 +143,32 @@ pub struct OpenInEditorResult {
     pub resolved_relative_path: Option<String>,
 }
 
+/// Open a portal document in the running IDE (ADR-0080 §4, v2 control).
+///
+/// Until v2 this was only a frame message; a runtime the portal cannot reach
+/// through its frame (VS Code) is told over the control channel instead.
+/// `content` is the markdown the portal already holds, for an IDE that has no
+/// token of its own to read the document with: it shows it read-only.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenDocument {
+    /// The workspace tenant that stores the document (not always the
+    /// session's: a project shows its parent workspace's documents).
+    pub workspace_id: String,
+    pub document_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+}
+
+/// Result of [`OpenDocument`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenDocumentResult {
+    pub opened: bool,
+}
+
 /// Show a Studio message in the running IDE (new editor command §4).
 ///
 /// Display-only: it touches no workspace state, which is why it needs none of
