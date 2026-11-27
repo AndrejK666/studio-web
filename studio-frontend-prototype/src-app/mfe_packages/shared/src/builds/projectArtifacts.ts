@@ -10,21 +10,41 @@
  * keeps them in the graph (`storage.artifacts: graph`), the model holds none
  * or only part of them and `/nodes` is what answers. Both ask the same
  * `domain.view`, so the fallback shows nobody more than the query would.
+ *
+ * A search (`q`) is an `_or` of case-insensitive substring tests (`_ilike`)
+ * over the fields `/nodes` matches its `q` against that the kind declares:
+ * the title, the path, the author, the number, a repository's full path.
  */
 
-import type { DomainQueryOf, DomainQueryResult, DomainQueryRow } from '../domain/domainQuery';
+import type { DomainFieldOf, DomainQueryOf, DomainQueryResult, DomainQueryRow, DomainResultOf } from '../domain/domainQuery';
 import { domainQuerySend } from '../data/domain';
 import { gateway, withQuery } from '../data/gateway';
+import { responseStatus } from '../errors/notFound';
+import type { EndpointDescriptor } from '@gears-frontx/react';
 import type { ArtifactNode } from './artifactNode';
 
 /** The kinds the project screens list, by the artifact gear's leaf. */
 export type ArtifactKind = 'repo' | 'workflow_run' | 'build';
 
 /** Each kind's type in the domain model. */
-export const ARTIFACT_MODEL_TYPE: Record<ArtifactKind, string> = {
+export const ARTIFACT_MODEL_TYPE = {
   repo: 'repository',
   workflow_run: 'ci-run',
   build: 'product-build',
+} as const satisfies Record<ArtifactKind, string>;
+
+/** The model type `kind` lists: one `model.gen.ts` has, so its rows are typed. */
+export type ArtifactModelType<K extends ArtifactKind = ArtifactKind> = (typeof ARTIFACT_MODEL_TYPE)[K];
+
+/**
+ * The fields a search matches, per kind: those of `/nodes`' `q` (title,
+ * author, path, full path, number) that the kind's type declares. Typed
+ * against the generated model, so a field the model drops fails the build.
+ */
+export const ARTIFACT_SEARCH_FIELDS: { readonly [K in ArtifactKind]: readonly DomainFieldOf<ArtifactModelType<K>>[] } = {
+  repo: ['title', 'path', 'full_path'],
+  workflow_run: ['title', 'author', 'path', 'number'],
+  build: ['title', 'path'],
 };
 
 const GTS_TYPE: Record<ArtifactKind, string> = {
@@ -49,21 +69,33 @@ export interface ProjectArtifactsOptions {
   limit?: number;
   /** `updated`: newest first. */
   sort?: 'updated';
+  /** A search: a substring of any of the kind's {@link ARTIFACT_SEARCH_FIELDS}, ignoring case. */
+  q?: string;
 }
 
 /** The query that lists `kind` in `projectId`: what `/nodes?type=&scope=` lists. */
 export function projectArtifactsQuery(
   kind: ArtifactKind,
   projectId: string,
-  { limit = 50, sort }: ProjectArtifactsOptions = {}
-): DomainQueryOf<string> {
-  const q: DomainQueryOf<string> = {
+  { limit = 50, sort, q: search }: ProjectArtifactsOptions = {}
+): DomainQueryOf<ArtifactModelType> {
+  const q: DomainQueryOf<ArtifactModelType> = {
     type: ARTIFACT_MODEL_TYPE[kind],
     project_id: projectId,
     limit: Math.min(Math.max(1, limit), 200),
   };
   if (sort === 'updated') q.order_by = [{ field: 'updated_at', direction: 'desc' }];
+  const needle = search?.trim();
+  if (needle) {
+    const pattern = `%${likeLiteral(needle)}%`;
+    q.where = { _or: ARTIFACT_SEARCH_FIELDS[kind].map((field) => ({ [field]: { _ilike: pattern } })) };
+  }
   return q;
+}
+
+/** `text` as a `_ilike` pattern that matches only itself: `%`, `_` and the escape escaped. */
+export function likeLiteral(text: string): string {
+  return text.replace(/[\\%_]/g, (c) => `\\${c}`);
 }
 
 /** A query row as the node `/nodes` returns for it. */
@@ -122,16 +154,45 @@ export async function fetchProjectArtifacts(
   options: ProjectArtifactsOptions = {}
 ): Promise<ProjectArtifactPage> {
   if (orgId && (await artifactsInModel(orgId))) {
-    const r = await domainQuerySend<DomainQueryResult>(orgId).fetch(projectArtifactsQuery(kind, projectId, options));
-    const items = r.items ?? [];
-    return { nodes: items.map((row) => artifactNodeOf(kind, row)), total: r.total ?? items.length };
+    try {
+      const r = await domainQuerySend<DomainResultOf<ArtifactModelType>>(orgId).fetch(
+        projectArtifactsQuery(kind, projectId, options)
+      );
+      const items = r.items ?? [];
+      return { nodes: items.map((row) => artifactNodeOf(kind, row)), total: r.total ?? items.length };
+    } catch (e) {
+      // A search names fields the artifact gear declares as it syncs or
+      // sweeps: an organization whose model has not gained them yet answers
+      // 400. `/nodes` answers that search, under the same grant.
+      if (!(options.q?.trim() && responseStatus(e) === 400)) throw e;
+    }
   }
   const path = withQuery(NODES_PATH, {
     type: kind,
     scope: projectId,
     sort: options.sort,
+    q: options.q?.trim() || undefined,
     limit: Math.min(Math.max(1, options.limit ?? 50), 200),
   });
   const page = await gateway().get<ProjectArtifactPage>(path, { staleTime: 0 }).fetch({ staleTime: 0 });
   return { nodes: page.nodes ?? [], total: page.total ?? 0 };
+}
+
+/**
+ * {@link fetchProjectArtifacts} as a cacheable read, for `useApiQuery`: keyed
+ * by the organization, the project, the kind and the options, so a screen
+ * invalidates it by the same descriptor.
+ */
+export function projectArtifacts(
+  orgId: string | null | undefined,
+  projectId: string,
+  kind: ArtifactKind,
+  options: ProjectArtifactsOptions = {},
+  staleTime?: number
+): EndpointDescriptor<ProjectArtifactPage> {
+  return {
+    key: ['project-artifacts', orgId ?? null, projectId, kind, options],
+    staleTime,
+    fetch: () => fetchProjectArtifacts(orgId, projectId, kind, options),
+  };
 }

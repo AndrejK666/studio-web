@@ -397,11 +397,15 @@ export type { ArtifactNode as BuildArtifactNode } from './builds/artifactNode';
 // A project's repositories, CI runs and IDE builds, through the query where the model answers.
 export {
   ARTIFACT_MODEL_TYPE,
+  ARTIFACT_SEARCH_FIELDS,
   artifactNodeOf,
   artifactsInModel,
   fetchProjectArtifacts,
+  likeLiteral,
+  projectArtifacts,
   projectArtifactsQuery,
   type ArtifactKind,
+  type ArtifactModelType,
   type ProjectArtifactPage,
   type ProjectArtifactsOptions,
 } from './builds/projectArtifacts';

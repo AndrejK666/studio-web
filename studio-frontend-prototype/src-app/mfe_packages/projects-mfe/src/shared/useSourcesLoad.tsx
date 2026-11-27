@@ -116,7 +116,7 @@ export function useSourcesLoad(
   const cache = useQueryCache();
 
   const config = useProjectConfig(projectId);
-  const nodesParams = useMemo(() => repositoryNodesParams(projectId), [projectId]);
+  const nodesParams = useMemo(() => repositoryNodesParams(projectId, orgId), [projectId, orgId]);
   const nodes = useApiQuery(ingest.nodes(nodesParams));
   // The project's own connections and its organization's (#1043).
   const connections = useApiQuery(connectors.connections(projectConnectionsParams(projectId)));

@@ -16,7 +16,7 @@ graph-storage ([the asks](upstream/graph-storage-requests.md), items 2 and 6–1
 
 ## Where we start
 
-*Updated 2026-11-26.* The portal is `studio-frontend-prototype/src-app`: the
+*Updated 2026-11-27.* The portal is `studio-frontend-prototype/src-app`: the
 FrontX shell with its screens as kits (ADR-0069). The old single-page
 prototype in `studio-frontend-prototype/src` was where this plan started; the
 paths below are the current ones.
@@ -80,11 +80,24 @@ data transition is where it gets tested:
 `scripts/gen-domain-client.mjs` reads the seed model
 (`studio-backend/src/domain_model/ontology.studio.json` and the types the
 built-in kits bring, what `GET /types` serves an organization on the base
-kits). It writes
+kits) and the types gears declare as they start
+(`studio-backend/src/domain_model/gear-declared-types.json`). It writes
 `studio-frontend-prototype/src-app/mfe_packages/shared/src/domain/model.gen.ts`,
 which holds:
 - one interface per entity, with its own and inherited fields;
 - per entity, the relations `include` accepts and the entity each one reaches.
+
+*2026-11-27: gears' types too.* A gear declares its types at run time
+(`TypeNeed` through `ensure_type`): the artifact gear's `ci-run`,
+`product-build`, `ci-job`, `release`, the documents and reports gears' records
+and the rest. They were in every organization's model and in no file, so the
+generated file did not have them and their reads were untyped.
+`gear-declared-types.json` is every gear's declarations, rendered from the
+gears' code by a backend test (`gear_types_snapshot_tests.rs`), which fails
+when the file says something else (`UPDATE_GOLDEN=1` rewrites it). The
+generator applies them after the seed and the kits the way
+`declare_gear_type` does: a type the model lacks is created, a field or
+relation it lacks is added, nothing it has changes.
 
 Inheritance and relation resolution mirror `ontology.rs` and `query.rs`. CI
 runs the script with `--check` next to `check-docs` and fails when the file is
@@ -272,7 +285,28 @@ Found while moving the first screens onto the query:
 - **The MCP tool** `domain_model_query` takes `cursor`, `aggregate` and
   `project_ids`, as the REST call does.
 
-## Which screens read through the query, and which stay (2026-11-26)
+## Gaps closed 2026-11-27
+
+- **`_ilike` and `_nilike`.** SQL's case-insensitive `LIKE` over the whole
+  value: `%` is any run of characters, `_` one, a backslash makes the next
+  one literal. It tests a string, or a number by its JSON text (so
+  `{"number": {"_ilike": "%12%"}}` finds run 112), and nothing else; a
+  pattern that ends with a lone backslash is a 400. In Postgres it is
+  `lower(value) LIKE lower($pattern) ESCAPE $escape`, both bound, never SQL
+  text; in memory the same reading (`like_pattern`), and `mirror_tests.rs`
+  asks both. A screen that searches for what a person typed escapes it with
+  `likeLiteral` (mfe-shared) and wraps it in `%…%`.
+- **The artifact types declare what `/nodes?q=` searches.** `author` and
+  `number` on `work-item`, `pull-request` and `ci-run`, `author` on `comment`
+  and `commit`, `full_path` on `repository` (`own_fields` in the artifact
+  gear's `model_store.rs`). The gear declares them when it writes, and now
+  also at its sweep for an organization already moved, so one nobody syncs
+  gains them too.
+- **`ci-run`, `product-build` and every other gear-declared type are in
+  `model.gen.ts`** (step 1), so `fetchProjectArtifacts` reads typed rows and
+  `ARTIFACT_SEARCH_FIELDS` is checked against the model at compile time.
+
+## Which screens read through the query, and which stay (2026-11-27)
 
 **On the query.** Admin › Objects (`TypeObjects`, `ObjectAttributes`, saved
 views), Activity › Timeline and the project overview's next steps. Each reads
@@ -292,14 +326,26 @@ with project grants only does not reach organization-wide objects) is the
 same "not yet". The two routes ask the same question now (below), so the
 fallback shows nobody more than the query would.
 
+*2026-11-27.* **Product's search** (`q` on `listArtifactNodes`) reads the
+same way: `where` is an `_or` of `_ilike: "%term%"` over the fields of
+`/nodes`' `q` the kind declares (repository: title, path, full path; CI
+run: title, author, path, number; IDE build: title, path). An organization
+whose model has not gained `author`/`number` yet answers 400; the helper then
+asks `/nodes` the same search, under the same grant. **The project's
+repositories in projects-mfe** (the Sources tab, the sync of sources with no
+repository yet, the Artifacts tab's repository picker) read
+`{type: repository, project_id}` through the same helper
+(`ArtifactIngestApiService.nodes` with `orgId`, cached as
+`projectArtifacts(...)`).
+
 **Looked at and left where they are.** The rule for a move: the screen shows
 the same thing to every role after it. These do not, or are not a plain read
 of one type.
 
 | Read | Screens | Why it stays |
 |---|---|---|
-| `GET /studio-artifact-ingest/v1/nodes` | The fallback of the three screens above; Product's search (`q`), a repository's contents, cursor paging, the IDE, MCP | **Authorization is the query's now.** The route asks the domain-object policy for `domain.view` as the caller, in the organization the scope hangs under (`DomainObjects::read_access`, the answer `POST /query` applies), and keeps only nodes whose owner (project, else workspace, else organization) it admits: 403 without a grant, 503 while the PDP cannot be asked or the domain model is not there. A scope the caller may not read whole is narrowed before it is paged, so `total` counts only what they may read. It stays for what the model cannot answer: `q` also matches `author` and `number`, which the model's artifact types do not declare (the query refuses undeclared fields, and has `_contains`, no `_ilike`); and for a tenant whose artifacts have not moved, or under `storage.artifacts: graph`. |
-| `GET /studio-artifact-ingest/v1/runs` | Tests | **Authorization is the query's now**, as `/nodes`: runs and jobs of a project outside the grants are not listed. Stays because it is derived: jobs joined to their runs, `latest_completed`, revision and branch matching, all in `ci_runs.rs`; on the query that is two reads and the same code again in the browser. |
+| `GET /studio-artifact-ingest/v1/nodes` | The fallback of the screens above; the project's Artifacts tab (its list of every kind, a repository's contents, the counts in its header); cursor paging; the IDE; MCP | **Authorization is the query's now.** The route asks the domain-object policy for `domain.view` as the caller, in the organization the scope hangs under (`DomainObjects::read_access`, the answer `POST /query` applies), and keeps only nodes whose owner (project, else workspace, else organization) it admits: 403 without a grant, 503 while the PDP cannot be asked or the domain model is not there. A scope the caller may not read whole is narrowed before it is paged, so `total` counts only what they may read. It stays for a tenant whose artifacts have not moved, or under `storage.artifacts: graph`. **The Artifacts tab's list stays (2026-11-27)** because it is not one type and not only the gear's: it pages every artifact kind together, newest first. On the query that is the base type with `{"_type": {"_in": [...]}}`, and two of those types, `work-item` and `comment` (and `finding`), are also what members write themselves, so the tab would start listing a project's hand-written work items and comments among its synced artifacts. The untyped `/nodes` also asks `domain.view` with no type, where the query would ask for the base type: a different question of the PDP. |
+| `GET /studio-artifact-ingest/v1/runs` | Tests | **Decided 2026-11-27: stays a REST route.** Authorization is the query's, as `/nodes`: runs and jobs of a project outside the grants are not listed. It is derived, and the derivation is the point: jobs joined to their run by the job's `run` field (no declared relation joins `ci-job` to `ci-run`, so `include` cannot follow it), the job set of the run's latest attempt, `latest_completed` per workflow (an arg-max per group, which `aggregate` does not answer: it folds numbers, it does not pick a row), and revision and branch matching (`ci_runs.rs`). On the query that is two reads and `ci_runs.rs` again in the browser, in every screen that shows it. What would move it: a declared `ci-job → ci-run` relation (written by the sync) and a "latest row per group" read in the query. |
 | `GET /studio-documents/v1/workspaces/{w}/types` | Specs, Documents | Derived: the platform catalogue (not in the model) under the organization's and the workspace's overrides, minus what the workspace hides. The query sees only the stored overrides. |
 | `GET /studio-documents/v1/specs-per-source` | Sources | A join across two gears: decided bindings, then the repository each file came from. No single `aggregate` counts that. |
 | `GET /studio-components-catalog/v1/components`, `/profiles`, `/registry` | Product, Admin | Tiered (platform pins, organization, project, ADR-0061), classified by the reference, superseded entries hidden. |
@@ -307,9 +353,10 @@ of one type.
 | Derived domain-model facts, `GET /objects/graph`, `GET /type-counts` | Admin › Model | Graph-shaped or across every type (step 2): the query is one type at a time. |
 
 **What moves them.** For `/nodes`: every organization moved into the model
-and `storage.artifacts: graph` retired (then the fallback goes), and `author`
-and `number` declared on the artifact types for the search. For `/runs`: the
-job join and `latest_completed` as a read the query can express.
+and `storage.artifacts: graph` retired (then the fallback goes); for the
+Artifacts tab, a marker on the synced objects of the shared types (or their
+own types) so "the gear's artifacts of every kind" is one `where`. For
+`/runs`: the job relation and a latest-per-group read, above.
 
 **Gears reading through the store.** The artifact sync reads back the
 repository it walks: the files it may forget and the comments it counts. Both
