@@ -91,6 +91,9 @@ try {
     });
     return new Promise((resolve) => server.listen(port, '127.0.0.1', () => resolve(server)));
   };
+  const down = await request('/internal/ide/v2/getRuntimeStatus');
+  assert.equal(down.response.statusCode, 503, 'a control call to a control port nobody holds is a 503, not the splash');
+  assert.match(down.body, /not answering/);
   const ide = await answering(3004, 'ide');
   const bridge = await answering(3005, 'bridge');
   try {
