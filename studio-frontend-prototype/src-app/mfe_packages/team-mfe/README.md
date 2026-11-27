@@ -1,8 +1,8 @@
-# team-mfe — the project's People
+# team-mfe — the project's Team
 
-Project › People (`/projects/team`), carried over from the prototype
+Project › Team (`/projects/team`; People in ADR-0071 step 6, Team again since #1111), carried over from the prototype
 (`people.tsx` in `mode="team"`, ADR-0069). The shell's own tab since
-ADR-0071 step 6: People on the project level, no kit (it was the built-in
+ADR-0071 step 6: no kit (it was the built-in
 kit `project-team`, now an alias of the shell for one release).
 
 - `src/screens/team/TeamScreen.tsx` — the team: this project's member grants
