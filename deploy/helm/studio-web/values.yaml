@@ -2,6 +2,9 @@
 # Required per environment: database.existingSecret, auth (IDP) secret.
 global:
   hostname: ""            # e.g. constructor.local (never a prod default)
+  # More hosts served exactly like `hostname`: the same ingress rules, the
+  # same frontend and backend. Dev and Test list their -poc host here, which
+  # served the prototype portal until the two portals became one.
   customDomains: []
   environmentName: "dev"
   environmentType: "prod" # policy: default reflects production behavior
@@ -458,6 +461,11 @@ backend:
       # NetworkPolicy cannot name FQDNs). Empty = DNS only (no external clone).
       egressCidrs: []
 
+# The one frontend (studio-frontend/: the FrontX shell and its kits, ADR-0069),
+# served at the root of `global.hostname` and of every `global.customDomains`
+# host by the main ingress. It replaced both the FrontX portal and the
+# prototype portal (`frontendPrototype`, retired with its own Deployment,
+# Service and ingress).
 frontend:
   image:
     repository: ghcr.io/constructorfabric/studio-web/studio-frontend
@@ -488,42 +496,6 @@ frontend:
   autoscaling:
     enabled: false
 
-# Experimental pre-FrontX portal. It is a separate immutable image exposed at
-# the root of `hostname`; the primary Studio hostname serves only the main
-# frontend. `path` remains the container-internal health/mount compatibility
-# path and is not added to the primary ingress.
-frontendPrototype:
-  enabled: false
-  path: /prototype
-  hostname: ""
-  ingress:
-    annotations: {}
-    tls: []
-  image:
-    repository: ghcr.io/constructorfabric/studio-web/studio-frontend-prototype
-    tag: ""                # REQUIRED when enabled: fixed service release tag
-  replicas: 1
-  rollingUpdate:
-    maxUnavailable: 0
-    maxSurge: 1
-  port: 8080
-  # nginx serving a static bundle: nothing here resists a second replica, which
-  # is why the deployed environments run two and this budget renders. The drain
-  # is shorter than the backend's for the same reason — there is no migration
-  # and no in-flight write, only whatever byte range a browser is mid-way
-  # through.
-  preStopDrainSeconds: 5
-  terminationGracePeriodSeconds: 30
-  podDisruptionBudget:
-    enabled: true
-    minAvailable: 1
-  resources:
-    requests: { cpu: 50m, memory: 64Mi }
-    # 100m, measured: nginx serving a static bundle peaks at 0.000 CPU over
-    # 24 hours on studio-dev. Memory is left alone — 4% of 256Mi is not a
-    # number worth tuning, and the namespace quota has memory to spare.
-    limits: { cpu: 100m, memory: 256Mi }
-
 # How much of the namespace this deployment may use.
 #
 # The numbers below are not a guess at "enough": they are derived, and the
@@ -541,6 +513,8 @@ frontendPrototype:
 # PLATFORM BASELINE in studio-dev, counted as limits.cpu:
 #   postgres 1 + backend 1 + file-storage .2 + frontend .1 x2
 #   + prototype .1 + keycloak .5                                  = 3.0
+#   (measured while a prototype portal ran beside the frontend; with the one
+#   frontend since 2026-11-27 it is 2.9, and the figures below keep 3.0)
 #   plus 0.5 for the database bootstrap hook while it runs
 #
 # It was 4.0 with one frontend replica, and the difference is not a smaller

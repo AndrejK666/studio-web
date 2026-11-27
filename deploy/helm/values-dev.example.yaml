@@ -1,5 +1,9 @@
 global:
   hostname: studio-dev.cfabric.org
+  # The -poc host served the prototype portal until the two portals became
+  # one; it now reaches the same frontend and backend as the main host.
+  customDomains:
+    - studio-dev-poc.cfabric.org
   environmentName: dev
   environmentType: dev
 
@@ -126,8 +130,8 @@ backend:
   research:
     issuer: "https://dev-constructor.dev/idp"
     clientId: "constructor-studio"
-    # The portal's callback first (the default), then the prototype's: each
-    # sign-in comes back to the portal it started from. The IdP client
+    # The main host's callback first (the default), then the -poc host's:
+    # each sign-in comes back to the host it started from. The IdP client
     # constructor-studio must allow both.
     redirectUri: "https://studio-dev.cfabric.org/connections/oauth/callback,https://studio-dev-poc.cfabric.org/connections/oauth/callback"
     apiUrl: "https://dev-constructor.dev/api/platform-account/v1"
@@ -148,13 +152,6 @@ frontend:
   # PodDisruptionBudget renders only above one replica.
   autoscaling:
     enabled: false
-
-frontendPrototype:
-  enabled: true
-  hostname: studio-dev-poc.cfabric.org
-  image:
-    tag: "sha-REPLACE_ME"
-  rollingUpdate: { maxUnavailable: 1, maxSurge: 0 }
 
 keycloak:
   enabled: true

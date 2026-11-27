@@ -50,6 +50,21 @@ spec:
             - name: STUDIO_DISCORD_URL
               value: {{ .Values.frontend.discordUrl | quote }}
             {{- end }}
+            {{- $idp := .Values.keycloak.constructorIdp }}
+            {{- if and .Values.keycloak.enabled $idp.enabled $idp.issuer $idp.clientId }}
+            # The sign-in screen offers Constructor only where the realm
+            # brokers it: the same condition the constructor-idp Job writes the
+            # broker under (keycloak/CONSTRUCTOR_SSO.md).
+            - name: STUDIO_CONSTRUCTOR_SIGN_IN
+              value: "true"
+            {{- end }}
+            {{- $gitlab := .Values.keycloak.gitlabIdp }}
+            {{- if and .Values.keycloak.enabled $gitlab.enabled $gitlab.baseUrl $gitlab.clientId }}
+            # GitLab likewise: the condition the gitlab-idp Job writes the
+            # broker under (keycloak/GITLAB_SSO.md).
+            - name: STUDIO_GITLAB_SIGN_IN
+              value: "true"
+            {{- end }}
           # The same deregistration pause the backend takes, and for the same
           # reason: endpoint removal and container shutdown are concurrent, so
           # without it a rollout serves 502s for whatever kube-proxy routed

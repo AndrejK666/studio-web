@@ -1,5 +1,9 @@
 global:
   hostname: studio-test.cfabric.org
+  # The -poc host served the prototype portal until the two portals became
+  # one; it now reaches the same frontend and backend as the main host.
+  customDomains:
+    - studio-test-poc.cfabric.org
   environmentName: test
   environmentType: test
 
@@ -89,13 +93,6 @@ frontend:
   # PodDisruptionBudget renders only above one replica.
   autoscaling:
     enabled: false
-
-frontendPrototype:
-  enabled: true
-  hostname: studio-test-poc.cfabric.org
-  image:
-    tag: "sha-REPLACE_ME"
-  rollingUpdate: { maxUnavailable: 1, maxSurge: 0 }
 
 keycloak:
   enabled: true
