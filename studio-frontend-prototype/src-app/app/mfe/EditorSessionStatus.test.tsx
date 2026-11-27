@@ -21,7 +21,7 @@ import DICTIONARY from '@/app/i18n/en.json';
 
 function show(state: Partial<EditorSessionState>): void {
   store.state = {
-    [EDITOR_SESSION_SLICE_KEY]: { phase: 'idle', failure: null, shown: true, clones: [], ...state } satisfies EditorSessionState,
+    [EDITOR_SESSION_SLICE_KEY]: { phase: 'idle', failure: null, shown: true, clones: [], runtime: null, ...state } satisfies EditorSessionState,
   };
 }
 

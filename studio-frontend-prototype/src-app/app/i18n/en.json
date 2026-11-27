@@ -11,7 +11,7 @@
   "editor_session_reason_read": "The session's state could not be read.",
   "editor_session_reason_unanswered": "The editor did not answer.",
   "editor_session_reason_unexpected": "The editor ran into an unexpected error.",
-  "editor_component_unavailable": "The component catalogue is not in the portal yet.",
+  "artifact_open_unavailable": "Nothing in this Studio opens a {kind}.",
   "level_tabs": "Sections",
   "level_switch_organization": "Switch organization",
   "level_back_to_projects": "Back to projects",

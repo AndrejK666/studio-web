@@ -96,6 +96,11 @@ export function editorGroupOf(groups: readonly ScreenGroup[]): ScreenGroup | und
   return groups.find((group) => group.members.some((member) => opensOf(member).size > 0));
 }
 
+/** The group whose screens declare that they open `kind` (`presentation.opens`, ADR-0079), if any. */
+export function groupOpening(groups: readonly ScreenGroup[], kind: string): ScreenGroup | undefined {
+  return groups.find((group) => group.members.some((member) => opensOf(member).has(kind)));
+}
+
 /** What the editor group opens, by kind, with how each is addressed: its screens' declarations together. */
 export function editorOpens(group: ScreenGroup | undefined): ReadonlyMap<string, ArtifactAddress> {
   const out = new Map<string, ArtifactAddress>();

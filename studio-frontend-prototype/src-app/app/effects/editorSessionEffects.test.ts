@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AuthSession, AuthStateEvent, FrontXApp } from '@gears-frontx/react';
+import { eventBus, type AuthSession, type AuthStateEvent, type FrontXApp } from '@gears-frontx/react';
 
 const { mockHas, mockGetService, publishFrameUrl, showNotice } = vi.hoisted(() => ({
   mockHas: vi.fn(),
@@ -34,6 +34,7 @@ import { APP_SESSION_SLICE_KEY } from '@/app/slices/appSessionSlice';
 import { StudioSessionApiService, type StudioSessionState } from '@/app/api';
 import { resetShellPorts, shellPortsContext } from '@/app/ports/shellPorts';
 import { cloneProblems } from '@/kits/project-git/shell';
+import { frameChannel } from '@/kits/ide/frameBridge';
 import { DARK_THEME_ID } from '@/app/themes/dark';
 import { DEFAULT_THEME_ID } from '@/app/themes/default';
 import { DRACULA_THEME_ID } from '@/app/themes/dracula';
@@ -207,6 +208,8 @@ function harness({ profile = PROFILE as typeof PROFILE | null, projectName = 'We
   );
   // The project-git kit's port, as its `shell.ts` fills it, over this stub.
   resetShellPorts();
+  // The ide kit's frame channel, as its `shell.ts` fills the port for an IDE that hears its frame.
+  shellPortsContext.fill('ide', 'editor.connect', frameChannel);
   shellPortsContext.fill('project-git', 'editor.cloneProblems', async (projectId) =>
     cloneProblems(((await cloneStatus({ projectId }).fetch()) as { items: Parameters<typeof cloneProblems>[0] }).items)
   );
@@ -980,7 +983,7 @@ describe('createEditorSession', () => {
       h.open();
       await vi.waitFor(() => expect(h.state().phase).toBe('ready'));
 
-      expect(h.frames[0]?.sent()[0]).toEqual({
+      expect(h.frames[0]?.sent()[1]).toEqual({
         type: 'studio.init',
         theme: 'light',
         workspaceId: PROJECT,
@@ -1005,7 +1008,7 @@ describe('createEditorSession', () => {
       h.open();
       await vi.waitFor(() => expect(h.state().phase).toBe('ready'));
 
-      expect(h.frames[0]?.sent()[0]).toMatchObject({ type: 'studio.init', theme: editor });
+      expect(h.frames[0]?.sent()[1]).toMatchObject({ type: 'studio.init', theme: editor });
     });
 
     it('says only what it knows: no viewer without a profile, no name for an unnamed project, no token but a bearer one', async () => {
@@ -1017,7 +1020,7 @@ describe('createEditorSession', () => {
       await vi.waitFor(() => expect(h.state().phase).toBe('ready'));
       h.authEvent({ state: 'authenticated', session: { kind: 'cookie' } });
 
-      expect(h.frames[0]?.sent()[0]).toEqual({ type: 'studio.init', theme: 'light', workspaceId: PROJECT });
+      expect(h.frames[0]?.sent()[1]).toEqual({ type: 'studio.init', theme: 'light', workspaceId: PROJECT });
       expect(h.frames[0]?.types()).not.toContain('studio.token');
     });
 
@@ -1031,6 +1034,7 @@ describe('createEditorSession', () => {
       await vi.waitFor(() => expect(h.state().phase).toBe('ready'));
 
       expect(h.frames[0]?.sent()[0]).not.toHaveProperty('apiToken');
+      expect(h.frames[0]?.sent()[1]).not.toHaveProperty('apiToken');
       expect(warn).toHaveBeenCalledWith('[editor-session] no session for the editor:', 'IdP unreachable');
       warn.mockRestore();
     });
@@ -1065,7 +1069,11 @@ describe('createEditorSession', () => {
       await settle();
       h.frames[0]?.load();
 
-      expect(h.frames[0]?.sent().map((message) => message.apiToken).filter(Boolean)).toEqual(['T2', 'T2']);
+      expect(h.frames[0]?.sent().map((message) => message.apiToken).filter(Boolean)).toEqual([
+        'T2', // the renewal
+        'T2', // the reload's greeting, ide.init
+        'T2', // and studio.init
+      ]);
     });
 
     it('takes no token from the read of a frame that has gone', async () => {
@@ -1122,7 +1130,7 @@ describe('createEditorSession', () => {
       await vi.waitFor(() => expect(h.frames).toHaveLength(2));
       await vi.waitFor(() => expect(h.state().phase).toBe('ready'));
 
-      expect(h.frames[1]?.sent()[0]).toMatchObject({ type: 'studio.init', workspaceId: 'p2' });
+      expect(h.frames[1]?.sent()[1]).toMatchObject({ type: 'studio.init', workspaceId: 'p2' });
       expect(h.frames[1]?.types()).not.toContain('studio.openInEditor');
     });
 
@@ -1253,15 +1261,41 @@ describe('createEditorSession', () => {
       ]);
     });
 
-    it("says the catalogue is not in the portal when the IDE asks for a component's page", async () => {
+    it('hands an artifact the IDE asks for to the shell, as any artifact-open', async () => {
       const h = harness();
+      const requested = vi.fn();
+      const off = eventBus.on('app/context/artifact/requested', requested);
       h.launch.mockResolvedValue(session('running'));
       h.open();
       await vi.waitFor(() => expect(h.state().phase).toBe('ready'));
 
       h.frames[0]?.answer({ type: 'studio.openComponent', name: 'cf-gears-api-gateway' });
 
-      expect(showNotice).toHaveBeenCalledWith({ kind: 'info', text: 'shell:editor_component_unavailable' });
+      expect(requested).toHaveBeenCalledWith({
+        projectId: PROJECT,
+        kind: 'component',
+        artifactId: 'cf-gears-api-gateway',
+        repository: '',
+        path: 'cf-gears-api-gateway',
+      });
+      off.unsubscribe();
+    });
+
+    it('takes the IDE for answered where no kit fills editor.connect', async () => {
+      const h = harness();
+      resetShellPorts();
+      h.ide.answers = false;
+      h.launch.mockResolvedValue(session('running'));
+      h.open();
+      await vi.waitFor(() => expect(h.state().phase).toBe('ready'));
+      expect(h.frames[0]?.sent()).toEqual([]);
+    });
+
+    it('keeps the IDE the launch named, and its capabilities', async () => {
+      const h = harness();
+      h.launch.mockResolvedValue({ ...session('running'), ide: { id: 'vscode', capabilities: ['open_file'] } });
+      h.open();
+      await vi.waitFor(() => expect(h.state().runtime).toEqual({ id: 'vscode', capabilities: ['open_file'] }));
     });
 
     it("attaches to the entry space-mfe declares, by the editor's frame-url property and not by its id", () => {
