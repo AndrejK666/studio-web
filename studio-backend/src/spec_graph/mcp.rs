@@ -63,7 +63,7 @@ fn run_start() -> Value {
     object(
         json!({
             "project_id": { "type": "string", "description": PROJECT },
-            "job": { "type": "string", "enum": ["index", "contradictions", "realization", "status"] },
+            "job": { "type": "string", "enum": ["index", "prepare", "contradictions", "realization", "status"] },
             "params": { "type": "object", "description": "index: {facts}; contradictions: {cap, skip_judged}." }
         }),
         &["project_id", "job"],
@@ -161,6 +161,19 @@ fn neighbors() -> Value {
     )
 }
 
+fn subgraph() -> Value {
+    object(
+        json!({
+            "project_id": { "type": "string", "description": PROJECT },
+            "key": { "type": "string", "description": "The centre node's key." },
+            "depth": { "type": "integer", "minimum": 1, "maximum": 4, "description": "Hops out (default 2)." },
+            "types": { "type": "string", "description": "Node type names, comma-separated: only those on the way." },
+            "limit": { "type": "integer", "description": "At most this many nodes (default 300, at most 1000)." }
+        }),
+        &["project_id", "key"],
+    )
+}
+
 const Q: &[&str] = &["project_id"];
 
 pub fn tools() -> Vec<Tool> {
@@ -231,8 +244,9 @@ pub fn tools() -> Vec<Tool> {
         Tool {
             name: "spec_graph_run_start",
             description: "Start a long spec-graph job on a project: index (build its graph; \
-                params.facts false for the structure only, no model), contradictions (judge the \
-                corpus; params.cap), realization or status (those judges). Minutes and model cost; \
+                params.facts false for the structure only, no model), prepare (the facts and \
+                embeddings a review with the model reads, made ahead of the first one), \
+                contradictions (judge the corpus; params.cap), realization or status (those judges). Minutes and model cost; \
                 follow it with spec_graph_run.",
             input_schema: run_start,
             effect: Effect::Write,
@@ -329,6 +343,26 @@ pub fn tools() -> Vec<Tool> {
             effect: Effect::Read,
             experimental: false,
             run: Run::Get("/studio-spec-graph/v1/graph/neighbors"),
+        },
+        Tool {
+            name: "spec_graph_subgraph",
+            description: "The graph around one node of a project's spec graph, `depth` hops out \
+                (1-4) in both directions: its nodes (key, type, name, file) and the edges between \
+                them, static or a judge's conclusion.",
+            input_schema: subgraph,
+            effect: Effect::Read,
+            experimental: false,
+            run: Run::Get("/studio-spec-graph/v1/graph/subgraph"),
+        },
+        Tool {
+            name: "spec_graph_ontology",
+            description: "The spec graph's ontology: its node and edge types, what each edge \
+                connects, which edges are a judge's conclusion, how keys are formed, and how many \
+                nodes of each type the project's graph holds.",
+            input_schema: project_only,
+            effect: Effect::Read,
+            experimental: false,
+            run: Run::Get("/studio-spec-graph/v1/graph/ontology"),
         },
         Tool {
             name: "spec_graph_metrics",

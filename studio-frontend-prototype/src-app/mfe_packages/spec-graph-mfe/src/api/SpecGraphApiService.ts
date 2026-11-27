@@ -5,13 +5,19 @@
 
 import { BaseApiService, RestEndpointProtocol, RestProtocol } from '@gears-frontx/react';
 import type {
+  Calibration,
   Decision,
   GraphNode,
+  Metrics,
   Neighbors,
+  Ontology,
+  Picture,
   SearchHit,
   OpenPullRequest,
   Review,
+  ReviewRecord,
   Run,
+  Verdict,
   SpecGraphCheck,
   SpecGraphFindingList,
   SpecGraphProject,
@@ -74,9 +80,34 @@ export class SpecGraphApiService extends BaseApiService {
     >('POST', `${BASE}/reviews?${q({ project_id: projectId })}`);
   }
 
+  /** A run; waits up to 5 s for it to end, so a page following it shows its progress as it goes. */
   readonly run = this.protocol(RestEndpointProtocol).queryWith<{ run: Run }, { projectId: string; runId: string }>(
-    ({ projectId, runId }) => `${BASE}/runs/${encodeURIComponent(runId)}?${q({ project_id: projectId, wait: '25' })}`
+    ({ projectId, runId }) => `${BASE}/runs/${encodeURIComponent(runId)}?${q({ project_id: projectId, wait: '5' })}`
   );
+
+  /** The project's runs, newest first; a running one with its progress. */
+  readonly runs = this.protocol(RestEndpointProtocol).queryWith<{ items: Run[]; total: number }, { projectId: string; job: string }>(
+    ({ projectId, job }) => `${BASE}/runs?${q({ project_id: projectId, job, limit: '5' })}`
+  );
+
+  /** Start a long job: `index` (params.facts) or `prepare`. */
+  startRun(projectId: string) {
+    return this.protocol(RestEndpointProtocol).mutation<
+      { run: Run },
+      { job: 'index' | 'prepare' | 'contradictions'; params?: Record<string, unknown> }
+    >('POST', `${BASE}/runs?${q({ project_id: projectId })}`);
+  }
+
+  /** The latest review of each pull request branch, to show again after a reload. */
+  readonly reviews = this.protocol(RestEndpointProtocol).queryWith<{ items: ReviewRecord[]; total: number }, { projectId: string }>(
+    ({ projectId }) => `${BASE}/reviews?${q({ project_id: projectId })}`
+  );
+
+  /** The project's Git sources (the first is the one the graph reads by default). */
+  readonly sources = this.protocol(RestEndpointProtocol).queryWith<
+    { items: { name: string }[] },
+    { projectId: string }
+  >(({ projectId }) => `/studio-git/v1/sources?${q({ project_id: projectId })}`);
 
   /** Search the project's graph (full text and vectors). */
   search(projectId: string) {
@@ -94,4 +125,46 @@ export class SpecGraphApiService extends BaseApiService {
     { answer: Neighbors },
     { projectId: string; key: string }
   >(({ projectId, key }) => `${BASE}/graph/neighbors?${q({ project_id: projectId, key })}`);
+
+  /** The graph around one node, `depth` hops out; `types` keeps only those nodes on the way. */
+  readonly subgraph = this.protocol(RestEndpointProtocol).queryWith<
+    { answer: Picture },
+    { projectId: string; key: string; depth: number; types: string }
+  >(({ projectId, key, depth, types }) =>
+    `${BASE}/graph/subgraph?${q({ project_id: projectId, key, depth: String(depth), ...(types ? { types } : {}) })}`
+  );
+
+  /** The whole graph, or the nodes of `types` (comma-separated) and the edges between them. */
+  readonly overview = this.protocol(RestEndpointProtocol).queryWith<{ answer: Picture }, { projectId: string; types: string }>(
+    ({ projectId, types }) => `${BASE}/graph/overview?${q({ project_id: projectId, ...(types ? { types } : {}) })}`
+  );
+
+  /** The node and edge types, with the project's count of each node type. */
+  readonly ontology = this.protocol(RestEndpointProtocol).queryWith<{ answer: Ontology }, { projectId: string }>(
+    ({ projectId }) => `${BASE}/graph/ontology?${q({ project_id: projectId })}`
+  );
+
+  /** Stop a run: a queued one never starts, a running one's step is ended. */
+  cancelRun(projectId: string, runId: string) {
+    return this.protocol(RestEndpointProtocol).mutation<{ run: Run }, Record<string, never>>(
+      'POST',
+      `${BASE}/runs/${encodeURIComponent(runId)}/cancel?${q({ project_id: projectId })}`
+    );
+  }
+
+  /** A label on a finding, for its rule's calibration: it neither hides nor records a decision. */
+  label(projectId: string, fingerprint: string) {
+    return this.protocol(RestEndpointProtocol).mutation<unknown, { verdict: Verdict; rule: string; note?: string }>(
+      'PUT',
+      `${BASE}/findings/${encodeURIComponent(fingerprint)}/label?${q({ project_id: projectId })}`
+    );
+  }
+
+  readonly metrics = this.protocol(RestEndpointProtocol).queryWith<{ answer: Metrics }, { projectId: string }>(
+    ({ projectId }) => `${BASE}/metrics?${q({ project_id: projectId })}`
+  );
+
+  readonly calibration = this.protocol(RestEndpointProtocol).queryWith<{ answer: Calibration }, { projectId: string }>(
+    ({ projectId }) => `${BASE}/calibration?${q({ project_id: projectId })}`
+  );
 }

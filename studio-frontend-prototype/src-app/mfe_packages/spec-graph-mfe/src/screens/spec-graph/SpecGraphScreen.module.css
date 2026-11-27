@@ -247,3 +247,231 @@
   fill: var(--primary-foreground);
   font-weight: 600;
 }
+
+/* Graph pictures (GraphCanvas): the whole graph, or a node's surroundings to a depth. */
+.picture {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+
+
+
+
+
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  font-size: var(--text-small-size, 12px);
+}
+
+.legendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.modes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.slider {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-body-size);
+}
+
+.table th,
+.table td {
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.radio {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* sigma.js canvas (GraphCanvas): as tall as the window allows; full screen fills it. */
+.canvasWrap {
+  position: relative;
+}
+
+.canvas {
+  height: max(520px, calc(100vh - 320px));
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--background);
+  color: var(--foreground);
+  overflow: hidden;
+}
+
+.picture:fullscreen {
+  padding: var(--space-3);
+  background: var(--background);
+}
+
+.picture:fullscreen .canvas {
+  height: calc(100vh - 110px);
+}
+
+.tooltip {
+  position: absolute;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 420px;
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--background);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 15%);
+  font-size: 12px;
+  pointer-events: none;
+}
+
+.swatch {
+  display: inline-block;
+  box-sizing: border-box;
+  width: 12px;
+  height: 12px;
+  border: 2px solid transparent;
+  border-radius: 3px;
+}
+
+/* A legend entry that filters: a press shows or hides that node type. */
+.typeSwitch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px var(--space-1);
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--foreground);
+  font: inherit;
+  cursor: pointer;
+}
+
+.typeSwitch:hover,
+.typeSwitch:focus-visible {
+  background: var(--muted);
+}
+
+.off {
+  color: var(--muted-foreground);
+  text-decoration: line-through;
+}
+
+/* Quality: headline numbers, then a table per rule. */
+.tiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 200px;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.tileValue {
+  font-size: var(--text-heading-1-size, 28px);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.num {
+  text-align: right !important;
+  font-variant-numeric: tabular-nums;
+}
+
+.labelForm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.chosen {
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+/* The findings graph with a finding's panel beside it (stacked when narrow). */
+.withPanel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 440px);
+  gap: var(--space-3);
+  align-items: start;
+}
+
+@media (max-width: 1100px) {
+  .withPanel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-height: max(520px, calc(100vh - 280px));
+  overflow: auto;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--background);
+}
+
+/* The hover card: what a node is, where, what about, and what a click does. */
+.tipTitle {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.tipBadge {
+  padding: 0 var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-weight: 500;
+  font-size: 11px;
+}
+
+.tipGist {
+  color: var(--muted-foreground);
+  font-style: italic;
+}

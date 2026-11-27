@@ -11,7 +11,7 @@
  * that is not set up gets a form for the documents to read.
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import type { ChildMfeBridge } from '@gears-frontx/react';
 import {
   apiRegistry,
@@ -21,18 +21,23 @@ import {
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Skeleton } from '@gears-frontx/ui-kit';
 import { STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT, refusalText, useScreenAvailability } from '@constructor-studio/mfe-shared';
 import { SpecGraphApiService } from '../../api/SpecGraphApiService';
-import type { Decision, DocumentFindings, Finding, SpecGraphProject } from '../../api/types';
-import { counts, documentsInOrder, place, without } from '../../model/findings';
-import { findingNode } from '../../model/graph';
+import type { Decision, DocumentFindings, Finding, Ontology, SpecGraphProject } from '../../api/types';
+import { counts, documentsInOrder, onlyRules, ruleCounts, without } from '../../model/findings';
+import { familyColour, familyOf } from '../../model/picture';
+import { documentsOf, invalid, scopeOf, type Documents } from '../../model/scope';
 import { useSpecGraphTranslations } from '../../i18n';
+import { BuildChoice, DEFAULT_CAP, GraphStatus, startBuild, type BuildOptions } from './GraphStatus';
 import { GraphView } from './GraphView';
+import { OntologyView } from './OntologyView';
+import { QualityView } from './QualityView';
+import { FindingRow } from './FindingCard';
 import { PullsView } from './PullsView';
 import styles from './SpecGraphScreen.module.css';
 
 const DARK_HOST_THEMES = ['dark', 'dracula', 'dracula-large'];
 
 type Text = ReturnType<typeof useSpecGraphTranslations>['t'];
-type View = 'now' | 'stored' | 'pulls' | 'graph';
+type View = 'now' | 'stored' | 'pulls' | 'graph' | 'ontology' | 'quality';
 
 /**
  * The domain type the Pull requests view shows (`sectionNeeds` in mfe.json):
@@ -40,7 +45,7 @@ type View = 'now' | 'stored' | 'pulls' | 'graph';
  * offered; the rest of the screen does not need it.
  */
 export const PULL_REQUEST_TYPE = 'gts.cf.studio.domain.pull_request.v1~';
-type FindingsView = Exclude<View, 'pulls' | 'graph'>;
+type FindingsView = Exclude<View, 'pulls' | 'graph' | 'ontology' | 'quality'>;
 
 /** One reading of the project, for one view and one ask. */
 interface Reading {
@@ -93,7 +98,15 @@ export const SpecGraphScreen: React.FC<{ bridge: ChildMfeBridge }> = ({ bridge }
 const ProjectSpecGraph: React.FC<{ projectId: string; t: Text }> = ({ projectId, t }) => {
   const api = apiRegistry.getService(SpecGraphApiService);
   const [setup, setSetup] = useState<SpecGraphProject | null>(null);
-  const [chosen, setView] = useState<View>('now');
+  const [chosen, choose] = useState<View>('now');
+  // the findings views' filter: chosen rules and gates (none chosen: every finding); a new view starts unfiltered
+  const [rules, setRules] = useState<Set<string>>(() => new Set());
+  const [gates, setGates] = useState<Set<string>>(() => new Set());
+  const setView = (v: View) => {
+    choose(v);
+    setRules(new Set());
+    setGates(new Set());
+  };
   // Unknown counts as installed, as on Tests.
   const pullsShown = useScreenAvailability().type(PULL_REQUEST_TYPE);
   const view: View = chosen === 'pulls' && !pullsShown ? 'now' : chosen;
@@ -103,6 +116,24 @@ const ProjectSpecGraph: React.FC<{ projectId: string; t: Text }> = ({ projectId,
   const [asked, setAsked] = useState(0);
   const [result, setResult] = useState<Reading | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The graph's ontology with the project's counts: how many nodes it holds, read again after a run.
+  const [ontology, setOntology] = useState<Ontology | null>(null);
+  const [graphRead, setGraphRead] = useState(0);
+  const graphChanged = useCallback(() => setGraphRead((n) => n + 1), []);
+  const nodes = ontology?.counts ? Object.values(ontology.counts).reduce((a, b) => a + b, 0) : null;
+
+  useEffect(() => {
+    if (!setup?.registered) return undefined;
+    let live = true;
+    api
+      .ontology({ projectId })
+      .fetch({ staleTime: 0 })
+      .then((r) => live && setOntology(r.answer))
+      .catch(() => live && setOntology(null));
+    return () => {
+      live = false;
+    };
+  }, [api, projectId, setup?.registered, graphRead]);
 
   useEffect(() => {
     let live = true;
@@ -117,7 +148,8 @@ const ProjectSpecGraph: React.FC<{ projectId: string; t: Text }> = ({ projectId,
   }, [api, projectId]);
 
   useEffect(() => {
-    if (!setup?.registered || view === 'pulls' || view === 'graph') return undefined;
+    if (!setup?.registered || view === 'pulls' || view === 'graph' || view === 'ontology' || view === 'quality')
+      return undefined;
     let live = true;
     const reading: Promise<Reading> =
       view === 'now'
@@ -171,7 +203,14 @@ const ProjectSpecGraph: React.FC<{ projectId: string; t: Text }> = ({ projectId,
     return <SetupForm projectId={projectId} t={t} onDone={setSetup} />;
   }
 
-  const shown = docs ? documentsInOrder(docs) : [];
+  const all = docs ? documentsInOrder(docs) : [];
+  const shown = onlyRules(all, rules, gates);
+  const flip = (set: Set<string>, key: string) => {
+    const next = new Set(set);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    return next;
+  };
   const n = counts(shown);
   return (
     <>
@@ -207,11 +246,18 @@ const ProjectSpecGraph: React.FC<{ projectId: string; t: Text }> = ({ projectId,
           <Button variant={view === 'graph' ? undefined : 'outline'} onClick={() => setView('graph')}>
             {t('view_graph')}
           </Button>
+          <Button variant={view === 'ontology' ? undefined : 'outline'} onClick={() => setView('ontology')}>
+            {t('view_ontology')}
+          </Button>
+          <Button variant={view === 'quality' ? undefined : 'outline'} onClick={() => setView('quality')}>
+            {t('view_quality')}
+          </Button>
           <Button variant="ghost" disabled={busy || !findingsView} onClick={() => setAsked((n) => n + 1)}>
             {busy ? t('reading') : t('refresh')}
           </Button>
         </div>
       </header>
+      <GraphStatus projectId={projectId} nodes={nodes} onChanged={graphChanged} t={t} />
       <p className={styles.muted}>
         {view === 'now'
           ? t('now_hint')
@@ -219,7 +265,11 @@ const ProjectSpecGraph: React.FC<{ projectId: string; t: Text }> = ({ projectId,
             ? t('stored_hint')
             : view === 'pulls'
               ? t('pulls_hint')
-              : t('graph_view_hint')}
+              : view === 'ontology'
+                ? t('ontology_hint')
+                : view === 'quality'
+                  ? t('quality_hint')
+                  : t('graph_view_hint')}
       </p>
       {view === 'pulls' && (
         <PullsView
@@ -229,9 +279,67 @@ const ProjectSpecGraph: React.FC<{ projectId: string; t: Text }> = ({ projectId,
           t={t}
         />
       )}
-      {view === 'graph' && <GraphView key={graphStart ?? ''} projectId={projectId} start={graphStart} t={t} />}
+      {view === 'graph' && (
+        <GraphView
+          key={`${graphStart ?? ''}|${graphRead}`}
+          projectId={projectId}
+          start={graphStart}
+          counts={ontology?.counts ?? null}
+          t={t}
+        />
+      )}
+      {view === 'ontology' && (ontology ? <OntologyView ontology={ontology} t={t} /> : <Skeleton className={styles.skeleton} />)}
+      {view === 'quality' && <QualityView key={graphRead} projectId={projectId} t={t} />}
       {error && <p className={styles.error}>{error}</p>}
       {findingsView && busy && !docs && <Skeleton className={styles.skeleton} />}
+      {findingsView && all.length > 0 && (
+        <div className={styles.legend} role="group" aria-label={t('filter_rules')}>
+          {(['block', 'advise'] as const).map((g) => (
+            <button
+              key={g}
+              type="button"
+              className={styles.typeSwitch}
+              aria-pressed={gates.has(g)}
+              onClick={() => setGates((s) => flip(s, g))}
+            >
+              <span className={gates.has(g) ? styles.chosen : undefined}>{g === 'block' ? t('gate_block') : t('gate_advise')}</span>
+            </button>
+          ))}
+          {ruleCounts(all).map((r) => (
+            <button
+              key={r.rule}
+              type="button"
+              className={styles.typeSwitch}
+              aria-pressed={rules.has(r.rule)}
+              onClick={() => setRules((s) => flip(s, r.rule))}
+            >
+              <span
+                className={styles.swatch}
+                style={
+                  rules.has(r.rule) || !rules.size
+                    ? { background: familyColour(familyOf(r.rule)), borderColor: familyColour(familyOf(r.rule)) }
+                    : { borderColor: familyColour(familyOf(r.rule)) }
+                }
+                aria-hidden
+              />
+              <code className={rules.has(r.rule) ? styles.chosen : undefined}>{r.rule}</code>
+              <span className={styles.muted}>({r.count})</span>
+            </button>
+          ))}
+          {(rules.size > 0 || gates.size > 0) && (
+            <button
+              type="button"
+              className={styles.typeSwitch}
+              onClick={() => {
+                setRules(new Set());
+                setGates(new Set());
+              }}
+            >
+              {t('filter_all')}
+            </button>
+          )}
+        </div>
+      )}
       {findingsView && docs && shown.length === 0 && <p className={styles.muted}>{t('nothing')}</p>}
       {(findingsView ? shown : []).map((d) => (
         <Card key={d.path ?? '(corpus)'} className={styles.document}>
@@ -244,8 +352,10 @@ const ProjectSpecGraph: React.FC<{ projectId: string; t: Text }> = ({ projectId,
                 key={f.id}
                 path={d.path}
                 finding={f}
+                graphBuilt={!!nodes}
                 t={t}
                 onDecide={decide}
+                onLabel={(f, verdict, note) => api.label(projectId, f.id).fetch({ verdict, rule: f.rule, note })}
                 onShow={(node) => {
                   setGraphStart(node);
                   setView('graph');
@@ -259,87 +369,50 @@ const ProjectSpecGraph: React.FC<{ projectId: string; t: Text }> = ({ projectId,
   );
 };
 
-const FindingRow: React.FC<{
-  path: string | null;
-  finding: Finding;
-  t: Text;
-  onDecide: (f: Finding, d: Decision) => Promise<void>;
-  onShow: (node: string) => void;
-}> = ({ path, finding: f, t, onDecide, onShow }) => {
-  const node = findingNode(path, f);
-  const [deciding, setDeciding] = useState(false);
-  const act = async (d: Decision) => {
-    setDeciding(true);
-    await onDecide(f, d);
-    setDeciding(false);
-  };
-  return (
-    <div className={styles.finding} data-gate={f.gate}>
-      <div className={styles.findingHead}>
-        <Badge variant={f.gate === 'block' ? 'destructive' : 'secondary'}>
-          {f.gate === 'block' ? t('gate_block') : t('gate_advise')}
-        </Badge>
-        <strong>{f.title}</strong>
-        <code className={styles.rule}>{f.rule}</code>
-      </div>
-      <p className={styles.message}>{f.message}</p>
-      <p className={styles.place}>
-        <code>{place(path, f.anchor)}</code>
-        {f.anchor.quote && <span className={styles.quote}> — {f.anchor.quote}</span>}
-      </p>
-      {f.related.length > 0 && (
-        <ul className={styles.related}>
-          {f.related.slice(0, 5).map((r) => (
-            <li key={place(r.path, r.anchor)}>
-              <code>{place(r.path, r.anchor)}</code>
-              {r.anchor.quote && <span className={styles.quote}> — {r.anchor.quote}</span>}
-            </li>
-          ))}
-        </ul>
-      )}
-      {f.suggestion && (
-        <pre className={styles.suggestion} aria-label={t('suggestion')}>
-          {f.suggestion.text}
-        </pre>
-      )}
-      <div className={styles.rowActions}>
-        <Button size="sm" variant="outline" disabled={deciding} onClick={() => void act('confirmed')}>
-          {t('confirm')}
-        </Button>
-        <Button size="sm" variant="ghost" disabled={deciding} onClick={() => void act('dismissed')}>
-          {t('dismiss')}
-        </Button>
-        {node && (
-          <Button size="sm" variant="link" onClick={() => onShow(node)}>
-            {t('show_in_graph')}
-          </Button>
-        )}
-      </div>
-    </div>
-  );
-};
-
 const SetupForm: React.FC<{ projectId: string; t: Text; onDone: (p: SpecGraphProject) => void }> = ({
   projectId,
   t,
   onDone,
 }) => {
   const api = apiRegistry.getService(SpecGraphApiService);
-  const [scope, setScope] = useState('--docs-root docs --name docs .');
+  const [docs, setDocs] = useState<Documents>(documentsOf(undefined));
+  const [named, setNamed] = useState(false);
+  const [buildNow, setBuildNow] = useState(true);
+  const [build, setBuild] = useState<BuildOptions>({ facts: false, contradictions: false, cap: DEFAULT_CAP });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The label defaults to the first source's name (the repository the graph reads).
+  useEffect(() => {
+    let live = true;
+    api
+      .sources({ projectId })
+      .fetch({ staleTime: 0 })
+      .then((r) => {
+        const name = r.items?.find((s) => s.name && s.name !== '_root')?.name;
+        if (live && name && !named) setDocs((d) => ({ ...d, name }));
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [api, projectId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const why = invalid(docs);
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (why) return;
     setBusy(true);
     setError(null);
     try {
-      onDone(await api.setup(projectId).fetch({ scope: scope.trim() }));
+      const done = await api.setup(projectId).fetch({ scope: scopeOf(docs) });
+      if (buildNow) await startBuild(api, projectId, build);
+      onDone(done);
     } catch (err) {
       setError(message(err));
     } finally {
       setBusy(false);
     }
   };
+  const set = (patch: Partial<Documents>) => setDocs((d) => ({ ...d, ...patch }));
   return (
     <Card className={styles.document}>
       <CardHeader>
@@ -348,11 +421,60 @@ const SetupForm: React.FC<{ projectId: string; t: Text; onDone: (p: SpecGraphPro
       <CardContent>
         <p className={styles.muted}>{t('setup_hint')}</p>
         <form className={styles.setup} onSubmit={(e) => void submit(e)}>
-          <label className={styles.label}>
-            {t('setup_scope')}
-            <input className={styles.input} value={scope} onChange={(e) => setScope(e.target.value)} />
-          </label>
-          <Button type="submit" disabled={busy || !scope.trim()}>
+          <fieldset className={styles.modes}>
+            <legend className={styles.label}>{t('setup_layout')}</legend>
+            <label className={styles.radio}>
+              <input type="radio" name="layout" checked={docs.layout === 'docs'} onChange={() => set({ layout: 'docs' })} />
+              {t('setup_layout_docs')}
+            </label>
+            <label className={styles.radio}>
+              <input type="radio" name="layout" checked={docs.layout === 'gears'} onChange={() => set({ layout: 'gears' })} />
+              {t('setup_layout_gears')}
+            </label>
+          </fieldset>
+          {docs.layout === 'docs' ? (
+            <>
+              <label className={styles.label}>
+                {t('setup_root')}
+                <input className={styles.input} value={docs.root} onChange={(e) => set({ root: e.target.value })} />
+              </label>
+              <label className={styles.label}>
+                {t('setup_name')}
+                <input
+                  className={styles.input}
+                  value={docs.name}
+                  onChange={(e) => {
+                    setNamed(true);
+                    set({ name: e.target.value });
+                  }}
+                />
+                <span className={styles.muted}>{t('setup_name_hint')}</span>
+              </label>
+            </>
+          ) : (
+            <label className={styles.label}>
+              {t('setup_gears')}
+              <textarea
+                className={styles.input}
+                rows={4}
+                value={docs.gears}
+                placeholder={'gears/file-storage\ngears/system/oagw'}
+                onChange={(e) => set({ gears: e.target.value })}
+              />
+              <span className={styles.muted}>{t('setup_gears_hint')}</span>
+            </label>
+          )}
+          <p className={styles.muted}>
+            {t('setup_scope_preview')} <code>{why ? t(why) : scopeOf(docs)}</code>
+          </p>
+          <div className={styles.modes}>
+            <label className={styles.radio}>
+              <input type="checkbox" checked={buildNow} onChange={(e) => setBuildNow(e.target.checked)} />
+              {t('setup_build')}
+            </label>
+            {buildNow && <BuildChoice value={build} onChange={setBuild} t={t} />}
+          </div>
+          <Button type="submit" disabled={busy || !!why}>
             {busy ? t('reading') : t('setup_submit')}
           </Button>
         </form>

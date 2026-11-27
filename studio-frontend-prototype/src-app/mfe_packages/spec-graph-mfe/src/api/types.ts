@@ -95,12 +95,73 @@ export interface Review {
   fingerprints: string[];
 }
 
+/** What a running step last reported (`specq.progress`): `facts` 40 of 85, `embeddings`, `judging`. */
+export interface RunProgress {
+  stage: string;
+  done?: number | null;
+  total?: number | null;
+}
+
 export interface Run {
   id: string;
   job: string;
   state: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted';
   error: string | null;
-  result: (Partial<Review> & { stats?: { model_cost_usd?: number } }) | null;
+  created?: string;
+  started?: string | null;
+  finished?: string | null;
+  revision?: string;
+  params?: { base?: string; head?: string; head_rev?: string; facts?: boolean } | null;
+  progress?: RunProgress | null;
+  result: (Partial<Review> & { stats?: { model_cost_usd?: number }; cost_usd?: number; confirmed?: number; judged?: number }) | null;
+}
+
+/** The latest review of a pull request branch: the deterministic one kept, or the latest model run. */
+export interface ReviewRecord {
+  kind: 'review' | 'model';
+  base: string;
+  head: string;
+  head_rev?: string;
+  at?: string;
+  result?: Review;
+  run?: Run;
+}
+
+/** A node as the graph pictures show it. */
+export interface PictureNode {
+  key: string;
+  type: string;
+  name?: string | null;
+  path?: string;
+  line?: number;
+  /** What sizes the node instead of its links (the ontology: how many nodes of the type). */
+  weight?: number;
+}
+
+export interface PictureEdge {
+  from: string;
+  to: string;
+  type: string;
+  kind: 'static' | 'analysis';
+}
+
+/** The graph around one node (`subgraph`) or the whole graph (`graph`). */
+export interface Picture {
+  key?: string;
+  depth?: number;
+  types?: string[];
+  counts?: Record<string, number>;
+  nodes: PictureNode[];
+  edges: PictureEdge[];
+  truncated?: boolean;
+}
+
+/** The spec graph's ontology, with the project's count of each node type. */
+export interface Ontology {
+  nodes: Record<string, string>;
+  edges: Record<string, { description: string; from: string[]; to: string[]; kind: string }>;
+  keys?: string;
+  counts?: Record<string, number>;
 }
 
 /** A node of the project's spec graph (the service's `node` tool). */
@@ -149,3 +210,29 @@ export interface SearchHit {
   line?: number;
   score?: number;
 }
+
+/** A person's label on one finding, for its rule's calibration. */
+export type Verdict = 'real' | 'not' | 'unsure';
+
+/** The project's spec quality in numbers (the service's `metrics` tool). */
+export interface Metrics {
+  findings: { total: number; block: number; advise: number; by_rule: Record<string, number>; checked_by_reading?: number };
+  requirements_p1?: {
+    count: number;
+    realized_in_markup: number;
+    realized_with_judge: number;
+    share_in_markup: number;
+    share_with_judge: number;
+  };
+  conflicting_pairs?: { pairs: number; passages_not_linked: number; same_document: number };
+}
+
+/** Each rule's precision from people's labels, and whether it has earned the right to block. */
+export interface Calibration {
+  rules: Record<
+    string,
+    { real: number; not: number; unsure: number; decided: number; precision: number | null; precision_lower_95: number | null; may_block: boolean }
+  >;
+  threshold: { min_labels: number; min_precision_lower: number };
+}
+

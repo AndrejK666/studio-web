@@ -82,6 +82,14 @@
     {
       "name": "spec_graph_metrics",
       "description": "The project's spec quality in numbers"
+    },
+    {
+      "name": "spec_graph_subgraph",
+      "description": "The graph around one node, up to 4 hops out"
+    },
+    {
+      "name": "spec_graph_ontology",
+      "description": "The graph's node and edge types, with this project's counts"
     }
   ],
   "permissions": {
@@ -93,6 +101,11 @@
       "POST /studio-spec-graph/v1/graph/search",
       "GET /studio-spec-graph/v1/graph/node",
       "GET /studio-spec-graph/v1/graph/neighbors",
+      "GET /studio-spec-graph/v1/graph/subgraph",
+      "GET /studio-spec-graph/v1/graph/overview",
+      "GET /studio-spec-graph/v1/graph/ontology",
+      "GET /studio-spec-graph/v1/runs",
+      "GET /studio-spec-graph/v1/reviews",
       "GET /studio-spec-graph/v1/metrics",
       "GET /studio-git/v1/sources",
       "GET /studio-artifact-ingest/v1/open-pull-requests"
@@ -126,7 +139,9 @@
         "spec_graph_search",
         "spec_graph_node",
         "spec_graph_neighbors",
-        "spec_graph_metrics"
+        "spec_graph_metrics",
+        "spec_graph_subgraph",
+        "spec_graph_ontology"
       ],
       "routes": [
         "PUT /studio-spec-graph/v1/project",

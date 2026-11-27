@@ -35,6 +35,8 @@ describe('PullsView', () => {
   beforeEach(() => {
     for (const k of Object.keys(service)) delete service[k];
     service.openPullRequests = () => ({ fetch: () => Promise.resolve({ items: [pull], total: 1 }) });
+    service.reviews = () => ({ fetch: () => Promise.resolve({ items: [], total: 0 }) });
+    service.runs = () => ({ fetch: () => Promise.resolve({ items: [{ id: 'p', job: 'prepare', state: 'succeeded' }], total: 0 }) });
   });
 
   it('says Git collaboration is not installed where its gear does not answer', async () => {
@@ -113,4 +115,55 @@ describe('PullsView', () => {
     render(<PullsView projectId="p1" repository="o/r" defaultBase="main" t={t} />);
     expect(await screen.findByText(/no_pulls/)).toBeTruthy();
   });
+
+  it('shows the latest review again after a reload, and says when reviews are not prepared', async () => {
+    service.runs = () => ({ fetch: () => Promise.resolve({ items: [], total: 0 }) });
+    service.reviews = () => ({
+      fetch: () =>
+        Promise.resolve({
+          total: 1,
+          items: [{ kind: 'review', base: 'main', head: pull.source_branch, at: '2026-11-26T12:00:00Z', result: review }],
+        }),
+    });
+    render(<PullsView projectId="p1" repository="o/r" defaultBase="main" t={t} />);
+    expect(await screen.findByText('pulls_not_prepared')).toBeTruthy();
+    fireEvent.click(await screen.findByText(/last_review/));
+    expect(await screen.findByText('gears/system/oagw/docs/DESIGN.md:124')).toBeTruthy();
+  });
+
+  it('picks up a model review still going and follows it, showing its stage', async () => {
+    let reads = 0;
+    service.reviews = () => ({
+      fetch: () =>
+        Promise.resolve({
+          total: 1,
+          items: [
+            {
+              kind: 'model',
+              base: 'main',
+              head: pull.source_branch,
+              at: '2026-11-26T12:00:00Z',
+              run: { id: 'r7', job: 'review', state: 'running', error: null, result: null, progress: { stage: 'facts', done: 3, total: 9 } },
+            },
+          ],
+        }),
+    });
+    service.run = () => ({
+      fetch: () => {
+        reads += 1;
+        const slow = (v: unknown) => new Promise((ok) => setTimeout(() => ok(v), reads < 2 ? 300 : 0));
+        return slow({
+          run:
+            reads < 2
+              ? { id: 'r7', job: 'review', state: 'running', error: null, result: null, progress: { stage: 'embeddings', done: 64, total: 900 } }
+              : { id: 'r7', job: 'review', state: 'succeeded', error: null, result: { ...review, stats: { model_cost_usd: 0.02 } } },
+        });
+      },
+    });
+    render(<PullsView projectId="p1" repository="o/r" defaultBase="main" t={t} />);
+    expect(await screen.findByText(/reviewing_model_at/)).toBeTruthy();
+    expect(await screen.findByText('gears/system/oagw/docs/DESIGN.md:124')).toBeTruthy();
+    expect(reads).toBe(2);
+  });
 });
+
