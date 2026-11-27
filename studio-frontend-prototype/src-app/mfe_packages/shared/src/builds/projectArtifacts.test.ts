@@ -35,6 +35,7 @@ import {
   artifactNodeOf,
   fetchProjectArtifacts,
   forgetArtifactsInModel,
+  likeLiteral,
   movedByMarker,
   projectArtifactsQuery,
 } from './projectArtifacts';
@@ -56,6 +57,29 @@ describe('projectArtifactsQuery', () => {
       order_by: [{ field: 'updated_at', direction: 'desc' }],
     });
     expect(projectArtifactsQuery('repo', 'p1')).toEqual({ type: 'repository', project_id: 'p1', limit: 50 });
+  });
+
+  it('searches the fields /nodes searches that the kind declares, as substrings', () => {
+    expect(projectArtifactsQuery('workflow_run', 'p1', { q: ' Fix ' }).where).toEqual({
+      _or: [
+        { title: { _ilike: '%Fix%' } },
+        { author: { _ilike: '%Fix%' } },
+        { path: { _ilike: '%Fix%' } },
+        { number: { _ilike: '%Fix%' } },
+      ],
+    });
+    expect(projectArtifactsQuery('repo', 'p1', { q: 'acme' }).where).toEqual({
+      _or: [{ title: { _ilike: '%acme%' } }, { path: { _ilike: '%acme%' } }, { full_path: { _ilike: '%acme%' } }],
+    });
+    expect(projectArtifactsQuery('build', 'p1', { q: '   ' }).where).toBeUndefined();
+  });
+});
+
+describe('likeLiteral', () => {
+  it('escapes what a pattern would read as a wildcard or an escape', () => {
+    expect(likeLiteral('100%_done')).toBe('100\\%\\_done');
+    expect(likeLiteral('a\\b')).toBe('a\\\\b');
+    expect(likeLiteral('plain')).toBe('plain');
   });
 });
 
@@ -105,6 +129,18 @@ describe('fetchProjectArtifacts', () => {
     const page = await fetchProjectArtifacts('org', 'p1', 'repo');
     expect(page.total).toBe(1);
     expect(calls.nodes).toHaveLength(1);
+  });
+
+  it('searches /nodes when the model refuses a search it has no fields for yet', async () => {
+    calls.answer = (body) =>
+      body.type === 'sync-state'
+        ? Promise.resolve({ items: [row('art-store-moved-v1', { status: 'done' })], total: 1 })
+        : Promise.reject(Object.assign(new Error('400'), { response: { status: 400 } }));
+    const page = await fetchProjectArtifacts('org', 'p1', 'workflow_run', { q: 'ann' });
+    expect(page.total).toBe(1);
+    expect(calls.nodes).toEqual(['/studio-artifact-ingest/v1/nodes?type=workflow_run&scope=p1&q=ann&limit=50']);
+    // Without a search a refusal is the screen's to show.
+    await expect(fetchProjectArtifacts('org', 'p1', 'workflow_run')).rejects.toThrow('400');
   });
 
   it('reads /nodes while the organization is not known', async () => {

@@ -1,6 +1,7 @@
 /** studio-artifact-ingest — the graph of what a project's repositories contain */
 
 import {
+  type EndpointDescriptor,
   BaseApiService,
   RestEndpointProtocol,
   RestProtocol,
@@ -17,6 +18,7 @@ import type {
   SyncEnqueuedDto,
 } from './artifactTypes';
 import { IdempotencyKeyPlugin } from './idempotencyKeyPlugin';
+import { projectArtifacts, type ArtifactKind } from '@constructor-studio/mfe-shared';
 
 export const ARTIFACT_INGEST_API_BASE_URL = '/cf/studio-artifact-ingest/v1';
 
@@ -50,6 +52,20 @@ export interface NodesParams {
   q?: string;
   offset?: number;
   limit?: number;
+  /**
+   * The organization the project is in. With it, a listing of one kind the
+   * domain model holds (repositories, CI runs, IDE builds; no repository,
+   * no offset) is read through `POST /studio-domain-model/v1/query` where
+   * the organization has moved (`fetchProjectArtifacts`).
+   */
+  orgId?: string | null;
+}
+
+const MODEL_KINDS: readonly string[] = ['repo', 'workflow_run', 'build'];
+
+/** Whether `params` is a listing `fetchProjectArtifacts` answers. */
+export function readsThroughModel(params: NodesParams): boolean {
+  return !!params.orgId && !!params.type && MODEL_KINDS.includes(params.type) && !params.repo && !params.offset;
 }
 
 function nodesPath({ scope, type, repo, sort, q, offset, limit }: NodesParams): string {
@@ -80,10 +96,25 @@ export class ArtifactIngestApiService extends BaseApiService {
   // The key is `[baseURL, 'GET', resolvedPath, params]`, and the query string is
   // glued into `resolvedPath`, so `/nodes` has no prefix under which its pages
   // sit
-  readonly nodes = this.protocol(RestEndpointProtocol).queryWith<
+  private readonly nodesRest = this.protocol(RestEndpointProtocol).queryWith<
     ArtifactNodeListDto,
     NodesParams
   >(nodesPath, { staleTime: NODES_STALE_TIME_MS });
+
+  /** `GET /nodes`, or the query where {@link readsThroughModel} says so. */
+  readonly nodes = (params: NodesParams) => {
+    if (!readsThroughModel(params)) {
+      const { orgId: _org, ...rest } = params;
+      return this.nodesRest(rest);
+    }
+    return projectArtifacts(
+      params.orgId,
+      params.scope,
+      params.type as ArtifactKind,
+      { limit: params.limit, sort: params.sort, q: params.q },
+      NODES_STALE_TIME_MS
+    ) as EndpointDescriptor<ArtifactNodeListDto>;
+  };
 
   readonly sync = this.protocol(RestEndpointProtocol).mutation<SyncEnqueuedDto, SyncBody>(
     'POST',

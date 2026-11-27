@@ -18,8 +18,11 @@ import type { DocumentDto } from '../api/documentTypes';
 
 const REPOSITORY_CEILING = 200;
 
-export function repositoryNodesParams(projectId: string): NodesParams {
-  return { scope: projectId, type: ARTIFACT_REPO_TYPE, limit: REPOSITORY_CEILING };
+/** The project's repositories; with `orgId`, through the query where the organization has moved. */
+export function repositoryNodesParams(projectId: string, orgId?: string | null): NodesParams {
+  const params: NodesParams = { scope: projectId, type: ARTIFACT_REPO_TYPE, limit: REPOSITORY_CEILING };
+  if (orgId) params.orgId = orgId;
+  return params;
 }
 
 export interface ArtifactCountView {
@@ -174,13 +177,14 @@ export function useArtifacts(
   projectId: string,
   workspaceId: string | null,
   repo: string | null,
-  onRefresh: () => void
+  onRefresh: () => void,
+  orgId: string | null = null
 ): ArtifactsView {
   const ingest = apiRegistry.getService(ArtifactIngestApiService);
   const cache = useQueryCache();
   const studio = useProjectDocuments(workspaceId, projectId);
 
-  const repositoryParams = useMemo(() => repositoryNodesParams(projectId), [projectId]);
+  const repositoryParams = useMemo(() => repositoryNodesParams(projectId, orgId), [projectId, orgId]);
   const repositoryNodes = useApiQuery(ingest.nodes(repositoryParams));
   const scope = useArtifactCount(projectId);
 

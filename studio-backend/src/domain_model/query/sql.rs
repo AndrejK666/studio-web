@@ -14,6 +14,9 @@
 //!   list. Case folding is Postgres's `lower`, which follows the database's
 //!   ctype: the same as Rust's for ASCII, and for other letters only under a
 //!   UTF-8 ctype.
+//! * `_ilike` / `_nilike` are `lower(value) LIKE lower(pattern)` with a
+//!   backslash as the escape, over a string or a number's JSON text; the
+//!   pattern is a parameter like every other value.
 //!
 //! Every comparison is wrapped so it is `TRUE` or `FALSE`, never `NULL`, so
 //! `_not` turns a non-match into a match the way it does in memory. A cast
@@ -247,6 +250,24 @@ impl Sql {
         }
     }
 
+    /// `_ilike`: a string, or a number by its JSON text, matches the pattern
+    /// as a whole, ignoring case; any other value matches nothing. The
+    /// pattern is a bound parameter, and so is its escape character, the
+    /// backslash the in-memory reading uses ([`super::like_pattern`]); the
+    /// planner has refused a pattern that ends with one.
+    fn ilike(&mut self, v: &str, arg: &Value) -> String {
+        let Some(pattern) = arg.as_str() else {
+            return "FALSE".to_string();
+        };
+        let p = self.param(SqlValue::String(Some(pattern.to_string())));
+        let esc = self.param(SqlValue::String(Some("\\".to_string())));
+        format!(
+            "CASE WHEN jsonb_typeof({v}) = 'string' THEN lower({v} #>> '{{}}') LIKE lower({p}) ESCAPE {esc} \
+             WHEN jsonb_typeof({v}) = 'number' THEN ({v} #>> '{{}}') LIKE lower({p}) ESCAPE {esc} \
+             ELSE FALSE END"
+        )
+    }
+
     fn any_of(&mut self, path: &[String], v: &str, arg: &Value) -> String {
         let items: Vec<String> = arg
             .as_array()
@@ -345,6 +366,11 @@ impl Sql {
                                 "CASE WHEN jsonb_typeof({v}) = 'array' THEN {in_list} ELSE FALSE END"
                             ),
                         }
+                    }
+                    Op::Ilike => self.ilike(&v, arg),
+                    Op::Nilike => {
+                        let like = self.ilike(&v, arg);
+                        format!("(NOT {absent} AND NOT ({like}))")
                     }
                 };
                 format!("COALESCE(({body}), FALSE)")

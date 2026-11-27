@@ -164,7 +164,7 @@ export const ArtifactsSection: React.FC<ArtifactsSectionProps> = ({ projectId, p
   const reloadList = React.useCallback(() => triggerRef.current?.(), []);
 
   const { projectTotal, repositoryTotal, repositoryTotalFailed, repositories, repoNames, own, sources, loading, failed, refetch } =
-    useArtifacts(projectId, workspace?.id ?? null, repository, reloadList);
+    useArtifacts(projectId, workspace?.id ?? null, repository, reloadList, org?.id ?? null);
 
   // `load` stays one function for the grid's life: it reads the documents and the names from here.
   const current = React.useRef<{ own: readonly DocumentDto[]; repoNames: ReadonlyMap<string, string> }>({
