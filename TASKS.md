@@ -161,11 +161,18 @@ done, **P2** can wait.
   migration could remove them once the rehome has finished everywhere.
   Proposal only; not built.
 
-- [ ] Portal nginx keeps the backend's old address @andrejk666
+- [x] Portal nginx keeps the backend's old address @andrejk666
 
   After a backend restart the portal answers 502 until it restarts too.
   Resolve the upstream per request (a `resolver` plus a variable in
   `proxy_pass`).
+
+  Done in 173558b6a (docker/15-backend-upstream.envsh: resolver from
+  /etc/resolv.conf, the name made absolute for k8s). Checked 2026-11-27:
+  `nginx -t` passes; in a compose-style network the portal followed a
+  backend replaced at a new IP without a restart; Dev and Test (image
+  sha-0a9d5400) log the cluster DNS 10.254.0.10 and the absolute Service
+  name. `studio-frontend/` (FrontX) still writes the host into proxy_pass.
 
 - [ ] Rotate the GHCR token @andrejk666
 
