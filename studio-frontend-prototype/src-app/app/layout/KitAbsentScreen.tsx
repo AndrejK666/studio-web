@@ -8,6 +8,9 @@
  * section that needs another kit's domain type (`presentation.needs`) is
  * judged by the same rule as its tab.
  *
+ * A kit installed here that the deployment does not run (ADR-0079 §5) is
+ * absent the same way; the words then say so.
+ *
  * Unknown hides nothing: while the installed kits (or types) are not known,
  * nothing is drawn.
  */
@@ -23,7 +26,13 @@ import { useMountedExtensions } from '@/app/mfe/domainOccupancy';
 import { levelOf, type StudioScreenExtension } from '@/app/mfe/screenLevels';
 import { APP_CONTEXT_SLICE_KEY, type AppContextState } from '@/app/slices/appContextSlice';
 import { useShellText } from '@/app/i18n/shellTranslations';
-import { screenShows, typesNeeded, useInstalledKits, useInstalledTypes } from './useInstalledKits';
+import {
+  screenShows,
+  typesNeeded,
+  useInstalledKits,
+  useInstalledTypes,
+  useKitsOffInDeployment,
+} from './useInstalledKits';
 import { screenRouteOf } from './useScreenRoute';
 
 /** The item on screen: the mounted screen, or the section of it on display. */
@@ -46,6 +55,7 @@ export function KitAbsentScreen() {
   );
   const item = itemOnScreen(registered, mounted, section);
   const installed = useInstalledKits();
+  const offInDeployment = useKitsOffInDeployment();
   const types = useInstalledTypes(item !== undefined && typesNeeded(item).length > 0);
   if (!item || screenShows(item, installed, types)) return null;
 
@@ -61,7 +71,10 @@ export function KitAbsentScreen() {
       <div className="text-body font-medium text-foreground">{t('screen_unknown_title')}</div>
       <div className="text-label text-muted-foreground">
         {kitMissing
-          ? t('screen_unknown_kit', { screen: label, kit: kit ?? '' })
+          ? t(kit !== undefined && offInDeployment.has(kit) ? 'screen_kit_off_in_deployment' : 'screen_unknown_kit', {
+              screen: label,
+              kit: kit ?? '',
+            })
           : t('screen_needs_types', { screen: label, types: typesNeeded(item).join(', ') })}
       </div>
       <div>

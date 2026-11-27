@@ -32,6 +32,8 @@
   "base_default": "base kit (by default)",
   "installed_for": "installed for {organization}",
   "not_installed": "not installed",
+  "not_in_deployment": "Not in this deployment",
+  "not_in_deployment_reason": "This deployment of Studio does not run this kit, so it cannot be installed or used here.",
   "make_base": "Make a base kit",
   "remove_base": "Remove the base kit",
   "install_for": "Install for {organization}",

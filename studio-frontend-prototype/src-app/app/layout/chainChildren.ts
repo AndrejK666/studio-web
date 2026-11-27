@@ -17,7 +17,7 @@ import {
   FRONTX_SCREEN_DOMAIN,
 } from '@gears-frontx/react';
 import { AccountsApiService, errorMessage } from '@constructor-studio/mfe-shared';
-import { InstalledKitsApiService } from '@/app/api/InstalledKitsApiService';
+import { InstalledKitsApiService, runningKits } from '@/app/api/InstalledKitsApiService';
 import { useMountedExtensions } from '@/app/mfe/domainOccupancy';
 import type { StudioScreenExtension } from '@/app/mfe/screenLevels';
 import { APP_CONTEXT_SLICE_KEY, type AppContextState, type ContextEntity } from '@/app/slices/appContextSlice';
@@ -89,7 +89,8 @@ async function kitAt(place: Place, kit: string): Promise<boolean> {
     const summary = await apiRegistry.getService(InstalledKitsApiService).installed(scope).fetch();
     if (!summary) return true;
     // A retired slug (ADR-0071 §8) is in `effective` wherever everything it resolves to applies.
-    return summary.effective.some((k) => k.kit_slug === kit);
+    // A kit the deployment does not run (ADR-0079 §5) is not there either.
+    return runningKits(summary).includes(kit);
   } catch (error) {
     console.warn('[chain] could not read the kits of the place picked:', errorMessage(error));
     return true;

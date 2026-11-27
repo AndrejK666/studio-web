@@ -13,6 +13,7 @@ const { emit, state } = vi.hoisted(() => ({
     section: null as string | null,
     installed: null as ReadonlySet<string> | null,
     types: null as ReadonlySet<string> | null,
+    off: new Set<string>() as ReadonlySet<string>,
   },
 }));
 
@@ -28,6 +29,7 @@ vi.mock('./useInstalledKits', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./useInstalledKits')>()),
   useInstalledKits: () => state.installed,
   useInstalledTypes: () => state.types,
+  useKitsOffInDeployment: () => state.off,
 }));
 vi.mock('@/app/i18n/shellTranslations', () => ({
   useShellText: () => (key: string, params?: Record<string, string>) =>
@@ -52,7 +54,7 @@ const timeline = ext('activity.timeline', 'entry.activity', {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
-  Object.assign(state, { registered: [], mounted: [], section: null, installed: null, types: null });
+  Object.assign(state, { registered: [], mounted: [], section: null, installed: null, types: null, off: new Set() });
 });
 
 describe('KitAbsentScreen', () => {
@@ -86,6 +88,15 @@ describe('KitAbsentScreen', () => {
     expect(screen.getByRole('alert').textContent).toContain('screen_unknown_kit:Activity,project-git');
     fireEvent.click(screen.getByRole('button', { name: 'screen_unknown_home' }));
     expect(emit).toHaveBeenCalledWith('app/context/level/requested', { level: 'project' });
+  });
+
+  it('says the deployment does not run a kit installed here that it switched off', () => {
+    at(activity, 'activity');
+    state.installed = new Set(['project-tests']);
+    state.off = new Set(['project-git']);
+    render(<KitAbsentScreen />);
+    expect(screen.getByRole('alert').textContent).toContain('screen_kit_off_in_deployment:Activity,project-git');
+    expect(screen.getByRole('button', { name: 'screen_unknown_home' })).toBeTruthy();
   });
 
   it('judges a section of the owner’s micro-frontend by its own kit', () => {

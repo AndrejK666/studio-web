@@ -449,10 +449,19 @@ function KitControls({
   const own = installed?.organization.find((k) => k.kit_slug === kit.slug);
   const mine = installed?.project?.find((k) => k.kit_slug === kit.slug);
   const name = organization?.name ?? '';
+  // A kit the deployment's composition switched off (ADR-0079 §5): its gears start nothing here,
+  // so installing it would change nothing. Removing an installation stays possible.
+  const offHere = kit.available_in_deployment === false;
+  const notHere = offHere ? t('not_in_deployment_reason') : undefined;
   return (
     <>
       <div className={styles.badges}>
         {kit.shelf && <Badge variant="secondary">{t('shelf_' + kit.shelf)}</Badge>}
+        {offHere && (
+          <Badge variant="warning" title={notHere} data-kit-not-in-deployment>
+            {t('not_in_deployment')}
+          </Badge>
+        )}
         {base && (
           <Badge variant="success" dot>
             {scope === 'platform' ? t(base.by_default ? 'base_default' : 'base') : t('inherited_from_platform')}
@@ -478,7 +487,7 @@ function KitControls({
                 {t('remove_base')}
               </Button>
             ) : (
-              <Button size="sm" disabled={busy} onClick={onMakeBase}>
+              <Button size="sm" disabled={busy || offHere} title={notHere} onClick={onMakeBase}>
                 {t('make_base')}
               </Button>
             ))}
@@ -492,7 +501,7 @@ function KitControls({
             ) : base ? (
               <span className={styles.note}>{t('from_platform')}</span>
             ) : (
-              <Button size="sm" disabled={busy} onClick={() => onInstall(organization.id)}>
+              <Button size="sm" disabled={busy || offHere} title={notHere} onClick={() => onInstall(organization.id)}>
                 {t('install_for', { organization: name })}
               </Button>
             ))}
@@ -516,12 +525,13 @@ function KitControls({
             ) : base || own ? (
               <span className={styles.note}>{base ? t('from_platform') : t('from_organization')}</span>
             ) : (
-              <Button size="sm" disabled={busy} onClick={onInstallProject}>
+              <Button size="sm" disabled={busy || offHere} title={notHere} onClick={onInstallProject}>
                 {t('install_project')}
               </Button>
             ))}
         </div>
       )}
+      {installed && offHere && <p className={styles.note}>{notHere}</p>}
       {problem && (
         <p role="alert" className={styles.error}>
           {problem}

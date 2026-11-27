@@ -220,6 +220,14 @@ pub fn kit_on(slug: &str) -> bool {
     current_kit_on(slug)
 }
 
+/// Whether kit `slug` is available in this deployment, as the portal is told
+/// (`available_in_deployment`): a kit this build links runs only while it is
+/// switched on; any other kit (an official kit or an organization's own,
+/// loaded at run time) is not the switch's to govern, so it is available.
+pub fn kit_available(slug: &str) -> bool {
+    kit_on(slug) || !known_kits().contains(slug)
+}
+
 /// The kit gear `gear` belongs to, when it is a kit's.
 pub fn kit_of(gear: &str) -> Option<&'static str> {
     inventory::iter::<KitGear>

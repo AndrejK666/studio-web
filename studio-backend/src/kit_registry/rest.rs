@@ -70,6 +70,11 @@ pub struct KitDto {
     /// Every tier the kit brings, strongest first (`runtime`, `gears`,
     /// `model`, `material`); never empty.
     pub brings: Vec<String>,
+    /// Whether this deployment runs the kit (ADR-0079 §5). A kit linked into
+    /// Studio that the deployment's composition switched off is `false`: its
+    /// gears start nothing and its routes answer `KIT_NOT_INSTALLED`, so it
+    /// cannot be used or installed here. Every other kit is `true`.
+    pub available_in_deployment: bool,
 }
 
 /// A catalogue entry for a caller in `org`, with where its bundled icon is
@@ -531,7 +536,9 @@ impl From<KitDescriptor> for KitDto {
         // What the library alone says the kit brings; a caller holding the
         // kit's detail (a shelf kit's manifest) sets it again (`set_kind`).
         let kind = super::kind::kind_of(&super::contents::describe(value.clone()));
+        let available_in_deployment = crate::composition::kit_available(&value.slug);
         Self {
+            available_in_deployment,
             kind: kind.kind.to_owned(),
             brings: kind.brings.iter().map(|b| (*b).to_owned()).collect(),
             slug: value.slug,
@@ -797,6 +804,10 @@ pub struct InstalledKitDto {
     /// A base kit an organization administrator may uninstall for that
     /// organization alone (ADR-0074); every other base kit is the platform's.
     pub removable_by_organization: bool,
+    /// Whether this deployment runs the kit (ADR-0079 §5), as
+    /// `KitDto.available_in_deployment`: `false` for a kit the deployment's
+    /// composition switched off, whose screens the shell does not show.
+    pub available_in_deployment: bool,
 }
 
 /// A retired kit slug a document named, and what it is now (ADR-0071 §8).
@@ -914,6 +925,7 @@ impl From<InstalledKit> for InstalledKitDto {
             && super::service::is_organization_removable_base(&value.kit_slug);
         Self {
             removable_by_organization,
+            available_in_deployment: crate::composition::kit_available(&value.kit_slug),
             kit_slug: value.kit_slug,
             version: value.version,
             shelf: value.shelf,
@@ -2806,5 +2818,49 @@ mod icon_tests {
         .into();
         assert_eq!(dto.icon, None);
         assert_eq!(dto.icon_url, None);
+        assert!(dto.available_in_deployment);
+    }
+
+    fn installed(slug: &str) -> InstalledKitDto {
+        InstalledKit {
+            kit_slug: slug.into(),
+            version: "1".into(),
+            shelf: "builtin".into(),
+            kind: super::super::installed::KIND_BASE,
+            installed_by: None,
+            installed_at: None,
+            by_default: true,
+            retired: false,
+        }
+        .into()
+    }
+
+    /// ADR-0079 §5: the portal is told which kits the deployment runs, on
+    /// the installed list and in the library alike.
+    #[test]
+    fn a_switched_off_kit_is_not_available_in_the_deployment() {
+        let off: std::collections::BTreeSet<String> = crate::composition::known_kits()
+            .into_iter()
+            .filter(|k| k != "project-tests")
+            .collect();
+        crate::composition::with(crate::composition::Composition::Only(off), || {
+            assert!(!installed("project-tests").available_in_deployment);
+            assert!(installed("project-lifecycle").available_in_deployment);
+            let library: Vec<KitDto> = super::super::service::builtin_catalogue()
+                .into_iter()
+                .map(KitDto::from)
+                .collect();
+            let tests = library.iter().find(|k| k.slug == "project-tests").unwrap();
+            assert!(!tests.available_in_deployment);
+            assert!(
+                library
+                    .iter()
+                    .filter(|k| k.slug != "project-tests")
+                    .all(|k| k.available_in_deployment)
+            );
+            // A kit this build does not link (an official or an
+            // organization's) is not the switch's to govern.
+            assert!(installed("hello-kit").available_in_deployment);
+        });
     }
 }
