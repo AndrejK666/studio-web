@@ -77,3 +77,14 @@ pub fn is_configured() -> bool {
 pub(crate) fn set_configured_for_tests(configured: bool) {
     CONFIGURED.store(configured, std::sync::atomic::Ordering::Relaxed);
 }
+
+// The kit this gear belongs to, and the API domain it serves: which kits
+// start is the deployment's choice (`crate::composition`, ADR-0079 §5), and
+// the core lists no kit's domain (`crate::api_contract`).
+inventory::submit! {
+    crate::composition::KitGear {
+        gear: "studio-spec-quality",
+        kit: "project-specs",
+    }
+}
+inventory::submit! { crate::api_contract::ApiDomain("studio-spec-quality") }

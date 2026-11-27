@@ -159,6 +159,10 @@ pub struct StudioDocumentsGear {
 impl toolkit::Gear for StudioDocumentsGear {
     #[tracing::instrument(skip_all, fields(module = "studio-documents"))]
     async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
+        // Its kit is switched off in this deployment: the gear does not start.
+        if crate::composition::stands_down(Self::MODULE_NAME) {
+            return Ok(());
+        }
         // Stand down (rather than fail the whole boot) when no database is
         // configured, the same shape studio-credstore-pg uses when its key is
         // absent: the gear stays inert and registers no routes, so a profile
@@ -285,6 +289,9 @@ impl toolkit::Gear for StudioDocumentsGear {
 
 impl DatabaseCapability for StudioDocumentsGear {
     fn migrations(&self) -> Vec<Box<dyn toolkit_db::sea_orm_migration::MigrationTrait>> {
+        if !crate::composition::gear_on(Self::MODULE_NAME) {
+            return Vec::new();
+        }
         use toolkit_db::sea_orm_migration::MigratorTrait;
         migrations::Migrator::migrations()
     }
@@ -298,6 +305,9 @@ impl RestApiCapability for StudioDocumentsGear {
         router: Router,
         openapi: &dyn OpenApiRegistry,
     ) -> anyhow::Result<Router> {
+        if !crate::composition::gear_on(Self::MODULE_NAME) {
+            return Ok(router);
+        }
         // Inert when no database was configured (see `init`): return the router
         // unchanged rather than failing the boot.
         let Some(service) = self.service.get().cloned() else {
@@ -314,3 +324,14 @@ impl RestApiCapability for StudioDocumentsGear {
         ))
     }
 }
+
+// The kit this gear belongs to, and the API domain it serves: which kits
+// start is the deployment's choice (`crate::composition`, ADR-0079 §5), and
+// the core lists no kit's domain (`crate::api_contract`).
+inventory::submit! {
+    crate::composition::KitGear {
+        gear: "studio-documents",
+        kit: "project-specs",
+    }
+}
+inventory::submit! { crate::api_contract::ApiDomain("studio-documents") }

@@ -29,6 +29,10 @@ impl Default for GitProxyGear {
 #[async_trait]
 impl Gear for GitProxyGear {
     async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
+        // Its kit is switched off in this deployment: the gear does not start.
+        if crate::composition::stands_down(Self::MODULE_NAME) {
+            return Ok(());
+        }
         let hub = ctx.client_hub();
         // All three are required: without the resolver nobody can be
         // authenticated, without account-management no source can be found,
@@ -67,6 +71,9 @@ impl toolkit::contracts::RestApiCapability for GitProxyGear {
         router: Router,
         openapi: &dyn OpenApiRegistry,
     ) -> anyhow::Result<Router> {
+        if !crate::composition::gear_on(Self::MODULE_NAME) {
+            return Ok(router);
+        }
         let proxy = self
             .proxy
             .get()

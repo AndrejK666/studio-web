@@ -29,11 +29,8 @@ use uuid::Uuid;
 
 /// One service identity a gear vouches for.
 pub struct ServiceRule {
-    /// The gear that registered it, for the logs.
-    #[allow(
-        dead_code,
-        reason = "names the registering gear for readers of the registry"
-    )]
+    /// The gear that registered it: a switched-off kit's gear vouches for
+    /// nobody.
     pub gear: &'static str,
     /// The subject the service's token carries, when this deployment
     /// configures one. `None` means the rule names nobody and admits nothing.
@@ -54,6 +51,9 @@ pub(super) fn rule_for(request: &EvaluationRequest) -> Option<&'static ServiceRu
     }
     inventory::iter::<ServiceRule>
         .into_iter()
+        .filter(|rule| {
+            crate::composition::contributes(rule.gear) && crate::composition::kit_on(rule.kit)
+        })
         .find(|rule| (rule.subject)() == Some(request.subject.id))
 }
 

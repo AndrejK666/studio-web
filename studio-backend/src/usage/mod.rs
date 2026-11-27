@@ -105,6 +105,10 @@ pub struct StudioUsageGear;
 #[async_trait]
 impl Gear for StudioUsageGear {
     async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
+        // Its kit is switched off in this deployment: the gear does not start.
+        if crate::composition::stands_down(Self::MODULE_NAME) {
+            return Ok(());
+        }
         // Where every metering gear's records go (the core's metering port).
         ctx.client_hub()
             .register::<dyn crate::metering::UsageRecorder>(sdk::recorder(ctx.client_hub()));
@@ -131,6 +135,9 @@ impl RestApiCapability for StudioUsageGear {
         router: Router,
         openapi: &dyn OpenApiRegistry,
     ) -> anyhow::Result<Router> {
+        if !crate::composition::gear_on(Self::MODULE_NAME) {
+            return Ok(router);
+        }
         let am = ctx
             .client_hub()
             .get::<dyn account_management_sdk::AccountManagementClient>()?;
@@ -153,3 +160,14 @@ impl RestApiCapability for StudioUsageGear {
         Ok(router.layer(axum::Extension(access)))
     }
 }
+
+// The kit this gear belongs to, and the API domain it serves: which kits
+// start is the deployment's choice (`crate::composition`, ADR-0079 §5), and
+// the core lists no kit's domain (`crate::api_contract`).
+inventory::submit! {
+    crate::composition::KitGear {
+        gear: "studio-usage",
+        kit: "org-costs",
+    }
+}
+inventory::submit! { crate::api_contract::ApiDomain("studio-usage") }

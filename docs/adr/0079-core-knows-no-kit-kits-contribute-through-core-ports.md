@@ -100,7 +100,10 @@ kit's gear registers in its own module, so adding a kit changes no core file.
 | **Project creation** | a step of a project's creation run, or a field its configuration starts with | ported: kits register `CreationStep` and `CreationField` (inventory); the plan keeps the step keys and their order |
 | **Rollup counts** | per-project counts for the portfolio and the projects table | ported: organizations declares `DocumentCounter`, `ArtifactCounter` and `RowSignalSource`; kits publish them on the ClientHub |
 | **Repository metrics** | the metrics board's git, CI and task half | ported: the analysing kit registers `RepositoryMetricsSource` (inventory, studio-insight) |
-| **Kit parts** | which status steps, signals and path stages its tab owns | ported: kits register `ProjectKitParts` (inventory) |
+| **Kit parts** | which status steps, signals and path stages its tab owns, and the tab a step or signal opens | ported: kits register `ProjectKitParts` (inventory), `opens` names the tab (`("kind", "components")`) |
+| **API domains** | the first path segment of its REST API, for the API-contract lint | ported: kits register `ApiDomain` (inventory); `api_contract::DOMAINS` lists only the core's |
+| **Command line** | a `studio-backend` subcommand that runs before the configuration is read | ported: kits register `CliCommand` (inventory): the build Job's steps, `research-emulator` |
+| **Catalogue model types** | the model types its catalogue node types become | ported: `HeldNodeTypes.entities` (inventory, studio-product's two) |
 | **Kit runtime** | a built-in kit's function: its routes on studio-kits, what it registers on the hub | ported: `mna` and `project_lifecycle` register `KitFunction` (inventory, `kit_registry/runtime.rs`) and read the kits and the project's object through `KitRuntime`; studio-kits mounts a function's routes only where its `kit.json` claims them (a write in its `gears`, a read in `permissions.reads`) and refuses to start otherwise |
 
 In process a port is a static registration (`inventory`); for a kit's gear
@@ -121,6 +124,44 @@ Our own kits are in the binary and switched on by configuration. A switched-off
 kit's gear does not start: no database, no tasks, no routes. Switching it on
 needs a restart, not a rebuild. Cost management is a kit for now and its own
 gear later.
+
+The setting is `vendor.studio.kits` in the backend's configuration
+(`src/composition.rs`):
+
+```yaml
+vendor:
+  studio:
+    kits:
+      enabled: all     # default; `none`, or a list of kit slugs
+      disabled: []     # default; kit slugs taken out of `enabled`
+```
+
+Both keys take a YAML list or one comma-separated string. `config/k8s.yaml`
+and `config/docker.yaml` read them from `STUDIO_KITS_ENABLED` (default `all`)
+and `STUDIO_KITS_DISABLED` (default empty); the Helm chart renders those from
+`backend.kits.enabled` and `backend.kits.disabled`. With neither set every kit
+runs, so a deployment that does not mention it behaves as before. A slug no
+kit has stops the boot, so a typo cannot leave running a kit that was meant
+off.
+
+How it is held:
+
+- A kit's gear registers its kit in its own module
+  (`crate::composition::KitGear { gear, kit }`) and asks the composition first
+  in `init`, `register_rest` and `migrations`: switched off, it starts nothing,
+  mounts no route and runs no migration. A gear no kit registers is the core's
+  and always starts. No core gear depends on a kit's gear (`deps`), so the core
+  starts with no kit.
+- Every port drops the contributions of a switched-off kit's gear: MCP tools
+  and instructions, Overview blocks, status contributors, project creation
+  steps and fields, cost meters, the repository metrics source, inbox sources,
+  service access rules, schedules and catalogue model types.
+- A kit without a gear of its own (`gears-matcher` in studio-product,
+  `constructor-research` in studio-environments) is switched off through its
+  claims (ADR-0071): its claimed MCP tools leave `tools/list`, and its claimed
+  routes and tools answer `KIT_NOT_INSTALLED`, saying the deployment does not
+  run it. Its status steps and signals are hidden even where every kit
+  applies.
 
 ### 6. Partner kits are services beside Studio
 
@@ -144,8 +185,16 @@ By folder under `studio-backend/src/`:
   `environments` (delivery), `product` (project-product),
   `components_catalog` (components), `reports` (org-reports), `usage`
   (org-costs), `insight` (a new kit, insight), `llm_proxy` (assistant),
-  `studio_theia` (a new kit, ide), `mna` (mna) and `project_lifecycle`
-  (project-lifecycle), the built-in kits' functions on the kit-runtime port.
+  `studio_theia` (ide), `gears_matcher` (gears-matcher: the Studio side of
+  the gears-matcher service, ADR-0076; its routes and tools are claimed in
+  studio-product), `research_emulator` (constructor-research: the stand-in
+  for Constructor Research, ADR-0049, contributed as a `CliCommand`), and
+  `mna` (mna) and `project_lifecycle` (project-lifecycle), the built-in
+  kits' functions on the kit-runtime port.
+
+Each kit is described by its built-in `kit.json` (`kit_registry/builtin/`:
+screens, model, inbox, MCP tools, claims), and reaches the core only through
+the ports of §4.
 
 ## Migration order
 
@@ -156,7 +205,10 @@ By folder under `studio-backend/src/`:
    single references (studio-kits, studio-session, notify, project paths and
    sources, catalog graph, derived views).
 5. **The composition switch**: a kit's gear starts only when the
-   configuration turns it on.
+   configuration turns it on (§5: `vendor.studio.kits`, Helm
+   `backend.kits`). Built: every kit gear and port asks
+   `crate::composition`; `src/composition_tests.rs` starts the core with no
+   kit and takes one kit out.
 
 ## Consequences
 
@@ -165,7 +217,8 @@ By folder under `studio-backend/src/`:
 - Good: the core's size stops following the number of kits.
 - Bad: a port is one more indirection to read; the order of contributions has
   to be stated (an `order` key), not read off a list.
-- Bad: until step 5, every kit is still linked and started.
+- Bad: every kit is still linked into the binary; step 5 decides which start,
+  not which are built.
 
 ## Confirmation
 
@@ -173,5 +226,10 @@ By folder under `studio-backend/src/`:
   module names a kit's gear unless the pair is in
   `studio-backend/src/assembly/core_kit_allowlist.txt`, and fails when a
   listed pair is gone, so the list only shrinks. It is empty when the
-  migration is done.
+  migration is done. On 2026-11-27 it holds two pairs, both the kit
+  registry's mna part, which is moving out of the registry.
+- `studio-backend/src/composition_tests.rs` holds the switch: the core starts
+  with no kit (no kit gear mounts a route or keeps a table, every port answers
+  with the core's contributions), and one kit off takes its routes, tools,
+  block and meter out while the other kits keep theirs.
 - Step 1 leaves `tools/list` unchanged, name for name and in order.

@@ -24,3 +24,14 @@ pub mod refresh;
 pub mod rest;
 pub mod sdk;
 pub mod sources;
+
+// The kit this gear belongs to, and the API domain it serves: which kits
+// start is the deployment's choice (`crate::composition`, ADR-0079 §5), and
+// the core lists no kit's domain (`crate::api_contract`).
+inventory::submit! {
+    crate::composition::KitGear {
+        gear: "studio-git",
+        kit: "project-git",
+    }
+}
+inventory::submit! { crate::api_contract::ApiDomain("studio-git") }

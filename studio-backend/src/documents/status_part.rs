@@ -60,6 +60,7 @@ inventory::submit! {
             title: "Documents",
             tab: "specs",
         }],
+        opens: &[],
     }
 }
 
@@ -80,5 +81,6 @@ inventory::submit! {
                 tab: "issues",
             },
         ],
+        opens: &[],
     }
 }

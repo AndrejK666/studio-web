@@ -14,6 +14,7 @@
 //!         steps: &["kind", "product"],
 //!         signals: &["product"],
 //!         stages: &[PathStage { id: "product", title: "Product", tab: "product" }],
+//!         opens: &[("kind", "components"), ("product", "components")],
 //!     }
 //! }
 //! ```
@@ -32,6 +33,10 @@ pub struct ProjectKitParts {
     pub signals: &'static [&'static str],
     /// Stages of the delivery path (`project_path.rs`) shown in its tab.
     pub stages: &'static [PathStage],
+    /// The project tab a step or signal opens, by its id or key, where the
+    /// kit's screen holds it: `("kind", "components")`. A kit may name a
+    /// tab for a part it does not own (the IDE answers comment threads).
+    pub opens: &'static [(&'static str, &'static str)],
 }
 
 /// A stage of the delivery path, as the kit whose tab holds it says it.
@@ -60,6 +65,19 @@ pub fn signal_kit(key: &str) -> Option<&'static str> {
     registered()
         .find(|p| p.signals.contains(&key))
         .map(|p| p.kit)
+}
+
+/// The tab a step or signal opens, as a running kit declares it; `None`
+/// when no running kit says (the caller's own tab then).
+pub fn opens(part: &str) -> Option<&'static str> {
+    registered()
+        .filter(|p| crate::composition::kit_on(p.kit))
+        .find_map(|p| {
+            p.opens
+                .iter()
+                .find(|(id, _)| *id == part)
+                .map(|(_, tab)| *tab)
+        })
 }
 
 /// A delivery path stage's title, tab and kit, as its kit declares it.

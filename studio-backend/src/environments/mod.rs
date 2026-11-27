@@ -180,6 +180,9 @@ pub struct StudioEnvironmentsGear {
 
 impl DatabaseCapability for StudioEnvironmentsGear {
     fn migrations(&self) -> Vec<Box<dyn toolkit_db::sea_orm_migration::MigrationTrait>> {
+        if !crate::composition::gear_on(Self::MODULE_NAME) {
+            return Vec::new();
+        }
         use toolkit_db::sea_orm_migration::MigratorTrait;
         migrations::Migrator::migrations()
     }
@@ -188,6 +191,10 @@ impl DatabaseCapability for StudioEnvironmentsGear {
 #[async_trait]
 impl Gear for StudioEnvironmentsGear {
     async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
+        // Its kit is switched off in this deployment: the gear does not start.
+        if crate::composition::stands_down(Self::MODULE_NAME) {
+            return Ok(());
+        }
         let records = match ctx.db_required() {
             Ok(db) => Some(Arc::new(records::Records::new(db.db()))),
             Err(e) => {
@@ -227,6 +234,9 @@ impl RestApiCapability for StudioEnvironmentsGear {
         router: Router,
         openapi: &dyn OpenApiRegistry,
     ) -> anyhow::Result<Router> {
+        if !crate::composition::gear_on(Self::MODULE_NAME) {
+            return Ok(router);
+        }
         let am = ctx
             .client_hub()
             .get::<dyn account_management_sdk::AccountManagementClient>()?;
@@ -278,3 +288,20 @@ impl RestApiCapability for StudioEnvironmentsGear {
 pub(crate) fn failure_code_for_tests(text: &str, step: &str) -> &'static str {
     failure::explain(failure::Of::Build, text, Some(step), true).code
 }
+
+// The kit this gear belongs to, and the API domain it serves: which kits
+// start is the deployment's choice (`crate::composition`, ADR-0079 §5), and
+// the core lists no kit's domain (`crate::api_contract`).
+inventory::submit! {
+    crate::composition::KitGear {
+        gear: "studio-environments",
+        kit: "delivery",
+    }
+}
+inventory::submit! {
+    crate::composition::KitGear {
+        gear: "kubernetes-connector-plugin",
+        kit: "delivery",
+    }
+}
+inventory::submit! { crate::api_contract::ApiDomain("studio-environments") }

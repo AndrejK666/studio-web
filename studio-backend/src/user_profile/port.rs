@@ -68,7 +68,6 @@ pub struct InboxSource {
     /// Its id, as its items' `source` and its kit's `studio` source name it.
     pub id: &'static str,
     /// The gear that reads it, for readers of the registry.
-    #[allow(dead_code, reason = "named for readers of the registry")]
     pub gear: &'static str,
     /// Where its items stand among the sources' (every workspace's of one
     /// source before the next source's), lowest first.
@@ -87,7 +86,10 @@ inventory::collect!(InboxSource);
 
 /// Every registered source, lowest `order` first, then by id.
 pub fn sources() -> Vec<&'static InboxSource> {
-    let mut out: Vec<&'static InboxSource> = inventory::iter::<InboxSource>.into_iter().collect();
+    let mut out: Vec<&'static InboxSource> = inventory::iter::<InboxSource>
+        .into_iter()
+        .filter(|s| crate::composition::contributes(s.gear))
+        .collect();
     out.sort_by_key(|s| (s.order, s.id));
     out
 }
@@ -118,6 +120,8 @@ pub type ToolItemsFuture = Pin<Box<dyn Future<Output = Result<Vec<Value>, ToolEr
 pub struct InboxToolSource {
     /// Each item's `source`: `deploy`, `review`, `pull`.
     pub kind: &'static str,
+    /// The gear that registered it: a switched-off kit's gear lists nothing.
+    pub gear: &'static str,
     /// Where its items are listed when nothing else orders them, lowest first.
     pub order: u16,
     pub read: fn(Api, InboxScope) -> ToolItemsFuture,
@@ -127,8 +131,10 @@ inventory::collect!(InboxToolSource);
 
 /// Every registered kind, lowest `order` first, then by kind.
 pub fn tool_sources() -> Vec<&'static InboxToolSource> {
-    let mut out: Vec<&'static InboxToolSource> =
-        inventory::iter::<InboxToolSource>.into_iter().collect();
+    let mut out: Vec<&'static InboxToolSource> = inventory::iter::<InboxToolSource>
+        .into_iter()
+        .filter(|s| crate::composition::contributes(s.gear))
+        .collect();
     out.sort_by_key(|s| (s.order, s.kind));
     out
 }

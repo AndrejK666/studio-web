@@ -148,6 +148,10 @@ pub struct StudioArtifactIngestGear {
 #[async_trait]
 impl Gear for StudioArtifactIngestGear {
     async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
+        // Its kit is switched off in this deployment: the gear does not start.
+        if crate::composition::stands_down(Self::MODULE_NAME) {
+            return Ok(());
+        }
         // Register the artifact GTS type schemas (idempotent — same documents
         // every boot). The rest of the wiring — drivers, credstore, and the
         // graph store — is resolved in the REST phase, where every gear is
@@ -201,6 +205,9 @@ impl Gear for StudioArtifactIngestGear {
 
 impl DatabaseCapability for StudioArtifactIngestGear {
     fn migrations(&self) -> Vec<Box<dyn toolkit_db::sea_orm_migration::MigrationTrait>> {
+        if !crate::composition::gear_on(Self::MODULE_NAME) {
+            return Vec::new();
+        }
         use toolkit_db::sea_orm_migration::MigratorTrait;
         migrations::Migrator::migrations()
     }
@@ -357,6 +364,9 @@ impl RestApiCapability for StudioArtifactIngestGear {
         router: Router,
         openapi: &dyn OpenApiRegistry,
     ) -> anyhow::Result<Router> {
+        if !crate::composition::gear_on(Self::MODULE_NAME) {
+            return Ok(router);
+        }
         // Resolve the source connector drivers by the same ClientHub ids the
         // connector gear uses. A provider whose plugin is not linked is skipped.
         let mut drivers: HashMap<String, Arc<dyn ConnectorDriver>> = HashMap::new();
@@ -692,3 +702,14 @@ mod tests {
         }
     }
 }
+
+// The kit this gear belongs to, and the API domain it serves: which kits
+// start is the deployment's choice (`crate::composition`, ADR-0079 §5), and
+// the core lists no kit's domain (`crate::api_contract`).
+inventory::submit! {
+    crate::composition::KitGear {
+        gear: "studio-artifact-ingest",
+        kit: "project-git",
+    }
+}
+inventory::submit! { crate::api_contract::ApiDomain("studio-artifact-ingest") }

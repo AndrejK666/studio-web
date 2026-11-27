@@ -55,6 +55,10 @@ pub struct SpecMappingGear;
 #[async_trait]
 impl Gear for SpecMappingGear {
     async fn init(&self, _ctx: &GearCtx) -> anyhow::Result<()> {
+        // Its kit is switched off in this deployment: the gear does not start.
+        if crate::composition::stands_down(Self::MODULE_NAME) {
+            return Ok(());
+        }
         Ok(())
     }
 }
@@ -67,6 +71,9 @@ impl RestApiCapability for SpecMappingGear {
         router: Router,
         openapi: &dyn OpenApiRegistry,
     ) -> anyhow::Result<Router> {
+        if !crate::composition::gear_on(Self::MODULE_NAME) {
+            return Ok(router);
+        }
         let router = rest::register_routes(router, openapi, rest::Ports::new(ctx.client_hub()));
         // The write routes a kit claims answer KIT_NOT_INSTALLED without it
         // (ADR-0071 §4): studio-kits' one shared check.
@@ -90,3 +97,14 @@ impl RestApiCapability for SpecMappingGear {
         )
     }
 }
+
+// The kit this gear belongs to, and the API domain it serves: which kits
+// start is the deployment's choice (`crate::composition`, ADR-0079 §5), and
+// the core lists no kit's domain (`crate::api_contract`).
+inventory::submit! {
+    crate::composition::KitGear {
+        gear: "studio-spec-mapping",
+        kit: "spec-mapping",
+    }
+}
+inventory::submit! { crate::api_contract::ApiDomain("studio-spec-mapping") }

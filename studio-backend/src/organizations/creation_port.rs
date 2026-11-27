@@ -34,7 +34,6 @@ use super::project_create::{MadeRepo, Plan, StepError};
 /// A step of a project's creation, done by a kit's gear.
 pub struct CreationStep {
     /// The gear that does it, for logs and readers.
-    #[allow(dead_code, reason = "named for logs and readers of the registry")]
     pub gear: &'static str,
     /// The step it does (`repository`, `scaffold`, `prd`): one gear per key.
     pub key: &'static str,
@@ -69,6 +68,7 @@ pub trait CreationStepRun: Send + Sync {
 pub fn step(key: &str) -> Option<&'static CreationStep> {
     inventory::iter::<CreationStep>
         .into_iter()
+        .filter(|s| crate::composition::contributes(s.gear))
         .find(|s| s.key == key)
 }
 
@@ -90,7 +90,6 @@ pub async fn run_step(
 
 /// A field of a new project's configuration, filled by a kit's gear.
 pub struct CreationField {
-    #[allow(dead_code, reason = "named for logs and readers of the registry")]
     pub gear: &'static str,
     /// The configuration field (`stages`): one gear per field.
     pub field: &'static str,
@@ -109,8 +108,10 @@ pub trait CreationFieldSource: Send + Sync {
 
 /// Every registered field, by field name.
 pub fn fields() -> Vec<&'static CreationField> {
-    let mut out: Vec<&'static CreationField> =
-        inventory::iter::<CreationField>.into_iter().collect();
+    let mut out: Vec<&'static CreationField> = inventory::iter::<CreationField>
+        .into_iter()
+        .filter(|f| crate::composition::contributes(f.gear))
+        .collect();
     out.sort_by(|a, b| a.field.cmp(b.field));
     out
 }

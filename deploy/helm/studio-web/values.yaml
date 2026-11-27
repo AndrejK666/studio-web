@@ -157,6 +157,19 @@ backend:
   # and set this to its service account's id:
   #   GET /auth/admin/realms/studio/users?username=service-account-studio-service&exact=true
   serviceSubject: ""
+  # ── Which kits start (ADR-0079 §5) ──────────────────────────────────────
+  # Studio's own kits are in the image; this says which of them run. A
+  # switched-off kit's gear starts nothing (no tables, tasks, routes, MCP
+  # tools or Overview blocks) and what it claims answers KIT_NOT_INSTALLED.
+  # Changing it restarts the backend; nothing is rebuilt. Rendered into
+  # STUDIO_KITS_ENABLED / STUDIO_KITS_DISABLED, which config/k8s.yaml reads
+  # as `vendor.studio.kits`. A slug no kit has stops the boot.
+  #   enabled:  `all` (default), `none`, or a list of kit slugs
+  #   disabled: kit slugs taken out of `enabled` (default: none)
+  # e.g. `disabled: [org-reports, gears-matcher]`.
+  kits:
+    enabled: all
+    disabled: []
   # Knowledge-graph embeddings (graph-storage gear). ONE provider per
   # deployment; switching it over a populated graph blocks vector search until
   # the graph is re-embedded, and the backend logs that at boot.

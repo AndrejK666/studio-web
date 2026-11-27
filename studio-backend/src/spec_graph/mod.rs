@@ -64,6 +64,10 @@ pub struct SpecGraphGear {
 #[async_trait]
 impl Gear for SpecGraphGear {
     async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
+        // Its kit is switched off in this deployment: the gear does not start.
+        if crate::composition::stands_down(Self::MODULE_NAME) {
+            return Ok(());
+        }
         let cfg: SpecGraphConfig = ctx.config_or_default()?;
         match cfg.resolve_service_subject() {
             Ok(Some(subject)) => {
@@ -108,6 +112,9 @@ impl RestApiCapability for SpecGraphGear {
         router: Router,
         openapi: &dyn OpenApiRegistry,
     ) -> anyhow::Result<Router> {
+        if !crate::composition::gear_on(Self::MODULE_NAME) {
+            return Ok(router);
+        }
         let cfg = self.config.get().cloned().unwrap_or_default();
         // A check or a review answers in seconds; a run is submitted and
         // followed, and a wait is at most 25 s, so 60 s bounds every call.
@@ -130,3 +137,14 @@ impl RestApiCapability for SpecGraphGear {
         ))
     }
 }
+
+// The kit this gear belongs to, and the API domain it serves: which kits
+// start is the deployment's choice (`crate::composition`, ADR-0079 §5), and
+// the core lists no kit's domain (`crate::api_contract`).
+inventory::submit! {
+    crate::composition::KitGear {
+        gear: "studio-spec-graph",
+        kit: "spec-graph",
+    }
+}
+inventory::submit! { crate::api_contract::ApiDomain("studio-spec-graph") }

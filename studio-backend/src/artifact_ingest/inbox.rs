@@ -36,6 +36,7 @@ inventory::submit! {
 inventory::submit! {
     InboxToolSource {
         kind: "pull",
+        gear: "studio-artifact-ingest",
         order: 30,
         read: pulls,
     }

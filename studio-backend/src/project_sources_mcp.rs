@@ -25,7 +25,6 @@ pub struct SourceReading {
     /// `project_sources_set` keeps none of it: it is a reading, not a setting.
     pub key: &'static str,
     /// The gear that reads it, for readers of the registry.
-    #[allow(dead_code, reason = "named for readers of the registry")]
     pub gear: &'static str,
     /// The project's readings as the person may read them,
     /// `{"items": [{"clone_url", …}]}` matched to the sources by
@@ -39,8 +38,10 @@ inventory::collect!(SourceReading);
 
 /// Every registered reading, by key.
 fn readings() -> Vec<&'static SourceReading> {
-    let mut out: Vec<&'static SourceReading> =
-        inventory::iter::<SourceReading>.into_iter().collect();
+    let mut out: Vec<&'static SourceReading> = inventory::iter::<SourceReading>
+        .into_iter()
+        .filter(|r| crate::composition::contributes(r.gear))
+        .collect();
     out.sort_by_key(|r| r.key);
     out
 }

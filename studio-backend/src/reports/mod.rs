@@ -60,6 +60,10 @@ pub struct StudioReportsGear {
 #[async_trait]
 impl Gear for StudioReportsGear {
     async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
+        // Its kit is switched off in this deployment: the gear does not start.
+        if crate::composition::stands_down(Self::MODULE_NAME) {
+            return Ok(());
+        }
         let registry = ctx.client_hub().get::<dyn TypesRegistryClient>()?;
         let results = registry.register(gts::type_schemas()).await?;
         RegisterResult::ensure_all_ok(&results)?;
@@ -103,6 +107,9 @@ impl RestApiCapability for StudioReportsGear {
         router: Router,
         openapi: &dyn OpenApiRegistry,
     ) -> anyhow::Result<Router> {
+        if !crate::composition::gear_on(Self::MODULE_NAME) {
+            return Ok(router);
+        }
         let hub = ctx.client_hub();
         let catalog: CatalogLink = {
             let hub = Arc::clone(&hub);
@@ -169,3 +176,14 @@ pub(crate) fn test_ctx(tenant: u128) -> toolkit_security::SecurityContext {
         .build()
         .expect("security context")
 }
+
+// The kit this gear belongs to, and the API domain it serves: which kits
+// start is the deployment's choice (`crate::composition`, ADR-0079 §5), and
+// the core lists no kit's domain (`crate::api_contract`).
+inventory::submit! {
+    crate::composition::KitGear {
+        gear: "studio-reports",
+        kit: "org-reports",
+    }
+}
+inventory::submit! { crate::api_contract::ApiDomain("studio-reports") }

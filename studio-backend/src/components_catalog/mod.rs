@@ -132,6 +132,10 @@ pub struct StudioComponentsCatalogGear {
 #[async_trait]
 impl Gear for StudioComponentsCatalogGear {
     async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
+        // Its kit is switched off in this deployment: the gear does not start.
+        if crate::composition::stands_down(Self::MODULE_NAME) {
+            return Ok(());
+        }
         // Register the catalog GTS type schemas (idempotent). The graph store is
         // resolved later, in the REST phase, where every gear is initialized.
         let registry = ctx.client_hub().get::<dyn TypesRegistryClient>()?;
@@ -150,6 +154,9 @@ impl RestApiCapability for StudioComponentsCatalogGear {
         router: Router,
         openapi: &dyn OpenApiRegistry,
     ) -> anyhow::Result<Router> {
+        if !crate::composition::gear_on(Self::MODULE_NAME) {
+            return Ok(router);
+        }
         let keyword = std::env::var("STUDIO_COMPONENTS_CATALOG_KEYWORD")
             .ok()
             .map(|s| s.trim().to_string())
@@ -280,3 +287,14 @@ impl RestApiCapability for StudioComponentsCatalogGear {
         })
     }
 }
+
+// The kit this gear belongs to, and the API domain it serves: which kits
+// start is the deployment's choice (`crate::composition`, ADR-0079 §5), and
+// the core lists no kit's domain (`crate::api_contract`).
+inventory::submit! {
+    crate::composition::KitGear {
+        gear: "studio-components-catalog",
+        kit: "components",
+    }
+}
+inventory::submit! { crate::api_contract::ApiDomain("studio-components-catalog") }

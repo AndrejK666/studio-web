@@ -44,6 +44,10 @@ pub struct KubernetesConnectorPlugin {}
 #[async_trait]
 impl Gear for KubernetesConnectorPlugin {
     async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
+        // Its kit is switched off in this deployment: the gear does not start.
+        if crate::composition::stands_down(Self::MODULE_NAME) {
+            return Ok(());
+        }
         let cfg: Config = ctx.config_or_default()?;
         let driver: Arc<dyn ConnectorDriver> = Arc::new(KubernetesDriver);
         register_driver(

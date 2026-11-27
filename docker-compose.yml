@@ -249,6 +249,9 @@ services:
       # (studio-spec-quality.config.api_key_env); without it the wrapper reports
       # "not configured" and every Spec Quality run fails. Value lives in .env.
       STUDIO_SPEC_QUALITY_API_KEY: ${STUDIO_SPEC_QUALITY_API_KEY:-}
+      # Which kits start (ADR-0079 §5; config/docker.yaml `vendor.studio.kits`).
+      STUDIO_KITS_ENABLED: ${STUDIO_KITS_ENABLED:-all}
+      STUDIO_KITS_DISABLED: ${STUDIO_KITS_DISABLED:-}
       # Constructor Insight instance token (studio-insight gear). The gear has
       # base_url in config/docker.yaml and reads the TOKEN from this env var
       # (studio-insight.config.api_key_env); without it every Insight call

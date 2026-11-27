@@ -33,8 +33,13 @@ use super::gts::{self as cgts, GtsEdge, GtsNode};
 use super::sink::{CatalogNodeView, CatalogSink, GraphNodeType};
 use crate::domain_model::port::{DomainObjects, OwnedObject, TypeNeed};
 
-/// Each catalogue node type, the model type it becomes, and how it is named.
-const TYPES: [(&str, &str, &str, &str); 17] = [
+/// A catalogue node type, the model type it becomes, and how it is named.
+pub(crate) type ModelEntity = (&'static str, &'static str, &'static str, &'static str);
+
+/// Each catalogue node type the catalogue itself writes, the model type it
+/// becomes, and how it is named. A kit's gear that writes node types of its
+/// own names them in its [`HeldNodeTypes`] ([`types`] has both).
+const TYPES: [ModelEntity; 15] = [
     (
         cgts::GEAR_TYPE,
         "gear",
@@ -52,18 +57,6 @@ const TYPES: [(&str, &str, &str, &str); 17] = [
         "gear-profile",
         "Gear Profile",
         "What an organization says about a gear, kept apart from its source.",
-    ),
-    (
-        cgts::PROJECT_GEAR_REPO_TYPE,
-        "project-gear-repository",
-        "Project Gear Repository",
-        "Where a project's gears live and new ones are written.",
-    ),
-    (
-        cgts::PROJECT_PRODUCT_TYPE,
-        "project-product",
-        "Project Product",
-        "The product a project composes out of gears, and what the engine said of it.",
     ),
     (
         cgts::KIT_TYPE,
@@ -170,11 +163,11 @@ const CATALOG_ID: &str = "catalog_id";
 const CATALOG_TENANT: &str = "catalog_tenant";
 
 fn entity_of(type_id: &str) -> Option<&'static str> {
-    TYPES.iter().find(|t| t.0 == type_id).map(|t| t.1)
+    types().into_iter().find(|t| t.0 == type_id).map(|t| t.1)
 }
 
 fn type_of_entity(entity: &str) -> Option<&'static str> {
-    TYPES.iter().find(|t| t.1 == entity).map(|t| t.0)
+    types().into_iter().find(|t| t.1 == entity).map(|t| t.0)
 }
 
 fn object_id(instance_id: &str) -> String {
@@ -187,9 +180,26 @@ fn object_id(instance_id: &str) -> String {
 pub(crate) struct HeldNodeTypes {
     pub gear: &'static str,
     pub type_ids: &'static [&'static str],
+    /// The model types they become, named by the gear that writes them, so
+    /// the core names no kit's type.
+    pub entities: &'static [ModelEntity],
 }
 
 inventory::collect!(HeldNodeTypes);
+
+/// Every catalogue node type and its model type: the catalogue's own, then
+/// those the running kits' gears register.
+fn types() -> Vec<&'static ModelEntity> {
+    TYPES
+        .iter()
+        .chain(
+            inventory::iter::<HeldNodeTypes>
+                .into_iter()
+                .filter(|h| crate::composition::contributes(h.gear))
+                .flat_map(|h| h.entities.iter()),
+        )
+        .collect()
+}
 
 /// Whether `gear` writes nodes of `type_id`: a gear that registered its
 /// types those, the catalogue the rest. Only those are moved and held by it.
@@ -207,8 +217,8 @@ fn owns_type(gear: &str, type_id: &str) -> bool {
 /// The types `gear` declares for the catalogue: all of them, held where it
 /// writes them.
 pub(crate) fn needs_of(gear: &str) -> Vec<TypeNeed> {
-    TYPES
-        .iter()
+    types()
+        .into_iter()
         .map(|(type_id, entity, name, description)| TypeNeed {
             declared_by: gear.to_owned(),
             id: (*entity).to_owned(),
@@ -363,7 +373,7 @@ impl ModelSink {
                 return anyhow::Ok(0usize);
             }
             let available: HashSet<_> = p.entity_types(ctx).await?.into_iter().map(|(id, _)| id).collect();
-            let entities: Vec<&str> = TYPES.iter().filter(|t| self.owns(t.0) && available.contains(t.1)).map(|t| t.1).collect();
+            let entities: Vec<&str> = types().into_iter().filter(|t| self.owns(t.0) && available.contains(t.1)).map(|t| t.1).collect();
             let rows = self.read(ctx, p, &entities, None).await?;
             let mut nodes = Vec::new();
             let mut snapshots = Vec::new();
@@ -669,8 +679,8 @@ impl CatalogSink for ModelSink {
         let Some(port) = self.ready(ctx).await? else {
             return self.legacy.list(ctx, type_filter).await;
         };
-        let entities: Vec<&str> = TYPES
-            .iter()
+        let entities: Vec<&str> = types()
+            .into_iter()
             .filter(|t| t.0 != cgts::COMPONENT_SNAPSHOT_TYPE)
             .filter(|t| type_filter.is_none_or(|f| t.0.contains(f)))
             .map(|t| t.1)
@@ -694,7 +704,7 @@ impl CatalogSink for ModelSink {
             return self.legacy.delete(ctx, instance_id).await;
         };
         let id = object_id(instance_id);
-        for (_, entity, ..) in TYPES {
+        for &(_, entity, ..) in types() {
             let (found, _) = port
                 .query(
                     ctx,
@@ -737,8 +747,8 @@ impl CatalogSink for ModelSink {
         let entities: Vec<String> = graph_types
             .iter()
             .map(|t| {
-                TYPES
-                    .iter()
+                types()
+                    .into_iter()
                     .find(|x| cgts::graph_type_id(x.0) == *t || x.0 == t)
                     .map_or_else(|| t.clone(), |x| x.1.to_owned())
             })
@@ -769,8 +779,8 @@ impl CatalogSink for ModelSink {
         let Some(port) = self.ready(ctx).await? else {
             return self.legacy.count_of_type(ctx, graph_type, cap).await;
         };
-        let entity = TYPES
-            .iter()
+        let entity = types()
+            .into_iter()
             .find(|x| cgts::graph_type_id(x.0) == graph_type || x.0 == graph_type)
             .map_or(graph_type, |x| x.1);
         let mut body = json!({"type": entity, "limit": 1});

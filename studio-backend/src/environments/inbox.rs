@@ -11,6 +11,7 @@ use crate::user_profile::port::{
 inventory::submit! {
     InboxToolSource {
         kind: "deploy",
+        gear: "studio-environments",
         order: 10,
         read: deploys,
     }

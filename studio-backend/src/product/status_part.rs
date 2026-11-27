@@ -70,5 +70,6 @@ inventory::submit! {
             title: "Product",
             tab: "product",
         }],
+        opens: &[("kind", "components"), ("product", "components")],
     }
 }

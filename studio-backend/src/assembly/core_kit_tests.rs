@@ -146,17 +146,17 @@ fn the_scanner_sees_references_between_modules() {
     );
     // The crate root's bare paths.
     assert!(
-        has(MODULE_REFS, "lib", "research_emulator"),
+        has(MODULE_REFS, "lib", "gts_audit"),
         "build.rs did not read lib.rs"
     );
-    // A kit gear's REST path in a string.
+    // A gear's REST path in a string (a kit's gear naming a core gear's).
     assert!(
-        has(MODULE_NAME_REFS, "notify", "studio_theia"),
+        has(MODULE_NAME_REFS, "spec_quality", "tasks"),
         "build.rs read no gear names in strings"
     );
     // A kit's slug in a string.
     assert!(
-        has(MODULE_SLUG_REFS, "organizations", "components"),
+        has(MODULE_SLUG_REFS, "artifact_ingest", "project-git"),
         "build.rs read no kit slugs in strings"
     );
 }
