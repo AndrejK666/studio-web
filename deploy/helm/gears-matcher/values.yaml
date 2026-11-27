@@ -65,6 +65,14 @@ catalogue:
 persistence:
   size: 10Gi
   storageClass: ""         # empty leaves it to the cluster default
+  # Who hands the claim to uid 10001. A Cinder claim whose class sets no fsType (cinder-default) mounts
+  # root:root and ignores fsGroup (#854), so a root init container chowns its mount point, which
+  # PodSecurity "restricted" warns about. So it runs only when needed:
+  #   fresh  - only in the rollout that creates the claim (helm `lookup` finds none yet)
+  #   always - every rollout (re-hand a claim that was replaced by hand)
+  #   never  - the class sets fsType (e.g. cinder-postgres), so fsGroup does it
+  # `helm template` without --dry-run=server finds no claim and renders it, which errs on the safe side.
+  claimOwner: fresh
 
 limits:
   workers: 4               # runs executed at the same time on this Pod

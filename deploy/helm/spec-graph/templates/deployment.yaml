@@ -1,6 +1,15 @@
 {{- $gateway := required "studio.gatewayUrl: Studio's gateway with /cf, as this pod reaches it" .Values.studio.gatewayUrl -}}
 {{- $tag := required "image.tag: a published tag of the image" .Values.image.tag -}}
 {{- $token := required "studio.tokenUrl: Keycloak's token endpoint of Studio's realm" .Values.studio.tokenUrl -}}
+{{- /* persistence.claimOwner: fresh, always or never; the old true and false mean fresh and never. */ -}}
+{{- $claimOwner := .Values.persistence.claimOwner -}}
+{{- if kindIs "bool" $claimOwner }}{{ $claimOwner = ternary "fresh" "never" $claimOwner }}{{ end -}}
+{{- $claimOwner = $claimOwner | default "fresh" -}}
+{{- if not (has $claimOwner (list "fresh" "always" "never")) -}}
+{{- fail (printf "persistence.claimOwner must be fresh, always or never, not %q" $claimOwner) -}}
+{{- end -}}
+{{- $claimName := .Values.persistence.existingClaim | default (printf "%s-data" (include "spec-graph.fullname" .)) -}}
+{{- $ownClaim := or (eq $claimOwner "always") (and (eq $claimOwner "fresh") (not (lookup "v1" "PersistentVolumeClaim" .Release.Namespace $claimName))) -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -25,9 +34,13 @@ spec:
       imagePullSecrets: {{- toYaml . | nindent 8 }}
       {{- end }}
       securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
-      {{- if .Values.persistence.claimOwner }}
+      {{- if $ownClaim }}
       # A new Cinder claim mounts root:root and ignores fsGroup: hand /data to the service's
-      # user before it starts (the backend's claim-owner, the same way).
+      # user before it starts (the backend's claim-owner, the same way). PodSecurity "restricted"
+      # (the namespaces' warn level) cannot be met: it requires runAsNonRoot and allows no capability
+      # but NET_BIND_SERVICE, and a chown of a root-owned mount point takes root with CAP_CHOWN.
+      # Everything else is narrowed, inside "baseline" (the enforced level); and it is rendered only
+      # in the rollout that creates the claim (persistence.claimOwner).
       initContainers:
         - name: claim-owner
           image: "{{ .Values.image.repository }}:{{ $tag }}"
@@ -38,9 +51,13 @@ spec:
             runAsUser: 0
             allowPrivilegeEscalation: false
             capabilities: { drop: ["ALL"], add: ["CHOWN"] }
+            seccompProfile: { type: RuntimeDefault }
           volumeMounts:
             - name: data
               mountPath: /data
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { cpu: 100m, memory: 64Mi }
       {{- end }}
       containers:
         - name: spec-graph
@@ -94,7 +111,7 @@ spec:
       volumes:
         - name: data
           persistentVolumeClaim:
-            claimName: {{ .Values.persistence.existingClaim | default (printf "%s-data" (include "spec-graph.fullname" .)) }}
+            claimName: {{ $claimName }}
         {{- if .Values.studio.caConfigMap }}
         - name: ca
           configMap:
