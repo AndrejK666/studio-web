@@ -37,7 +37,6 @@ inventory::collect!(ToolSet);
 /// beside its [`ToolSet`] (ADR-0079 §4).
 pub struct Instruction {
     /// The gear whose tools it names, for readers of the registry.
-    #[allow(dead_code, reason = "named for readers of the registry")]
     pub gear: &'static str,
     /// Where the phrase stands in the list, lowest first.
     pub order: u16,
@@ -56,7 +55,10 @@ or your repository.";
 /// The server's `instructions`: what its tools are for, as the gears
 /// registered it, then how every call acts.
 pub fn instructions() -> String {
-    let mut found: Vec<&Instruction> = inventory::iter::<Instruction>.into_iter().collect();
+    let mut found: Vec<&Instruction> = inventory::iter::<Instruction>
+        .into_iter()
+        .filter(|i| crate::composition::contributes(i.gear))
+        .collect();
     found.sort_by_key(|i| (i.order, i.phrase));
     let phrases: Vec<&str> = found.iter().map(|i| i.phrase).collect();
     let list = match phrases.as_slice() {

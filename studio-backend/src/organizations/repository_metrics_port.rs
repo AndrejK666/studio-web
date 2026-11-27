@@ -35,6 +35,7 @@ inventory::collect!(RepositoryMetricsSource);
 pub fn registered() -> Option<&'static RepositoryMetricsSource> {
     inventory::iter::<RepositoryMetricsSource>
         .into_iter()
+        .filter(|s| crate::composition::contributes(s.gear))
         .min_by(|a, b| a.gear.cmp(b.gear))
 }
 

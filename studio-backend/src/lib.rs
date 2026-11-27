@@ -15,6 +15,7 @@ mod assembly; // studio-assembly: the gears this process linked, its build, its 
 mod catalog_graph; // the catalogue graph: node vocabulary + store, shared by the catalogue and the product
 mod clone_outcomes; // how a clone of a project's source went: a core port its writers record through (#1071)
 mod components_catalog; // connector to crates.io: catalogue our published gears + versions in the graph
+mod composition; // which kits run in this deployment: the composition switch (ADR-0079 §5)
 mod connectors; // source connectors: driver plugins + tenant connection catalogue
 mod credstore_pg; // persistent credstore value store (issue #66)
 mod data_places; // where each gear keeps its records, as the architecture page shows it
@@ -67,7 +68,8 @@ mod spec_quality; // studio-spec-quality: authenticated wrapper over the externa
 mod studio_authz_plugin; // Studio PDP: the AuthZ resolver plugin (ADR-0009)
 mod studio_events; // studio-events: the assembly's one push channel to the portal (SSE + replay)
 mod studio_session; // Studio's own gear: per-workspace Theia IDE containers
-#[cfg(feature = "theia-bridge")]
+// The IDE kit's gear is behind `theia-bridge`; the module always is, for the
+// kit's registrations (`studio_theia/mod.rs`).
 mod studio_theia; // ADR-0022: backend-to-backend bridge to the Theia node backend (opt-in)
 mod tasks; // studio-tasks: durable background runs (queue + history + cancel)
 #[cfg(test)]
@@ -159,11 +161,6 @@ enum Commands {
     /// Built from the code alone, like `gts-types`. `scripts/product-gdl.mjs`
     /// gives the list to the Gearbox engine, which writes `product.gdl`.
     Gears,
-    /// Serve a stand-in for Constructor Research (ADR-0049): its sign-in,
-    /// account API, desk files and build logs, as Studio calls them. For a
-    /// deployment that cannot reach a real Research yet; see
-    /// `docs/research-emulator.md`.
-    ResearchEmulator(research_emulator::Args),
     /// Audit a running deployment: diff both live registries against the
     /// inventory this binary would register, and exit non-zero on any
     /// disagreement (ADR-0013 §6.3).
@@ -224,10 +221,6 @@ pub async fn run_cli() -> Result<()> {
         println!("{}", assembly::gears_json()?);
         return Ok(());
     }
-    // A process of its own: no profile, no database.
-    if let Some(Commands::ResearchEmulator(args)) = &cli.command {
-        return research_emulator::run(args).await;
-    }
     if matches!(cli.command, Some(Commands::GtsTypes)) {
         print!("{}", gts_inventory::to_pretty_json()?);
         return Ok(());
@@ -274,6 +267,9 @@ pub async fn run_cli() -> Result<()> {
     // -> CLI overrides.
     let mut config = load_config(cli.config.as_ref())?;
     config.apply_cli_overrides(cli.verbose);
+    // Which kits start is the deployment's choice (ADR-0079 §5), fixed
+    // before any gear does.
+    composition::configure(&config)?;
 
     if cli.print_config {
         println!("Effective configuration:\n{}", config.to_yaml()?);
@@ -302,7 +298,6 @@ pub async fn run_cli() -> Result<()> {
         Commands::ApiContract { .. }
         | Commands::GtsTypes
         | Commands::Gears
-        | Commands::ResearchEmulator(_)
         | Commands::GtsAudit { .. } => Ok(()),
     }
 }

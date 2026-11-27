@@ -13,7 +13,7 @@
 
 mod access_grants;
 /// The core's Overview port: kits' blocks on an organization's Overview (ADR-0079).
-mod blocks;
+pub(crate) mod blocks;
 #[cfg(test)]
 pub(crate) use access_grants::{
     ChangeError as AccessChangeError, save_document as save_access_document,
@@ -23,11 +23,11 @@ mod creation;
 mod creation_port;
 mod events;
 /// Which kit owns which part of a project's status and path (ADR-0079).
-mod kit_parts;
+pub(crate) mod kit_parts;
 pub mod logo;
 mod mcp;
 /// The cost metering port: what kits meter of an organization's spend (ADR-0079).
-mod metering_port;
+pub(crate) mod metering_port;
 mod metrics;
 mod overview;
 pub(crate) mod project_create;
@@ -48,7 +48,7 @@ inventory::submit! {
 }
 pub mod port;
 /// The repository metrics port: the metrics board's repository half (ADR-0079).
-mod repository_metrics_port;
+pub(crate) mod repository_metrics_port;
 mod rest;
 /// The rollup counts port: what kits count per project for its row (ADR-0079).
 mod rollup_port;
@@ -57,7 +57,7 @@ pub mod sdk;
 mod service;
 pub(crate) mod status;
 /// The project status port: kits' facts about a project (ADR-0079).
-mod status_port;
+pub(crate) mod status_port;
 pub(crate) mod status_read;
 /// What the project path (`crate::project_path`) reads of a product record, the
 /// same way the project status does.

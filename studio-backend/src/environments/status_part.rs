@@ -74,5 +74,6 @@ inventory::submit! {
                 tab: "releases",
             },
         ],
+        opens: &[],
     }
 }

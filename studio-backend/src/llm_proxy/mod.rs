@@ -32,3 +32,26 @@ mod anthropic_connector_plugin;
 /// OpenAI — what `@theia/ai-codex` uses.
 #[path = "plugins/openai/mod.rs"]
 mod openai_connector_plugin;
+
+// The kit this gear belongs to, and the API domain it serves: which kits
+// start is the deployment's choice (`crate::composition`, ADR-0079 §5), and
+// the core lists no kit's domain (`crate::api_contract`).
+inventory::submit! {
+    crate::composition::KitGear {
+        gear: "studio-llm-proxy",
+        kit: "assistant",
+    }
+}
+inventory::submit! {
+    crate::composition::KitGear {
+        gear: "anthropic-connector-plugin",
+        kit: "assistant",
+    }
+}
+inventory::submit! {
+    crate::composition::KitGear {
+        gear: "openai-connector-plugin",
+        kit: "assistant",
+    }
+}
+inventory::submit! { crate::api_contract::ApiDomain("studio-llm") }

@@ -71,7 +71,6 @@ pub struct OverviewBlock {
     /// The kit it belongs to: shown only where that kit is installed.
     pub kit: &'static str,
     /// The gear that computes it (`studio-usage`), for logs.
-    #[allow(dead_code, reason = "named for logs and readers of the registry")]
     pub gear: &'static str,
     /// Its name inside the kit (`spend`); `kit/id` is unique.
     pub id: &'static str,
@@ -88,6 +87,7 @@ pub fn registered(level: Level) -> Vec<&'static OverviewBlock> {
     let mut out: Vec<&'static OverviewBlock> = inventory::iter::<OverviewBlock>
         .into_iter()
         .filter(|b| b.level == level)
+        .filter(|b| crate::composition::contributes(b.gear) && crate::composition::kit_on(b.kit))
         .collect();
     out.sort_by(|a, b| {
         a.order

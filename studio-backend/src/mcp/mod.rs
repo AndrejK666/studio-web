@@ -49,10 +49,21 @@ pub fn tools() -> Vec<sdk::Tool> {
 /// `tools/list` gives them: what a component's page lists under the gear,
 /// and what the kits' claims test holds to the claims.
 pub fn tools_by_gear() -> Vec<(&'static str, sdk::Tool)> {
-    let mut sets: Vec<&sdk::ToolSet> = inventory::iter::<sdk::ToolSet>.into_iter().collect();
+    // A switched-off kit brings no tool (ADR-0079 §5): neither its gear's
+    // sets nor a tool another gear serves for it.
+    let claims = crate::kit_registry::port::Claims::builtin();
+    let mut sets: Vec<&sdk::ToolSet> = inventory::iter::<sdk::ToolSet>
+        .into_iter()
+        .filter(|set| crate::composition::contributes(set.gear))
+        .collect();
     sets.sort_by_key(|set| set.order);
     sets.into_iter()
         .flat_map(|set| (set.tools)().into_iter().map(move |tool| (set.gear, tool)))
+        .filter(|(_, tool)| {
+            claims
+                .tool_claim(tool.name)
+                .is_none_or(|c| crate::composition::kit_on(&c.kit))
+        })
         .collect()
 }
 

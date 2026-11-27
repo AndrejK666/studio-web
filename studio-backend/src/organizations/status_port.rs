@@ -30,7 +30,6 @@ use super::status::{BuildFacts, Deploy, FindingFacts, ModelFacts, ProductFacts, 
 /// A kit's contribution to a project's status, registered by its gear.
 pub struct StatusContributor {
     /// The gear that reads it (`studio-documents`), for logs and readers.
-    #[allow(dead_code, reason = "named for logs and readers of the registry")]
     pub gear: &'static str,
     /// Where its part stands when two say the same fact, lowest first.
     pub order: u16,
@@ -41,8 +40,10 @@ inventory::collect!(StatusContributor);
 
 /// Every registered contributor, lowest `order` first, then by gear.
 pub fn registered() -> Vec<&'static StatusContributor> {
-    let mut out: Vec<&'static StatusContributor> =
-        inventory::iter::<StatusContributor>.into_iter().collect();
+    let mut out: Vec<&'static StatusContributor> = inventory::iter::<StatusContributor>
+        .into_iter()
+        .filter(|c| crate::composition::contributes(c.gear))
+        .collect();
     out.sort_by(|a, b| a.order.cmp(&b.order).then(a.gear.cmp(b.gear)));
     out
 }

@@ -28,6 +28,7 @@ inventory::submit! {
 inventory::submit! {
     InboxToolSource {
         kind: "review",
+        gear: "studio-documents",
         order: 20,
         read: reviews,
     }

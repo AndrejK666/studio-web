@@ -70,6 +70,10 @@ impl Default for LlmProxyGear {
 #[async_trait]
 impl Gear for LlmProxyGear {
     async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
+        // Its kit is switched off in this deployment: the gear does not start.
+        if crate::composition::stands_down(Self::MODULE_NAME) {
+            return Ok(());
+        }
         let cfg: LlmProxyConfig = ctx.config_or_default()?;
 
         // Long timeout: chat completions stream for minutes. connect_timeout
@@ -130,6 +134,9 @@ impl toolkit::contracts::RestApiCapability for LlmProxyGear {
         router: Router,
         openapi: &dyn OpenApiRegistry,
     ) -> anyhow::Result<Router> {
+        if !crate::composition::gear_on(Self::MODULE_NAME) {
+            return Ok(router);
+        }
         let providers = self
             .providers
             .get()

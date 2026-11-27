@@ -27,10 +27,10 @@ use super::manifest::{MODULE_NAME_REFS, MODULE_REFS, MODULE_SLUG_REFS};
 /// registers its own manifest (ADR-0079 §5).
 const REGISTRY: &str = "kit_registry";
 
-/// The folders under `src/` that are kits' gears (ADR-0079 §7), and the two
-/// kits' modules the ADR's list predates: `gears_matcher` (the gears-matcher
-/// kit's client of its service, ADR-0076) and `research_emulator` (the
-/// constructor-research kit's stand-in for Constructor Research, ADR-0049).
+/// The folders under `src/` that are kits' gears and modules (ADR-0079 §7),
+/// `gears_matcher` (the gears-matcher kit's side of its service, ADR-0076)
+/// and `research_emulator` (the constructor-research kit's stand-in for
+/// Constructor Research, ADR-0049) among them.
 const KIT_GEARS: &[&str] = &[
     "artifact_ingest",
     "components_catalog",
@@ -142,17 +142,17 @@ fn the_scanner_sees_references_between_modules() {
     );
     // The crate root's bare paths.
     assert!(
-        has(MODULE_REFS, "lib", "research_emulator"),
+        has(MODULE_REFS, "lib", "gts_audit"),
         "build.rs did not read lib.rs"
     );
-    // A kit gear's REST path in a string.
+    // A gear's REST path in a string (a kit's gear naming a core gear's).
     assert!(
-        has(MODULE_NAME_REFS, "notify", "studio_theia"),
+        has(MODULE_NAME_REFS, "spec_quality", "tasks"),
         "build.rs read no gear names in strings"
     );
     // A kit's slug in a string.
     assert!(
-        has(MODULE_SLUG_REFS, "organizations", "components"),
+        has(MODULE_SLUG_REFS, "artifact_ingest", "project-git"),
         "build.rs read no kit slugs in strings"
     );
 }

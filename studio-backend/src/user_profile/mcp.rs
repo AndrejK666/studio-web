@@ -37,6 +37,7 @@ const MAX_PAGES: usize = 20;
 inventory::submit! {
     InboxToolSource {
         kind: "run",
+        gear: "studio-user",
         order: 40,
         read: runs,
     }

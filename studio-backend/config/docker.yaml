@@ -100,6 +100,17 @@ logging:
     file: "logs/account-management.log"
     file_level: debug
 
+# Which of Studio's kits start (ADR-0079 §5, `src/composition.rs`): `all`,
+# `none` or a comma list of kit slugs, minus the `disabled` ones. A switched-off
+# kit's gear starts nothing: no tables, no tasks, no routes, no MCP tools, no
+# Overview blocks. Changing it needs a restart, not a rebuild. Compose passes
+# the two variables through when they are set.
+vendor:
+  studio:
+    kits:
+      enabled: "${STUDIO_KITS_ENABLED:-all}"
+      disabled: "${STUDIO_KITS_DISABLED:-}"
+
 gears:
   # Wrapper over the external spec-quality detector service (bloat / purpose /
   # leak / traceability). The service has its OWN bearer secret; it lives here

@@ -321,7 +321,10 @@ inventory::collect!(ScheduleSet);
 
 /// Every submitted set's schedules, the sets in their `order`.
 pub fn contributed_schedules() -> Vec<PlatformSchedule> {
-    let mut sets: Vec<&ScheduleSet> = inventory::iter::<ScheduleSet>.into_iter().collect();
+    let mut sets: Vec<&ScheduleSet> = inventory::iter::<ScheduleSet>
+        .into_iter()
+        .filter(|s| crate::composition::contributes(s.gear))
+        .collect();
     sets.sort_by_key(|s| (s.order, s.gear));
     sets.into_iter().flat_map(|s| (s.schedules)()).collect()
 }

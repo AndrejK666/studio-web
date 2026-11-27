@@ -52,6 +52,20 @@ inventory::submit! {
     crate::catalog_graph::HeldNodeTypes {
         gear: "studio-product",
         type_ids: &crate::catalog_graph::gts::PRODUCT_NODE_TYPES,
+        entities: &[
+            (
+                crate::catalog_graph::gts::PROJECT_GEAR_REPO_TYPE,
+                "project-gear-repository",
+                "Project Gear Repository",
+                "Where a project's gears live and new ones are written.",
+            ),
+            (
+                crate::catalog_graph::gts::PROJECT_PRODUCT_TYPE,
+                "project-product",
+                "Project Product",
+                "The product a project composes out of gears, and what the engine said of it.",
+            ),
+        ],
     }
 }
 
@@ -126,6 +140,9 @@ pub struct StudioProductGear {
 
 impl DatabaseCapability for StudioProductGear {
     fn migrations(&self) -> Vec<Box<dyn toolkit_db::sea_orm_migration::MigrationTrait>> {
+        if !crate::composition::gear_on(Self::MODULE_NAME) {
+            return Vec::new();
+        }
         use toolkit_db::sea_orm_migration::MigratorTrait;
         migrations::Migrator::migrations()
     }
@@ -134,6 +151,10 @@ impl DatabaseCapability for StudioProductGear {
 #[async_trait]
 impl Gear for StudioProductGear {
     async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
+        // Its kit is switched off in this deployment: the gear does not start.
+        if crate::composition::stands_down(Self::MODULE_NAME) {
+            return Ok(());
+        }
         // The descriptions stand down without a database, rather than the
         // whole gear: previews, writes and the corpus need none.
         let mut match_store = None;
@@ -228,6 +249,9 @@ impl RestApiCapability for StudioProductGear {
         router: Router,
         openapi: &dyn OpenApiRegistry,
     ) -> anyhow::Result<Router> {
+        if !crate::composition::gear_on(Self::MODULE_NAME) {
+            return Ok(router);
+        }
         let mut sink = crate::catalog_graph::build_sink(&ctx.client_hub(), "studio-product");
         // A project's gear repository and product as domain objects (ADR-0066
         // §8a, `storage.catalog`).
@@ -339,3 +363,14 @@ impl RestApiCapability for StudioProductGear {
         })
     }
 }
+
+// The kit this gear belongs to, and the API domain it serves: which kits
+// start is the deployment's choice (`crate::composition`, ADR-0079 §5), and
+// the core lists no kit's domain (`crate::api_contract`).
+inventory::submit! {
+    crate::composition::KitGear {
+        gear: "studio-product",
+        kit: "project-product",
+    }
+}
+inventory::submit! { crate::api_contract::ApiDomain("studio-product") }

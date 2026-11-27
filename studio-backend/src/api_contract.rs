@@ -53,36 +53,39 @@ mod schema_names; // OpenAPI schema names, one namespace across every gear
 ///
 /// A domain lands here in the same PR that registers its first operation, which
 /// makes "new domain or typo?" a review question instead of a runtime surprise.
+/// These are the core's; a kit's gear registers its own domain beside its
+/// routes ([`ApiDomain`], ADR-0079 §4), so the core names no kit.
 const DOMAINS: &[&str] = &[
-    "studio-artifact-ingest",
     "studio-assembly",
-    "studio-components-catalog",
     "studio-connector",
-    "studio-documents",
     "studio-domain-model",
-    "studio-environments",
     "studio-events",
-    "studio-git",
     "studio-identity",
-    "studio-insight",
     "studio-kits",
-    "studio-llm",
     "studio-mcp",
     "studio-notify",
     "studio-organizations",
     "studio-presence",
-    "studio-product",
-    "studio-reports",
     "studio-scheduler",
     "studio-session",
-    "studio-spec-graph",
-    "studio-spec-mapping",
-    "studio-spec-quality",
     "studio-tasks",
-    "studio-theia",
-    "studio-usage",
     "studio-user",
 ];
+
+/// A kit gear's API domain, registered in the gear's own module:
+/// `inventory::submit! { crate::api_contract::ApiDomain("studio-reports") }`.
+/// The same review question as [`DOMAINS`], asked where the kit is.
+pub(crate) struct ApiDomain(pub &'static str);
+
+inventory::collect!(ApiDomain);
+
+/// Whether `domain` is registered: the core's, or a kit gear's.
+fn domain_registered(domain: &str) -> bool {
+    DOMAINS.contains(&domain)
+        || inventory::iter::<ApiDomain>
+            .into_iter()
+            .any(|d| d.0 == domain)
+}
 
 /// The verbs an `operation_id` may begin with (rule A2).
 ///
@@ -552,10 +555,10 @@ fn violations(operations: &[Operation], structs: &BTreeMap<String, StructShape>)
             continue;
         };
         let domain = operation.domain();
-        if !DOMAINS.contains(&domain) {
+        if !domain_registered(domain) {
             broken.push((
                 "domain-registered",
-                format!("`{domain}` is not in the domain registry (api_contract::DOMAINS)"),
+                format!("`{domain}` is not in the domain registry (api_contract::DOMAINS, or a kit's ApiDomain)"),
             ));
         }
         if !domain.starts_with("studio-") {

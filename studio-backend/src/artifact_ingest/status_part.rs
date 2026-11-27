@@ -34,6 +34,7 @@ inventory::submit! {
         steps: &[],
         signals: &["stuck", "nobody", "threads", "quiet"],
         stages: &[],
+        opens: &[],
     }
 }
 

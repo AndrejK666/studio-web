@@ -46,6 +46,10 @@ impl Default for StudioTheiaGear {
 #[async_trait]
 impl Gear for StudioTheiaGear {
     async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
+        // Its kit is switched off in this deployment: the gear does not start.
+        if crate::composition::stands_down(Self::MODULE_NAME) {
+            return Ok(());
+        }
         let cfg: StudioTheiaConfig = ctx.config_or_default()?;
         // Remember the path even when disabled, so REST still mounts the (503)
         // ingress at the configured location.
@@ -119,6 +123,9 @@ impl RestApiCapability for StudioTheiaGear {
         router: Router,
         openapi: &dyn OpenApiRegistry,
     ) -> anyhow::Result<Router> {
+        if !crate::composition::gear_on(Self::MODULE_NAME) {
+            return Ok(router);
+        }
         let path = self
             .ingress_path
             .get()

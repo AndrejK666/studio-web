@@ -29,7 +29,6 @@ use uuid::Uuid;
 /// keeps it.
 pub struct CostMeter {
     /// The gear that meters (`studio-usage`), for logs and readers.
-    #[allow(dead_code, reason = "named for logs and readers of the registry")]
     pub gear: &'static str,
     /// Where it stands among the meters, lowest first: the first one's
     /// currency is the board's.
@@ -41,7 +40,10 @@ inventory::collect!(CostMeter);
 
 /// Every registered meter, lowest `order` first, then by gear.
 pub fn registered() -> Vec<&'static CostMeter> {
-    let mut out: Vec<&'static CostMeter> = inventory::iter::<CostMeter>.into_iter().collect();
+    let mut out: Vec<&'static CostMeter> = inventory::iter::<CostMeter>
+        .into_iter()
+        .filter(|m| crate::composition::contributes(m.gear))
+        .collect();
     out.sort_by(|a, b| a.order.cmp(&b.order).then(a.gear.cmp(b.gear)));
     out
 }

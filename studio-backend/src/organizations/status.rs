@@ -54,10 +54,19 @@ impl Kits {
     /// always does.
     pub fn has(&self, kit: Option<&str>) -> bool {
         match (self, kit) {
-            (_, None) | (Kits::All, _) => true,
+            (_, None) => true,
+            // A kit this deployment does not run shows nowhere (ADR-0079 §5).
+            (_, Some(k)) if !crate::composition::kit_on(k) => false,
+            (Kits::All, _) => true,
             (Kits::Only(kits), Some(k)) => kits.iter().any(|x| x == k),
         }
     }
+}
+
+/// The tab a step or signal opens, as the kit that holds it says; the
+/// project's Overview when no running kit does (the part is then hidden too).
+fn opens(part: &str) -> &'static str {
+    super::kit_parts::opens(part).unwrap_or("overview")
 }
 
 fn plural_s(n: u32, one: &str) -> String {
@@ -357,7 +366,7 @@ fn kind(k: Option<&KindFacts>) -> Draft {
         draft(
             "kind",
             "Decide what the product is",
-            "components",
+            opens("kind"),
             "Open Product",
             done,
             status,
@@ -374,7 +383,7 @@ fn product(f: &PathFacts) -> Draft {
         draft(
             "product",
             "Compose the product",
-            "components",
+            opens("product"),
             "Open Product",
             done,
             status,
@@ -693,7 +702,7 @@ pub fn project_signals(f: &Facts) -> Vec<Signal> {
             "product does not resolve".into(),
             Some(plural_s(product.errors, "error")),
             "Open Product",
-            "components",
+            opens("product"),
         ));
     }
     if let Some(BuildFacts::Last { status, sha }) = p.and_then(|p| p.build.as_ref())
@@ -811,7 +820,7 @@ pub fn project_signals(f: &Facts) -> Vec<Signal> {
             ),
             Some("answered in the IDE, on the text each is about".into()),
             "Open IDE",
-            "ide",
+            super::kit_parts::opens("threads-me").unwrap_or("activity"),
         ));
     } else if let Some(n) = f.open_comments.filter(|n| *n > 0) {
         out.push(signal(

@@ -224,6 +224,33 @@ fn content_range(v: &str) -> Option<(usize, usize, usize)> {
     (a <= b && b < total).then_some((a, b, total))
 }
 
+// The constructor-research kit's command, through the core's command-line
+// port (ADR-0079 §4): a process of its own, no profile, no database.
+inventory::submit! {
+    crate::CliCommand {
+        order: 30,
+        command,
+        run: run_command,
+    }
+}
+
+/// The command as clap reads it.
+fn command() -> clap::Command {
+    use clap::Args as _;
+    Args::augment_args(clap::Command::new("research-emulator").about(
+        "Serve a stand-in for Constructor Research (ADR-0049): its sign-in, account API, \
+         desk files and build logs, as Studio calls them. For a deployment that cannot reach \
+         a real Research yet; see `docs/research-emulator.md`.",
+    ))
+}
+
+/// Run it on the command line's runtime: the port's commands are synchronous.
+fn run_command(matches: &clap::ArgMatches) -> anyhow::Result<()> {
+    use clap::FromArgMatches as _;
+    let args = Args::from_arg_matches(matches)?;
+    tokio::task::block_in_place(|| tokio::runtime::Handle::current().block_on(run(&args)))
+}
+
 /// `studio-backend research-emulator`: serve until stopped.
 pub async fn run(args: &Args) -> anyhow::Result<()> {
     let cfg = Config::from_args(args)?;

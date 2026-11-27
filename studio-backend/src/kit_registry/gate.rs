@@ -70,6 +70,12 @@ impl KitRefusal {
                     Some(name) => format!("the {name} kit (`{kit}`)"),
                     None => format!("the kit `{kit}`"),
                 };
+                if !crate::composition::kit_on(kit) {
+                    return format!(
+                        "this comes with {named}, which this deployment does not run: its \
+                         operator switches it on in the configuration (`vendor.studio.kits`)"
+                    );
+                }
                 format!(
                     "this comes with {named}, which is not installed here: an administrator \
                      installs it for the organization under Organization › Kits, or for one \
@@ -114,6 +120,12 @@ pub async fn require_kit_with(
     tenant: Uuid,
     kit: &str,
 ) -> Result<(), KitRefusal> {
+    // A kit this deployment does not run applies nowhere (ADR-0079 §5).
+    if !crate::composition::kit_on(kit) {
+        return Err(KitRefusal::NotInstalled {
+            kit: kit.to_owned(),
+        });
+    }
     let Some(presence) = presence else {
         return Ok(());
     };
@@ -339,6 +351,10 @@ pub async fn sync_wanted(
     let Some(kit) = claims.sync_kit(gear, type_id) else {
         return true;
     };
+    // A kit this deployment does not run wants nothing synced for it.
+    if !crate::composition::kit_on(kit) {
+        return false;
+    }
     let Some(presence) = presence else {
         return true;
     };

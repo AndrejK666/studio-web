@@ -32,6 +32,10 @@ impl Default for SpecQualityGear {
 #[async_trait]
 impl Gear for SpecQualityGear {
     async fn init(&self, ctx: &GearCtx) -> anyhow::Result<()> {
+        // Its kit is switched off in this deployment: the gear does not start.
+        if crate::composition::stands_down(Self::MODULE_NAME) {
+            return Ok(());
+        }
         let cfg: SpecQualityConfig = ctx.config_or_default()?;
         let base_url = cfg.resolve_base_url();
         let api_key = cfg.resolve_api_key();
@@ -90,6 +94,9 @@ impl toolkit::contracts::RestApiCapability for SpecQualityGear {
         router: Router,
         openapi: &dyn OpenApiRegistry,
     ) -> anyhow::Result<Router> {
+        if !crate::composition::gear_on(Self::MODULE_NAME) {
+            return Ok(router);
+        }
         let state = self
             .state
             .get()

@@ -88,7 +88,8 @@ impl NotifyService {
         self.hub.get::<dyn IdeBridge>().map_err(|_| {
             anyhow!(
                 "notifying an IDE is not available in this deployment \
-                 (studio-theia is not wired — see `theia_control_enabled`)"
+                 (no IDE bridge is registered: the IDE kit is switched off, or its bridge \
+                 is — see `theia_control_enabled`)"
             )
         })
     }
