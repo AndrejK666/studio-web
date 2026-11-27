@@ -94,6 +94,26 @@ studio-web/
 └── docker-compose.published.yml  Override: run the images CI published instead
 ```
 
+### Archived frontends
+
+The team works on one frontend, `studio-frontend/`. The two portals it
+replaced were removed from the tree on 2026-11-27 and are kept as annotated
+git tags on the commit before the removal (`34bc5841e`):
+
+| Tree | Tag | What it was |
+|---|---|---|
+| `studio-frontend-poc/` | `archive/studio-frontend-poc-2026-11-27` | The pre-FrontX prototype SPA, the source the kits were carried over from |
+| `studio-frontend/` (FrontX) | `archive/studio-frontend-frontx-2026-11-27` | The FrontX portal that served the main hosts until the one frontend took them over |
+
+Restore a tree with `git checkout <tag> -- <dir>`, for example
+`git checkout archive/studio-frontend-poc-2026-11-27 -- studio-frontend-poc`.
+The FrontX tree's directory name is reused by the one frontend, so read it
+without overwriting: `git show archive/studio-frontend-frontx-2026-11-27:studio-frontend/<path>`,
+or extract it elsewhere with
+`git archive archive/studio-frontend-frontx-2026-11-27 studio-frontend | tar -x -C <dir>`.
+The tags are the primary archive; a tar.gz of each tree is also kept by the
+maintainer.
+
 | If you want to… | Start with |
 |---|---|
 | run the whole stack locally | [Quick start](#quick-start) |
