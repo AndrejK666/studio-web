@@ -581,3 +581,87 @@ describe('PortalBridgeContribution portal theme (#1073)', () => {
         expect(set).toEqual([['light', true]]);
     });
 });
+
+/**
+ * Protocol v2 beside v1 (ADR-0080 §4): the portal may speak `ide.*` or
+ * `studio.*`, and the IDE answers each in its own spelling for the release
+ * both are served.
+ */
+describe('PortalBridgeContribution protocol versions', () => {
+    const OWN = window.location.origin;
+    let post: jest.Mock;
+    let parent: { postMessage: jest.Mock };
+    let listener: ((event: Partial<MessageEvent>) => void) | undefined;
+    let shown: string[];
+
+    beforeEach(() => {
+        post = jest.fn();
+        parent = { postMessage: post };
+        Object.defineProperty(window, 'parent', { value: parent, configurable: true });
+        listener = undefined;
+        jest.spyOn(window, 'addEventListener').mockImplementation(((type: string, handler: EventListener) => {
+            if (type === 'message') {
+                listener = handler as unknown as typeof listener;
+            }
+        }) as typeof window.addEventListener);
+        jest.spyOn(global, 'setInterval').mockReturnValue(0 as unknown as ReturnType<typeof setInterval>);
+        shown = [];
+    });
+    afterEach(() => {
+        Object.defineProperty(window, 'parent', { value: window, configurable: true });
+        jest.restoreAllMocks();
+    });
+
+    const start = async (): Promise<TestBridge> => {
+        const bridge = new TestBridge();
+        Object.assign(bridge, {
+            runtime: { getSession: async () => ({ allowedOriginsMode: 'same-origin', allowedOrigins: [] }) },
+            documentResources: { onDidSaveDocument: () => ({ dispose: () => undefined }) },
+            shell: { widgets: [] },
+            notifier: { onNotifyEditor: (request: { message: string }) => void shown.push(request.message) },
+        });
+        bridge.onStart();
+        await new Promise(resolve => setTimeout(resolve, 0));
+        return bridge;
+    };
+    const send = (data: unknown): void => listener?.({ source: parent as unknown as MessageEventSource, origin: OWN, data });
+
+    it('answers ide.init with ide.status', async () => {
+        await start();
+        send({ type: 'ide.init', protocol: 2 });
+        expect(post).toHaveBeenCalledWith({ type: 'ide.status', dirty: 0 }, OWN);
+    });
+
+    it('still answers studio.init with studio.status', async () => {
+        await start();
+        send({ type: 'studio.init' });
+        expect(post).toHaveBeenCalledWith({ type: 'studio.status', dirty: 0 }, OWN);
+    });
+
+    it('takes a v2 notification as its v1 twin', async () => {
+        await start();
+        send({ type: 'ide.notify', message: 'hello' });
+        expect(shown).toEqual(['hello']);
+    });
+
+    it('ignores a type neither version has', async () => {
+        await start();
+        send({ type: 'ide.openComponent', name: 'x' });
+        send({ type: 'other.init' });
+        expect(post).not.toHaveBeenCalled();
+    });
+
+    it('asks a v2 portal for a component as an artifact, a v1 portal by its old name', async () => {
+        const bridge = await start();
+        send({ type: 'ide.init' });
+        post.mockClear();
+        expect(bridge.openComponent('cf-gears-api-gateway')).toBe(true);
+        expect(post).toHaveBeenCalledWith(
+            { type: 'ide.openArtifact', kind: 'component', ref: 'cf-gears-api-gateway' }, OWN
+        );
+        send({ type: 'studio.init' });
+        post.mockClear();
+        bridge.openComponent('cf-gears-api-gateway');
+        expect(post).toHaveBeenCalledWith({ type: 'studio.openComponent', name: 'cf-gears-api-gateway' }, OWN);
+    });
+});

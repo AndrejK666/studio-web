@@ -20,6 +20,8 @@ import {
     type StudioNotifyEditorResult,
     type StudioOpenInEditorRequest,
     type StudioOpenInEditorResult,
+    type StudioOpenDocumentRequest,
+    type StudioOpenDocumentResult,
     type StudioRetryOperationRequest,
     type StudioRuntimeClient,
     type StudioWorkspaceRequest
@@ -200,6 +202,7 @@ export class StudioRuntimeEndpoint implements StudioRuntimeService, BackendAppli
             retryOperation: request => this.retryOperation(request),
             openInEditor: request => this.openInEditor(request),
             notifyEditor: request => this.notifyEditor(request),
+            openDocument: request => this.openDocument(request),
             installKit: request => this.kitInstaller.install(request, this.repositoryRegistry)
         });
     }
@@ -244,6 +247,21 @@ export class StudioRuntimeEndpoint implements StudioRuntimeService, BackendAppli
             }
         });
         return { shown: delivered > 0 };
+    }
+
+    /** Open a portal document in the browser clients; same shape as `openInEditor`. */
+    async openDocument(request: StudioOpenDocumentRequest): Promise<StudioOpenDocumentResult> {
+        if (!request.workspaceId || !request.documentId) {
+            return { opened: false };
+        }
+        let delivered = 0;
+        this.broadcast(client => {
+            if (client.onOpenDocument) {
+                client.onOpenDocument(request);
+                delivered++;
+            }
+        });
+        return { opened: delivered > 0 };
     }
 
     async resolveWorkspacePath(request: StudioWorkspaceRequest) {

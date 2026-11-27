@@ -1,8 +1,9 @@
-import { inject, injectable } from '@theia/core/shared/inversify';
+import { inject, injectable, optional } from '@theia/core/shared/inversify';
 import {
     type StudioAuditEntry,
     type StudioNotifyEditorRequest,
     type StudioOpenInEditorRequest,
+    type StudioOpenDocumentRequest,
     type StudioOperationEvent,
     type StudioRepositoryDescriptor,
     type StudioRuntimeClient
@@ -12,6 +13,7 @@ import { NotifyEditorFrontendController } from './notify-editor-controller';
 import { AuditFrontendController } from './audit-controller';
 import { GitOperationsFrontendController } from './git-operations-contribution';
 import { WorkspaceSourcesFrontendController } from './workspace-sources-controller';
+import { StudioDocumentOpener } from './studio-document-opener';
 
 /**
  * The single JSON-RPC client for the Studio runtime connection.
@@ -22,6 +24,10 @@ import { WorkspaceSourcesFrontendController } from './workspace-sources-controll
  */
 @injectable()
 export class StudioRuntimeFrontendClient implements StudioRuntimeClient {
+    /** Opens a portal document the backend asked for (control `openDocument`). */
+    @inject(StudioDocumentOpener) @optional()
+    protected readonly documentOpener: StudioDocumentOpener | undefined;
+
     constructor(
         @inject(GitOperationsFrontendController)
         protected readonly gitOperations: GitOperationsFrontendController,
@@ -61,5 +67,9 @@ export class StudioRuntimeFrontendClient implements StudioRuntimeClient {
 
     onNotifyEditor(request: StudioNotifyEditorRequest): void {
         void this.notifyEditor.onNotifyEditor(request);
+    }
+
+    onOpenDocument(request: StudioOpenDocumentRequest): void {
+        void this.documentOpener?.open({ workspaceId: request.workspaceId, documentId: request.documentId }, request.title);
     }
 }
