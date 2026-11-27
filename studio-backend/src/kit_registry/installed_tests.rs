@@ -216,6 +216,76 @@ async fn only_a_platform_administrator_changes_the_base_kits() {
     assert_eq!(sdlc.shelf, "official");
 }
 
+#[derive(Default)]
+struct Audited(Mutex<Vec<crate::audit::AuditEvent>>);
+
+#[async_trait]
+impl crate::audit::AuditRecorder for Audited {
+    async fn record(
+        &self,
+        _: &SecurityContext,
+        events: Vec<crate::audit::AuditEvent>,
+    ) -> anyhow::Result<()> {
+        self.0.lock().unwrap().extend(events);
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn an_organizations_kit_changes_are_audited_and_a_refusal_is_not() {
+    let (installer, _) = installer();
+    let audited = Arc::new(Audited::default());
+    let installer = installer.with_audit(crate::audit::Audit::fixed(audited.clone()));
+    assert!(
+        installer
+            .install_for_organization(&caller(MEMBER, ORG), ORG, "sdlc", None)
+            .await
+            .is_err()
+    );
+    installer
+        .install_for_organization(&caller(ORG_ADMIN, ORG), ORG, "compete", Some("v1.0.0"))
+        .await
+        .unwrap();
+    installer
+        .uninstall_for_organization(&caller(ORG_ADMIN, ORG), ORG, "compete")
+        .await
+        .unwrap();
+    let seen: Vec<(Uuid, Uuid, String, Option<String>, serde_json::Value)> = audited
+        .0
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|e| {
+            (
+                e.actor,
+                e.tenant,
+                e.action.clone(),
+                e.subject.clone(),
+                e.detail.clone(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        seen,
+        vec![
+            (
+                ORG_ADMIN,
+                ORG,
+                "kit.installed".to_owned(),
+                Some("compete".to_owned()),
+                serde_json::json!({ "version": "v1.0.0" })
+            ),
+            (
+                ORG_ADMIN,
+                ORG,
+                "kit.uninstalled".to_owned(),
+                Some("compete".to_owned()),
+                serde_json::json!({ "version": null })
+            ),
+        ]
+    );
+}
+
 #[tokio::test]
 async fn only_an_organization_administrator_changes_its_kits() {
     let (installer, store) = installer();

@@ -98,7 +98,9 @@ impl Gear for StudioKitsGear {
             .with_models(Arc::new(models::HubModels(ctx.client_hub())))
             // `kit.installed` / `kit.uninstalled`, so the shell reads the kits
             // again when somebody else changes them.
-            .with_events(Arc::new(events::HubEvents(ctx.client_hub()))),
+            .with_events(Arc::new(events::HubEvents(ctx.client_hub())))
+            // Who installed or removed which kit, where (the audit port).
+            .with_audit(crate::audit::Audit::new(ctx.client_hub())),
         );
         let service = Arc::new(service.with_ide_shelf(Arc::clone(&installer)));
         // An organization's own kits' screens, read from its repository at the

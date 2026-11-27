@@ -320,6 +320,9 @@ pub struct KitInstaller {
     reader: Arc<dyn super::shelf::KitSourceReader>,
     models: Option<Arc<dyn super::models::ModelPort>>,
     events: Option<Arc<dyn crate::studio_events::StudioEventPublisher>>,
+    /// Where installs and uninstalls are audited (`crate::audit`); none in a
+    /// test that does not ask.
+    audit: Option<crate::audit::Audit>,
     /// Which kits each organization's model was last brought in step with
     /// ([`super::models::InStep`]): a read that finds the same set writes
     /// nothing.
@@ -348,6 +351,7 @@ impl KitInstaller {
             reader: Arc::new(super::shelf::NoReader),
             models: None,
             events: None,
+            audit: None,
             in_step: super::models::InStep::default(),
         }
     }
@@ -364,6 +368,29 @@ impl KitInstaller {
     ) -> Self {
         self.events = Some(events);
         self
+    }
+
+    /// Audit installs and uninstalls through `audit`.
+    pub fn with_audit(mut self, audit: crate::audit::Audit) -> Self {
+        self.audit = Some(audit);
+        self
+    }
+
+    /// Audit that `ctx` did `action` to kit `slug` in `tenant`. The install
+    /// stands whatever the audit answers.
+    async fn audit(
+        &self,
+        ctx: &SecurityContext,
+        tenant: Uuid,
+        action: &str,
+        slug: &str,
+        version: Option<&str>,
+    ) {
+        let Some(audit) = &self.audit else { return };
+        let event = crate::audit::AuditEvent::new(ctx, tenant, "studio-kits", action)
+            .on(slug)
+            .with(serde_json::json!({ "version": version }));
+        audit.note(ctx, event).await;
     }
 
     fn announce(&self, kind: &str, level: super::events::Level, slug: &str, version: Option<&str>) {
@@ -942,6 +969,7 @@ impl KitInstaller {
                 self.install_for_project_one(ctx, project, &s, version)
                     .await?,
             );
+            self.audit(ctx, project, "kit.installed", &s, version).await;
         }
         last.ok_or_else(|| Refusal::Internal(anyhow!("nothing to install")))
     }
@@ -955,6 +983,7 @@ impl KitInstaller {
     ) -> Result<(), Refusal> {
         for s in requested(slug)? {
             self.uninstall_for_project_one(ctx, project, &s).await?;
+            self.audit(ctx, project, "kit.uninstalled", &s, None).await;
         }
         Ok(())
     }
@@ -969,6 +998,8 @@ impl KitInstaller {
         let mut last = None;
         for s in requested(slug)? {
             last = Some(self.install_base_one(ctx, &s, version).await?);
+            self.audit(ctx, PLATFORM_TENANT, "kit.installed", &s, version)
+                .await;
         }
         last.ok_or_else(|| Refusal::Internal(anyhow!("nothing to install")))
     }
@@ -977,6 +1008,8 @@ impl KitInstaller {
     pub async fn uninstall_base(&self, ctx: &SecurityContext, slug: &str) -> Result<(), Refusal> {
         for s in requested(slug)? {
             self.uninstall_base_one(ctx, &s).await?;
+            self.audit(ctx, PLATFORM_TENANT, "kit.uninstalled", &s, None)
+                .await;
         }
         Ok(())
     }
@@ -995,6 +1028,7 @@ impl KitInstaller {
                 self.install_for_organization_one(ctx, tenant, &s, version)
                     .await?,
             );
+            self.audit(ctx, tenant, "kit.installed", &s, version).await;
         }
         last.ok_or_else(|| Refusal::Internal(anyhow!("nothing to install")))
     }
@@ -1008,6 +1042,7 @@ impl KitInstaller {
     ) -> Result<(), Refusal> {
         for s in requested(slug)? {
             self.uninstall_for_organization_one(ctx, tenant, &s).await?;
+            self.audit(ctx, tenant, "kit.uninstalled", &s, None).await;
         }
         Ok(())
     }

@@ -12,6 +12,7 @@ mod access_config; // the Studio access-config document: one shape, one reader, 
 mod api_contract; // the mechanical half of docs/api-conventions.md, as a ratchet
 mod artifact_ingest; // pull issues/PRs from a connector source into the graph as GTS nodes
 mod assembly; // studio-assembly: the gears this process linked, its build, its session image
+mod audit; // the audit port: who did what, where and when, recorded through the audit kit's recorder
 mod catalog_graph; // the catalogue graph: node vocabulary + store, shared by the catalogue and the product
 mod clone_outcomes; // how a clone of a project's source went: a core port its writers record through (#1071)
 mod components_catalog; // connector to crates.io: catalogue our published gears + versions in the graph
