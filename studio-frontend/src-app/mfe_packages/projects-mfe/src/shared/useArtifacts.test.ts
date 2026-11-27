@@ -158,9 +158,9 @@ describe('the re-read while an import runs', () => {
   const QUERY = { repo: null, kind: null, search: '', offset: 0 };
   /** One refetch invalidates the page, the repositories, the project count and the repository total. */
   const READS_PER_REFETCH = 4;
-  const importing = (...repos: [status: string, stored: number][]) => ({
+  const importing = (...repos: [status: string, written: number][]) => ({
     phase: 'running',
-    repos: repos.map(([status, stored], i) => ({ repo: `acme/r-${i}`, status, stored })),
+    repos: repos.map(([status, written], i) => ({ repo: `acme/r-${i}`, status, written })),
   });
 
   beforeEach(() => {
@@ -184,13 +184,13 @@ describe('the re-read while an import runs', () => {
     expect(invalidate).toHaveBeenCalledTimes(READS_PER_REFETCH);
   });
 
-  it('happens once in two seconds however often the stored count grows', () => {
+  it('happens once in two seconds however often the written count grows', () => {
     imported.mockReturnValue(importing(['running', 0]));
     const { rerender } = renderHook(() => useArtifacts('p1', 'w1', QUERY));
     invalidate.mockClear();
 
-    for (const stored of [1_000, 2_000, 3_000]) {
-      imported.mockReturnValue(importing(['running', stored]));
+    for (const written of [1_000, 2_000, 3_000]) {
+      imported.mockReturnValue(importing(['running', written]));
       rerender();
     }
     expect(invalidate).not.toHaveBeenCalled();
@@ -199,7 +199,7 @@ describe('the re-read while an import runs', () => {
     expect(invalidate).toHaveBeenCalledTimes(READS_PER_REFETCH);
   });
 
-  it('keeps happening every two seconds while the stored count keeps growing', () => {
+  it('keeps happening every two seconds while the written count keeps growing', () => {
     imported.mockReturnValue(importing(['running', 0]));
     const { rerender } = renderHook(() => useArtifacts('p1', 'w1', QUERY));
     invalidate.mockClear();

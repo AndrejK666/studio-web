@@ -238,8 +238,8 @@ describe('a repository sync, followed on the event stream', () => {
     h.stream.onEvent?.(taskEvent(8, 'r-2', 'task.progress', { phase: "waiting for another repository's sync to finish…" }));
     expect(h.rows()[1]).toMatchObject({ status: 'queued' });
 
-    h.stream.onEvent?.(taskEvent(9, 'r-2', 'task.progress', { phase: 'pulling issues…', result: { stored: 4 } }));
-    expect(h.rows()[1]).toMatchObject({ status: 'running', phase: 'pulling issues…', stored: 4 });
+    h.stream.onEvent?.(taskEvent(9, 'r-2', 'task.progress', { phase: 'pulling issues…', result: { nodes_written: 4 } }));
+    expect(h.rows()[1]).toMatchObject({ status: 'running', phase: 'pulling issues…', written: 4 });
   });
 
   it('keeps following a repository that starts after the first has run for more than twenty minutes', async () => {
@@ -249,11 +249,11 @@ describe('a repository sync, followed on the event stream', () => {
 
     h.stream.onEvent?.(taskEvent(8, 'r-1', 'task.running'));
     await vi.advanceTimersByTimeAsync(25 * MINUTE);
-    h.stream.onEvent?.(taskEvent(9, 'r-1', 'task.succeeded', { summary: 'acme/api: done', result: { stored: 40 } }));
+    h.stream.onEvent?.(taskEvent(9, 'r-1', 'task.succeeded', { summary: 'acme/api: done', result: { stored: 400, nodes_written: 40 } }));
     h.stream.onEvent?.(taskEvent(10, 'r-2', 'task.progress', { phase: 'pulling issues…' }));
 
     expect(h.rows().map((row) => row.status)).toEqual(['succeeded', 'running', 'queued']);
-    expect(h.rows()[0]).toMatchObject({ summary: 'acme/api: done', stored: 40 });
+    expect(h.rows()[0]).toMatchObject({ summary: 'acme/api: done', written: 40 });
     expect(h.phase()).toBe('running');
     // The stream answered throughout: nothing was read on an interval.
     expect(h.tasks.run).toHaveBeenCalledTimes(2);
@@ -565,8 +565,8 @@ describe('an import found again on the gear', () => {
     expect(h.events.streamFrom).toHaveBeenCalledWith(7);
     expect(h.syncFetch).not.toHaveBeenCalled();
 
-    h.stream.onEvent?.(taskEvent(8, 'r-9', 'task.succeeded', { summary: 'acme/api: done', result: { stored: 3 } }));
-    expect(h.rows()[0]).toMatchObject({ status: 'succeeded', stored: 3 });
+    h.stream.onEvent?.(taskEvent(8, 'r-9', 'task.succeeded', { summary: 'acme/api: done', result: { nodes_written: 3 } }));
+    expect(h.rows()[0]).toMatchObject({ status: 'succeeded', written: 3 });
   });
 
   it('shows the import again when the member comes back to the project', async () => {

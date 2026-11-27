@@ -37,6 +37,12 @@ pub use super::driver::{
 /// What another gear's test needs to stand in for a provider.
 #[cfg(test)]
 pub use super::driver::{ConnectorCategory, DriverIdentity};
+
+/// GitHub's own driver, for another gear's test to point at a fake GitHub.
+#[cfg(test)]
+pub fn github_driver() -> Arc<dyn ConnectorDriver> {
+    Arc::new(super::github::GitHubDriver::new(reqwest::Client::new()))
+}
 pub use super::gear_repository::PROVIDER as GEAR_REPOSITORY_PROVIDER;
 /// Whether a name is a gear repository's source id, as the engine takes it.
 pub use super::gear_repository::is_source_id;

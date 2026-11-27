@@ -1131,7 +1131,8 @@ pub trait ConnectorDriver: Send + Sync + 'static {
     /// listing ([`Self::list_comments`]).
     ///
     /// GitLab has no project-wide listing of notes: they hang off each merge
-    /// request and issue, one call per item. The sync then reads them per
+    /// request and issue, one call per item. GitHub has one, but reads its
+    /// comments per item too, for the cursor below. The sync then reads them per
     /// item, several in flight, and marks each item read at the state it was
     /// read in, so a sync that runs out of time leaves a cursor the next one
     /// goes on from (`artifact_ingest::item_comments`).

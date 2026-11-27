@@ -277,10 +277,25 @@ pub struct SyncSummary {
     /// total, and so also absent from the progress ticks.
     #[serde(default)]
     pub open_document_threads: Option<usize>,
-    /// Nodes already flushed to the graph store — the objects that are
-    /// queryable right now, mid-sync.
+    /// Nodes the graph holds for this repository once the sync is over --
+    /// the repository itself and its issues, pull requests, files and their
+    /// text, comments, commits, CI runs and jobs, build artifacts and
+    /// releases -- counted from the store, as `comments` is. A sync that
+    /// carried most items and wrote few still says how many there are. The
+    /// people the repository names are shared with the connection's other
+    /// repositories and not counted.
+    ///
+    /// Only on the run's result, a partial one included, like the thread
+    /// counts: the progress ticks carry `nodes_written`. `None` on them, and
+    /// when the store could not be counted.
     #[serde(default)]
-    pub stored: usize,
+    pub stored: Option<usize>,
+    /// Nodes this sync wrote to the graph store -- the objects queryable
+    /// right now, mid-sync, growing as it runs. An item
+    /// carried from an earlier sync is not written again, so on a quiet
+    /// repository this is far below `stored`.
+    #[serde(default)]
+    pub nodes_written: usize,
     /// Files the graph held for this repository that its complete listing no
     /// longer has, forgotten by this sync. Zero after a partial listing, which
     /// forgets nothing. Like the thread counts, only on the final result.
@@ -347,6 +362,21 @@ impl SyncSummary {
             || self.comment_items_left > 0
     }
 }
+
+/// The node types a sync writes with a `repo` naming the repository's node:
+/// what [`SyncSummary::stored`] counts, beside that node itself.
+const REPO_HELD_TYPES: [&str; 10] = [
+    gts::ISSUE_TYPE,
+    gts::PULL_REQUEST_TYPE,
+    gts::FILE_TYPE,
+    gts::FILE_CONTENT_TYPE,
+    gts::COMMENT_TYPE,
+    gts::COMMIT_TYPE,
+    gts::WORKFLOW_RUN_TYPE,
+    gts::WORKFLOW_JOB_TYPE,
+    gts::BUILD_ARTIFACT_TYPE,
+    gts::RELEASE_TYPE,
+];
 
 /// How long a sync may spend linking pull requests to their files before it
 /// stops for this run, short of its deadline: what comes after (comments,
@@ -1446,11 +1476,12 @@ impl IngestService {
             checkpoint_if_due!();
         }
 
-        // Comments as one repository-wide listing (GitHub), each linked to
+        // Comments as one repository-wide listing, each linked to
         // the issue/PR node it is on (`comment_on`) and to its author.
         // Best-effort: a provider that will not list them costs the sync its
-        // comments, nothing else. Where comments hang off each item (GitLab)
-        // they are read item by item after the listings.
+        // comments, nothing else. Where they are read per item (GitLab, GitHub:
+        // `ConnectorDriver::comments_per_item`) they are read after the
+        // listings instead.
         progress.set("pulling comments…");
         let mut comments = cursor.comments.counted;
         let mut pages =
@@ -1702,7 +1733,8 @@ impl IngestService {
                 comments,
                 commits,
                 open_review_threads,
-                stored: flushed,
+                stored: self.held_of_repo(ctx, &repo_id, repo_full_path).await,
+                nodes_written: flushed,
                 listings_left: left,
                 rest_left,
                 ..Default::default()
@@ -2265,7 +2297,7 @@ impl IngestService {
                         issues,
                         pull_requests,
                         files,
-                        stored,
+                        nodes_written: stored,
                         links_done: t.linked,
                         links_total: t.total,
                         links_left: t.left,
@@ -2318,15 +2350,16 @@ impl IngestService {
         // nothing is left for later: that is not a deadline.
 
         // Comments read item by item, where the provider keeps them on each
-        // issue and pull request (GitLab). Best-effort, like the listing.
-        // (A repository-wide listing, GitHub's, was read with the listings.)
+        // issue and pull request (GitLab), or reads them so for the cursor
+        // (GitHub). Best-effort, like the listing. (A repository-wide
+        // listing was read with the listings.)
         let mut comment_items = super::item_comments::Tally {
             total: comments_carried + comments_pending.len(),
             read: comments_carried,
             ..Default::default()
         };
         if per_item_comments {
-            // Item by item (GitLab): only the items not read at their current
+            // Item by item: only the items not read at their current
             // state, several in flight, each portion stored as it is read, and
             // the pass stops `COMMENTS_TAIL` short of the deadline. What it
             // leaves, the next sync reads (`item_comments`).
@@ -2340,7 +2373,7 @@ impl IngestService {
                         pull_requests,
                         files,
                         comments: t.comments,
-                        stored: stored + t.comments,
+                        nodes_written: stored + t.comments,
                         comment_items_done: t.read,
                         comment_items_total: t.total,
                         comment_items_left: t.left,
@@ -2821,7 +2854,8 @@ impl IngestService {
             commits,
             open_review_threads,
             open_document_threads,
-            stored: total_nodes,
+            stored: self.held_of_repo(ctx, &repo_id, repo_full_path).await,
+            nodes_written: total_nodes,
             pruned,
             links_done: links.linked,
             links_total: links.total,
@@ -2832,6 +2866,43 @@ impl IngestService {
             listings_left: 0,
             rest_left: false,
         })
+    }
+
+    /// The nodes the graph holds for one repository ([`SyncSummary::stored`]):
+    /// its own node and every node whose `repo` names it, counted by the
+    /// store one type at a time. `None` when the store would not count one
+    /// of them -- the summary then says nothing rather than a short number.
+    async fn held_of_repo(
+        &self,
+        ctx: &SecurityContext,
+        repo_id: &str,
+        repo_full_path: &str,
+    ) -> Option<usize> {
+        let counts = futures_util::future::try_join_all(
+            REPO_HELD_TYPES
+                .iter()
+                .map(|t| self.graph.count_of_repo(ctx, t, repo_id)),
+        )
+        .await;
+        match counts {
+            Ok(counts) => {
+                let held: u64 = counts.into_iter().sum();
+                // The repository node itself, written first by every sync.
+                Some(
+                    usize::try_from(held)
+                        .unwrap_or(usize::MAX)
+                        .saturating_add(1),
+                )
+            }
+            Err(e) => {
+                warn!(
+                    repo = repo_full_path,
+                    error = %e,
+                    "studio-artifact-ingest: could not count the repository's nodes; the summary leaves them out"
+                );
+                None
+            }
+        }
     }
 
     /// Store what the listings read beyond their nodes -- the authors not
@@ -3746,7 +3817,7 @@ impl IngestService {
                 // carries it; a mid-sync tick has nothing new to say about it.
                 open_review_threads: None,
                 open_document_threads: None,
-                stored: *flushed,
+                nodes_written: *flushed,
                 // The link counts tick in their own phase (`pr_links`); the
                 // final result carries them.
                 ..Default::default()
@@ -6900,3 +6971,7 @@ mod item_comments_tests;
 #[cfg(test)]
 #[path = "listing_cursor_tests.rs"]
 mod listing_cursor_tests;
+
+#[cfg(test)]
+#[path = "github_comments_tests.rs"]
+mod github_comments_tests;

@@ -16,8 +16,8 @@ export interface RepoImport {
   summary: string | null;
   /** Why it stopped. */
   reason: Refusal | null;
-  /** Nodes the sync has flushed so far. */
-  stored: number;
+  /** Nodes the sync has written so far: a growing count, not what the repository holds. */
+  written: number;
   /** Cancel was asked for and the gear has not recorded it yet. */
   cancelling: boolean;
   /** The gear refused the last cancel or retry. */
@@ -59,7 +59,7 @@ function row(repo: string, status: RepoImportStatus, reason: Refusal | null): Re
     phase: null,
     summary: null,
     reason,
-    stored: 0,
+    written: 0,
     cancelling: false,
     refusal: null,
   };
@@ -75,9 +75,17 @@ function repoOf(state: ArtifactSyncState, projectId: string, repo: string) {
   return entry && found ? { entry, row: found } : null;
 }
 
+/**
+ * The nodes a run has written so far. A gear before `nodes_written` counted them
+ * as `stored`, which now names what the repository holds once the run is over.
+ */
+function writtenOf(result: Record<string, unknown>): number {
+  return 'nodes_written' in result ? runCount(result, 'nodes_written') : runCount(result, 'stored');
+}
+
 function applyUpdate(target: RepoImport, update: RunUpdate): void {
   if (update.phase !== undefined) target.phase = update.phase;
-  if (update.result) target.stored = runCount(update.result, 'stored');
+  if (update.result) target.written = writtenOf(update.result);
   target.status = repoStatusOf(update.state, target.phase);
   if (target.status === 'succeeded') target.summary = update.summary ?? target.summary;
   // @cpt-begin:cpt-studiofrontend-algo-project-artifacts-sync:p2:inst-14
@@ -253,7 +261,7 @@ const {
         phase: null,
         summary: null,
         reason: null,
-        stored: 0,
+        written: 0,
         cancelling: false,
         refusal: null,
       });
