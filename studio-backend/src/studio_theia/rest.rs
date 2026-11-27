@@ -29,9 +29,9 @@ use uuid::Uuid;
 use crate::studio_session::sdk::SessionIdentity;
 use crate::studio_theia::commands;
 use crate::studio_theia::sdk::{
-    EnqueueOperation, EnqueueOperationResult, OpenInEditor, OpenInEditorResult, OperationDeltas,
-    OperationSnapshot, RepositoryDescriptor, RuntimeStatus, SessionInfo, SessionTarget,
-    TheiaControlClientV1,
+    EnqueueOperation, EnqueueOperationResult, OpenDocument, OpenDocumentResult, OpenInEditor,
+    OpenInEditorResult, OperationDeltas, OperationSnapshot, RepositoryDescriptor, RuntimeStatus,
+    SessionInfo, SessionTarget, TheiaControlClientV1,
 };
 use crate::studio_theia::service::TheiaService;
 use crate::studio_theia::sink::TheiaForwardedEvent;
@@ -159,6 +159,22 @@ async fn open_in_editor(
     Ok(Json(out))
 }
 
+/// Open a portal document in the running IDE (ADR-0080 §4): the control
+/// channel's half of what the frame's `openDocument` does, for an IDE the
+/// portal does not reach through its frame.
+async fn open_document(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(portal): Extension<Portal>,
+    Path(workspace_id): Path<Uuid>,
+    Json(body): Json<OpenDocument>,
+) -> ApiResult<Json<OpenDocumentResult>> {
+    let client = portal.client()?;
+    let out = client
+        .open_document(&ctx, &SessionTarget { workspace_id }, &body)
+        .await?;
+    Ok(Json(out))
+}
+
 /* ── Event ingress (Theia → studio) ── */
 
 /// Receive one forwarded `StudioRuntimeClient` event from a Theia container.
@@ -175,13 +191,9 @@ async fn ingest_events(
     let Some(service) = service else {
         return StatusCode::SERVICE_UNAVAILABLE;
     };
-    let presented = headers
-        .get("X-CFS-Theia-Token")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or_default();
-    if presented.is_empty() {
+    let Some((presented, protocol)) = presented_token(&headers) else {
         return StatusCode::UNAUTHORIZED;
-    }
+    };
     // The token IS the credential: reverse-resolve it to the session's trusted
     // (tenant, workspace). This — not the request body — is the source of truth
     // for who the event belongs to, so a forged `session.workspaceId` cannot
@@ -196,9 +208,25 @@ async fn ingest_events(
     // identity below is its input either way.
     service
         .sink()
-        .accept(forwarded(&identity, "container", &payload))
+        .accept(forwarded(&identity, "container", protocol, &payload))
         .await;
     StatusCode::ACCEPTED
+}
+
+/// The session token an event came with, and the bridge protocol its header
+/// names (ADR-0080 §4): `X-CFS-Ide-Token` is v2, `X-CFS-Theia-Token` v1. The
+/// same per-session token either way; only the kinds it is republished as
+/// differ.
+fn presented_token(headers: &HeaderMap) -> Option<(&str, u8)> {
+    let header = |name: &str| {
+        headers
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .filter(|v| !v.is_empty())
+    };
+    header(crate::ide_runtime::CONTROL_V2.header)
+        .map(|token| (token, 2))
+        .or_else(|| header(crate::ide_theia::CONTROL_V1.header).map(|token| (token, 1)))
 }
 
 /// One forwarded event from the forwarder's envelope `{ kind, sequence?,
@@ -208,6 +236,7 @@ async fn ingest_events(
 fn forwarded(
     identity: &SessionIdentity,
     runtime: &'static str,
+    protocol: u8,
     payload: &serde_json::Value,
 ) -> TheiaForwardedEvent {
     TheiaForwardedEvent {
@@ -215,6 +244,8 @@ fn forwarded(
         workspace_id: identity.workspace_id,
         session_id: identity.session_id,
         runtime,
+        protocol,
+        ide: identity.ide,
         kind: payload
             .get("kind")
             .and_then(|k| k.as_str())
@@ -223,6 +254,7 @@ fn forwarded(
         sequence: payload.get("sequence").and_then(|s| s.as_i64()),
         payload: payload
             .get("event")
+            .or_else(|| payload.get("payload"))
             .cloned()
             .unwrap_or(serde_json::Value::Null),
     }
@@ -266,7 +298,7 @@ async fn ingest_desktop_events(
     let identity = own_desktop(&service, &ctx, desktop_session_id).await?;
     service
         .sink()
-        .accept(forwarded(&identity, "desktop", &payload))
+        .accept(forwarded(&identity, "desktop", 1, &payload))
         .await;
     Ok(StatusCode::ACCEPTED)
 }
@@ -457,6 +489,27 @@ pub fn register_routes(
     .error_500(openapi)
     .register(router, openapi);
 
+    router = OperationBuilder::post("/studio-theia/v1/workspaces/{workspace_id}/documents/open")
+        .operation_id("studio_theia.open_document")
+        .summary("Open a portal document in the running IDE")
+        .description(
+            "Opens a portal document in the running IDE over the control channel \
+             (ADR-0080): the way the portal reaches an IDE it cannot talk to \
+             through its frame. An IDE that cannot open documents answers so in \
+             a sentence.",
+        )
+        .tag("StudioTheia")
+        .authenticated()
+        .require_license_features::<License>([])
+        .path_param("workspace_id", "Workspace id")
+        .handler(open_document)
+        .json_response(StatusCode::OK, "Open result")
+        .error_400(openapi)
+        .error_401(openapi)
+        .error_404(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
     router = OperationBuilder::post("/studio-theia/v1/workspaces/{workspace_id}/open")
         .operation_id("studio_theia.open_in_editor")
         .summary("Reveal/open a file in the running IDE")
@@ -565,6 +618,7 @@ mod tests {
             session_id: Uuid::new_v4(),
             tenant_id: Uuid::new_v4(),
             workspace_id: Uuid::new_v4(),
+            ide: None,
         };
         let envelope = json!({
             "session": { "workspaceId": Uuid::new_v4() },
@@ -572,7 +626,7 @@ mod tests {
             "sequence": 7,
             "event": { "operationId": "op-1" },
         });
-        let event = forwarded(&identity, "desktop", &envelope);
+        let event = forwarded(&identity, "desktop", 1, &envelope);
         assert_eq!(event.workspace_id, identity.workspace_id);
         assert_eq!(event.tenant_id, identity.tenant_id);
         assert_eq!(event.session_id, identity.session_id);
@@ -581,9 +635,62 @@ mod tests {
         assert_eq!(event.sequence, Some(7));
         assert_eq!(event.payload, json!({ "operationId": "op-1" }));
 
-        let bare = forwarded(&identity, "container", &json!({}));
+        let bare = forwarded(&identity, "container", 1, &json!({}));
         assert_eq!(bare.kind, "unknown");
         assert_eq!(bare.sequence, None);
         assert_eq!(bare.payload, serde_json::Value::Null);
+    }
+
+    /// v2 names its header, v1 keeps Theia's; the v2 one wins when a caller
+    /// sends both, and an empty one is no token at all.
+    #[test]
+    fn the_header_says_which_protocol_an_event_came_in_on() {
+        use axum::http::{HeaderMap, HeaderValue};
+        let with = |pairs: &[(&'static str, &'static str)]| {
+            let mut headers = HeaderMap::new();
+            for (k, v) in pairs {
+                headers.insert(*k, HeaderValue::from_static(v));
+            }
+            headers
+        };
+        assert_eq!(
+            super::presented_token(&with(&[("x-cfs-theia-token", "t")])),
+            Some(("t", 1))
+        );
+        assert_eq!(
+            super::presented_token(&with(&[("x-cfs-ide-token", "t")])),
+            Some(("t", 2))
+        );
+        assert_eq!(
+            super::presented_token(&with(&[
+                ("x-cfs-theia-token", "old"),
+                ("x-cfs-ide-token", "new")
+            ])),
+            Some(("new", 2))
+        );
+        assert_eq!(super::presented_token(&with(&[("x-cfs-ide-token", "")])), None);
+        assert_eq!(super::presented_token(&HeaderMap::new()), None);
+    }
+
+    /// An IDE on v2 posts the same envelope; `payload` is read where an
+    /// envelope has no `event`.
+    #[test]
+    fn a_v2_event_carries_the_protocol_and_the_sessions_ide() {
+        let identity = SessionIdentity {
+            session_id: Uuid::new_v4(),
+            tenant_id: Uuid::new_v4(),
+            workspace_id: Uuid::new_v4(),
+            ide: Some("vscode"),
+        };
+        let event = forwarded(
+            &identity,
+            "container",
+            2,
+            &json!({ "kind": "open-artifact", "payload": { "kind": "component", "ref": "x" } }),
+        );
+        assert_eq!(event.protocol, 2);
+        assert_eq!(event.ide, Some("vscode"));
+        assert_eq!(event.kind, "open-artifact");
+        assert_eq!(event.payload, json!({ "kind": "component", "ref": "x" }));
     }
 }

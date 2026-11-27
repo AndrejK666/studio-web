@@ -81,14 +81,14 @@ impl NotifyService {
             })
     }
 
-    /// The IDE bridge (the core's IDE port). Absent where `studio-theia`
-    /// stood down — the gear is dormant unless
-    /// `studio-session.theia_control_enabled` is on.
+    /// The IDE bridge (the core's IDE port). Absent where the IDE kit's
+    /// bridge gear stood down — it is dormant unless
+    /// `studio-session.ide_control_enabled` is on.
     fn editor(&self) -> anyhow::Result<Arc<dyn IdeBridge>> {
         self.hub.get::<dyn IdeBridge>().map_err(|_| {
             anyhow!(
                 "notifying an IDE is not available in this deployment \
-                 (studio-theia is not wired — see `theia_control_enabled`)"
+                 (no IDE bridge is wired — see `studio-session.ide_control_enabled`)"
             )
         })
     }

@@ -147,7 +147,12 @@ fn the_scanner_sees_references_between_modules() {
     );
     // A kit gear's REST path in a string.
     assert!(
-        has(MODULE_NAME_REFS, "notify", "studio_theia"),
+        has(MODULE_NAME_REFS, "kit_registry", "artifact_ingest"),
+        "build.rs read no REST paths in strings"
+    );
+    // A kit gear's name in a string.
+    assert!(
+        has(MODULE_NAME_REFS, "api_contract", "documents"),
         "build.rs read no gear names in strings"
     );
     // A kit's slug in a string.

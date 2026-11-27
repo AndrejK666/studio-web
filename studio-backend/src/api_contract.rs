@@ -53,6 +53,11 @@ mod schema_names; // OpenAPI schema names, one namespace across every gear
 ///
 /// A domain lands here in the same PR that registers its first operation, which
 /// makes "new domain or typo?" a review question instead of a runtime surprise.
+///
+/// A gear's own name is registered where the gear declares it
+/// (`#[toolkit::gear(name = "…")]`, [`declared_gears`]), so a kit's gear
+/// serves its domain without the core naming the kit (ADR-0079): the
+/// declaration is the same deliberate act this list is for.
 const DOMAINS: &[&str] = &[
     "studio-artifact-ingest",
     "studio-assembly",
@@ -79,7 +84,6 @@ const DOMAINS: &[&str] = &[
     "studio-spec-mapping",
     "studio-spec-quality",
     "studio-tasks",
-    "studio-theia",
     "studio-usage",
     "studio-user",
 ];
@@ -529,8 +533,43 @@ fn struct_shapes(sources: &[(PathBuf, String)]) -> BTreeMap<String, StructShape>
 // Rules
 // ---------------------------------------------------------------------------
 
+/// Every gear name the crate declares (`#[toolkit::gear(name = "…")]`), read
+/// from the same sources the operations are: each is a registered domain.
+fn declared_gears(sources: &[(PathBuf, String)]) -> BTreeSet<String> {
+    const DECLARATION: &str = "#[toolkit::gear(";
+    let mut out = BTreeSet::new();
+    for (_, text) in sources {
+        let mut rest = text.as_str();
+        while let Some(at) = rest.find(DECLARATION) {
+            rest = &rest[at + DECLARATION.len()..];
+            let attribute = &rest[..rest.find(")]").unwrap_or(rest.len())];
+            if let Some(name) = attribute
+                .split_once("name = \"")
+                .and_then(|(_, tail)| tail.split_once('"'))
+                .map(|(name, _)| name)
+            {
+                out.insert(name.to_owned());
+            }
+        }
+    }
+    out
+}
+
+/// The registered domains: [`DOMAINS`] and every declared gear's name.
+fn registered_domains(sources: &[(PathBuf, String)]) -> BTreeSet<String> {
+    DOMAINS
+        .iter()
+        .map(|d| (*d).to_owned())
+        .chain(declared_gears(sources))
+        .collect()
+}
+
 /// Apply every rule to every operation. The result is sorted and deduplicated.
-fn violations(operations: &[Operation], structs: &BTreeMap<String, StructShape>) -> Vec<Violation> {
+fn violations(
+    operations: &[Operation],
+    structs: &BTreeMap<String, StructShape>,
+    domains: &BTreeSet<String>,
+) -> Vec<Violation> {
     let mut out: Vec<Violation> = Vec::new();
     let mut seen_ids: BTreeMap<&str, String> = BTreeMap::new();
     let mut domain_tags: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
@@ -552,10 +591,13 @@ fn violations(operations: &[Operation], structs: &BTreeMap<String, StructShape>)
             continue;
         };
         let domain = operation.domain();
-        if !DOMAINS.contains(&domain) {
+        if !domains.contains(domain) {
             broken.push((
                 "domain-registered",
-                format!("`{domain}` is not in the domain registry (api_contract::DOMAINS)"),
+                format!(
+                    "`{domain}` is not in the domain registry (api_contract::DOMAINS) \
+                     and no gear declares it as its name"
+                ),
             ));
         }
         if !domain.starts_with("studio-") {
@@ -907,7 +949,7 @@ fn audit(crate_root: &Path) -> (Vec<Operation>, Vec<Violation>) {
     operations.sort_by(|a, b| a.key().cmp(&b.key()).then_with(|| a.file.cmp(&b.file)));
 
     let structs = struct_shapes(&sources);
-    let violations = violations(&operations, &structs);
+    let violations = violations(&operations, &structs, &registered_domains(&sources));
     (operations, violations)
 }
 

@@ -96,11 +96,19 @@ pub trait SessionActivity: Send + Sync {
     /// `None` when the session cannot say: it is unreachable, it has no
     /// control API, or it is an image from before it reported this. `None`
     /// is never a reason to stop anything.
-    async fn idle_secs(&self, base_url: &str, token: &str) -> Option<u64>;
+    ///
+    /// `control` is the session's IDE runtime's endpoint (ADR-0080): the path
+    /// and the header the token goes on are the runtime's, not the core's.
+    async fn idle_secs(
+        &self,
+        base_url: &str,
+        control: &crate::ide_runtime::IdeControl,
+        token: &str,
+    ) -> Option<u64>;
 }
 
 /// [`SessionActivity`] over the session's control API (`getRuntimeStatus`,
-/// the same call studio-theia makes).
+/// the same call the IDE bridge makes).
 pub struct ControlApiActivity {
     http: reqwest::Client,
 }
@@ -124,7 +132,12 @@ impl Default for ControlApiActivity {
 
 #[async_trait]
 impl SessionActivity for ControlApiActivity {
-    async fn idle_secs(&self, base_url: &str, token: &str) -> Option<u64> {
+    async fn idle_secs(
+        &self,
+        base_url: &str,
+        control: &crate::ide_runtime::IdeControl,
+        token: &str,
+    ) -> Option<u64> {
         #[derive(serde::Deserialize)]
         #[serde(rename_all = "camelCase")]
         struct Status {
@@ -132,8 +145,8 @@ impl SessionActivity for ControlApiActivity {
         }
         let response = self
             .http
-            .post(format!("{base_url}/internal/theia/v1/getRuntimeStatus"))
-            .header("X-CFS-Theia-Token", token)
+            .post(format!("{base_url}{}/getRuntimeStatus", control.path))
+            .header(control.header, token)
             .json(&serde_json::json!({}))
             .send()
             .await
@@ -183,11 +196,16 @@ pub struct Session {
     /// this one session; NOT the caller's platform token. Empty for
     /// sessions adopted from an older image (gate disabled there anyway).
     pub session_token: String,
-    /// Per-session S2S control token for the Theia backend bridge (ADR-0022).
-    /// Minted only when `theia_control_enabled`; empty otherwise and for
+    /// Per-session S2S control token for the IDE bridge (ADR-0022).
+    /// Minted only when `ide_control_enabled`; empty otherwise and for
     /// adopted sessions. Never handed to the browser — distinct from
     /// `session_token`.
     pub control_token: String,
+    /// The IDE it runs, kept for its life (ADR-0080 §6): from the launch, or
+    /// from the runtime's [`crate::ide_runtime::LABEL`] label on adoption.
+    /// `None` for a runtime this build no longer has: such a session can be
+    /// listed and stopped, and nothing else.
+    pub ide: Option<&'static crate::ide_runtime::IdeRuntime>,
 }
 
 impl Session {
@@ -340,6 +358,7 @@ impl SessionService {
                     sources: a.sources,
                     session_token: a.session_token,
                     control_token: a.control_token,
+                    ide: crate::ide_runtime::of_label(a.ide.as_deref()),
                 };
                 (id, session)
             })
@@ -842,6 +861,8 @@ impl SessionService {
             }
         }
 
+        // The IDE this launch runs: the deployment's (ADR-0080 §6).
+        let runtime = crate::ide_runtime::resolve(self.cfg.ide.as_deref())?;
         let port = self.allocate_port().await?;
         let session_id = session_id_for(workspace_id);
         let name = format!("cf-studio-session-{workspace_id}");
@@ -854,9 +875,9 @@ impl SessionService {
             let b = Uuid::new_v4().simple().to_string();
             format!("{a}{b}")
         };
-        // Distinct per-session token for the Theia backend-control bridge
+        // Distinct per-session token for the IDE's control bridge
         // (ADR-0022). Only minted when the bridge is enabled; empty otherwise.
-        let control_token = if self.cfg.theia_control_enabled {
+        let control_token = if self.cfg.ide_control_enabled {
             let a = Uuid::new_v4().simple().to_string();
             let b = Uuid::new_v4().simple().to_string();
             format!("{a}{b}")
@@ -891,11 +912,13 @@ impl SessionService {
         if !allowed_origins.is_empty() {
             env.push(format!("STUDIO_ALLOWED_ORIGINS={allowed_origins}"));
         }
-        // Hand the container its S2S control token so the Theia node can
-        // authenticate studio-backend's control calls (ADR-0022).
-        if self.cfg.theia_control_enabled {
-            env.push(format!("STUDIO_THEIA_S2S_TOKEN={control_token}"));
+        // Hand the container its S2S control token so the IDE can
+        // authenticate studio-backend's control calls (ADR-0022), in the env
+        // its runtime reads it from (ADR-0080).
+        if self.cfg.ide_control_enabled {
+            env.push(format!("{}={control_token}", runtime.control.token_env));
         }
+        env.extend(runtime.launch_env.iter().map(|pair| (*pair).to_owned()));
         // Nothing personal (ADR-0030). Several people type into this container,
         // and it used to carry the launcher's provider keys (private ones
         // first) and git author, so everybody's agents and commits were the
@@ -962,6 +985,7 @@ impl SessionService {
             (TENANT_LABEL.into(), tenant_id.to_string()),
             (PORT_LABEL.into(), port.to_string()),
             (LAUNCH_LABEL.into(), launch_id.to_string()),
+            (crate::ide_runtime::LABEL.into(), runtime.id.into()),
         ]);
 
         let local_binds: Vec<LocalBind> = repos
@@ -982,7 +1006,8 @@ impl SessionService {
             .collect();
 
         let spec = LaunchSpec {
-            image: self.cfg.image.clone(),
+            image: self.cfg.image_for(runtime),
+            runtime,
             env,
             workspace_host_dir: ws_dir,
             local_binds,
@@ -1029,6 +1054,7 @@ impl SessionService {
             launch_id: Some(launch_id),
             session_token,
             control_token,
+            ide: Some(runtime),
             sources: root_repo
                 .iter()
                 .map(|_| "workspace root (git)".to_string())
@@ -1242,19 +1268,20 @@ impl SessionService {
         self.snapshot().await.get(&id).map(|s| s.address.clone())
     }
 
-    /// Resolve the internal Theia control endpoint for the caller's live
+    /// Resolve the internal IDE control endpoint for the caller's live
     /// session on `workspace_id` (ADR-0022). `None` unless the bridge is
-    /// enabled, a live session exists for this tenant+workspace, and it carries
-    /// a control token. The control API is served by the Theia node on the
-    /// session's own port under an internal, S2S-token-gated path (Docker MVP);
-    /// a dedicated internal port / Service is the production hardening.
+    /// enabled, a live session exists for this tenant+workspace, it carries
+    /// a control token, and this build has its IDE runtime. The control API is
+    /// served behind the session's gate on its own port, under the path and
+    /// token header its runtime names (ADR-0080); a dedicated internal port /
+    /// Service is the production hardening.
     #[allow(dead_code)]
     pub async fn control_endpoint(
         &self,
         ctx: &SecurityContext,
         workspace_id: Uuid,
-    ) -> Option<crate::studio_session::sdk::TheiaControlEndpoint> {
-        if !self.cfg.theia_control_enabled {
+    ) -> Option<crate::studio_session::sdk::IdeControlEndpoint> {
+        if !self.cfg.ide_control_enabled {
             return None;
         }
         if !self.may_reach(ctx, workspace_id).await {
@@ -1268,14 +1295,15 @@ impl SessionService {
         if session.control_token.is_empty() {
             return None;
         }
-        Some(crate::studio_session::sdk::TheiaControlEndpoint {
+        Some(crate::studio_session::sdk::IdeControlEndpoint {
             session_id: session.id,
             base_url: self.control_base_url(&session.address),
             token: session.control_token.clone(),
+            runtime: session.ide?,
         })
     }
 
-    /// Where a session's control API answers: the Theia node, on the
+    /// Where a session's control API answers: behind its gate, on the
     /// session's own port.
     fn control_base_url(&self, address: &SessionAddress) -> String {
         match address {
@@ -1298,7 +1326,7 @@ impl SessionService {
         &self,
         token: &str,
     ) -> Option<crate::studio_session::sdk::SessionIdentity> {
-        if !self.cfg.theia_control_enabled || token.is_empty() {
+        if !self.cfg.ide_control_enabled || token.is_empty() {
             return None;
         }
         self.snapshot()
@@ -1309,6 +1337,7 @@ impl SessionService {
                 session_id: s.id,
                 tenant_id: s.tenant_id,
                 workspace_id: s.workspace_id,
+                ide: s.ide.map(|runtime| runtime.id),
             })
     }
 
@@ -1428,7 +1457,7 @@ impl SessionService {
     /// driver refuses to stop is counted in [`ReapOutcome::failed`] and left
     /// for the next pass.
     pub async fn reap_expired(&self) -> anyhow::Result<ReapOutcome> {
-        let idle_reaping = self.cfg.idle_session_secs != 0 && self.cfg.theia_control_enabled;
+        let idle_reaping = self.cfg.idle_session_secs != 0 && self.cfg.ide_control_enabled;
         if self.cfg.max_session_secs == 0 && !idle_reaping {
             return Ok(ReapOutcome::default());
         }
@@ -1470,10 +1499,18 @@ impl SessionService {
                 {
                     continue;
                 }
+                // Only an IDE that reports it is asked (ADR-0080): one that
+                // cannot see the browser has no answer, and no answer never
+                // stops a session.
+                let Some(runtime) = crate::ide_runtime::of_label(session.ide.as_deref())
+                    .filter(|r| r.can(crate::ide_runtime::Capability::IdleReport))
+                else {
+                    continue;
+                };
                 let base_url = self.control_base_url(&session.address);
                 let idle_for = self
                     .activity
-                    .idle_secs(&base_url, &session.control_token)
+                    .idle_secs(&base_url, &runtime.control, &session.control_token)
                     .await;
                 if idle_for.is_some_and(|secs| secs >= self.cfg.idle_session_secs) {
                     idle.push(session);
@@ -1726,6 +1763,7 @@ mod tests {
             launch_id: Some(LISTED_LAUNCH),
             session_token: "gate".into(),
             control_token: "s2s".into(),
+            ide: None,
             sources: vec!["docs (git)".into()],
         }
     }
@@ -1735,7 +1773,7 @@ mod tests {
     fn config() -> StudioSessionConfig {
         StudioSessionConfig {
             registry_ttl_secs: 0,
-            theia_control_enabled: true,
+            ide_control_enabled: true,
             ..StudioSessionConfig::default()
         }
     }
@@ -2226,7 +2264,12 @@ mod tests {
 
     #[async_trait]
     impl super::SessionActivity for Idle {
-        async fn idle_secs(&self, _base_url: &str, _token: &str) -> Option<u64> {
+        async fn idle_secs(
+            &self,
+            _base_url: &str,
+            _control: &crate::ide_runtime::IdeControl,
+            _token: &str,
+        ) -> Option<u64> {
             self.asked.fetch_add(1, Ordering::SeqCst);
             self.answer
         }
@@ -2568,5 +2611,274 @@ mod tests {
 
         assert!(reused);
         assert_eq!(session.state, SessionState::Running);
+    }
+
+    // ── The IDE is a runtime behind a port (ADR-0080) ─────────────────────
+
+    // A runtime no kit ships: everything a launch of it carries is either the
+    // core's or this, so anything Theia-shaped in its spec came from the core.
+    inventory::submit! {
+        crate::ide_runtime::IdeRuntime {
+            id: "fake-ide",
+            label: "Fake IDE",
+            default_image: "example.test/fake-ide:1",
+            container_port: 4444,
+            container_name: "fake",
+            launch_env: &["FAKE_IDE=1"],
+            control: crate::ide_runtime::IdeControl {
+                path: "/fake/v9",
+                header: "X-Fake-Token",
+                token_env: "FAKE_IDE_TOKEN",
+            },
+            adopt_token_envs: &["FAKE_IDE_TOKEN"],
+            capabilities: &[],
+            default: false,
+        }
+    }
+
+    /// One launch as the driver saw it.
+    #[derive(Clone)]
+    struct SeenSpec {
+        image: String,
+        env: Vec<String>,
+        labels: std::collections::HashMap<String, String>,
+        runtime: &'static crate::ide_runtime::IdeRuntime,
+        port: u16,
+    }
+
+    /// A runtime that keeps every spec it launched and lists each launch back
+    /// the way Docker does: with its labels and the env its tokens are in.
+    #[derive(Default)]
+    struct SpecRecorder {
+        seen: Mutex<Vec<SeenSpec>>,
+    }
+
+    #[async_trait]
+    impl SessionDriver for SpecRecorder {
+        async fn image_present(&self) -> bool {
+            true
+        }
+        async fn refresh_image(&self) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn launch(&self, spec: &LaunchSpec) -> anyhow::Result<LaunchedSession> {
+            self.seen.lock().unwrap().push(SeenSpec {
+                image: spec.image.clone(),
+                env: spec.env.clone(),
+                labels: spec.labels.clone(),
+                runtime: spec.runtime,
+                port: spec.port,
+            });
+            Ok(LaunchedSession {
+                handle: spec.name.clone(),
+                address: SessionAddress::Loopback { port: spec.port },
+            })
+        }
+        async fn is_running(&self, _handle: &str) -> bool {
+            true
+        }
+        async fn is_reachable(&self, _address: &SessionAddress) -> bool {
+            true
+        }
+        async fn destroy(&self, _handle: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn list_adoptable(&self) -> anyhow::Result<Vec<AdoptedSession>> {
+            Ok(self
+                .seen
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|seen| {
+                    let ws = seen.labels[super::WS_LABEL].parse().unwrap();
+                    let ide = seen.labels.get(crate::ide_runtime::LABEL).cloned();
+                    let env_value = |name: &str| {
+                        let prefix = format!("{name}=");
+                        seen.env.iter().find_map(|kv| kv.strip_prefix(&prefix))
+                    };
+                    AdoptedSession {
+                        control_token: super::super::driver::adopted_control_token(
+                            ide.as_deref(),
+                            env_value,
+                        ),
+                        ide,
+                        ..running_session(ws, seen.port)
+                    }
+                })
+                .collect())
+        }
+    }
+
+    /// A launch under a deployment that names `ide` (or none), and what the
+    /// driver was handed.
+    async fn launch_under(ide: Option<&str>) -> (Arc<SessionService>, SeenSpec, Uuid) {
+        let root = std::env::temp_dir().join(format!("cf-session-ide-{}", Uuid::new_v4()));
+        let driver = Arc::new(SpecRecorder::default());
+        let service = SessionService::new(
+            StudioSessionConfig {
+                workspaces_root: root.to_string_lossy().into_owned(),
+                gateway_url: "http://gateway.test/cf/".into(),
+                ide: ide.map(str::to_owned),
+                ..config()
+            },
+            driver.clone(),
+        );
+        service
+            .set_workspace_access(Arc::new(Reachable(true)))
+            .await;
+        let ws = Uuid::from_u128(0xE1);
+        service
+            .create(&ctx(), ws, None, None, vec![])
+            .await
+            .expect("the session launches");
+        let _ = std::fs::remove_dir_all(&root);
+        let seen = driver.seen.lock().unwrap()[0].clone();
+        (service, seen, ws)
+    }
+
+    fn has_env(seen: &SeenSpec, prefix: &str) -> bool {
+        seen.env.iter().any(|kv| kv.starts_with(prefix))
+    }
+
+    /// A deployment that names no IDE launches today's Theia, exactly as it
+    /// did before the port: its image, its gate port, its v1 token env, and
+    /// nothing a v2 IDE needs.
+    #[tokio::test]
+    async fn no_ide_named_is_todays_theia_launch() {
+        let (service, seen, ws) = launch_under(None).await;
+        assert_eq!(seen.runtime.id, "theia");
+        assert_eq!(seen.runtime.container_port, 3003);
+        assert_eq!(seen.runtime.container_name, "theia");
+        assert_eq!(
+            seen.image,
+            "ghcr.io/constructorfabric/studio-web/cf-studio-theia:edge"
+        );
+        assert!(has_env(&seen, "STUDIO_THEIA_S2S_TOKEN="));
+        assert!(!has_env(&seen, "STUDIO_IDE_CONTROL_TOKEN="));
+        assert!(!has_env(&seen, "STUDIO_IDE="));
+        assert_eq!(seen.labels[crate::ide_runtime::LABEL], "theia");
+
+        let endpoint = service.control_endpoint(&ctx(), ws).await.expect("bridged");
+        assert_eq!(endpoint.runtime.control.path, "/internal/theia/v1");
+        assert_eq!(endpoint.runtime.control.header, "X-CFS-Theia-Token");
+        assert!(has_env(&seen, &format!("STUDIO_THEIA_S2S_TOKEN={}", endpoint.token)));
+    }
+
+    /// `ide: vscode`: its image, its v2 token env, its own marker, and the
+    /// v2 endpoint for every control call. The session remembers its IDE on
+    /// the runtime, so a later listing (another replica, a restart) agrees.
+    #[tokio::test]
+    async fn a_vscode_deployment_launches_vscode_on_v2() {
+        let (service, seen, ws) = launch_under(Some("vscode")).await;
+        assert_eq!(seen.runtime.id, "vscode");
+        assert_eq!(
+            seen.image,
+            "ghcr.io/constructorfabric/studio-web/cf-studio-vscode:edge"
+        );
+        assert!(has_env(&seen, "STUDIO_IDE_CONTROL_TOKEN="));
+        assert!(has_env(&seen, "STUDIO_IDE=vscode"));
+        assert!(!has_env(&seen, "STUDIO_THEIA_S2S_TOKEN="));
+        assert_eq!(seen.labels[crate::ide_runtime::LABEL], "vscode");
+
+        let endpoint = service.control_endpoint(&ctx(), ws).await.expect("bridged");
+        assert_eq!(endpoint.runtime.id, "vscode");
+        assert_eq!(endpoint.runtime.control.path, "/internal/ide/v2");
+        assert_eq!(endpoint.runtime.control.header, "X-CFS-Ide-Token");
+        assert!(has_env(&seen, &format!("STUDIO_IDE_CONTROL_TOKEN={}", endpoint.token)));
+        let identity = service
+            .resolve_control_token(&endpoint.token)
+            .await
+            .expect("the token is the session's");
+        assert_eq!(identity.ide, Some("vscode"));
+    }
+
+    /// The Confirmation of ADR-0080: launched with a runtime no kit ships,
+    /// the spec holds no `3003`, no `theia` and no Theia token that the
+    /// runtime did not give it. Everything IDE-shaped is the runtime's.
+    #[tokio::test]
+    async fn the_core_adds_nothing_theia_shaped_to_a_launch() {
+        let (service, seen, ws) = launch_under(Some("fake-ide")).await;
+        assert_eq!(seen.runtime.id, "fake-ide");
+        assert_eq!(seen.runtime.container_port, 4444);
+        assert_eq!(seen.image, "example.test/fake-ide:1");
+        assert!(has_env(&seen, "FAKE_IDE=1"));
+        assert!(has_env(&seen, "FAKE_IDE_TOKEN="));
+        let everything = std::iter::once(seen.image.clone())
+            .chain(seen.env.iter().cloned())
+            .chain(seen.labels.iter().map(|(k, v)| format!("{k}={v}")))
+            .chain(std::iter::once(seen.runtime.container_name.to_owned()));
+        for item in everything {
+            let lower = item.to_lowercase();
+            assert!(
+                !lower.contains("theia") && !item.contains("3003"),
+                "the core put `{item}` into a launch of an IDE that is not Theia"
+            );
+        }
+        let endpoint = service.control_endpoint(&ctx(), ws).await.expect("bridged");
+        assert_eq!(endpoint.runtime.control.path, "/fake/v9");
+    }
+
+    /// An IDE the build does not have is a sentence at launch, not a
+    /// container started from somebody's guess.
+    #[tokio::test]
+    async fn an_ide_the_build_lacks_is_refused_at_launch() {
+        let root = std::env::temp_dir().join(format!("cf-session-ide-{}", Uuid::new_v4()));
+        let driver = Arc::new(SpecRecorder::default());
+        let service = SessionService::new(
+            StudioSessionConfig {
+                workspaces_root: root.to_string_lossy().into_owned(),
+                ide: Some("emacs".into()),
+                ..config()
+            },
+            driver.clone(),
+        );
+        service
+            .set_workspace_access(Arc::new(Reachable(true)))
+            .await;
+        let err = service
+            .create(&ctx(), Uuid::from_u128(0xE2), None, None, vec![])
+            .await
+            .expect_err("no such IDE");
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(format!("{err:#}").contains("no IDE called `emacs`"), "{err:#}");
+        assert!(driver.seen.lock().unwrap().is_empty());
+    }
+
+    /// A session keeps the IDE it started with: one launched as Theia is
+    /// still bridged as Theia under a deployment that now says VS Code.
+    #[tokio::test]
+    async fn a_running_session_keeps_its_ide_when_the_deployment_switches() {
+        let ws = Uuid::from_u128(0xE3);
+        let runtime = FakeRuntime::with(vec![AdoptedSession {
+            ide: Some("theia".into()),
+            ..running_session(ws, 41000)
+        }]);
+        let service = SessionService::new(
+            StudioSessionConfig {
+                ide: Some("vscode".into()),
+                ..config()
+            },
+            runtime,
+        );
+        service
+            .set_workspace_access(Arc::new(Reachable(true)))
+            .await;
+        let endpoint = service.control_endpoint(&ctx(), ws).await.expect("bridged");
+        assert_eq!(endpoint.runtime.id, "theia");
+        assert_eq!(endpoint.runtime.control.path, "/internal/theia/v1");
+    }
+
+    /// An IDE that cannot see the browser has no idle answer to give, so the
+    /// reaper does not ask it; it is never stopped for being idle.
+    #[tokio::test]
+    async fn an_ide_that_cannot_report_idleness_is_not_asked() {
+        let idle = Idle::says(Some(99_999));
+        let session = AdoptedSession {
+            ide: Some("vscode".into()),
+            ..an_hour_old(Uuid::from_u128(0xE4))
+        };
+        let outcome = reap_with(session, idle.clone()).await;
+        assert_eq!((outcome.idle, outcome.stopped), (0, 0));
+        assert_eq!(idle.asked.load(Ordering::SeqCst), 0);
     }
 }

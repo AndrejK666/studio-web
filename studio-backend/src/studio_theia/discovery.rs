@@ -1,10 +1,12 @@
-//! Resolving a session to its Theia control endpoint + S2S token.
+//! Resolving a session to its IDE control endpoint + S2S token.
 //!
 //! [`StudioSessionResolver`] consumes the studio-session discovery client from
 //! `ClientHub` (looked up lazily, so gear init order does not matter) and maps
-//! its [`TheiaControlEndpoint`](crate::studio_session::sdk::TheiaControlEndpoint)
+//! its [`IdeControlEndpoint`](crate::studio_session::sdk::IdeControlEndpoint)
 //! onto a dial-able [`TheiaEndpoint`]. Tenant scoping happens inside
-//! studio-session, under the caller's `SecurityContext`.
+//! studio-session, under the caller's `SecurityContext`. The endpoint carries
+//! the session's IDE runtime (ADR-0080): Theia's on the v1 path, any other on
+//! v2, so this one client reaches both.
 
 use std::sync::Arc;
 
@@ -18,13 +20,16 @@ use crate::studio_session::sdk::{
 };
 use crate::studio_theia::sdk::{SessionTarget, TheiaControlError};
 
-/// A concrete, dial-able Theia control endpoint for one session.
+/// A concrete, dial-able IDE control endpoint for one session.
 #[derive(Debug, Clone)]
 pub struct TheiaEndpoint {
     /// Base URL of the internal control API, e.g. `http://127.0.0.1:41007`.
     pub base_url: String,
-    /// S2S token to present on the `X-CFS-Theia-Token` header.
+    /// S2S token to present on the runtime's control header.
     pub token: String,
+    /// The session's IDE: the path and header to call it on, and what it can
+    /// be asked.
+    pub runtime: &'static crate::ide_runtime::IdeRuntime,
 }
 
 /// Resolves a [`SessionTarget`] to a [`TheiaEndpoint`] under the caller's
@@ -77,7 +82,7 @@ impl TheiaEndpointResolver for StudioSessionResolver {
                     .create()
             })?;
         let endpoint = discovery
-            .resolve_theia_control(ctx, target.workspace_id)
+            .resolve_ide_control(ctx, target.workspace_id)
             .await?
             .ok_or_else(|| {
                 CanonicalError::service_unavailable()
@@ -90,6 +95,7 @@ impl TheiaEndpointResolver for StudioSessionResolver {
         Ok(TheiaEndpoint {
             base_url: endpoint.base_url,
             token: endpoint.token,
+            runtime: endpoint.runtime,
         })
     }
 }

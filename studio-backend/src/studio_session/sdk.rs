@@ -1,12 +1,13 @@
-//! studio-session SDK — the in-process discovery contract for the Theia
-//! backend bridge (ADR-0022).
+//! studio-session SDK — the in-process discovery contract for the IDE
+//! backend bridge (ADR-0022, ADR-0080).
 //!
-//! The studio-theia gear consumes [`StudioSessionDiscoveryClientV1`] from
-//! `ClientHub` to turn a workspace into a dial-able Theia control endpoint +
-//! per-session S2S token. Registered unconditionally by the studio-session
-//! gear; dormant (resolves to `None`) unless `theia_control_enabled`.
+//! The IDE bridge gear consumes [`StudioSessionDiscoveryClientV1`] from
+//! `ClientHub` to turn a workspace into a dial-able IDE control endpoint +
+//! per-session S2S token, with the session's IDE runtime (its path, its token
+//! header, what it can do). Registered unconditionally by the studio-session
+//! gear; dormant (resolves to `None`) unless `ide_control_enabled`.
 
-// Consumed only by the opt-in studio-theia gear; until a live caller (the
+// Consumed only by the opt-in bridge gear; until a live caller (the
 // portal REST slice) drives it, this reads as dead code under `-D warnings`.
 #![allow(dead_code)]
 
@@ -21,40 +22,46 @@ use super::service::SessionService;
 /// Error returned by discovery lookups.
 pub type StudioSessionError = toolkit_canonical_errors::CanonicalError;
 
-/// The internal Theia control endpoint for one live session (ADR-0022).
+/// The internal IDE control endpoint for one live session (ADR-0022).
 #[derive(Debug, Clone)]
-pub struct TheiaControlEndpoint {
+pub struct IdeControlEndpoint {
     /// The studio-session id backing this endpoint.
     pub session_id: Uuid,
     /// Base URL studio-backend dials, e.g. `http://127.0.0.1:41007`.
     pub base_url: String,
-    /// Per-session S2S token to present on the `X-CFS-Theia-Token` header.
+    /// Per-session S2S token to present on the runtime's control header.
     pub token: String,
+    /// The IDE the session runs (ADR-0080): the control path under
+    /// `base_url`, the header `token` goes on, and what it can be asked.
+    pub runtime: &'static crate::ide_runtime::IdeRuntime,
 }
 
 /// Trusted session coordinates recovered from a per-session S2S control
 /// token. The token is the credential (256 random bits, minted per session),
-/// so this is the primitive the studio-theia ingress uses to MINT a
+/// so this is the primitive the bridge's event ingress uses to MINT a
 /// tenant-scoped identity instead of trusting the forwarded request body.
 #[derive(Debug, Clone, Copy)]
 pub struct SessionIdentity {
     pub session_id: Uuid,
     pub tenant_id: Uuid,
     pub workspace_id: Uuid,
+    /// The session's IDE runtime id (ADR-0080); `None` for a desktop lease,
+    /// which is the desktop app's, and for a runtime this build lacks.
+    pub ide: Option<&'static str>,
 }
 
 /// Object-safe discovery client (version 1): resolve a workspace to its live
-/// session's Theia control endpoint under the caller's identity.
+/// session's IDE control endpoint under the caller's identity.
 #[async_trait]
 pub trait StudioSessionDiscoveryClientV1: Send + Sync {
-    /// Resolve the Theia control endpoint for the caller's live session on
+    /// Resolve the IDE control endpoint for the caller's live session on
     /// `workspace_id`. `Ok(None)` when the bridge is disabled or there is no
     /// live session for that `(tenant, workspace)`.
-    async fn resolve_theia_control(
+    async fn resolve_ide_control(
         &self,
         ctx: &SecurityContext,
         workspace_id: Uuid,
-    ) -> Result<Option<TheiaControlEndpoint>, StudioSessionError>;
+    ) -> Result<Option<IdeControlEndpoint>, StudioSessionError>;
 
     /// Reverse-resolve a per-session S2S control token to its owning session's
     /// trusted coordinates. Unauthenticated by design — the token IS the
@@ -79,11 +86,11 @@ impl StudioSessionDiscoveryLocalClient {
 
 #[async_trait]
 impl StudioSessionDiscoveryClientV1 for StudioSessionDiscoveryLocalClient {
-    async fn resolve_theia_control(
+    async fn resolve_ide_control(
         &self,
         ctx: &SecurityContext,
         workspace_id: Uuid,
-    ) -> Result<Option<TheiaControlEndpoint>, StudioSessionError> {
+    ) -> Result<Option<IdeControlEndpoint>, StudioSessionError> {
         Ok(self.service.control_endpoint(ctx, workspace_id).await)
     }
 
@@ -144,6 +151,7 @@ impl DesktopSessionsClientV1 for DesktopSessionsLocalClient {
                 session_id: lease.id,
                 tenant_id: lease.tenant_id,
                 workspace_id: lease.workspace_id,
+                ide: None,
             })
     }
 }

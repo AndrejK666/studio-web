@@ -11,7 +11,8 @@ use toolkit_security::SecurityContext;
 
 use crate::studio_theia::sdk::{
     EnqueueOperation, EnqueueOperationResult, InstallKit, InstallKitResult, NotifyEditor,
-    NotifyEditorResult, OpenInEditor, OpenInEditorResult, OperationDeltas, OperationSnapshot,
+    NotifyEditorResult, OpenDocument, OpenDocumentResult, OpenInEditor, OpenInEditorResult,
+    OperationDeltas, OperationSnapshot,
     RepositoryDescriptor, RuntimeStatus, SessionInfo, SessionTarget, TheiaControlClientV1,
     TheiaControlError,
 };
@@ -110,6 +111,17 @@ impl TheiaControlClientV1 for TheiaControlLocalClient {
     ) -> Result<OpenInEditorResult, TheiaControlError> {
         self.service
             .call(ctx, target, "openInEditor", request)
+            .await
+    }
+
+    async fn open_document(
+        &self,
+        ctx: &SecurityContext,
+        target: &SessionTarget,
+        request: &OpenDocument,
+    ) -> Result<OpenDocumentResult, TheiaControlError> {
+        self.service
+            .call(ctx, target, "openDocument", request)
             .await
     }
 

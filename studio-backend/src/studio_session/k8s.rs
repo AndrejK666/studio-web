@@ -38,12 +38,8 @@ const TENANT_LABEL: &str = "cf.studio.tenant_id";
 const PORT_LABEL: &str = "cf.studio.port";
 const LAUNCH_LABEL: &str = "cf.studio.launch_id";
 const POD_LABEL: &str = "cf.studio.pod";
-const THEIA_PORT: i32 = 3003;
 const SESSION_READY_PATH: &str = "/__studio_session_ready__";
 const SESSION_TOKEN_ENV: &str = "STUDIO_SESSION_TOKEN";
-/// The Theia backend-control token (ADR-0022), recovered on adoption so a
-/// restarted backend can still reach the node it launched.
-const CONTROL_TOKEN_ENV: &str = "STUDIO_THEIA_S2S_TOKEN";
 /// The two variables a session's source summary is rebuilt from.
 const ROOT_URL_ENV: &str = "STUDIO_ROOT_URL";
 const SOURCES_ENV: &str = "STUDIO_SOURCES";
@@ -117,11 +113,23 @@ fn service_dns(pod_name: &str, namespace: &str) -> String {
 /// of `starting`: the IDE answered on 3003 while the backend dialled 41000. The
 /// launch itself was correct, until the first cache refresh replaced its address
 /// with the adopted one.
-fn session_address(pod_name: &str, namespace: &str) -> SessionAddress {
+///
+/// The port is the one the session's IDE runtime holds (ADR-0080), the same
+/// in the container and on the Service.
+fn session_address(pod_name: &str, namespace: &str, port: u16) -> SessionAddress {
     SessionAddress::Service {
         host: service_dns(pod_name, namespace),
-        port: THEIA_PORT as u16,
+        port,
     }
+}
+
+/// The port a session's gate holds, from its [`crate::ide_runtime::LABEL`]
+/// label. A runtime this build no longer has is addressed on the default
+/// runtime's port: it can still be listed and stopped.
+fn runtime_port(ide_label: Option<&str>) -> u16 {
+    crate::ide_runtime::of_label(ide_label)
+        .or_else(crate::ide_runtime::default_runtime)
+        .map_or(0, |runtime| runtime.container_port)
 }
 
 pub struct KubernetesDriver {
@@ -484,10 +492,10 @@ impl SessionDriver for KubernetesDriver {
                 node_selector: node_selector.clone(),
                 image_pull_secrets,
                 containers: vec![Container {
-                    name: "theia".to_string(),
+                    name: spec.runtime.container_name.to_string(),
                     image: Some(spec.image.clone()),
                     ports: Some(vec![ContainerPort {
-                        container_port: THEIA_PORT,
+                        container_port: i32::from(spec.runtime.container_port),
                         name: Some("http".to_string()),
                         ..Default::default()
                     }]),
@@ -515,7 +523,7 @@ impl SessionDriver for KubernetesDriver {
                     readiness_probe: Some(Probe {
                         http_get: Some(HTTPGetAction {
                             path: Some(SESSION_READY_PATH.to_string()),
-                            port: IntOrString::Int(THEIA_PORT),
+                            port: IntOrString::Int(i32::from(spec.runtime.container_port)),
                             ..Default::default()
                         }),
                         initial_delay_seconds: Some(1),
@@ -532,7 +540,7 @@ impl SessionDriver for KubernetesDriver {
                     // listening restarts the container in place.
                     liveness_probe: Some(Probe {
                         tcp_socket: Some(TCPSocketAction {
-                            port: IntOrString::Int(THEIA_PORT),
+                            port: IntOrString::Int(i32::from(spec.runtime.container_port)),
                             ..Default::default()
                         }),
                         initial_delay_seconds: Some(30),
@@ -571,8 +579,8 @@ impl SessionDriver for KubernetesDriver {
             spec: Some(ServiceSpec {
                 selector: Some(BTreeMap::from([(POD_LABEL.to_string(), name.clone())])),
                 ports: Some(vec![ServicePort {
-                    port: THEIA_PORT,
-                    target_port: Some(IntOrString::Int(THEIA_PORT)),
+                    port: i32::from(spec.runtime.container_port),
+                    target_port: Some(IntOrString::Int(i32::from(spec.runtime.container_port))),
                     name: Some("http".to_string()),
                     ..Default::default()
                 }]),
@@ -595,7 +603,7 @@ impl SessionDriver for KubernetesDriver {
 
         Ok(LaunchedSession {
             handle: name.clone(),
-            address: session_address(&name, &self.namespace),
+            address: session_address(&name, &self.namespace, spec.runtime.container_port),
         })
     }
 
@@ -651,7 +659,7 @@ impl SessionDriver for KubernetesDriver {
             // writes, so demanding it keeps adoption to sessions this platform
             // started — but its VALUE is deliberately unused: it carries the
             // Docker driver's published host port, while a Pod is reached
-            // through its Service on `THEIA_PORT`.
+            // through its Service on its IDE runtime's port.
             let (Some(ws), Some(tenant), Some(_)) = (
                 labels.get(WS_LABEL).and_then(|v| v.parse::<Uuid>().ok()),
                 labels
@@ -677,14 +685,15 @@ impl SessionDriver for KubernetesDriver {
                     .and_then(|e| e.value.as_deref())
             };
             let session_token = env_value(SESSION_TOKEN_ENV).unwrap_or_default().to_string();
-            let control_token = env_value(CONTROL_TOKEN_ENV).unwrap_or_default().to_string();
+            let ide = labels.get(crate::ide_runtime::LABEL).cloned();
+            let control_token = super::driver::adopted_control_token(ide.as_deref(), env_value);
             let sources =
                 super::driver::adopted_sources(env_value(ROOT_URL_ENV), env_value(SOURCES_ENV));
             out.push(AdoptedSession {
                 workspace_id: ws,
                 tenant_id: tenant,
                 handle: name.clone(),
-                address: session_address(&name, &self.namespace),
+                address: session_address(&name, &self.namespace, runtime_port(ide.as_deref())),
                 running,
                 created_at_epoch_secs: pod
                     .metadata
@@ -697,6 +706,7 @@ impl SessionDriver for KubernetesDriver {
                     .and_then(|v| v.parse::<Uuid>().ok()),
                 session_token,
                 control_token,
+                ide,
                 sources,
             });
         }
@@ -778,7 +788,7 @@ fn classify_create(e: kube::Error) -> CreateRefusal {
 #[cfg(test)]
 mod tests {
     use super::{
-        CreateRefusal, STUCK_UNREADY_SECS, SessionAddress, StudioSessionConfig, THEIA_PORT,
+        CreateRefusal, STUCK_UNREADY_SECS, SessionAddress, StudioSessionConfig,
         classify_create, pod_is_live, pod_phase_is_live, session_address, workspace_claim,
         workspace_claim_name,
     };
@@ -852,13 +862,13 @@ mod tests {
     /// session never left `starting` and the caller timed out on a healthy IDE.
     #[test]
     fn a_session_is_addressed_on_the_port_its_service_publishes() {
-        match session_address("cf-studio-session-abc123", "studio-dev") {
+        match session_address("cf-studio-session-abc123", "studio-dev", 3003) {
             SessionAddress::Service { host, port } => {
                 assert_eq!(
                     host,
                     "cf-studio-session-abc123.studio-dev.svc.cluster.local"
                 );
-                assert_eq!(port, THEIA_PORT as u16);
+                assert_eq!(port, 3003);
             }
             other => panic!("a Kubernetes session is reached through its Service, got {other:?}"),
         }

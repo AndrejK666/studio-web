@@ -28,9 +28,11 @@ yet and are the reviewer's job.
 
 **A1 `[domain-prefix]` `[domain-registered]` `[path-version]` — a path is
 `/<domain>/v1/<resource>`.** The domain is the gear that owns the resource,
-`studio-` prefixed, lower-kebab, and listed in `api_contract::DOMAINS`. A new
-domain is added to that list in the PR that registers its first operation, so a
-typo cannot quietly become a second API.
+`studio-` prefixed, lower-kebab, and listed in `api_contract::DOMAINS` or
+declared as a gear's own name (`#[toolkit::gear(name = "…")]`, so a kit's gear
+needs no line in the core, ADR-0079). A new domain is added to that list in the
+PR that registers its first operation, so a typo cannot quietly become a second
+API.
 
 **A2 `[op-id]` `[op-id-verb]` `[op-id-unique]` — `operation_id` is
 `<domain_snake>.<verb>_<noun>`, unique across the assembly.** The verb comes
