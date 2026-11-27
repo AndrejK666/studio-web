@@ -15,7 +15,11 @@ name: gears-matcher
 #   The deploy uses the GitHub Environment's KUBE_CONFIG_B64, the namespace-scoped credential Studio
 #   Delivery uses.
 #
-# A fork runs the gates and the build, and never publishes or deploys.
+# A fork runs the gates and the build on every pull request and push, and publishes only when asked:
+# "Run workflow" there publishes ghcr.io/<fork owner, lowercased>/studio-web/gears-matcher:sha-<commit>
+# (ghcr.io/andrejk666/... for AndrejK666/studio-web), as Studio Delivery's manual build does. It never
+# deploys: a fork's package is private, so its environments pull it through an image pull Secret and
+# are upgraded by hand (deploy/README.md), with image.repository set to the fork's registry.
 
 on:
   workflow_dispatch:
@@ -50,9 +54,15 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
+  # Lowercased in each job that pushes or pulls it: ghcr refuses an uppercase letter, and a fork's
+  # `github.repository` keeps its owner's case (AndrejK666/studio-web).
   IMAGE: ghcr.io/${{ github.repository }}/gears-matcher
-  # Publishing and deploying happen in the upstream repository only.
+  # Deploying happens in the upstream repository only; a fork publishes on "Run workflow" only.
   UPSTREAM: ${{ github.repository == 'constructorfabric/studio-web' }}
+  PUBLISH: >-
+    ${{ github.event_name == 'workflow_dispatch' ||
+        (github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+         github.repository == 'constructorfabric/studio-web') }}
 
 jobs:
   gates:
@@ -145,6 +155,10 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+      - name: Lowercase the image name
+        run: |
+          set -euo pipefail
+          echo "IMAGE=$(printf '%s' "$IMAGE" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
       - name: Build the image
         run: docker build --tag "$IMAGE:build" gears-matcher
       # The image starts and answers its probe, so a broken entry point or a missing file is found here.
@@ -159,7 +173,7 @@ jobs:
           test "$status" -eq 2
           echo "$out" | grep -q "GEARS_MATCHER_SECRET is required"
       - name: Log in to GHCR
-        if: env.UPSTREAM == 'true' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))
+        if: env.PUBLISH == 'true'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -169,13 +183,13 @@ jobs:
       # only main moves `edge`.
       - name: Publish
         id: publish
-        if: env.UPSTREAM == 'true' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))
+        if: env.PUBLISH == 'true'
         run: |
           set -euo pipefail
           tag="sha-$GITHUB_SHA"
           docker tag "$IMAGE:build" "$IMAGE:$tag"
           docker push "$IMAGE:$tag"
-          if [ "$GITHUB_REF" = refs/heads/main ]; then
+          if [ "$GITHUB_REF" = refs/heads/main ] && [ "$UPSTREAM" = true ]; then
             docker tag "$IMAGE:build" "$IMAGE:edge"
             docker push "$IMAGE:edge"
           fi
@@ -183,7 +197,10 @@ jobs:
           {
             echo "### gears-matcher image"
             echo "- \`$IMAGE:$tag\` (immutable; what a deploy takes)"
-            if [ "$GITHUB_REF" = refs/heads/main ]; then echo "- \`$IMAGE:edge\`"; fi
+            if [ "$GITHUB_REF" = refs/heads/main ] && [ "$UPSTREAM" = true ]; then echo "- \`$IMAGE:edge\`"; fi
+            if [ "$UPSTREAM" != true ]; then
+              echo "- a fork's package: deploy it by hand with \`--set image.repository=$IMAGE\` and an image pull Secret"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
   deploy:

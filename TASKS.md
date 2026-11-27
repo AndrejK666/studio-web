@@ -145,11 +145,13 @@ done, **P2** can wait.
   Red since 8fe24027b (follow a run the event stream never mentions). The
   test expects the old behaviour; update it or the effect.
 
-- [ ] Point `gears-matcher.yml` at the fork's registry @andrejk666
+- [x] Point `gears-matcher.yml` at the fork's registry @andrejk666
 
-  The workflow publishes only to upstream's registry, so the matcher goes to
-  Dev by hand. Add the fork's `ghcr.io/andrejk666` as a target, or a manual
-  dispatch input for it.
+  Done 2026-11-27: "Run workflow" in the fork publishes
+  `ghcr.io/andrejk666/studio-web/gears-matcher:sha-<commit>` (owner
+  lowercased; no `edge`, no deploy, fork pushes still only build). The Dev
+  upgrade stays by hand with `image.repository` and `ghcr-pull`
+  (deploy/README.md). Unrun on GitHub yet: the first dispatch is the check.
 
 ## P2
 
