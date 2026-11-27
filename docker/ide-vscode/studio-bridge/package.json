@@ -1,0 +1,19 @@
+{
+  "name": "studio-bridge",
+  "displayName": "Constructor Studio bridge",
+  "description": "Studio's side of the IDE bridge in a VS Code session (ADR-0080): opens files and portal documents, shows notifications, tells the portal what the IDE asks it to open.",
+  "publisher": "constructorfabric",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "engines": { "vscode": "^1.80.0" },
+  "main": "./extension.js",
+  "activationEvents": ["onStartupFinished"],
+  "contributes": {
+    "commands": [
+      { "command": "studio.openArtifact", "title": "Open in the Studio portal", "category": "Studio" }
+    ]
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  }
+}
