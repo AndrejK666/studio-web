@@ -39,6 +39,11 @@ function takeArrival(): CallbackParams {
   return arrived;
 }
 
+/** A new page load, as far as the arrival goes: each test of the page is one. */
+export function resetConnectionSignInArrivalForTests(): void {
+  arrived = null;
+}
+
 export const ConnectionSignInCallback: React.FC = () => {
   const [params] = useState(takeArrival);
   const [back] = useState(takeSignInReturn);
