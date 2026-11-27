@@ -235,6 +235,10 @@ impl StructShape {
 // ---------------------------------------------------------------------------
 
 /// Every `.rs` file under `src/`, sorted, so a run is reproducible.
+///
+/// Test files (`*tests.rs`, `*_test.rs`) are left out, as `build.rs` leaves
+/// them out of its tables: a route a test mounts to exercise a mechanism is
+/// not part of the API.
 fn source_files(src: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut stack = vec![src.to_path_buf()];
@@ -250,6 +254,7 @@ fn source_files(src: &Path) -> Vec<PathBuf> {
                 }
             } else if path.extension().is_some_and(|ext| ext == "rs")
                 && path.file_name().is_some_and(|name| name != SELF_FILE)
+                && !is_test_file(&path)
             {
                 out.push(path);
             }
@@ -257,6 +262,13 @@ fn source_files(src: &Path) -> Vec<PathBuf> {
     }
     out.sort();
     out
+}
+
+/// A file of tests only, by the name the crate gives such files.
+fn is_test_file(path: &Path) -> bool {
+    path.file_stem()
+        .and_then(|stem| stem.to_str())
+        .is_some_and(|stem| stem.ends_with("tests") || stem.ends_with("_test"))
 }
 
 /// Blank out `//` comments while leaving byte offsets and line breaks intact.

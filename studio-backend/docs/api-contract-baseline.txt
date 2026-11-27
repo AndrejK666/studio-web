@@ -269,6 +269,7 @@ scope-in-path	POST /studio-kits/v1/projects/{project_id}/installations
 scope-in-path	POST /studio-kits/v1/projects/{project_id}/installations/{kit_slug}/materialize
 scope-in-path	POST /studio-kits/v1/projects/{project_id}/installations/{kit_slug}/materializations
 scope-in-path	POST /studio-kits/v1/projects/{project_id}/installations/{kit_slug}/reconcile
+scope-in-path	POST /studio-theia/v1/workspaces/{workspace_id}/documents/open
 scope-in-path	POST /studio-theia/v1/workspaces/{workspace_id}/open
 scope-in-path	POST /studio-theia/v1/workspaces/{workspace_id}/operations
 scope-in-path	POST /studio-theia/v1/workspaces/{workspace_id}/operations/{operation_id}/retry

@@ -81,7 +81,7 @@ describe('controlChannel', () => {
     channel.open({ kind: 'document', ref: 'd1', address: 'workspace', workspaceId: 'w1', title: 'PRD' });
     await vi.runAllTimersAsync();
     expect(openFile).toHaveBeenCalledWith('p1', { relativePath: 'web/README.md', preview: false });
-    expect(openDocument).toHaveBeenCalledWith('p1', { workspaceId: 'w1', documentId: 'd1', title: 'PRD' });
+    expect(openDocument).toHaveBeenCalledWith('p1', { workspace_id: 'w1', document_id: 'd1', title: 'PRD' });
   });
 
   it('tries again while the IDE comes up, and gives up after the last attempt', async () => {

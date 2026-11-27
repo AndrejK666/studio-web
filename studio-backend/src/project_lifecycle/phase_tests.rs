@@ -104,6 +104,7 @@ fn the_kit_s_routes_pass_the_claimed_route_gate() {
         access: anyone(),
     };
     let openapi = toolkit::api::OpenApiRegistryImpl::new();
-    crate::kit_registry::runtime::mount(SLUG, &routes, axum::Router::new(), &openapi)
-        .expect("every route of Project lifecycle is claimed");
+    let _mounted: axum::Router =
+        crate::kit_registry::runtime::mount(SLUG, &routes, axum::Router::new(), &openapi)
+            .expect("every route of Project lifecycle is claimed");
 }

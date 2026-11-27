@@ -17,8 +17,8 @@ pub use client::TheiaControlClientV1;
 pub use models::{
     EnqueueOperation, EnqueueOperationResult, InstallKit, InstallKitResult, NotifyEditor,
     NotifyEditorResult, OpenDocument, OpenDocumentResult, OpenInEditor, OpenInEditorResult,
-    OperationDeltas, OperationSnapshot,
-    RepositoryDescriptor, RuntimeStatus, SessionInfo, SessionTarget,
+    OperationDeltas, OperationSnapshot, RepositoryDescriptor, RuntimeStatus, SessionInfo,
+    SessionTarget,
 };
 
 /// Error returned by every fallible bridge operation.

@@ -507,7 +507,8 @@ fn the_gate_mounts_a_kit_s_claimed_routes() {
         ("PUT", "/studio-kits/v1/project-phase"),
         ("GET", "/studio-kits/v1/project-phases"),
     ]);
-    mount(SLUG, &routes, Router::new(), &openapi).expect("every route is claimed");
+    let _mounted: axum::Router =
+        mount(SLUG, &routes, Router::new(), &openapi).expect("every route is claimed");
 }
 
 #[test]

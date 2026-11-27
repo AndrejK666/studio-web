@@ -34,7 +34,7 @@ export class IdeControlApiService extends BaseApiService {
   openDocument(workspaceId: string) {
     return this.protocol(RestEndpointProtocol).mutation<
       { opened: boolean },
-      { workspaceId: string; documentId: string; title?: string; content?: string }
+      { workspace_id: string; document_id: string; title?: string; content?: string }
     >('POST', `/workspaces/${encodeURIComponent(workspaceId)}/documents/open`);
   }
 }

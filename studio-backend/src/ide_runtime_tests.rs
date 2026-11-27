@@ -7,8 +7,12 @@ fn protocol() -> serde_json::Value {
         .join("..")
         .join("ide-bridge")
         .join("protocol.json");
-    let text = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("{} is the bridge's one source of names: {e}", path.display()));
+    let text = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+        panic!(
+            "{} is the bridge's one source of names: {e}",
+            path.display()
+        )
+    });
     serde_json::from_str(&text).expect("protocol.json is JSON")
 }
 
@@ -75,12 +79,18 @@ fn every_runtime_speaks_a_protocol_version_and_names_its_token_for_adoption() {
     for runtime in all().filter(|r| !r.id.starts_with("fake-")) {
         assert!(known.contains(&runtime.control), "{}", runtime.id);
         assert!(
-            runtime.adopt_token_envs.contains(&runtime.control.token_env),
+            runtime
+                .adopt_token_envs
+                .contains(&runtime.control.token_env),
             "{}: adoption must read the token it launched with",
             runtime.id
         );
         for pair in runtime.launch_env {
-            assert!(pair.contains('='), "{}: `{pair}` is not KEY=VALUE", runtime.id);
+            assert!(
+                pair.contains('='),
+                "{}: `{pair}` is not KEY=VALUE",
+                runtime.id
+            );
         }
     }
 }

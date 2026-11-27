@@ -793,9 +793,8 @@ fn classify_create(e: kube::Error) -> CreateRefusal {
 #[cfg(test)]
 mod tests {
     use super::{
-        CreateRefusal, STUCK_UNREADY_SECS, SessionAddress, StudioSessionConfig,
-        classify_create, pod_is_live, pod_phase_is_live, session_address, workspace_claim,
-        workspace_claim_name,
+        CreateRefusal, STUCK_UNREADY_SECS, SessionAddress, StudioSessionConfig, classify_create,
+        pod_is_live, pod_phase_is_live, session_address, workspace_claim, workspace_claim_name,
     };
     use k8s_openapi::api::core::v1::{Pod, PodCondition, PodStatus};
     use k8s_openapi::apimachinery::pkg::apis::meta::v1::Time;

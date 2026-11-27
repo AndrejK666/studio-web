@@ -1,6 +1,6 @@
 {
   "note": "The API surface studio-backend declares. Generated from source by `cargo run --quiet -- api-contract`; the rules it must follow are docs/api-conventions.md.",
-  "open_violations": 256,
+  "open_violations": 257,
   "operations": [
     {
       "method": "DELETE",
@@ -8311,6 +8311,24 @@
       "summary": "A desktop session's events",
       "authenticated": true,
       "errors": [
+        "401",
+        "404",
+        "500"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/studio-theia/v1/workspaces/{workspace_id}/documents/open",
+      "operation_id": "studio_theia.open_document",
+      "tag": "StudioTheia",
+      "summary": "Open a portal document in the running IDE",
+      "authenticated": true,
+      "request": "OpenDocumentRequest",
+      "responses": [
+        "OpenDocumentDto"
+      ],
+      "errors": [
+        "400",
         "401",
         "404",
         "500"

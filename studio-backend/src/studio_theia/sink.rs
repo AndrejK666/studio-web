@@ -346,8 +346,8 @@ mod tests {
             crate::api_contract::events::documented_kinds("ide."),
             "docs/events-catalog.md and the IDE sink disagree on the `ide.*` kinds"
         );
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../ide-bridge/protocol.json");
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ide-bridge/protocol.json");
         let protocol: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
         let kinds: Vec<&str> = protocol["events"]["kinds"]
@@ -363,8 +363,14 @@ mod tests {
     /// `ide.*`, and only v2 carries `open-artifact`.
     #[test]
     fn the_protocol_picks_the_prefix() {
-        assert_eq!(republished_kind(1, "operation").as_deref(), Some("theia.operation"));
-        assert_eq!(republished_kind(2, "operation").as_deref(), Some("ide.operation"));
+        assert_eq!(
+            republished_kind(1, "operation").as_deref(),
+            Some("theia.operation")
+        );
+        assert_eq!(
+            republished_kind(2, "operation").as_deref(),
+            Some("ide.operation")
+        );
         assert_eq!(
             republished_kind(2, "open-artifact").as_deref(),
             Some("ide.open-artifact")

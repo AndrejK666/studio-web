@@ -8,8 +8,9 @@ use toolkit_security::SecurityContext;
 
 use super::{
     EnqueueOperation, EnqueueOperationResult, InstallKit, InstallKitResult, NotifyEditor,
-    NotifyEditorResult, OpenInEditor, OpenInEditorResult, OperationDeltas, OperationSnapshot,
-    RepositoryDescriptor, RuntimeStatus, SessionInfo, SessionTarget, TheiaControlError,
+    NotifyEditorResult, OpenDocument, OpenDocumentResult, OpenInEditor, OpenInEditorResult,
+    OperationDeltas, OperationSnapshot, RepositoryDescriptor, RuntimeStatus, SessionInfo,
+    SessionTarget, TheiaControlError,
 };
 
 /// Object-safe control client for the per-session Theia node backend (v1).

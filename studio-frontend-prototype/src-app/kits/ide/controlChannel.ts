@@ -41,8 +41,8 @@ export function controlChannel(connection: EditorConnection): EditorChannel {
       await api.openFile(projectId).fetch({ relativePath: target.ref, preview: false });
     } else if (target.workspaceId) {
       await api.openDocument(projectId).fetch({
-        workspaceId: target.workspaceId,
-        documentId: target.ref,
+        workspace_id: target.workspaceId,
+        document_id: target.ref,
         ...(target.title ? { title: target.title } : {}),
       });
     }

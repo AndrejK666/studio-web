@@ -17,7 +17,7 @@ inventory::submit! {
         label: "VS Code",
         default_image: "ghcr.io/constructorfabric/studio-web/cf-studio-vscode:edge",
         container_port: 3003,
-        container_name: "ide",
+        container_name: "vscode",
         launch_env: &["STUDIO_IDE=vscode"],
         control: CONTROL_V2,
         adopt_token_envs: &["STUDIO_IDE_CONTROL_TOKEN"],

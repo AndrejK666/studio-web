@@ -7,6 +7,12 @@
 event	desktop_session.command_sent	desktop_session
 event	domain.model_changed	domain_model
 event	domain.objects_changed	domain_type
+event	ide.audit	workspace
+event	ide.open-artifact	workspace
+event	ide.operation	workspace
+event	ide.repositories-changed	workspace
+event	ide.workspace-activity	workspace
+event	ide.workspace-snapshot-changed	workspace
 event	kit.installed	kit
 event	kit.uninstalled	kit
 event	review_request.cancelled	review_request
@@ -36,6 +42,42 @@ event-field	domain.model_changed	version
 event-field	domain.objects_changed	count
 event-field	domain.objects_changed	entity
 event-field	domain.objects_changed	op
+event-field	ide.audit	event
+event-field	ide.audit	ide
+event-field	ide.audit	runtime
+event-field	ide.audit	sequence
+event-field	ide.audit	session_id
+event-field	ide.audit	workspace_id
+event-field	ide.open-artifact	event
+event-field	ide.open-artifact	ide
+event-field	ide.open-artifact	runtime
+event-field	ide.open-artifact	sequence
+event-field	ide.open-artifact	session_id
+event-field	ide.open-artifact	workspace_id
+event-field	ide.operation	event
+event-field	ide.operation	ide
+event-field	ide.operation	runtime
+event-field	ide.operation	sequence
+event-field	ide.operation	session_id
+event-field	ide.operation	workspace_id
+event-field	ide.repositories-changed	event
+event-field	ide.repositories-changed	ide
+event-field	ide.repositories-changed	runtime
+event-field	ide.repositories-changed	sequence
+event-field	ide.repositories-changed	session_id
+event-field	ide.repositories-changed	workspace_id
+event-field	ide.workspace-activity	event
+event-field	ide.workspace-activity	ide
+event-field	ide.workspace-activity	runtime
+event-field	ide.workspace-activity	sequence
+event-field	ide.workspace-activity	session_id
+event-field	ide.workspace-activity	workspace_id
+event-field	ide.workspace-snapshot-changed	event
+event-field	ide.workspace-snapshot-changed	ide
+event-field	ide.workspace-snapshot-changed	runtime
+event-field	ide.workspace-snapshot-changed	sequence
+event-field	ide.workspace-snapshot-changed	session_id
+event-field	ide.workspace-snapshot-changed	workspace_id
 event-field	kit.installed	kit_slug
 event-field	kit.installed	level
 event-field	kit.installed	organization_id
@@ -1087,6 +1129,10 @@ request	POST /studio-spec-mapping/v1/plan	requirements	Vec<String>	optional
 request	POST /studio-spec-mapping/v1/plan	terms	BTreeMap<String,Vec<String>>	optional
 request	POST /studio-theia/v1/desktop-sessions/{}/commands	command	String	required
 request	POST /studio-theia/v1/desktop-sessions/{}/commands	params	Value	optional
+request	POST /studio-theia/v1/workspaces/{}/documents/open	content	String	optional
+request	POST /studio-theia/v1/workspaces/{}/documents/open	document_id	String	required
+request	POST /studio-theia/v1/workspaces/{}/documents/open	title	String	optional
+request	POST /studio-theia/v1/workspaces/{}/documents/open	workspace_id	String	required
 request	POST /studio-user/v1/me	avatar_url	String	optional
 request	POST /studio-user/v1/me	display_name	String	optional
 request	POST /studio-user/v1/me	email	String	optional
@@ -3364,6 +3410,7 @@ response	GET /studio-documents/v1/spec-rows	sources.reviews_known	bool	always
 response	GET /studio-documents/v1/spec-rows	total	u32	always
 response	GET /studio-documents/v1/specs-per-source	files_known	bool	always
 response	GET /studio-documents/v1/specs-per-source	items	Vec<{}>	always
+response	GET /studio-documents/v1/specs-per-source	items.doc_files	u32	always
 response	GET /studio-documents/v1/specs-per-source	items.repo	String	always
 response	GET /studio-documents/v1/specs-per-source	items.specs	u32	always
 response	GET /studio-documents/v1/specs-per-source	total	u32	always
@@ -6092,6 +6139,10 @@ response	GET /studio-session/v1/desktop-sessions	total	u32	always
 response	GET /studio-session/v1/sessions	items	Vec<{}>	always
 response	GET /studio-session/v1/sessions	items.created_at_epoch_secs	u64	always
 response	GET /studio-session/v1/sessions	items.id	Uuid	always
+response	GET /studio-session/v1/sessions	items.ide	{}	optional
+response	GET /studio-session/v1/sessions	items.ide.capabilities	Vec<String>	optional
+response	GET /studio-session/v1/sessions	items.ide.id	String	optional
+response	GET /studio-session/v1/sessions	items.ide.label	String	optional
 response	GET /studio-session/v1/sessions	items.ready_run_id	String	optional
 response	GET /studio-session/v1/sessions	items.sources	Vec<String>	always
 response	GET /studio-session/v1/sessions	items.state	String	always
@@ -6099,6 +6150,10 @@ response	GET /studio-session/v1/sessions	items.url	String	always
 response	GET /studio-session/v1/sessions	items.workspace_id	Uuid	always
 response	GET /studio-session/v1/sessions/{}	created_at_epoch_secs	u64	always
 response	GET /studio-session/v1/sessions/{}	id	Uuid	always
+response	GET /studio-session/v1/sessions/{}	ide	{}	optional
+response	GET /studio-session/v1/sessions/{}	ide.capabilities	Vec<String>	optional
+response	GET /studio-session/v1/sessions/{}	ide.id	String	optional
+response	GET /studio-session/v1/sessions/{}	ide.label	String	optional
 response	GET /studio-session/v1/sessions/{}	ready_run_id	String	optional
 response	GET /studio-session/v1/sessions/{}	sources	Vec<String>	always
 response	GET /studio-session/v1/sessions/{}	state	String	always
@@ -8727,6 +8782,10 @@ response	POST /studio-session/v1/desktop-sessions	started_at_epoch_secs	u64	alwa
 response	POST /studio-session/v1/desktop-sessions	workspace_id	Uuid	always
 response	POST /studio-session/v1/sessions	created_at_epoch_secs	u64	always
 response	POST /studio-session/v1/sessions	id	Uuid	always
+response	POST /studio-session/v1/sessions	ide	{}	optional
+response	POST /studio-session/v1/sessions	ide.capabilities	Vec<String>	optional
+response	POST /studio-session/v1/sessions	ide.id	String	optional
+response	POST /studio-session/v1/sessions	ide.label	String	optional
 response	POST /studio-session/v1/sessions	ready_run_id	String	optional
 response	POST /studio-session/v1/sessions	sources	Vec<String>	always
 response	POST /studio-session/v1/sessions	state	String	always
@@ -8866,6 +8925,7 @@ response	POST /studio-tasks/v1/runs/{}/retry	updated_at	String	always
 response	POST /studio-theia/v1/desktop-sessions/{}/commands	command	String	always
 response	POST /studio-theia/v1/desktop-sessions/{}/commands	command_id	Uuid	always
 response	POST /studio-theia/v1/desktop-sessions/{}/commands	desktop_session_id	Uuid	always
+response	POST /studio-theia/v1/workspaces/{}/documents/open	opened	bool	always
 response	POST /studio-user/v1/grants/backfill	failed	u32	always
 response	POST /studio-user/v1/grants/backfill	organizations	u32	always
 response	POST /studio-user/v1/grants/backfill	rewritten	u32	always
@@ -10247,6 +10307,7 @@ route	POST /studio-tasks/v1/runs/{}/cancel
 route	POST /studio-tasks/v1/runs/{}/retry
 route	POST /studio-theia/v1/desktop-sessions/{}/commands
 route	POST /studio-theia/v1/desktop-sessions/{}/events
+route	POST /studio-theia/v1/workspaces/{}/documents/open
 route	POST /studio-theia/v1/workspaces/{}/open
 route	POST /studio-theia/v1/workspaces/{}/operations
 route	POST /studio-theia/v1/workspaces/{}/operations/{}/retry

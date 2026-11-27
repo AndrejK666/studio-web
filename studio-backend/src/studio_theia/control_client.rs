@@ -12,9 +12,8 @@ use toolkit_security::SecurityContext;
 use crate::studio_theia::sdk::{
     EnqueueOperation, EnqueueOperationResult, InstallKit, InstallKitResult, NotifyEditor,
     NotifyEditorResult, OpenDocument, OpenDocumentResult, OpenInEditor, OpenInEditorResult,
-    OperationDeltas, OperationSnapshot,
-    RepositoryDescriptor, RuntimeStatus, SessionInfo, SessionTarget, TheiaControlClientV1,
-    TheiaControlError,
+    OperationDeltas, OperationSnapshot, RepositoryDescriptor, RuntimeStatus, SessionInfo,
+    SessionTarget, TheiaControlClientV1, TheiaControlError,
 };
 use crate::studio_theia::service::TheiaService;
 

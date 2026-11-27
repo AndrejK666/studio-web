@@ -208,7 +208,9 @@ fn session_names(workspace_id: Uuid, owner: Option<&str>) -> (String, String) {
             workspace_id.to_string(),
         ),
         Some(_) => {
-            let id = session_id_for_owner(workspace_id, owner).simple().to_string();
+            let id = session_id_for_owner(workspace_id, owner)
+                .simple()
+                .to_string();
             let dir = format!("{workspace_id}-{}", &id[..8]);
             (format!("cf-studio-session-{dir}"), dir)
         }
@@ -1096,9 +1098,7 @@ impl SessionService {
                     .await
                     .unwrap_or_default()
                     .into_values()
-                    .find(|s| {
-                        s.id == session_id && s.state != SessionState::Stopped
-                    })
+                    .find(|s| s.id == session_id && s.state != SessionState::Stopped)
                 {
                     tracing::info!(
                         session_id = %existing.id,
@@ -2857,7 +2857,10 @@ mod tests {
         let endpoint = service.control_endpoint(&ctx(), ws).await.expect("bridged");
         assert_eq!(endpoint.runtime.control.path, "/internal/theia/v1");
         assert_eq!(endpoint.runtime.control.header, "X-CFS-Theia-Token");
-        assert!(has_env(&seen, &format!("STUDIO_THEIA_S2S_TOKEN={}", endpoint.token)));
+        assert!(has_env(
+            &seen,
+            &format!("STUDIO_THEIA_S2S_TOKEN={}", endpoint.token)
+        ));
     }
 
     /// `ide: vscode`: its image, its v2 token env, its own marker, and the
@@ -2880,7 +2883,10 @@ mod tests {
         assert_eq!(endpoint.runtime.id, "vscode");
         assert_eq!(endpoint.runtime.control.path, "/internal/ide/v2");
         assert_eq!(endpoint.runtime.control.header, "X-CFS-Ide-Token");
-        assert!(has_env(&seen, &format!("STUDIO_IDE_CONTROL_TOKEN={}", endpoint.token)));
+        assert!(has_env(
+            &seen,
+            &format!("STUDIO_IDE_CONTROL_TOKEN={}", endpoint.token)
+        ));
         let identity = service
             .resolve_control_token(&endpoint.token)
             .await
@@ -2936,7 +2942,10 @@ mod tests {
             .await
             .expect_err("no such IDE");
         let _ = std::fs::remove_dir_all(&root);
-        assert!(format!("{err:#}").contains("no IDE called `emacs`"), "{err:#}");
+        assert!(
+            format!("{err:#}").contains("no IDE called `emacs`"),
+            "{err:#}"
+        );
         assert!(driver.seen.lock().unwrap().is_empty());
     }
 
@@ -3015,8 +3024,14 @@ mod tests {
 
         assert_ne!(mine.id, theirs.id);
         assert_ne!(mine.session_token, theirs.session_token);
-        assert_eq!(mine.owner.as_deref(), Some(ada.subject_id().to_string().as_str()));
-        assert_eq!(theirs.owner.as_deref(), Some(bob.subject_id().to_string().as_str()));
+        assert_eq!(
+            mine.owner.as_deref(),
+            Some(ada.subject_id().to_string().as_str())
+        );
+        assert_eq!(
+            theirs.owner.as_deref(),
+            Some(bob.subject_id().to_string().as_str())
+        );
 
         let seen = driver.seen.lock().unwrap().clone();
         assert_eq!(seen.len(), 2);
@@ -3105,7 +3120,10 @@ mod tests {
     #[test]
     fn a_persons_session_id_is_derived_like_the_shared_one() {
         let ws = Uuid::from_u128(0xF4);
-        assert_eq!(super::session_id_for_owner(ws, None), super::session_id_for(ws));
+        assert_eq!(
+            super::session_id_for_owner(ws, None),
+            super::session_id_for(ws)
+        );
         let a = super::session_id_for_owner(ws, Some("a"));
         assert_eq!(a, super::session_id_for_owner(ws, Some("a")));
         assert_ne!(a, super::session_id_for_owner(ws, Some("b")));

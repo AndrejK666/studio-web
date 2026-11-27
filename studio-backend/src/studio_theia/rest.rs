@@ -166,13 +166,43 @@ async fn open_document(
     Extension(ctx): Extension<SecurityContext>,
     Extension(portal): Extension<Portal>,
     Path(workspace_id): Path<Uuid>,
-    Json(body): Json<OpenDocument>,
-) -> ApiResult<Json<OpenDocumentResult>> {
+    Json(body): Json<OpenDocumentRequest>,
+) -> ApiResult<Json<OpenDocumentDto>> {
     let client = portal.client()?;
-    let out = client
-        .open_document(&ctx, &SessionTarget { workspace_id }, &body)
+    let request = OpenDocument {
+        workspace_id: body.workspace_id,
+        document_id: body.document_id,
+        title: body.title,
+        content: body.content,
+    };
+    let out: OpenDocumentResult = client
+        .open_document(&ctx, &SessionTarget { workspace_id }, &request)
         .await?;
-    Ok(Json(out))
+    Ok(Json(OpenDocumentDto { opened: out.opened }))
+}
+
+/// A portal document to open in the running IDE.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(request)]
+pub struct OpenDocumentRequest {
+    /// The workspace tenant that stores the document (a project shows its
+    /// parent workspace's documents, so not always the path's).
+    pub workspace_id: String,
+    pub document_id: String,
+    /// The tab's title.
+    #[serde(default)]
+    pub title: Option<String>,
+    /// The markdown, for an IDE that cannot read the document itself: it
+    /// shows it read-only.
+    #[serde(default)]
+    pub content: Option<String>,
+}
+
+/// Whether the IDE opened it.
+#[derive(Debug)]
+#[toolkit_macros::api_dto(response)]
+pub struct OpenDocumentDto {
+    pub opened: bool,
 }
 
 /* ── Event ingress (Theia → studio) ── */
@@ -502,8 +532,9 @@ pub fn register_routes(
         .authenticated()
         .require_license_features::<License>([])
         .path_param("workspace_id", "Workspace id")
+        .json_request::<OpenDocumentRequest>(openapi, "The document to open")
         .handler(open_document)
-        .json_response(StatusCode::OK, "Open result")
+        .json_response_with_schema::<OpenDocumentDto>(openapi, StatusCode::OK, "Open result")
         .error_400(openapi)
         .error_401(openapi)
         .error_404(openapi)
@@ -668,7 +699,10 @@ mod tests {
             ])),
             Some(("new", 2))
         );
-        assert_eq!(super::presented_token(&with(&[("x-cfs-ide-token", "")])), None);
+        assert_eq!(
+            super::presented_token(&with(&[("x-cfs-ide-token", "")])),
+            None
+        );
         assert_eq!(super::presented_token(&HeaderMap::new()), None);
     }
 
