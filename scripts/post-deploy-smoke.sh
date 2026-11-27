@@ -2,7 +2,7 @@
 # What a browser gets from a deployed stand, asserted rather than assumed.
 #
 #   scripts/post-deploy-smoke.sh studio-dev.cfabric.org
-#   scripts/post-deploy-smoke.sh studio-dev.cfabric.org studio-dev-poc.cfabric.org
+#   scripts/post-deploy-smoke.sh studio-dev.cfabric.org studio-dev-poc.cfabric.org   # both hosts
 #
 # Run by `studio-delivery.yml` after every deploy, and by hand against any
 # stand. It needs nothing but curl: no token, no kubeconfig, no cluster access.
@@ -30,8 +30,8 @@
 # the cluster — see the `nginx -T` step in studio-delivery.yml.
 set -euo pipefail
 
-host=${1:?usage: post-deploy-smoke.sh <host> [prototype-host]}
-prototype_host=${2:-}
+host=${1:?usage: post-deploy-smoke.sh <host> [second-host]}
+second_host=${2:-}
 
 pass() { printf '  ok    %s\n' "$1"; }
 fail() { printf '  FAIL  %s\n' "$1" >&2; failures=$((failures + 1)); }
@@ -110,18 +110,18 @@ else
     fail "realm issuer is '${issuer:-<none>}', expected https://$host/auth/realms/studio"
 fi
 
-# ── The prototype portal, when this deploy carried one ────────────────────
-if [ -n "$prototype_host" ]; then
-    echo "post-deploy smoke: https://$prototype_host"
-    proto_headers=$(fetch_headers "https://$prototype_host/")
-    if grep -qi '^content-encoding:.*\(gzip\|br\)' <<<"$proto_headers"; then
-        pass "prototype index.html is compressed"
+# ── The second host (the -poc one), served by the same frontend ───────────
+if [ -n "$second_host" ]; then
+    echo "post-deploy smoke: https://$second_host"
+    second_headers=$(fetch_headers "https://$second_host/")
+    if grep -qi '^content-encoding:.*\(gzip\|br\)' <<<"$second_headers"; then
+        pass "second host index.html is compressed"
     else
-        fail "prototype index.html came back uncompressed"
+        fail "second host index.html came back uncompressed"
     fi
-    code=$(status_of "https://$prototype_host/cf/health")
-    [ "$code" = 200 ] && pass "prototype /cf/health answers 200" \
-        || fail "prototype /cf/health answered $code"
+    code=$(status_of "https://$second_host/cf/health")
+    [ "$code" = 200 ] && pass "second host /cf/health answers 200" \
+        || fail "second host /cf/health answered $code"
 fi
 
 echo
