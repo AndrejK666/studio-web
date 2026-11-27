@@ -20,6 +20,7 @@ import {
   leaders,
   toGraph,
   type Cluster,
+  FAMILIES,
   SMALL,
   type EdgeAttrs,
   type NodeAttrs,
@@ -30,7 +31,7 @@ import styles from './SpecGraphScreen.module.css';
 
 type Text = ReturnType<typeof useSpecGraphTranslations>['t'];
 
-export type Colouring = 'type' | 'cluster';
+export type Colouring = 'type' | 'cluster' | 'finding';
 
 interface Hovered {
   key: string;
@@ -75,10 +76,14 @@ export const GraphCanvas: React.FC<{
     open.current = onOpen;
   }, [onOpen]);
 
-  useEffect(() => {
+  // colours and legend categories, set before the legend reads them; sigma redraws after
+  const coloured = useMemo(() => {
     colourBy(g, colouring, found);
-    sigma.current?.refresh();
+    return colouring;
   }, [g, found, colouring]);
+  useEffect(() => {
+    sigma.current?.refresh();
+  }, [coloured]);
 
   useEffect(() => {
     hiddenRef.current = hidden;
@@ -118,7 +123,7 @@ export const GraphCanvas: React.FC<{
             maxCameraRatio: 3,
             defaultEdgeColor: '#cbd5e1',
             nodeReducer: (key, a) => {
-              if (hiddenRef.current.has(a.kind)) return { ...a, hidden: true };
+              if (hiddenRef.current.has(a.cat ?? a.kind)) return { ...a, hidden: true };
               const hover = hoverRef.current;
               const lead = shown.has(key) && (labelAll || key === centre || ratioRef.current > 0.5);
               if (!hover) return { ...a, forceLabel: lead, zIndex: lead ? 1 : 0 };
@@ -187,8 +192,21 @@ export const GraphCanvas: React.FC<{
   };
 
   const h = hovered && g.hasNode(hovered.key) ? g.getNodeAttributes(hovered.key) : null;
-  const types = [...new Set(g.mapNodes((_, a) => a.kind))].sort();
-  const showing = hidden.size ? g.filterNodes((_, a) => !hidden.has(a.kind)).length : g.order;
+  // the legend's switches: node types, or (colouring by finding) the findings' rule families first
+  const catCounts = new Map<string, { colour: string; count: number }>();
+  g.forEachNode((_, a) => {
+    const key = a.cat ?? a.kind;
+    const had = catCounts.get(key);
+    catCounts.set(key, { colour: had?.colour ?? a.color, count: (had?.count ?? 0) + 1 });
+  });
+  const familyRank = (k: string) => FAMILIES.findIndex((f) => f.key === k);
+  const cats = [...catCounts.entries()]
+    .map(([key, v]) => ({ key, ...v, family: colouring === 'finding' && familyRank(key) >= 0 }))
+    .sort(
+      (x, y) =>
+        Number(y.family) - Number(x.family) || familyRank(x.key) - familyRank(y.key) || x.key.localeCompare(y.key),
+    );
+  const showing = hidden.size ? g.filterNodes((_, a) => !hidden.has(a.cat ?? a.kind)).length : g.order;
   const toggle = (type: string) =>
     setHidden((h) => {
       const next = new Set(h);
@@ -237,8 +255,12 @@ export const GraphCanvas: React.FC<{
         )}
       </div>
       <TypeFilter
-        types={types}
-        counts={picture.counts}
+        cats={cats.map((c) => ({
+          key: c.key,
+          label: c.family ? t(`family_${c.key}`) : c.key,
+          colour: colouring === 'finding' ? c.colour : colourOf(c.key),
+          count: colouring === 'type' ? (picture.counts?.[c.key] ?? c.count) : c.count,
+        }))}
         hidden={hidden}
         onToggle={toggle}
         onAll={() => setHidden(new Set())}
@@ -254,15 +276,14 @@ export const GraphCanvas: React.FC<{
  * shows and hollow once hidden; every type shows at first. A judge's edge is explained, not a switch.
  */
 const TypeFilter: React.FC<{
-  types: string[];
-  counts?: Record<string, number>;
+  cats: { key: string; label: string; colour: string; count: number }[];
   hidden: Set<string>;
   onToggle: (type: string) => void;
   onAll: () => void;
   t: Text;
-}> = ({ types, counts, hidden, onToggle, onAll, t }) => (
+}> = ({ cats, hidden, onToggle, onAll, t }) => (
   <div className={styles.legend} role="group" aria-label={t('graph_filter')}>
-    {types.map((type) => {
+    {cats.map(({ key: type, label, colour, count }) => {
       const on = !hidden.has(type);
       return (
         <button
@@ -270,16 +291,16 @@ const TypeFilter: React.FC<{
           type="button"
           className={styles.typeSwitch}
           aria-pressed={on}
-          title={on ? t('graph_filter_hide', { type }) : t('graph_filter_show', { type })}
+          title={on ? t('graph_filter_hide', { type: label }) : t('graph_filter_show', { type: label })}
           onClick={() => onToggle(type)}
         >
           <span
             className={styles.swatch}
-            style={on ? { background: colourOf(type), borderColor: colourOf(type) } : { borderColor: colourOf(type) }}
+            style={on ? { background: colour, borderColor: colour } : { borderColor: colour }}
             aria-hidden
           />
-          <span className={on ? undefined : styles.off}>{type}</span>
-          {counts?.[type] != null && <span className={styles.muted}>({counts[type]})</span>}
+          <span className={on ? undefined : styles.off}>{label}</span>
+          <span className={styles.muted}>({count})</span>
         </button>
       );
     })}

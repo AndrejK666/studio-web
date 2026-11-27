@@ -179,5 +179,22 @@
   "graph_filter_hide": "Скрыть {type}",
   "graph_filter_show": "Показать {type}",
   "graph_filter_all": "Показать все",
-  "graph_showing": "показано {shown} из {nodes} узлов"
+  "graph_showing": "показано {shown} из {nodes} узлов",
+  "graph_mode_findings": "Находки",
+  "findings_graph_empty": "В графе пока нет находок: детерминированные сохраняет индекс, находки судьи — поиск противоречий.",
+  "family_contradiction": "противоречия",
+  "family_coverage": "покрытие",
+  "family_links": "ссылки и якоря",
+  "family_reach": "недостижимые документы",
+  "family_stale": "устаревшее и замещённое",
+  "family_status": "статусы и решения",
+  "family_reference": "ссылки на источники",
+  "family_other": "другие правила",
+  "quality_graph": "Находки на графе",
+  "quality_graph_rule": "Находки {rule} на графе",
+  "quality_graph_hint": "Каждая находка связана с документами, на которые ссылается, цвет — семейство правил; выберите правило в таблице, чтобы оставить только его находки.",
+  "quality_graph_all": "Все правила",
+  "quality_show_rule": "Показать на графе ниже только находки этого правила",
+  "filter_rules": "Показывать находки",
+  "filter_all": "Все находки"
 }

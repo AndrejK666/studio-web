@@ -4,6 +4,10 @@ import {
   areaOf,
   clusters,
   ontologyPicture,
+  familyColour,
+  familyOf,
+  findingsPicture,
+  ruleOf,
   colourBy,
   layoutAround,
   layoutIslands,
@@ -165,5 +169,58 @@ describe('graph pictures for sigma', () => {
     const g = toGraph(p);
     expect(g.getNodeAttribute('requirement', 'size')).toBeGreaterThan(g.getNodeAttribute('document', 'size'));
     expect(g.getEdgeAttribute(g.edge('design_element', 'requirement')!, 'kind')).toBe('analysis');
+  });
+
+  it('sorts rules into families, each with its own validated colour', () => {
+    expect(
+      [
+        'contradiction.value',
+        'coverage.requirement-realized',
+        'anchor.resolves',
+        'document.reachable',
+        'stale.superseded-link',
+        'decision.status-superseded',
+        'reference.misattributed',
+        'bloat.near-duplicate',
+      ].map(familyOf),
+    ).toEqual(['contradiction', 'coverage', 'links', 'reach', 'stale', 'status', 'reference', 'other']);
+    expect(
+      new Set(
+        ['contradiction', 'coverage', 'links', 'reach', 'stale', 'status', 'reference', 'other'].map(familyColour),
+      ).size,
+    ).toBe(8);
+    expect(ruleOf('link.resolves: docs/a.md -> docs/b.md')).toBe('link.resolves');
+  });
+
+  it('draws the findings with the documents they cite, one rule when asked', () => {
+    const p = findingsPicture({
+      nodes: [
+        { key: 'finding:1', type: 'finding', name: 'link.resolves: a' },
+        { key: 'finding:2', type: 'finding', name: 'contradiction.value: b' },
+        { key: 'sec:docs/a.md#x', type: 'section' },
+        { key: 'doc:docs/a.md', type: 'document', name: 'A' },
+        { key: 'doc:docs/b.md', type: 'document', name: 'B' },
+      ],
+      edges: [
+        { from: 'finding:1', to: 'sec:docs/a.md#x', type: 'finding_cites', kind: 'analysis' },
+        { from: 'finding:2', to: 'sec:docs/a.md#x', type: 'finding_cites', kind: 'analysis' },
+        { from: 'finding:2', to: 'doc:docs/b.md', type: 'finding_cites', kind: 'analysis' },
+        { from: 'doc:docs/a.md', to: 'doc:docs/b.md', type: 'links_to', kind: 'static' },
+      ],
+    });
+    expect(p.nodes.map((n) => n.key).sort()).toEqual(['doc:docs/a.md', 'doc:docs/b.md', 'finding:1', 'finding:2']);
+    expect(p.edges.map((e) => `${e.from}>${e.to}`).sort()).toEqual([
+      'finding:1>doc:docs/a.md',
+      'finding:2>doc:docs/a.md',
+      'finding:2>doc:docs/b.md',
+    ]);
+    expect(p.nodes.find((n) => n.key === 'doc:docs/a.md')?.name).toBe('A');
+    const one = findingsPicture({ nodes: p.nodes, edges: p.edges }, 'link.resolves');
+    expect(one.nodes.map((n) => n.key).sort()).toEqual(['doc:docs/a.md', 'finding:1']);
+    const g = toGraph(p);
+    colourBy(g, 'finding', []);
+    expect(g.getNodeAttribute('finding:1', 'cat')).toBe('links');
+    expect(g.getNodeAttribute('finding:1', 'color')).toBe(familyColour('links'));
+    expect(g.getNodeAttribute('doc:docs/a.md', 'cat')).toBe('document');
   });
 });

@@ -21,6 +21,7 @@ import { SpecGraphApiService } from '../../api/SpecGraphApiService';
 import type { GraphNode, Neighbors, Picture, SearchHit } from '../../api/types';
 import { foldSections } from '../../model/collapse';
 import { documentOf, kindOf, label, side, type Side } from '../../model/graph';
+import { FindingsGraph } from './FindingsGraph';
 import { GraphCanvas, type Colouring } from './GraphCanvas';
 import { useSpecGraphTranslations } from '../../i18n';
 import styles from './SpecGraphScreen.module.css';
@@ -43,7 +44,7 @@ interface Centred {
   neighbors: Neighbors;
 }
 
-export type GraphMode = 'neighbours' | 'depth' | 'whole';
+export type GraphMode = 'neighbours' | 'depth' | 'whole' | 'findings';
 export const DEPTH = { min: 2, max: 4, start: 2 };
 const FACT_LAYER = ['fact', 'concept'];
 
@@ -122,7 +123,7 @@ export const GraphView: React.FC<{
   /** From a picture: Whole graph opens the node to a depth; Depth centres on it. */
   const openFromPicture = (key: string) => {
     open(key);
-    if (mode === 'whole') setMode('depth');
+    if (mode === 'whole' || mode === 'findings') setMode('depth');
   };
   const search = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -146,7 +147,7 @@ export const GraphView: React.FC<{
   return (
     <>
       <div className={styles.modes} role="group" aria-label={t('graph_mode')}>
-        {(['neighbours', 'depth', 'whole'] as const).map((m) => (
+        {(['neighbours', 'depth', 'whole', 'findings'] as const).map((m) => (
           <Button key={m} size="sm" variant={mode === m ? undefined : 'outline'} onClick={() => setMode(m)}>
             {t(`graph_mode_${m}`)}
           </Button>
@@ -165,7 +166,7 @@ export const GraphView: React.FC<{
             />
           </label>
         )}
-        {mode !== 'neighbours' && (
+        {(mode === 'depth' || mode === 'whole') && (
           <label className={styles.radio}>
             <input type="checkbox" checked={fold} onChange={(e) => setFold(e.target.checked)} />
             {t('graph_fold')}
@@ -217,6 +218,7 @@ export const GraphView: React.FC<{
           {shown && <GraphMap centred={shown} onOpen={open} t={t} />}
         </>
       )}
+      {mode === 'findings' && <FindingsGraph projectId={projectId} onOpen={openFromPicture} t={t} />}
       {mode === 'depth' && !current && <p className={styles.muted}>{t('graph_hint')}</p>}
       {ask && !pic && <Skeleton className={styles.skeleton} />}
       {pic?.error && <p className={styles.error}>{pic.error}</p>}

@@ -13,7 +13,7 @@ export function place(path: string | null, a: Anchor | null | undefined): string
 /** Blocking findings first, then by rule, so a document's list reads the same every time. */
 export function ordered(findings: Finding[]): Finding[] {
   return [...findings].sort(
-    (x, y) => Number(x.gate !== 'block') - Number(y.gate !== 'block') || x.rule.localeCompare(y.rule)
+    (x, y) => Number(x.gate !== 'block') - Number(y.gate !== 'block') || x.rule.localeCompare(y.rule),
   );
 }
 
@@ -56,4 +56,30 @@ export function plainThread(body: string): string {
     .replace(/\*\*/g, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+}
+
+/** Each rule's findings among the documents, most first. */
+export function ruleCounts(docs: readonly DocumentFindings[]): { rule: string; gate: string; count: number }[] {
+  const m = new Map<string, { rule: string; gate: string; count: number }>();
+  for (const d of docs)
+    for (const f of d.findings) {
+      const had = m.get(f.rule);
+      m.set(f.rule, { rule: f.rule, gate: f.gate, count: (had?.count ?? 0) + 1 });
+    }
+  return [...m.values()].sort((a, b) => b.count - a.count || a.rule.localeCompare(b.rule));
+}
+
+/** The documents with only the findings of the chosen rules and gates (none chosen: every one); empty documents leave. */
+export function onlyRules(
+  docs: readonly DocumentFindings[],
+  rules: ReadonlySet<string>,
+  gates: ReadonlySet<string>,
+): DocumentFindings[] {
+  if (!rules.size && !gates.size) return [...docs];
+  return docs
+    .map((d) => ({
+      ...d,
+      findings: d.findings.filter((f) => (!rules.size || rules.has(f.rule)) && (!gates.size || gates.has(f.gate))),
+    }))
+    .filter((d) => d.findings.length > 0);
 }

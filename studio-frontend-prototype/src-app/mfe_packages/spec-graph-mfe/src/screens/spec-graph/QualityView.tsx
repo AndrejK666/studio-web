@@ -15,7 +15,9 @@ import { Badge, Card, CardContent, CardHeader, CardTitle, Skeleton } from '@gear
 import { refusalText } from '@constructor-studio/mfe-shared';
 import { SpecGraphApiService } from '../../api/SpecGraphApiService';
 import type { Calibration, Metrics } from '../../api/types';
+import { familyColour, familyOf } from '../../model/picture';
 import { useSpecGraphTranslations } from '../../i18n';
+import { FindingsGraph } from './FindingsGraph';
 import styles from './SpecGraphScreen.module.css';
 
 type Text = ReturnType<typeof useSpecGraphTranslations>['t'];
@@ -83,6 +85,8 @@ export const QualityView: React.FC<{ projectId: string; t: Text }> = ({ projectI
   const api = apiRegistry.getService(SpecGraphApiService);
   const [data, setData] = useState<{ m: Metrics; c: Calibration } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // a rule chosen in the table: the graph below keeps only its findings
+  const [rule, setRule] = useState<string | null>(null);
   useEffect(() => {
     let live = true;
     Promise.all([
@@ -148,7 +152,24 @@ export const QualityView: React.FC<{ projectId: string; t: Text }> = ({ projectI
               {rows.map((r) => (
                 <tr key={r.rule}>
                   <td>
-                    <code>{r.rule}</code>
+                    <button
+                      type="button"
+                      className={styles.typeSwitch}
+                      aria-pressed={rule === r.rule}
+                      disabled={!r.findings}
+                      title={t('quality_show_rule')}
+                      onClick={() => setRule((x) => (x === r.rule ? null : r.rule))}
+                    >
+                      <span
+                        className={styles.swatch}
+                        style={{
+                          background: familyColour(familyOf(r.rule)),
+                          borderColor: familyColour(familyOf(r.rule)),
+                        }}
+                        aria-hidden
+                      />
+                      <code className={rule === r.rule ? styles.chosen : undefined}>{r.rule}</code>
+                    </button>
                   </td>
                   <td>{r.gate ? (r.gate === 'block' ? t('gate_block') : t('gate_advise')) : '—'}</td>
                   <td className={styles.num}>{r.findings}</td>
@@ -169,6 +190,22 @@ export const QualityView: React.FC<{ projectId: string; t: Text }> = ({ projectI
               ))}
             </tbody>
           </table>
+        </CardContent>
+      </Card>
+      <Card className={styles.document}>
+        <CardHeader>
+          <CardTitle>{rule ? t('quality_graph_rule', { rule }) : t('quality_graph')}</CardTitle>
+        </CardHeader>
+        <CardContent className={styles.list}>
+          <p className={styles.muted}>
+            {t('quality_graph_hint')}{' '}
+            {rule && (
+              <button type="button" className={styles.typeSwitch} onClick={() => setRule(null)}>
+                {t('quality_graph_all')}
+              </button>
+            )}
+          </p>
+          <FindingsGraph projectId={projectId} rule={rule} t={t} />
         </CardContent>
       </Card>
     </>

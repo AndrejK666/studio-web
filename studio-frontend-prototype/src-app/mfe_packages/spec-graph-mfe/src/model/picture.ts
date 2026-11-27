@@ -29,6 +29,8 @@ export interface NodeAttrs {
   size: number;
   color: string;
   cluster?: number;
+  /** What the legend filters by: the node type, or a finding's rule family. */
+  cat?: string;
 }
 
 export interface EdgeAttrs {
@@ -198,15 +200,77 @@ export function layoutAround(g: PictureGraph, centre?: string, iterations = 400)
   });
 }
 
-/** Colour every node by its type, or by its community (`clusters` first). */
-export function colourBy(g: PictureGraph, by: 'type' | 'cluster', found: Cluster[]): void {
-  g.forEachNode((k, a) =>
-    g.setNodeAttribute(
-      k,
-      'color',
-      by === 'cluster' && a.cluster != null ? (found[a.cluster]?.colour ?? SMALL) : colourOf(a.kind),
-    ),
+/**
+ * Finding rules in eight families, coloured with the validated eight hues in this order; a rule
+ * no family names is `other`.
+ */
+export const FAMILIES: { key: string; match: RegExp | null }[] = [
+  { key: 'contradiction', match: /^contradiction\./ },
+  { key: 'coverage', match: /^coverage\./ },
+  { key: 'links', match: /^(link|anchor)\./ },
+  { key: 'reach', match: /^document\./ },
+  { key: 'stale', match: /^stale\./ },
+  { key: 'status', match: /^(status|decision)\./ },
+  { key: 'reference', match: /^reference\./ },
+  { key: 'other', match: null },
+];
+
+/** A finding node's rule, from its name (`rule: subject`). */
+export const ruleOf = (label: string) => label.split(':', 1)[0].trim();
+
+export function familyOf(rule: string): string {
+  return (FAMILIES.find((f) => f.match?.test(rule)) ?? FAMILIES[FAMILIES.length - 1]).key;
+}
+
+export const familyColour = (family: string) =>
+  CLUSTER_COLOURS[
+    Math.max(
+      0,
+      FAMILIES.findIndex((f) => f.key === family),
+    )
+  ];
+
+/**
+ * Colour every node: by its type, by its community (`clusters` first), or, for findings, by its
+ * rule family with every other node a quiet grey but documents. `cat` is what the legend filters.
+ */
+export function colourBy(g: PictureGraph, by: 'type' | 'cluster' | 'finding', found: Cluster[]): void {
+  g.forEachNode((k, a) => {
+    if (by === 'finding') {
+      const family = a.kind === 'finding' ? familyOf(ruleOf(a.label)) : null;
+      g.mergeNodeAttributes(k, {
+        color: family ? familyColour(family) : a.kind === 'document' ? '#475569' : SMALL,
+        cat: family ?? a.kind,
+      });
+      return;
+    }
+    g.mergeNodeAttributes(k, {
+      color: by === 'cluster' && a.cluster != null ? (found[a.cluster]?.colour ?? SMALL) : colourOf(a.kind),
+      cat: a.kind,
+    });
+  });
+}
+
+/**
+ * The findings and the documents they cite (sections folded into their documents), for the
+ * findings view: one edge from each finding to each document it cites. `rule` keeps one rule's.
+ */
+export function findingsPicture(p: Picture, rule?: string | null): Picture {
+  const fold = (k: string) => (k.startsWith('sec:') ? `doc:${k.slice(4).split('#')[0]}` : k);
+  const findings = p.nodes.filter((n) => n.type === 'finding' && (!rule || ruleOf(n.name ?? '') === rule));
+  const keep = new Set(findings.map((n) => n.key));
+  const edges = new Map<string, { from: string; to: string; type: string; kind: 'static' | 'analysis' }>();
+  for (const e of p.edges) {
+    if (!keep.has(e.from) || e.type !== 'finding_cites') continue;
+    const to = fold(e.to);
+    edges.set(`${e.from}|${to}`, { from: e.from, to, type: e.type, kind: 'static' });
+  }
+  const docs = new Set([...edges.values()].map((e) => e.to));
+  const byKey = new Map(p.nodes.map((n) => [n.key, n]));
+  const docNodes = [...docs].map(
+    (k) => byKey.get(k) ?? { key: k, type: 'document', name: k.slice(4).split('/').pop(), path: k.slice(4) },
   );
+  return { nodes: [...findings, ...docNodes], edges: [...edges.values()] };
 }
 
 /** The nodes whose labels always show: the centre, and the best-linked few. */

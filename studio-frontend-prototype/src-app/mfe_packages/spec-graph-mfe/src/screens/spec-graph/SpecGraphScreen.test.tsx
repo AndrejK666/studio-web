@@ -60,6 +60,7 @@ describe('SpecGraphScreen', () => {
       runs: query({ items: [], total: 0 }),
       reviews: query({ items: [], total: 0 }),
       sources: query({ items: [{ name: 'insight' }] }),
+      overview: query({ answer: { nodes: [], edges: [] } }),
     });
   });
 
@@ -254,4 +255,34 @@ describe('SpecGraphScreen', () => {
     await screen.findByText('nothing');
     expect(screen.getByText('view_pulls')).toBeTruthy();
   });
+
+  it('filters the findings by rule and gate from the bar above them', async () => {
+    Object.assign(service, {
+      project: query({ project_id: 'p1', registered: true, project: { repository: { url: 'u', ref: 'main' } }, service: null }),
+      check: () => ({
+        fetch: () =>
+          Promise.resolve({
+            revision: 'abc',
+            count: 3,
+            blocking: 2,
+            dismissed: 0,
+            documents: [
+              { path: 'docs/a.md', detector: 'spec_graph', findings: [finding('f1', 'block', 'link.resolves'), finding('f2', 'advise', 'contradiction.value')] },
+              { path: 'docs/b.md', detector: 'spec_graph', findings: [finding('f3', 'block', 'anchor.resolves')] },
+            ],
+          }),
+      }),
+    });
+    render(<SpecGraphScreen bridge={bridge()} />);
+    expect(await screen.findByText('anchor.resolves title')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /^link\.resolves/ }));
+    expect(screen.queryByText('anchor.resolves title')).toBeNull();          // another rule, and its document, leave
+    expect(screen.queryByText('contradiction.value title')).toBeNull();
+    expect(screen.getByText('link.resolves title')).toBeTruthy();
+    fireEvent.click(screen.getByText('filter_all'));
+    fireEvent.click(screen.getByRole('button', { name: 'gate_advise' }));
+    expect(screen.getByText('contradiction.value title')).toBeTruthy();
+    expect(screen.queryByText('link.resolves title')).toBeNull();
+  });
 });
+

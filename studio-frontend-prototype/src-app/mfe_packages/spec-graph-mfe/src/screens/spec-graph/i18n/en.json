@@ -179,5 +179,22 @@
   "graph_filter_hide": "Hide {type}",
   "graph_filter_show": "Show {type}",
   "graph_filter_all": "Show all",
-  "graph_showing": "{shown} of {nodes} nodes shown"
+  "graph_showing": "{shown} of {nodes} nodes shown",
+  "graph_mode_findings": "Findings",
+  "findings_graph_empty": "No finding is stored in the graph yet: an index stores the deterministic ones, a contradictions run the judge's.",
+  "family_contradiction": "contradictions",
+  "family_coverage": "coverage",
+  "family_links": "links and anchors",
+  "family_reach": "unreachable documents",
+  "family_stale": "stale and superseded",
+  "family_status": "status and decisions",
+  "family_reference": "references",
+  "family_other": "other rules",
+  "quality_graph": "Findings on the graph",
+  "quality_graph_rule": "Findings of {rule} on the graph",
+  "quality_graph_hint": "Each finding linked to the documents it cites, coloured by rule family; choose a rule in the table to keep only its findings.",
+  "quality_graph_all": "Every rule",
+  "quality_show_rule": "Show only this rule's findings on the graph below",
+  "filter_rules": "Show findings of",
+  "filter_all": "Every finding"
 }

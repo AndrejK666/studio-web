@@ -22,7 +22,8 @@ import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Skeleton } fro
 import { STUDIO_SHARED_PROPERTY_CONTEXT_PROJECT, refusalText, useScreenAvailability } from '@constructor-studio/mfe-shared';
 import { SpecGraphApiService } from '../../api/SpecGraphApiService';
 import type { Decision, DocumentFindings, Finding, Ontology, SpecGraphProject, Verdict } from '../../api/types';
-import { counts, documentsInOrder, place, without } from '../../model/findings';
+import { counts, documentsInOrder, onlyRules, place, ruleCounts, without } from '../../model/findings';
+import { familyColour, familyOf } from '../../model/picture';
 import { findingNode } from '../../model/graph';
 import { documentsOf, invalid, scopeOf, type Documents } from '../../model/scope';
 import { useSpecGraphTranslations } from '../../i18n';
@@ -97,7 +98,15 @@ export const SpecGraphScreen: React.FC<{ bridge: ChildMfeBridge }> = ({ bridge }
 const ProjectSpecGraph: React.FC<{ projectId: string; t: Text }> = ({ projectId, t }) => {
   const api = apiRegistry.getService(SpecGraphApiService);
   const [setup, setSetup] = useState<SpecGraphProject | null>(null);
-  const [chosen, setView] = useState<View>('now');
+  const [chosen, choose] = useState<View>('now');
+  // the findings views' filter: chosen rules and gates (none chosen: every finding); a new view starts unfiltered
+  const [rules, setRules] = useState<Set<string>>(() => new Set());
+  const [gates, setGates] = useState<Set<string>>(() => new Set());
+  const setView = (v: View) => {
+    choose(v);
+    setRules(new Set());
+    setGates(new Set());
+  };
   // Unknown counts as installed, as on Tests.
   const pullsShown = useScreenAvailability().type(PULL_REQUEST_TYPE);
   const view: View = chosen === 'pulls' && !pullsShown ? 'now' : chosen;
@@ -194,7 +203,14 @@ const ProjectSpecGraph: React.FC<{ projectId: string; t: Text }> = ({ projectId,
     return <SetupForm projectId={projectId} t={t} onDone={setSetup} />;
   }
 
-  const shown = docs ? documentsInOrder(docs) : [];
+  const all = docs ? documentsInOrder(docs) : [];
+  const shown = onlyRules(all, rules, gates);
+  const flip = (set: Set<string>, key: string) => {
+    const next = new Set(set);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    return next;
+  };
   const n = counts(shown);
   return (
     <>
@@ -276,6 +292,54 @@ const ProjectSpecGraph: React.FC<{ projectId: string; t: Text }> = ({ projectId,
       {view === 'quality' && <QualityView key={graphRead} projectId={projectId} t={t} />}
       {error && <p className={styles.error}>{error}</p>}
       {findingsView && busy && !docs && <Skeleton className={styles.skeleton} />}
+      {findingsView && all.length > 0 && (
+        <div className={styles.legend} role="group" aria-label={t('filter_rules')}>
+          {(['block', 'advise'] as const).map((g) => (
+            <button
+              key={g}
+              type="button"
+              className={styles.typeSwitch}
+              aria-pressed={gates.has(g)}
+              onClick={() => setGates((s) => flip(s, g))}
+            >
+              <span className={gates.has(g) ? styles.chosen : undefined}>{g === 'block' ? t('gate_block') : t('gate_advise')}</span>
+            </button>
+          ))}
+          {ruleCounts(all).map((r) => (
+            <button
+              key={r.rule}
+              type="button"
+              className={styles.typeSwitch}
+              aria-pressed={rules.has(r.rule)}
+              onClick={() => setRules((s) => flip(s, r.rule))}
+            >
+              <span
+                className={styles.swatch}
+                style={
+                  rules.has(r.rule) || !rules.size
+                    ? { background: familyColour(familyOf(r.rule)), borderColor: familyColour(familyOf(r.rule)) }
+                    : { borderColor: familyColour(familyOf(r.rule)) }
+                }
+                aria-hidden
+              />
+              <code className={rules.has(r.rule) ? styles.chosen : undefined}>{r.rule}</code>
+              <span className={styles.muted}>({r.count})</span>
+            </button>
+          ))}
+          {(rules.size > 0 || gates.size > 0) && (
+            <button
+              type="button"
+              className={styles.typeSwitch}
+              onClick={() => {
+                setRules(new Set());
+                setGates(new Set());
+              }}
+            >
+              {t('filter_all')}
+            </button>
+          )}
+        </div>
+      )}
       {findingsView && docs && shown.length === 0 && <p className={styles.muted}>{t('nothing')}</p>}
       {(findingsView ? shown : []).map((d) => (
         <Card key={d.path ?? '(corpus)'} className={styles.document}>
