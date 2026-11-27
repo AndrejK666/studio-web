@@ -59,7 +59,10 @@ export const GraphCanvas: React.FC<{
   t: Text;
   /** Label every node and every edge (a small picture: the ontology). */
   labelAll?: boolean;
-}> = ({ picture, layout, centre, colouring, onOpen, t, labelAll = false }) => {
+  /** A node chosen outside the picture (the findings panel's): ringed and labelled. */
+  selected?: string | null;
+}> = ({ picture, layout, centre, colouring, onOpen, t, labelAll = false, selected = null }) => {
+  const selectedRef = useRef(selected);
   const { g, found } = useLaidOut(picture, layout, centre);
   const box = useRef<HTMLDivElement | null>(null);
   const frame = useRef<HTMLDivElement | null>(null);
@@ -84,6 +87,11 @@ export const GraphCanvas: React.FC<{
   useEffect(() => {
     sigma.current?.refresh();
   }, [coloured]);
+
+  useEffect(() => {
+    selectedRef.current = selected;
+    sigma.current?.refresh({ skipIndexation: true });
+  }, [selected]);
 
   useEffect(() => {
     hiddenRef.current = hidden;
@@ -124,6 +132,7 @@ export const GraphCanvas: React.FC<{
             defaultEdgeColor: '#cbd5e1',
             nodeReducer: (key, a) => {
               if (hiddenRef.current.has(a.cat ?? a.kind)) return { ...a, hidden: true };
+              if (key === selectedRef.current) return { ...a, highlighted: true, forceLabel: true, zIndex: 3 };
               const hover = hoverRef.current;
               const lead = shown.has(key) && (labelAll || key === centre || ratioRef.current > 0.5);
               if (!hover) return { ...a, forceLabel: lead, zIndex: lead ? 1 : 0 };

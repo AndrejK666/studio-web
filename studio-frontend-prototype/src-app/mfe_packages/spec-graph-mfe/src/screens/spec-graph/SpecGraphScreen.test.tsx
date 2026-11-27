@@ -61,6 +61,7 @@ describe('SpecGraphScreen', () => {
       reviews: query({ items: [], total: 0 }),
       sources: query({ items: [{ name: 'insight' }] }),
       overview: query({ answer: { nodes: [], edges: [] } }),
+      findings: query({ items: [], total: 0, dismissed: 0 }),
     });
   });
 

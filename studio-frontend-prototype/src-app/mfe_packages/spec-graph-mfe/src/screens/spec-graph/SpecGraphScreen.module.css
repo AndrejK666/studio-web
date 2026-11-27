@@ -428,3 +428,29 @@
   font-weight: 700;
   text-decoration: underline;
 }
+
+/* The findings graph with a finding's panel beside it (stacked when narrow). */
+.withPanel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 440px);
+  gap: var(--space-3);
+  align-items: start;
+}
+
+@media (max-width: 1100px) {
+  .withPanel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-height: max(520px, calc(100vh - 280px));
+  overflow: auto;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--background);
+}

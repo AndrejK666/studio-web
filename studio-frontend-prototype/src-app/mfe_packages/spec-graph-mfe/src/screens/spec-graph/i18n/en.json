@@ -196,5 +196,10 @@
   "quality_graph_all": "Every rule",
   "quality_show_rule": "Show only this rule's findings on the graph below",
   "filter_rules": "Show findings of",
-  "filter_all": "Every finding"
+  "filter_all": "Every finding",
+  "finding_panel": "Finding",
+  "finding_panel_close": "Close the finding",
+  "finding_panel_missing": "This finding is no longer stored: index again to see the current ones.",
+  "decided_confirmed": "decided: real",
+  "decided_dismissed": "decided: dismissed"
 }

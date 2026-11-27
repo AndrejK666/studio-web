@@ -196,5 +196,10 @@
   "quality_graph_all": "Все правила",
   "quality_show_rule": "Показать на графе ниже только находки этого правила",
   "filter_rules": "Показывать находки",
-  "filter_all": "Все находки"
+  "filter_all": "Все находки",
+  "finding_panel": "Находка",
+  "finding_panel_close": "Закрыть находку",
+  "finding_panel_missing": "Эта находка больше не хранится: переиндексируйте, чтобы увидеть текущие.",
+  "decided_confirmed": "решено: верно",
+  "decided_dismissed": "решено: отклонено"
 }
