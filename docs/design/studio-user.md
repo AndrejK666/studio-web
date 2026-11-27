@@ -78,6 +78,7 @@ membership at all.
 | `cpt-studio-adr-a-role-narrows-what-a-member-may-do` | Administrative authority is answered in the gear from the access config, not by the PDP. |
 | `cpt-studio-adr-a-shared-session-is-many-people-each-as-themselves` | Studio's service identity is seeded as a person with no membership. |
 | `cpt-studio-adr-one-owner-for-people-and-membership` | This gear is the only owner of person and membership; it alone writes the owner grant, and every grant names the person. |
+| `cpt-studio-adr-platform-roles-grants-and-terms` | The platform's own roles, its resources granted to an organization, and the terms a person accepts are kept here beside memberships, and asked through `PlatformAccessPort`. |
 
 ### 1.3 Architecture Layers
 
@@ -303,6 +304,7 @@ is configured.
 | `GET` `PUT` | `/me/ui-preferences` | Remembered UI choices, replaced whole | stable |
 | `GET` `PUT` | `/capacity`, `/capacity/availability`, `/capacity/allocations` | An organization's week of capacity (#785): each person's available hours (set, else the roadmap plan's power × 40 h read from the domain model's mirror) and hours per project; an owner edits anyone's, a member their own. Tables `identity_capacity_availability`, `identity_capacity_allocation` (`m0007`); a person is `github:<login>` (as the plan keys them) or a Studio id | unstable |
 | `GET` | `/me/inbox`, `/me/inbox/count` | The caller's Inbox, and only its counts for the header badge. Both answer from one read of the sources, kept 30 s per (person, organization) with single-flight and read again after a `review_request` event; the marks are applied on every call | unstable |
+| `GET` `PUT` `POST` `DELETE` | `/me/platform-roles`, `/platform/roles`, `/platform/roles/{person_id}`, `/platform/grants`, `/platform/grants/{grant_id}`, `/platform/terms`, `/me/terms`, `/me/terms/acceptances` | ADR-0081: platform roles (`operator`, `code_owner`, `account_manager`; an administrator holds all, only an administrator gives them), a platform resource granted to an organization (an administrator or an account manager grants; a member reads their organization's), versioned terms per audience (`organization_admin`, `member`) and who accepted which. Tables `identity_platform_role`, `identity_platform_grant`, `identity_terms`, `identity_terms_acceptance` (`m0009`); every change audited | unstable |
 | `GET` `PUT` | `/me/inbox-marks` | What the caller marked done or snoozed in their inbox; the items themselves are read from their facts each time (issue #730). At most 1000, the oldest dropped; table `identity_inbox_mark` | unstable |
 | `GET` | `/me/logins`, `/me/memberships` | What binds to the caller | stable |
 | `DELETE` | `/me/memberships/{org_id}` | Leave an organization | stable |

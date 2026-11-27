@@ -315,6 +315,12 @@ impl PgStore {
     pub fn new(db: Arc<DBProvider<anyhow::Error>>) -> Self {
         Self { db }
     }
+
+    /// A connection, for the records kept beside the identity tables
+    /// (`super::platform_access`).
+    pub(super) fn db(&self) -> &Arc<DBProvider<anyhow::Error>> {
+        &self.db
+    }
 }
 
 fn invitation_to_view(m: entity::invitation::Model) -> InvitationRecord {

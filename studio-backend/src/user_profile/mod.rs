@@ -24,6 +24,8 @@ mod leaving;
 mod mcp;
 mod migrations;
 mod org_requests;
+mod platform_access; // ADR-0081: platform roles, grants to an organization, accepted terms
+mod platform_rest;
 /// The Inbox port (ADR-0079 §4): the sources kits' gears register.
 pub mod port;
 mod rest;
@@ -851,6 +853,8 @@ impl MemberAliases for IdentityService {
 #[derive(Default)]
 pub struct StudioUserGear {
     service: OnceLock<Option<Arc<IdentityService>>>,
+    /// ADR-0081's records, over the same database.
+    platform: OnceLock<Option<Arc<platform_access::PlatformAccess>>>,
 }
 
 #[async_trait]
@@ -862,7 +866,12 @@ impl Gear for StudioUserGear {
                 let store = Arc::new(store::PgStore::new(db));
                 let am = ctx.client_hub().get::<dyn AccountManagementClient>()?;
                 info!("studio-user: relational identity store configured");
-                Some(Arc::new(IdentityService::new(store, am)))
+                let platform = platform_access::PlatformAccess::new(store.clone())
+                    .with_audit(crate::audit::Audit::new(ctx.client_hub()));
+                Some((
+                    Arc::new(IdentityService::new(store, am)),
+                    Arc::new(platform),
+                ))
             }
             Err(e) => {
                 warn!(
@@ -878,6 +887,27 @@ impl Gear for StudioUserGear {
         // store, which is why it can be published this early — the confirmation
         // ceremony needs the connector catalogue and is attached later (see
         // `register_rest`).
+        let (service, platform) = match service {
+            Some((svc, platform)) => (Some(svc), Some(platform)),
+            None => (None, None),
+        };
+        if let (Some(svc), Some(platform)) = (service.clone(), platform.clone()) {
+            // What other gears ask about platform roles, grants and pending
+            // terms (ADR-0081 §4).
+            let port: Arc<dyn platform_access::PlatformAccessPort> =
+                Arc::new(platform_access::HubPlatformAccess {
+                    access: platform,
+                    identity: svc,
+                });
+            ctx.client_hub()
+                .register_scoped::<dyn platform_access::PlatformAccessPort>(
+                    ClientScope::gts_id(IDENTITY_INSTANCE_ID),
+                    port,
+                );
+        }
+        self.platform
+            .set(platform)
+            .map_err(|_| anyhow::anyhow!("studio-user already initialized"))?;
         if let Some(svc) = service.clone() {
             let resolver: Arc<dyn AliasResolver> = svc.clone();
             ctx.client_hub().register_scoped::<dyn AliasResolver>(
@@ -1068,6 +1098,10 @@ impl RestApiCapability for StudioUserGear {
             }
         }
 
-        Ok(rest::register_routes(router, openapi, service))
+        let platform = self.platform.get().cloned().flatten();
+        let router = rest::register_routes(router, openapi, service.clone());
+        Ok(platform_rest::register_routes(
+            router, openapi, service, platform,
+        ))
     }
 }

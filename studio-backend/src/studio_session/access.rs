@@ -111,3 +111,26 @@ impl std::fmt::Display for NotReachable {
 }
 
 impl std::error::Error for NotReachable {}
+
+/// The caller has terms to accept in the workspace's organization before an
+/// IDE opens (ADR-0081 §3). A refusal the caller can act on: 403, naming
+/// what is pending.
+#[derive(Debug)]
+pub struct TermsPending {
+    pub organization_id: Uuid,
+    /// `audience vN` for each pending version.
+    pub pending: Vec<String>,
+}
+
+impl std::fmt::Display for TermsPending {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "accept the terms of organization {} first: {}",
+            self.organization_id,
+            self.pending.join(", ")
+        )
+    }
+}
+
+impl std::error::Error for TermsPending {}

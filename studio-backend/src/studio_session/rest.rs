@@ -10,7 +10,7 @@ use toolkit_canonical_errors::resource_error;
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
-use super::access::NotReachable;
+use super::access::{NotReachable, TermsPending};
 use super::driver::NoCapacity;
 use super::service::{RepoKind, RepoSpec, Session, SessionService};
 
@@ -409,6 +409,17 @@ async fn create_session(
             if let Some(refused) = e.downcast_ref::<NotReachable>() {
                 return StudioSessionError::not_found("Workspace not found")
                     .with_resource(refused.workspace_id.to_string())
+                    .create();
+            }
+            // Terms to accept first (ADR-0081 §3): the caller reaches the
+            // workspace, so saying why is no leak.
+            if let Some(pending) = e.downcast_ref::<TermsPending>() {
+                return StudioSessionError::failed_precondition()
+                    .with_precondition_violation(
+                        "terms".to_owned(),
+                        pending.to_string(),
+                        "TERMS_NOT_ACCEPTED",
+                    )
                     .create();
             }
             match e.downcast_ref::<NoCapacity>() {

@@ -434,6 +434,15 @@ and capabilities; the metering port (`src/metering.rs`) records quantities
 - **A5 done** (same branch): `src/audit.rs`, the audit port, shaped like
   metering; the kit installer is its first writer. No recorder yet, so nothing
   is kept until the `audit` kit exists.
+- **A2–A4 built** (branch `AndrejK666/glasshouse-access`, ADR-0081, proposed):
+  platform roles (`operator`, `code_owner`, `account_manager`; never a
+  membership, an administrator holds all), a platform resource granted to an
+  organization (`kind`, `resource`, organization), versioned terms per audience
+  (`organization_admin`, `member`) and their acceptance; kept by studio-user
+  (`m0009`), REST under `/studio-user/v1/platform/…` and `/me/…`, audited.
+  The IDE session refuses to open while terms are pending
+  (`TERMS_NOT_ACCEPTED`). Nothing published, nothing gated. Left: the
+  `org_scope` gate, the portal pages, the kits' rules on grants.
 - **B1** shrinks to a Glasshouse IDE runtime on the ADR-0080 port, plus what
   the port lacks: whether repository tokens go into the container, and the
   sandbox pod.

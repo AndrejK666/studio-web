@@ -28,6 +28,7 @@ impl MigratorTrait for Migrator {
             Box::new(m0006::Migration),
             Box::new(m0007::Migration),
             Box::new(m0008::Migration),
+            Box::new(m0009::Migration),
         ]
     }
 }
@@ -524,6 +525,99 @@ CREATE INDEX IF NOT EXISTS idx_identity_organization_request_status
             manager
                 .get_connection()
                 .execute_unprepared("DROP TABLE IF EXISTS identity_organization_request;")
+                .await?;
+            Ok(())
+        }
+    }
+}
+
+mod m0009 {
+    use toolkit_db::sea_orm_migration::prelude::*;
+    use toolkit_db::sea_orm_migration::sea_orm;
+    use toolkit_db::sea_orm_migration::sea_orm::ConnectionTrait;
+
+    const UNSUPPORTED: &str = "studio-user migrations: PostgreSQL only";
+
+    pub struct Migration;
+
+    impl MigrationName for Migration {
+        fn name(&self) -> &str {
+            "m0009_platform_access"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationTrait for Migration {
+        async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            let sql = match manager.get_database_backend() {
+                sea_orm::DatabaseBackend::Postgres => {
+                    // ADR-0081: a person's platform roles; a platform resource
+                    // granted to one organization; terms, one row per
+                    // published version; who accepted which version, where.
+                    // Every primary key is a v5 of the natural key, so the key
+                    // is the uniqueness rule.
+                    r"
+CREATE TABLE IF NOT EXISTS identity_platform_role (
+    id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL,
+    person_id UUID NOT NULL,
+    role TEXT NOT NULL,
+    granted_by TEXT NOT NULL,
+    granted_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_identity_platform_role_person
+    ON identity_platform_role (tenant_id, person_id);
+CREATE TABLE IF NOT EXISTS identity_platform_grant (
+    id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL,
+    kind TEXT NOT NULL,
+    resource TEXT NOT NULL,
+    org_id UUID NOT NULL,
+    granted_by TEXT NOT NULL,
+    granted_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_identity_platform_grant_org
+    ON identity_platform_grant (tenant_id, org_id, kind);
+CREATE TABLE IF NOT EXISTS identity_terms (
+    id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL,
+    audience TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    published_by TEXT NOT NULL,
+    published_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_identity_terms_version
+    ON identity_terms (tenant_id, audience, version);
+CREATE TABLE IF NOT EXISTS identity_terms_acceptance (
+    id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL,
+    person_id UUID NOT NULL,
+    org_id UUID NOT NULL,
+    audience TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    accepted_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_identity_terms_acceptance_person
+    ON identity_terms_acceptance (tenant_id, person_id, org_id);
+                    "
+                }
+                _ => return Err(DbErr::Custom(UNSUPPORTED.to_owned())),
+            };
+            manager.get_connection().execute_unprepared(sql).await?;
+            Ok(())
+        }
+
+        async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+            manager
+                .get_connection()
+                .execute_unprepared(
+                    "DROP TABLE IF EXISTS identity_terms_acceptance; \
+                     DROP TABLE IF EXISTS identity_terms; \
+                     DROP TABLE IF EXISTS identity_platform_grant; \
+                     DROP TABLE IF EXISTS identity_platform_role;",
+                )
                 .await?;
             Ok(())
         }
