@@ -813,7 +813,7 @@ async fn get_readiness(
         .readiness(&ctx, org, q.project_id, environment_id)
         .await
         .map_err(problem)?;
-    use crate::connectors::sdk::Readiness;
+    use crate::environments::cluster_driver::Readiness;
     let (missing, namespaces) = match &report.readiness {
         Readiness::Bootstrapped { .. } => (Vec::new(), Vec::new()),
         Readiness::NamespaceLimited { namespaces } => (Vec::new(), namespaces.clone()),

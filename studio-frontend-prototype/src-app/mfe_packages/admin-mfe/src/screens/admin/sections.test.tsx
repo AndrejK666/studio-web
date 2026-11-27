@@ -350,6 +350,43 @@ describe('Organizations', () => {
     await waitFor(() => expect(calls.find((c) => c.what === 'renameTenant')?.body).toEqual({ name: 'Acme Corp' }));
   });
 
+  // Dev 2026-11-26: the create sent the caller's home organization as the
+  // parent, and account-management refused an organization inside one.
+  it('does not offer a new organization to somebody who is not a platform administrator', async () => {
+    serve({ myMemberships: read('myMemberships', { items: [{ org_id: 'o1', role: 'owner', status: 'active' }] }) });
+    render(<OrganizationsSection />);
+    expect(await screen.findByText('org_new_platform_only')).toBeTruthy();
+    expect(document.querySelector('[data-org-new]')).toBeNull();
+    expect(calls.find((c) => c.what === 'createTenant')).toBeUndefined();
+  });
+
+  it.each([
+    ['homed in the platform root', { subject_tenant_id: '00000000-0000-0000-0000-000000000001' }, []],
+    [
+      'a member of the platform root',
+      { subject_tenant_id: 'o1' },
+      [{ org_id: '00000000-0000-0000-0000-000000000001', role: 'owner', status: 'active' }],
+    ],
+  ])('creates an organization under the platform root for a platform administrator %s', async (_, me, held) => {
+    serve({
+      getMe: read('getMe', { subject_id: 's', ...me }),
+      myMemberships: read('myMemberships', { items: held }),
+      getOrganizations: read('getOrganizations', { items: [tenant('o1', 'Acme')] }),
+    });
+    render(<OrganizationsSection />);
+    fireEvent.click(await shown('[data-org-new]'));
+    fireEvent.change(screen.getByLabelText('org_create_name'), { target: { value: 'Globex' } });
+    fireEvent.click(screen.getByText('org_create'));
+    await waitFor(() =>
+      expect(calls.find((c) => c.what === 'createTenant')?.body).toEqual({
+        name: 'Globex',
+        parent_id: '00000000-0000-0000-0000-000000000001',
+        tenant_type: 'gts.cf.core.am.tenant_type.v1~cf.studio.tenant.organization.v1~',
+      })
+    );
+    expect(screen.queryByText('org_new_platform_only')).toBeNull();
+  });
+
   it('flags same-named organizations for a platform administrator', async () => {
     serve({
       getMe: read('getMe', { subject_id: 's', subject_tenant_id: '00000000-0000-0000-0000-000000000001' }),

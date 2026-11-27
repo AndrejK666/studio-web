@@ -16,18 +16,22 @@ graph-storage ([the asks](upstream/graph-storage-requests.md), items 2 and 6–1
 
 ## Where we start
 
-**Who calls the domain model today.** Only the prototype does, in
-`studio-frontend-prototype/src/api.ts`, `App.tsx` and `domain-model-graph.tsx`,
-and only for these calls:
-- `GET /types`;
-- `POST /model/sync`;
-- `POST /model/import`;
-- `GET /model/graph`;
-- `GET /objects/graph`.
+*Updated 2026-11-26.* The portal is `studio-frontend-prototype/src-app`: the
+FrontX shell with its screens as kits (ADR-0069). The old single-page
+prototype in `studio-frontend-prototype/src` was where this plan started; the
+paths below are the current ones.
 
-No screen calls `GET /objects`. The product screens (organizations, people,
-projects, documents, artifacts, components) read their own gears, and those
-are relational stores or their own graph types, not domain objects.
+**Who calls the domain model.** Every MFE reads it through one shared client
+in `src-app/mfe_packages/shared/src/data/domain.ts`:
+- the model, `GET /types`: `domainTypes` / `useDomainTypes`;
+- a type's objects, `POST /query`: `domainQuery` / `useDomainQuery` (cached,
+  read again on `domain.objects_changed`), `domainQuerySend` (uncached) and
+  `fetchDomainAll` (every page, by cursor);
+- writes, `POST /mutate`: `domainMutate`.
+
+The request and answer shapes are in `shared/src/domain/domainQuery.ts`.
+Screens still on their own gears' reads move onto the query one by one; that
+migration is its own branch.
 
 So there are two transitions, and they should not be confused:
 
@@ -62,7 +66,7 @@ data transition is where it gets tested:
 | # | Step | Waits on | Done when |
 |---|---|---|---|
 | 0 | Query beside the existing reads | — | **done** 2026-10-07: `POST /studio-domain-model/v1/query` |
-| 1 | Typed client generated from the model | — | **done** 2026-10-07: `domain-model.gen.ts`, `api.queryDomain`, `--check` in CI |
+| 1 | Typed client generated from the model | — | **done** 2026-10-07: `domain-model.gen.ts`, `api.queryDomain`, `--check` in CI; 2026-11-26 the portal's shared client reads it (`DomainQueryOf`) |
 | 2 | Deprecate `GET /objects`; keep `GET /objects/graph` | — | **done** with step 1: removal after 2026-12-01 |
 | 3 | Authorization per type | [ADR-0035](adr/0035-domain-objects-are-authorized-through-the-pdp.md) | **done** 2026-10-07, stand-checked: a query for a type the caller may not read is refused |
 | 4 | Filters pushed down to indexes | ~~graph-storage item 8~~ | **done** 2026-10-26 another way: the read model ([ADR-0066](adr/0066-domain-objects-are-read-from-a-postgres-mirror-of-the-graph.md)) answers every filter in Postgres, `complete: true` at any size |
@@ -74,19 +78,33 @@ data transition is where it gets tested:
 ### 1. A typed client generated from the model
 
 `scripts/gen-domain-client.mjs` reads the seed model
-(`studio-backend/src/domain_model/ontology.core.json`, the same document
-`GET /types` serves a tenant that has not edited its model). It writes
-`studio-frontend-prototype/src/domain-model.gen.ts`, which holds:
+(`studio-backend/src/domain_model/ontology.studio.json` and the types the
+built-in kits bring, what `GET /types` serves an organization on the base
+kits). It writes
+`studio-frontend-prototype/src-app/mfe_packages/shared/src/domain/model.gen.ts`,
+which holds:
 - one interface per entity, with its own and inherited fields;
 - per entity, the relations `include` accepts and the entity each one reaches.
 
-Inheritance and relation resolution mirror `ontology.rs` and `query.rs`.
-`domain-query.ts` types the request and the answer over those types, and
-`api.queryDomain` sends it. CI runs the script with `--check` next to
-`check-docs` and fails when the file is stale, the way `api-contract.json` is
-held to the code. A test keeps four wrong queries as `@ts-expect-error`: an
-unknown field, a value outside an enum, an unknown relation, and a field of the
-wrong relation target.
+Inheritance and relation resolution mirror `ontology.rs` and `query.rs`. CI
+runs the script with `--check` next to `check-docs` and fails when the file is
+stale, the way `api-contract.json` is held to the code.
+
+*2026-11-26: the shared client reads it.* Until then nothing imported
+`model.gen.ts`; the request types were written by hand. Now
+`shared/src/domain/domainQuery.ts` has a typed twin of each shape, keyed by
+the type's name: `DomainQueryOf<T>`, `DomainSelectionOf<T>`,
+`DomainRowOf<T>`, `DomainResultOf<T>`. `useDomainQuery`, `domainQuery` and
+`fetchDomainAll` infer `T` from the body's `type`, so a literal
+`{type: 'milestone', fields: ['name']}` is checked: `fields`, `order_by` and
+`include` (each relation against its target) take only what the type has,
+and a row's `value` is a `Milestone`. A type the generated file does not have
+(a kit's own, an organization's edit) reads untyped, as before, and so does a
+body typed as the plain `DomainQueryRequest`. `where` stays untyped: it names
+relations, combinators and dotted paths, and the gear's 400 lists what it
+accepts. `domainQuery.types.test.ts` keeps the wrong queries as
+`@ts-expect-error`: an unknown field in `fields` and in `order_by`, a field of
+the wrong relation target, and the same through inference.
 
 The reason: when the model changes, the frontend learns it at compile time, not
 from a 400 in a browser. This is what makes "the backend follows the frontend"
@@ -226,6 +244,85 @@ After the removal date: `GET /objects` goes, together with its lines in
 `api-contract-baseline.txt` (rule G2). `GET /objects/graph` stays as the graph
 read (step 2), and the `/model/*` and `/types/*` routes stay; they are how the
 model itself is edited.
+
+## Gaps closed 2026-11-26
+
+Found while moving the first screens onto the query:
+
+- **A base type reads its subtypes.** `{"type": "file"}` answers
+  `repository-file` objects too, as a relation pointing at `file` always did;
+  before, only Project's kit subtypes were read this way. Each row's `entity`
+  names its concrete type. A gear's own read through the port
+  (`query_bulk`) keeps to the type itself, because a gear's records of a base
+  type are not its subtypes' (artifact ingest's `text-content` is not the
+  documents gear's `text-chunk`).
+- **Filter by subtype.** `{"_type": {"_in": ["deals-project"]}}` in `where`
+  (also `_eq`, `_neq`, `_nin`) tests the concrete type, on the root, under
+  `include` and in a filter on related objects. A name the rows cannot be is a
+  400 listing those they can.
+- **Several projects in one request.** `project_ids` (at most 200, not with
+  `project_id`) reads objects of any of them, one statement in the read model.
+  Each must be one the caller may read: one that is not refuses the whole
+  request with a 403 (reason `DOMAIN_PROJECT_NOT_READABLE:<id>`), so a screen
+  never shows part of a portfolio as all of it.
+- **A grant per type.** Objects an `include` or a related filter reaches were
+  narrowed with the root type's grant. Now each type is asked of the PDP on its
+  own, once per request; objects of a type the caller may not read are left out
+  and `warnings` says which type.
+- **The MCP tool** `domain_model_query` takes `cursor`, `aggregate` and
+  `project_ids`, as the REST call does.
+
+## Which screens read through the query, and which stay (2026-11-26)
+
+**On the query.** Admin › Objects (`TypeObjects`, `ObjectAttributes`, saved
+views), Activity › Timeline and the project overview's next steps. Each reads
+a type the domain model owns, through `useDomainQuery` / `fetchDomainAll` in
+mfe-shared, and asks the PDP what every other reader of those objects asks.
+
+**On the query where the model answers (2026-11-26).** The project's
+repositories (Tests, Releases, Product), CI runs as builds (Releases, Product)
+and IDE builds (Releases, Product) read `{type, project_id}` on `repository`,
+`ci-run` and `product-build` through `fetchProjectArtifacts` in mfe-shared.
+The artifact gear moves each organization into the model once, in the
+background, and leaves a `sync-state` marker (`art-store-moved-v1`); until it
+is there, and under `storage.artifacts: graph` (where it never is, or says
+`returned`), the model holds none or only part of the artifacts, so the
+helper reads `GET /nodes` instead. A marker the caller cannot read (a member
+with project grants only does not reach organization-wide objects) is the
+same "not yet". The two routes ask the same question now (below), so the
+fallback shows nobody more than the query would.
+
+**Looked at and left where they are.** The rule for a move: the screen shows
+the same thing to every role after it. These do not, or are not a plain read
+of one type.
+
+| Read | Screens | Why it stays |
+|---|---|---|
+| `GET /studio-artifact-ingest/v1/nodes` | The fallback of the three screens above; Product's search (`q`), a repository's contents, cursor paging, the IDE, MCP | **Authorization is the query's now.** The route asks the domain-object policy for `domain.view` as the caller, in the organization the scope hangs under (`DomainObjects::read_access`, the answer `POST /query` applies), and keeps only nodes whose owner (project, else workspace, else organization) it admits: 403 without a grant, 503 while the PDP cannot be asked or the domain model is not there. A scope the caller may not read whole is narrowed before it is paged, so `total` counts only what they may read. It stays for what the model cannot answer: `q` also matches `author` and `number`, which the model's artifact types do not declare (the query refuses undeclared fields, and has `_contains`, no `_ilike`); and for a tenant whose artifacts have not moved, or under `storage.artifacts: graph`. |
+| `GET /studio-artifact-ingest/v1/runs` | Tests | **Authorization is the query's now**, as `/nodes`: runs and jobs of a project outside the grants are not listed. Stays because it is derived: jobs joined to their runs, `latest_completed`, revision and branch matching, all in `ci_runs.rs`; on the query that is two reads and the same code again in the browser. |
+| `GET /studio-documents/v1/workspaces/{w}/types` | Specs, Documents | Derived: the platform catalogue (not in the model) under the organization's and the workspace's overrides, minus what the workspace hides. The query sees only the stored overrides. |
+| `GET /studio-documents/v1/specs-per-source` | Sources | A join across two gears: decided bindings, then the repository each file came from. No single `aggregate` counts that. |
+| `GET /studio-components-catalog/v1/components`, `/profiles`, `/registry` | Product, Admin | Tiered (platform pins, organization, project, ADR-0061), classified by the reference, superseded entries hidden. |
+| Search, the activity feed, the projects table's rollups, the organization overview | | Ranked or folded across many types and gears: search runs hybrid retrieval, the feed merges several sources in time order, rollups and the overview count per project in one read. One query per type would be more reads and the same code in the browser. |
+| Derived domain-model facts, `GET /objects/graph`, `GET /type-counts` | Admin › Model | Graph-shaped or across every type (step 2): the query is one type at a time. |
+
+**What moves them.** For `/nodes`: every organization moved into the model
+and `storage.artifacts: graph` retired (then the fallback goes), and `author`
+and `number` declared on the artifact types for the search. For `/runs`: the
+job join and `latest_completed` as a read the query can express.
+
+**Gears reading through the store.** The artifact sync reads back the
+repository it walks: the files it may forget and the comments it counts. Both
+go through `GraphStore::list_of_repo` / `count_of_repo`; the model answers them
+with one query narrowed by the declared `repo` field instead of every file or
+comment of the organization, and graph-storage keeps the whole-type read it
+cannot avoid. The sync's marks (pull requests and issues read whole, cached),
+the repository's last state, the prune of a detached repository and the names
+search lays on its hits stay on `GraphStore::list`: they read a type whole on
+purpose, or the set is small and cached. The components catalogue's registry
+reads already answer from the model through `ModelSink`, which keeps the old
+store as its fallback until a tenant has moved; going around it to the port
+would drop that fallback for sets of a few dozen rows.
 
 ## Risks worth watching
 

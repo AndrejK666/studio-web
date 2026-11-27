@@ -166,83 +166,9 @@ pub trait DocumentClassifier: Send + Sync + 'static {
     ) -> anyhow::Result<std::collections::HashSet<Uuid>>;
 }
 
-/// How much a project has in it, as this gear counts it.
-///
-/// Separate from [`DocumentClassifier`] because it is a different seam: the
-/// classifier is this gear doing work for another, and this is another gear
-/// asking this one a question about its own rows. Both are published the same
-/// way, and both stand down the same way when the gear has no database.
-///
-/// The portfolio needs one number per project and nothing else, so the trait
-/// returns a number rather than a page. A caller that receives `Ok(n)` knows
-/// `n`; a caller that receives `Err` knows NOTHING, which is not the same as
-/// zero and must not be rendered as one.
-#[async_trait]
-pub trait DocumentCounter: Send + Sync + 'static {
-    /// Document bindings recorded for this project.
-    ///
-    /// `workspace_id` is the PARENT workspace: bindings are stored against it
-    /// and scoped to the project, which is the pairing the Documents section
-    /// uses and the one the rollup has to repeat to count the same rows.
-    async fn count_bindings(
-        &self,
-        ctx: &SecurityContext,
-        workspace_id: Uuid,
-        project_id: Uuid,
-    ) -> anyhow::Result<u32>;
-
-    /// How this project's specs stand: how many, how many written in Studio,
-    /// how many checked and how many of those fail. Same pairing of
-    /// `workspace_id` and `project_id` as [`Self::count_bindings`].
-    async fn spec_summary(
-        &self,
-        ctx: &SecurityContext,
-        workspace_id: Uuid,
-        project_id: Uuid,
-    ) -> anyhow::Result<SpecSummary>;
-
-    /// [`Self::count_bindings`] and [`Self::spec_summary`] for several
-    /// projects of one workspace at once, as a table of projects asks: the
-    /// same numbers, counted for all of them together rather than read row
-    /// by row per project.
-    ///
-    /// Every project asked for has an entry; a number that could not be read
-    /// is `None` in it. Defaulted to the two calls per project.
-    async fn project_documents(
-        &self,
-        ctx: &SecurityContext,
-        workspace_id: Uuid,
-        projects: &[Uuid],
-    ) -> std::collections::HashMap<Uuid, ProjectDocumentCounts> {
-        let mut out = std::collections::HashMap::new();
-        for p in projects {
-            let (bindings, specs) = tokio::join!(
-                self.count_bindings(ctx, workspace_id, *p),
-                self.spec_summary(ctx, workspace_id, *p),
-            );
-            out.insert(
-                *p,
-                ProjectDocumentCounts {
-                    bindings: bindings.ok(),
-                    specs: specs.ok(),
-                },
-            );
-        }
-        out
-    }
-}
-
-/// A project's documents as the projects table counts them; `None` is a
-/// number nobody could tell.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct ProjectDocumentCounts {
-    /// [`DocumentCounter::count_bindings`].
-    pub bindings: Option<u32>,
-    /// [`DocumentCounter::spec_summary`].
-    pub specs: Option<SpecSummary>,
-}
-
-pub use super::spec_rows::SpecSummary;
+/// How much a project has in it: the core's rollup counts port, which this
+/// gear answers (ADR-0079).
+pub use crate::organizations::port::{DocumentCounter, ProjectDocumentCounts, SpecSummary};
 
 /// Whether a path could hold a specification document at all.
 ///

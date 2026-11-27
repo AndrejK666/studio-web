@@ -41,21 +41,26 @@ export interface StudioRunList {
 
 export interface RunsParams {
   taskType: string;
-  state: StudioRunState;
+  /** Every state when left out: newest first, whatever became of them. */
+  state?: StudioRunState;
   /** 1..=200; the gear's default is 50. */
   limit?: number;
   /** The runs of one organization (its tenant, its workspaces' and its projects'), not the caller's home. */
   organizationId?: string;
+  /** Only the runs whose payload names this project (`payload.project_id`). */
+  projectId?: string;
 }
 
 function runPath({ runId }: { runId: string }): string {
   return `/runs/${encodeURIComponent(runId)}`;
 }
 
-export function runsPath({ taskType, state, limit, organizationId }: RunsParams): string {
-  const query = new URLSearchParams({ task_type: taskType, state });
+export function runsPath({ taskType, state, limit, organizationId, projectId }: RunsParams): string {
+  const query = new URLSearchParams({ task_type: taskType });
+  if (state) query.set('state', state);
   if (limit !== undefined) query.set('limit', String(limit));
   if (organizationId) query.set('organization_id', organizationId);
+  if (projectId) query.set('project_id', projectId);
   return `/runs?${query.toString()}`;
 }
 

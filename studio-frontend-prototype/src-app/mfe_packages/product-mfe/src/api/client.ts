@@ -17,7 +17,7 @@
  */
 
 import { apiRegistry } from '@gears-frontx/react';
-import { isNotFound, responseStatus } from '@constructor-studio/mfe-shared';
+import { fetchProjectArtifacts, isNotFound, responseStatus, type ArtifactKind } from '@constructor-studio/mfe-shared';
 import {
   ProductApiService,
   type PreviewProductBody,
@@ -25,6 +25,7 @@ import {
   type SyncComponentsBody,
 } from './ProductApiService';
 import type {
+  ArtifactNodePage,
   Capability,
   CatalogRepoSource,
   GearConfigSchema,
@@ -111,6 +112,9 @@ function bareSource(s: CatalogRepoSource): CatalogRepoSource {
   delete out.shadowed_by_platform;
   return out;
 }
+
+/** The artifact kinds the project screens list through the query. */
+const PROJECT_KINDS: readonly string[] = ['repo', 'workflow_run', 'build'];
 
 export const api = {
   projectConfig: async (_org: Org, tenantId: string): Promise<ProjectConfig | null> => {
@@ -341,14 +345,26 @@ export const api = {
   cloneFailures: async (_org: Org, projectId: string) =>
     (await svc().cloneStatus({ projectId }).fetch(FRESH)).items.filter((s) => s.state === 'failed'),
 
+  /**
+   * Artifact nodes. A project's repositories, CI runs or builds, as one
+   * page, read through `POST /studio-domain-model/v1/query` where the
+   * organization's artifacts are answered from the model
+   * (`fetchProjectArtifacts`). Everything else stays on
+   * `GET /studio-artifact-ingest/v1/nodes`: `q` also matches the author and
+   * the number, which the model's artifact types do not declare, and a
+   * cursor or a repository is the gear's own paging.
+   */
   listArtifactNodes: (
-    _org: Org,
+    org: Org,
     type?: string,
     scope?: string,
     cursor?: string,
     limit?: number,
     opts?: { repo?: string; sort?: 'updated'; offset?: number; q?: string }
-  ) => {
+  ): Promise<ArtifactNodePage> => {
+    if (type && PROJECT_KINDS.includes(type) && scope && !cursor && !opts?.repo && !opts?.q && opts?.offset == null) {
+      return fetchProjectArtifacts(org, scope, type as ArtifactKind, { limit, sort: opts?.sort }) as Promise<ArtifactNodePage>;
+    }
     const qs = new URLSearchParams();
     if (type) qs.set('type', type);
     if (scope) qs.set('scope', scope);

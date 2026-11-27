@@ -9,6 +9,15 @@
     "organization",
     "project"
   ],
+  "screens": [
+    {
+      "kind": "tab",
+      "level": "organization",
+      "label": "Constructor Research",
+      "route": "/constructor-research",
+      "mfe": "infrastructure-mfe"
+    }
+  ],
   "requires": [
     "delivery"
   ],

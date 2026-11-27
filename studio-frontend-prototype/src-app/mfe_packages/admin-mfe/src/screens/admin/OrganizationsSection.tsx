@@ -35,6 +35,10 @@ const LOGO_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
 interface Scope {
   home: Tenant | null;
   homeId: string;
+  /** A platform administrator: homed in the platform root, or a member of
+   *  it (studio-user's rule). Organizations live directly under the root,
+   *  and only a platform administrator creates one there. */
+  platform: boolean;
   orgs: Tenant[];
   /** Each organization's workspaces; a self-managed one's are not asked for. */
   workspaces: Record<string, Tenant[]>;
@@ -56,13 +60,16 @@ async function readScope(): Promise<Scope> {
         .fetch({ staleTime: 0 })
         .catch((e: unknown) => (isNotFound(e) ? null : Promise.reject(e)))
     : null;
+  const held = (await admin.myMemberships.fetch({ staleTime: 0 }).catch(() => ({ items: [] }))).items ?? [];
+  const platform =
+    homeId === PLATFORM_ROOT_TENANT_ID ||
+    held.some((m) => m.org_id === PLATFORM_ROOT_TENANT_ID && m.status === 'active');
   let orgs: Tenant[];
-  if (homeId === PLATFORM_ROOT_TENANT_ID) {
-    orgs = ((await accounts.getOrganizations({ tenantId: homeId }).fetch({ staleTime: 0 }))?.items ?? []).filter(
-      isOrganization
-    );
+  if (platform) {
+    orgs = (
+      (await accounts.getOrganizations({ tenantId: PLATFORM_ROOT_TENANT_ID }).fetch({ staleTime: 0 }))?.items ?? []
+    ).filter(isOrganization);
   } else {
-    const held = (await admin.myMemberships.fetch({ staleTime: 0 }).catch(() => ({ items: [] }))).items ?? [];
     const resolved = await Promise.all(
       held.map((m) =>
         accounts
@@ -85,7 +92,7 @@ async function readScope(): Promise<Scope> {
       }
     })
   );
-  return { home, homeId, orgs, workspaces: Object.fromEntries(pairs) };
+  return { home, homeId, platform, orgs, workspaces: Object.fromEntries(pairs) };
 }
 
 export function OrganizationsSection() {
@@ -104,7 +111,7 @@ export function OrganizationsSection() {
       (e: unknown) => {
         if (!live) return;
         setError(errText(e));
-        setScope({ home: null, homeId: '', orgs: [], workspaces: {} });
+        setScope({ home: null, homeId: '', platform: false, orgs: [], workspaces: {} });
       }
     );
     return () => {
@@ -112,7 +119,7 @@ export function OrganizationsSection() {
     };
   }, [tick]);
 
-  const platform = scope?.homeId === PLATFORM_ROOT_TENANT_ID;
+  const platform = scope?.platform ?? false;
   const selected =
     scope?.orgs.find((o) => o.id === picked?.id) ??
     (scope?.home && isOrganization(scope.home) ? scope.home : scope?.orgs[0]) ??
@@ -124,15 +131,24 @@ export function OrganizationsSection() {
         title={t('org_title')}
         info={<p>{t('org_about')}</p>}
         action={
-          <Button onClick={() => setCreating((c) => !c)} data-org-new>
-            {t('org_new')}
-          </Button>
+          // Only a platform administrator creates an organization (under the
+          // root); anybody else would be offered a create that can only fail.
+          platform ? (
+            <Button onClick={() => setCreating((c) => !c)} data-org-new>
+              {t('org_new')}
+            </Button>
+          ) : undefined
         }
       />
+      {scope && !platform && (
+        <p className={styles.muted} data-org-new-platform-only>
+          {t('org_new_platform_only')}
+        </p>
+      )}
       {error && <ErrorLine>{error}</ErrorLine>}
-      {creating && scope && (
+      {creating && platform && (
         <CreateOrganization
-          parentId={scope.homeId}
+          parentId={PLATFORM_ROOT_TENANT_ID}
           onDone={() => {
             setCreating(false);
             refresh();

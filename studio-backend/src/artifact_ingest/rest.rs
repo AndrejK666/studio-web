@@ -25,6 +25,7 @@ use uuid::Uuid;
 
 use super::graph::{NodePageQuery, PageStart};
 use super::ingest_task::{IngestPayload, TASK_TYPE};
+use super::read_access;
 use super::service::{IngestService, KeptRepo, ProjectArtifact};
 use crate::pagination::{PageQuery, page_of};
 
@@ -1054,22 +1055,51 @@ async fn list_nodes(
         (None, Some(cursor)) => PageStart::After(cursor),
         (None, None) => PageStart::Offset(0),
     };
-    let page = svc
-        .page_nodes(
-            &ctx,
-            &NodePageQuery {
-                type_filter: filter.as_deref(),
-                scope: scope.as_deref(),
-                repo: repo.as_deref(),
-                subject: subject.as_deref(),
-                needle: needle.as_deref(),
-                by_updated: q.sort.as_deref() == Some("updated"),
-                start,
-                limit,
-            },
-        )
-        .await
-        .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+    let query = NodePageQuery {
+        type_filter: filter.as_deref(),
+        scope: scope.as_deref(),
+        repo: repo.as_deref(),
+        subject: subject.as_deref(),
+        needle: needle.as_deref(),
+        by_updated: q.sort.as_deref() == Some("updated"),
+        start,
+        limit,
+    };
+    // What `domain.view` admits, asked where the scope's artifacts live: the
+    // answer `POST /query` gives the same caller (ADR-0035).
+    let asked_in = svc.read_ctx(&ctx, query.scope).await;
+    let access = read_access::ask(
+        &ingest.hub,
+        &asked_in,
+        read_access::entity_of(query.type_filter),
+    )
+    .await?;
+    let internal = |e: anyhow::Error| CanonicalError::internal(format!("{e:#}")).create();
+    let whole = access.is_unconstrained()
+        || match query.scope {
+            Some(scope) => read_access::admits_scope(&access, &asked_in, scope).await,
+            None => false,
+        };
+    let page = if whole {
+        // The store pages; the page is still narrowed, so a node owned by a
+        // project the scope holds but the grant does not name is never shown.
+        let mut page = svc.page_nodes(&ctx, &query).await.map_err(internal)?;
+        let listed = page.nodes.len();
+        page.nodes = read_access::retain(&access, &asked_in, page.nodes).await;
+        page.total = page
+            .total
+            .saturating_sub(u64::try_from(listed - page.nodes.len()).unwrap_or(u64::MAX));
+        page
+    } else {
+        // Only some of it is readable: narrowed before it is paged, so
+        // `total` and the pages count only what the caller may read.
+        let nodes = svc
+            .nodes_of(&ctx, query.type_filter, query.scope)
+            .await
+            .map_err(internal)?;
+        let nodes = read_access::retain(&access, &asked_in, nodes).await;
+        super::graph::page_of_nodes(&nodes, &query)
+    };
     let end = page.start + page.nodes.len() as u64;
     let next_cursor = (end < page.total)
         .then(|| page.nodes.last().map(|node| node.instance_id.clone()))
@@ -1957,16 +1987,26 @@ async fn list_ci_runs(
             .create());
     }
     let service = ingest.get()?;
-    let runs: Vec<super::ci_runs::CiRun> = scoped_entries(service, &ctx, "workflow_run", scope)
-        .await?
-        .iter()
-        .filter_map(|(id, v)| super::ci_runs::run_of(id, v))
-        .collect();
-    let jobs: Vec<super::ci_runs::CiJob> = scoped_entries(service, &ctx, "workflow_job", scope)
-        .await?
-        .iter()
-        .filter_map(|(id, v)| super::ci_runs::job_of(id, v))
-        .collect();
+    // What `domain.view` admits, asked as `POST /query` asks it (ADR-0035):
+    // runs and jobs of a project outside the caller's grants are not listed.
+    let asked_in = service.read_ctx(&ctx, Some(scope)).await;
+    let access = read_access::ask(&ingest.hub, &asked_in, Some("ci-run")).await?;
+    let mut runs = Vec::new();
+    for (id, v) in scoped_entries(service, &ctx, "workflow_run", scope).await? {
+        if read_access::admits(&access, &asked_in, &v).await
+            && let Some(run) = super::ci_runs::run_of(&id, &v)
+        {
+            runs.push(run);
+        }
+    }
+    let mut jobs = Vec::new();
+    for (id, v) in scoped_entries(service, &ctx, "workflow_job", scope).await? {
+        if read_access::admits(&access, &asked_in, &v).await
+            && let Some(job) = super::ci_runs::job_of(&id, &v)
+        {
+            jobs.push(job);
+        }
+    }
     let latest = super::ci_runs::latest_completed(&runs).map(|r| r.id.clone());
     let items: Vec<CiRunDto> =
         super::ci_runs::filter(runs, query.revision.as_deref(), query.branch.as_deref())
@@ -2458,7 +2498,10 @@ pub fn register_routes(
              completed run on a mainline (main, master, trunk), else the newest completed run \
              — what a `tests` stage gate reads (issue #783). Each run carries the jobs of \
              the attempt it is at, with the step a failed job failed at, once a sync has \
-             read them. As fresh as the last sync.",
+             read them. As fresh as the last sync.\n\n\
+             Read as `POST /studio-domain-model/v1/query` reads: the caller needs \
+             `domain.view` (403 without it, 503 while it cannot be asked), and only \
+             runs of projects the grant admits are listed.",
         )
         .tag("StudioArtifactIngest")
         .authenticated()
@@ -2470,6 +2513,7 @@ pub fn register_routes(
         .json_response_with_schema::<CiRunListDto>(openapi, StatusCode::OK, "The runs")
         .error_400(openapi)
         .error_401(openapi)
+        .error_403(openapi)
         .error_500(openapi)
         .error_503(openapi)
         .register(router, openapi);
@@ -2620,7 +2664,10 @@ pub fn register_routes(
         .summary("List ingested artifact nodes")
         .description(
             "Reads back the artifact nodes upserted by /sync, optionally \
-             filtered to a type (issue, pull_request, repo).",
+             filtered to a type (issue, pull_request, repo).\n\n\
+             Read as `POST /studio-domain-model/v1/query` reads: the caller needs \
+             `domain.view` (403 without it, 503 while it cannot be asked), and only \
+             nodes of projects the grant admits are listed and counted.",
         )
         .tag("StudioArtifactIngest")
         .authenticated()
@@ -2656,7 +2703,9 @@ pub fn register_routes(
             "Ingested nodes",
         )
         .error_401(openapi)
+        .error_403(openapi)
         .error_500(openapi)
+        .error_503(openapi)
         .register(router, openapi);
 
     let router = OperationBuilder::get("/studio-artifact-ingest/v1/edges")
@@ -2776,3 +2825,7 @@ pub fn register_routes(
 
     router.layer(Extension(Ingest::new(service, hub)))
 }
+
+#[cfg(test)]
+#[path = "read_access_tests.rs"]
+mod read_access_tests;

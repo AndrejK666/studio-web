@@ -31,6 +31,12 @@ describe('StudioTasksApiService', () => {
     );
   });
 
+  it("lists one project's runs of a type in every state", () => {
+    expect(
+      service.runs({ taskType: 'artifact.ingest', organizationId: 'o-1', projectId: 'p-1', limit: 200 }).key[2]
+    ).toBe('/runs?task_type=artifact.ingest&limit=200&organization_id=o-1&project_id=p-1');
+  });
+
   it('asks a run to stop with a POST to its cancel action', () => {
     expect(service.cancel('r-1').key).toEqual(['/cf/studio-tasks/v1', 'POST', '/runs/r-1/cancel']);
   });

@@ -391,17 +391,17 @@ like from here.
 
 ### What is left after all of this
 
-Two things, both named above and neither blocking what shipped:
+One thing, named above and not blocking what shipped:
 
 - **(9)**, the policy half of enforcement.
-- **The clamp still admits the platform root from a token.** A service account
-  has a tenant and no memberships, and creating an organization happens under
-  the root before any membership exists, so the root cannot simply be dropped
-  from what a token may reach. It grants nothing administrative any more — (7)
-  saw to that — but somebody whose identity provider puts them in the root can
-  still *see* the tenant tree. Closing it means telling a person from a service
-  apart, which is a question about the platform's subject model rather than
-  about Studio's.
+
+The clamp no longer admits the platform root from a token alone (2026-11-27).
+A token whose tenant is the root reaches it only as a service (a typed service
+subject, or the registered sync subject) or through a membership of the root,
+which is what makes a platform administrator. A person whose identity provider
+names the root, without that membership, reaches only the organizations they
+are a member of. A clamp left with no tenant refuses a tenant-owned resource
+instead of answering with an empty filter.
 
 ## Traceability
 

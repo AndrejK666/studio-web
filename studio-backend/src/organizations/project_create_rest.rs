@@ -16,7 +16,7 @@ use account_management_sdk::AccountManagementClient;
 use axum::extract::{Path, Query};
 use axum::http::HeaderMap;
 use axum::{Extension, Router};
-use serde_json::{Map, Value, json};
+use serde_json::{Map, json};
 use toolkit::api::canonical_prelude::*;
 use toolkit::api::{OpenApiRegistry, OperationBuilder};
 use toolkit::client_hub::{ClientHub, ClientScope};
@@ -407,34 +407,6 @@ async fn usable_connection(
     Ok(holder)
 }
 
-/// The stages the workspace's catalogue marks required, read as the caller;
-/// none when it cannot be read (creation does not fail on it).
-async fn required_stages(headers: &HeaderMap, workspace: Uuid) -> Vec<Value> {
-    let Some(api) = crate::mcp::api_as(headers.get(axum::http::header::AUTHORIZATION).cloned())
-    else {
-        return Vec::new();
-    };
-    let Ok(page) = api
-        .get(
-            &format!("/studio-documents/v1/workspaces/{workspace}/stages"),
-            &[],
-        )
-        .await
-    else {
-        return Vec::new();
-    };
-    page.get("items")
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter(|s| s.get("required").and_then(Value::as_bool) == Some(true))
-                .filter_map(|s| s.get("key").cloned())
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
 /// A slug as the scaffold takes it.
 fn slug_ok(s: &str) -> bool {
     !s.is_empty()
@@ -698,10 +670,13 @@ async fn approve(
         }
         config.insert("project_type_kit".into(), json!(kit.slug));
     }
-    config.insert(
-        "stages".into(),
-        Value::Array(required_stages(headers, body.workspace_id).await),
-    );
+    // The fields kits start a project's configuration with (the stages the
+    // workspace's catalogue marks required), read as the caller.
+    for field in super::creation_port::fields() {
+        let authorization = headers.get(axum::http::header::AUTHORIZATION).cloned();
+        let value = field.source.value(authorization, body.workspace_id).await;
+        config.insert(field.field.into(), value);
+    }
     if let Some(b) = brief {
         config.insert("brief".into(), json!(b));
     }

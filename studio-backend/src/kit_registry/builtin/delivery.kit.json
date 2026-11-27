@@ -9,6 +9,22 @@
     "organization",
     "project"
   ],
+  "screens": [
+    {
+      "kind": "tab",
+      "level": "organization",
+      "label": "Infrastructure",
+      "route": "/infrastructure",
+      "mfe": "infrastructure-mfe"
+    },
+    {
+      "kind": "tab",
+      "level": "project",
+      "label": "Releases",
+      "route": "/releases",
+      "mfe": "releases-mfe"
+    }
+  ],
   "requires": [
     "project-git"
   ],

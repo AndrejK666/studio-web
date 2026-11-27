@@ -7,18 +7,18 @@
 //! theirs, their background work that failed -- and says what waits. The
 //! marks (done, snoozed) are studio-user's own `me/inbox-marks`, the same the
 //! portal's Inbox writes, so an item an agent marks done is gone in the
-//! browser too. A kit's source is one more entry in [`SOURCES`].
+//! browser too. A kit's source is an `InboxToolSource` its gear submits
+//! (the Inbox port, `super::port`, ADR-0079 §4); the failed runs are the
+//! shell's own.
 //!
 //! Each item says how to act on it (`act`): the tool to call and its
 //! arguments, so an agent goes from the list to the action.
-
-use std::future::Future;
-use std::pin::Pin;
 
 use serde_json::{Map, Value, json};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
+use super::port::{InboxScope, InboxToolSource, ToolItemsFuture, list_or_none, text, tool_sources};
 use crate::mcp::sdk::{
     Api, Effect, Run, Tool, ToolError, ToolFuture, fill_path, object, required_text,
 };
@@ -33,45 +33,14 @@ const RUN_DAYS: i64 = 7;
 /// a tool call.
 const MAX_PAGES: usize = 20;
 
-/// Who is asking, and where: the organization and its workspaces, and the ids
-/// the person is known by (their Studio profile and their sign-in subject).
-#[derive(Clone)]
-struct Scope {
-    organization_id: String,
-    workspaces: Vec<String>,
-    me: Vec<String>,
-    now: OffsetDateTime,
-}
-
-type SourceFuture = Pin<Box<dyn Future<Output = Result<Vec<Value>, ToolError>> + Send>>;
-
-/// One kind of fact that can wait for a person.
-struct Source {
-    /// `deploy`, `review`, `pull`, `run`: each item's `source`.
-    kind: &'static str,
-    read: fn(Api, Scope) -> SourceFuture,
-}
-
-/// The sources, in the order their items are listed when nothing else orders
-/// them.
-const SOURCES: &[Source] = &[
-    Source {
-        kind: "deploy",
-        read: deploys,
-    },
-    Source {
-        kind: "review",
-        read: reviews,
-    },
-    Source {
-        kind: "pull",
-        read: pulls,
-    },
-    Source {
+// The shell's own source: the person's failed background work.
+inventory::submit! {
+    InboxToolSource {
         kind: "run",
+        order: 40,
         read: runs,
-    },
-];
+    }
+}
 
 pub fn tools() -> Vec<Tool> {
     vec![
@@ -167,17 +136,18 @@ fn inbox(api: Api, args: Map<String, Value>) -> ToolFuture {
             me.push(id.to_owned());
         }
         me.retain(|s| !s.is_empty());
-        let scope = Scope {
+        let scope = InboxScope {
             organization_id,
             workspaces,
             me,
             now: OffsetDateTime::now_utc(),
         };
-        let reads = SOURCES.iter().map(|s| (s.read)(api.clone(), scope.clone()));
+        let sources = tool_sources();
+        let reads = sources.iter().map(|s| (s.read)(api.clone(), scope.clone()));
         let answers = futures_util::future::join_all(reads).await;
         let mut items = Vec::new();
         let mut errors = Vec::new();
-        for (source, answer) in SOURCES.iter().zip(answers) {
+        for (source, answer) in sources.iter().zip(answers) {
             match answer {
                 Ok(found) => items.extend(found),
                 Err(e) => errors.push(json!({ "source": source.kind, "error": e.0 })),
@@ -227,83 +197,7 @@ async fn workspaces_of(api: &Api, organization_id: &str) -> Result<Vec<String>, 
     Ok(out)
 }
 
-/// `GET path` with `query`; a route this deployment does not have (404) is
-/// a source with nothing to say.
-async fn list_or_none(
-    api: &Api,
-    path: &str,
-    query: &[(String, String)],
-) -> Result<Value, ToolError> {
-    let answer = api.get_answer(path, query).await?;
-    match answer.status {
-        404 => Ok(json!({ "items": [] })),
-        _ if answer.ok() => Ok(answer.body),
-        _ => Err(answer.refusal()),
-    }
-}
-
-fn deploys(api: Api, scope: Scope) -> SourceFuture {
-    Box::pin(async move {
-        let list = list_or_none(
-            &api,
-            "/studio-environments/v1/deployments",
-            &[("organization_id".to_owned(), scope.organization_id.clone())],
-        )
-        .await?;
-        Ok(deploy_items(&list["items"], &scope.organization_id))
-    })
-}
-
-fn reviews(api: Api, scope: Scope) -> SourceFuture {
-    Box::pin(async move {
-        let mut out = Vec::new();
-        for ws in &scope.workspaces {
-            let list = list_or_none(
-                &api,
-                "/studio-documents/v1/review-requests",
-                &[
-                    ("workspace_id".to_owned(), ws.clone()),
-                    ("waiting_on".to_owned(), "me".to_owned()),
-                ],
-            )
-            .await?;
-            out.extend(review_items(&list["items"]));
-        }
-        Ok(out)
-    })
-}
-
-fn pulls(api: Api, scope: Scope) -> SourceFuture {
-    Box::pin(async move {
-        let mut out = Vec::new();
-        for ws in &scope.workspaces {
-            let mut offset = 0usize;
-            for _ in 0..MAX_PAGES {
-                let page = list_or_none(
-                    &api,
-                    "/studio-artifact-ingest/v1/open-pull-requests",
-                    &[
-                        ("workspace_id".to_owned(), ws.clone()),
-                        ("waiting_on".to_owned(), "me".to_owned()),
-                        ("limit".to_owned(), "200".to_owned()),
-                        ("offset".to_owned(), offset.to_string()),
-                    ],
-                )
-                .await?;
-                let items = page["items"].as_array().cloned().unwrap_or_default();
-                out.extend(pull_items(&Value::Array(items.clone())));
-                offset += items.len();
-                let total = page["total"].as_u64().unwrap_or(0);
-                if items.is_empty() || offset as u64 >= total {
-                    break;
-                }
-            }
-        }
-        Ok(out)
-    })
-}
-
-fn runs(api: Api, scope: Scope) -> SourceFuture {
+fn runs(api: Api, scope: InboxScope) -> ToolItemsFuture {
     Box::pin(async move {
         let list = list_or_none(
             &api,
@@ -319,86 +213,6 @@ fn runs(api: Api, scope: Scope) -> SourceFuture {
 }
 
 /* ── The facts as items: pure, so they are tested without a server ── */
-
-fn text<'a>(v: &'a Value, key: &str) -> &'a str {
-    v[key].as_str().unwrap_or_default()
-}
-
-fn deploy_items(list: &Value, organization_id: &str) -> Vec<Value> {
-    list.as_array()
-        .into_iter()
-        .flatten()
-        .filter(|d| text(d, "state") == "awaiting_approval")
-        .map(|d| {
-            json!({
-                "source": "deploy",
-                "key": format!("deploy:{}", text(d, "id")),
-                "title": format!(
-                    "Approve the deploy of {} to {}",
-                    text(d, "project_name"),
-                    text(d, "environment_name")
-                ),
-                "detail": format!("{} asked", text(d, "requested_by_name")),
-                "project_id": d["project_id"],
-                "at": d["requested_at"],
-                "act": {
-                    "tool": "deployment_decide",
-                    "arguments": {
-                        "deployment_id": d["id"],
-                        "organization_id": organization_id,
-                        "action": "approve | decline (decline needs a reason)"
-                    }
-                }
-            })
-        })
-        .collect()
-}
-
-fn review_items(list: &Value) -> Vec<Value> {
-    list.as_array()
-        .into_iter()
-        .flatten()
-        .map(|r| {
-            json!({
-                "source": "review",
-                "key": format!("review:{}", text(r, "id")),
-                "title": format!("Review {}", text(r, "title")),
-                "detail": format!("{} asked", r["requested_by_name"].as_str().unwrap_or("a colleague")),
-                "project_id": r["project_id"],
-                "at": r["created_at"],
-                "due": r["due_at"],
-                "overdue": r["overdue"].as_bool().unwrap_or(false),
-                "act": {
-                    "tool": "review_verdict",
-                    "arguments": {
-                        "request_id": r["id"],
-                        "project_id": r["project_id"],
-                        "verdict": "approved | changes_requested"
-                    }
-                }
-            })
-        })
-        .collect()
-}
-
-fn pull_items(list: &Value) -> Vec<Value> {
-    list.as_array()
-        .into_iter()
-        .flatten()
-        .map(|p| {
-            json!({
-                "source": "pull",
-                "key": format!("pr:{}@{}", text(p, "id"), text(p, "updated_at")),
-                "title": p["title"],
-                "detail": format!("{}#{} · {}", text(p, "repo"), p["number"], text(p, "reason")),
-                "project_id": p["project_id"],
-                "at": p["updated_at"],
-                "waiting": p["waiting"],
-                "act": { "open": p["url"] }
-            })
-        })
-        .collect()
-}
 
 fn run_items(list: &Value, me: &[String], now: OffsetDateTime) -> Vec<Value> {
     let since = now - time::Duration::days(RUN_DAYS);
@@ -486,38 +300,6 @@ mod tests {
     }
 
     #[test]
-    fn a_deploy_waiting_for_approval_says_how_to_decide_it() {
-        let items = deploy_items(
-            &json!([
-                { "id": "d1", "state": "awaiting_approval", "project_id": "p", "project_name": "Shop",
-                  "environment_name": "prod", "requested_by_name": "Ann", "requested_at": "2026-11-06T10:00:00Z" },
-                { "id": "d2", "state": "succeeded" }
-            ]),
-            "org",
-        );
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0]["key"], "deploy:d1");
-        assert_eq!(items[0]["title"], "Approve the deploy of Shop to prod");
-        assert_eq!(items[0]["act"]["tool"], "deployment_decide");
-        assert_eq!(items[0]["act"]["arguments"]["organization_id"], "org");
-    }
-
-    #[test]
-    fn a_review_and_a_pull_request_are_keyed_as_the_portal_keys_them() {
-        let r = review_items(
-            &json!([{ "id": "r1", "title": "PRD", "project_id": "p", "overdue": true }]),
-        );
-        assert_eq!(r[0]["key"], "review:r1");
-        assert_eq!(r[0]["act"]["tool"], "review_verdict");
-        let p = pull_items(
-            &json!([{ "id": "x", "updated_at": "2026-11-05T00:00:00Z", "title": "Fix",
-            "repo": "o/r", "number": 7, "reason": "asked", "url": "https://g/7" }]),
-        );
-        assert_eq!(p[0]["key"], "pr:x@2026-11-05T00:00:00Z");
-        assert_eq!(p[0]["act"]["open"], "https://g/7");
-    }
-
-    #[test]
     fn only_the_caller_s_recent_failed_runs_are_in_the_inbox() {
         let now = at("2026-11-06T12:00:00Z");
         let items = run_items(
@@ -571,7 +353,7 @@ mod tests {
 
     #[test]
     fn every_source_has_its_own_kind() {
-        let kinds: Vec<&str> = SOURCES.iter().map(|s| s.kind).collect();
+        let kinds: Vec<&str> = tool_sources().iter().map(|s| s.kind).collect();
         assert_eq!(kinds, vec!["deploy", "review", "pull", "run"]);
     }
 

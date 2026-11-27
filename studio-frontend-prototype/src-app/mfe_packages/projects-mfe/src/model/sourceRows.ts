@@ -7,7 +7,7 @@
 // @cpt-dod:cpt-studiofrontend-dod-project-sources-gaps:p1
 // @cpt-dod:cpt-studiofrontend-dod-project-sources-search:p1
 // @cpt-dod:cpt-studiofrontend-dod-project-sources-footer:p1
-import type { ConnectionDto, ProjectSource, Refusal } from '@constructor-studio/mfe-shared';
+import type { ConnectionDto, ProjectSource, Refusal, StudioRun } from '@constructor-studio/mfe-shared';
 import type {
   ArtifactNodeDto,
   RepoActivityDto,
@@ -17,6 +17,7 @@ import type {
 import type { DocumentDto, SpecsPerSourceListDto } from '../api/documentTypes';
 import { repositoryHost } from './projectSources';
 import { canCancel, canRetry, inFlight, type RepoImportStatus } from './repoImport';
+import { lastSyncRuns, sourceSyncRun, type SourceSyncRun } from './sourceSyncRun';
 import { SYNCABLE_PROVIDERS, pathKey, repoNodeOf } from './syncRequest';
 
 export type SourceLastSync =
@@ -103,6 +104,8 @@ export interface SourceRow {
   activity: SourceActivity | null;
   lastSync: SourceLastSync;
   sync: SourceSync;
+  /** The source's last sync run: its status, what it said, its tries; `null` when none is known. */
+  syncRun: SourceSyncRun | null;
   clone: SourceClone;
 }
 
@@ -123,6 +126,12 @@ export interface SourceImportLine {
   status: RepoImportStatus;
   reason: Refusal | null;
   cancelling: boolean;
+  /** The phase the run last reported. */
+  phase?: string | null;
+  /** What it did, once it succeeded. */
+  summary?: string | null;
+  /** Its last error, also while it waits for another attempt. */
+  lastError?: string | null;
 }
 
 export interface SourcesAnswers {
@@ -136,6 +145,8 @@ export interface SourcesAnswers {
   uploads: readonly Pick<DocumentDto, 'created_at'>[] | null;
   /** The last clone of each source; `null` when it could not be read. */
   clones?: readonly SourceCloneStatusDto[] | null;
+  /** The project's sync runs, newest first; `null` (or left out) when they could not be read. */
+  runs?: readonly StudioRun[] | null;
 }
 
 export interface SourcesFooter {
@@ -193,6 +204,21 @@ function syncOf(line: SourceImportLine | undefined): SourceSync {
     return { kind: 'stopped', status: line.status, reason: line.reason, canRetry: canRetry(line) };
   }
   return NO_SYNC;
+}
+
+function syncRunOf(
+  repo: string,
+  listed: StudioRun | undefined,
+  line: SourceImportLine | undefined
+): SourceSyncRun | null {
+  return sourceSyncRun(
+    repo,
+    listed,
+    line && {
+      ...line,
+      reasonText: line.reason?.kind === 'provider' ? line.reason.text : null,
+    }
+  );
 }
 
 function oneOf<T extends string>(known: readonly T[], value: string | null | undefined): T | null {
@@ -256,6 +282,7 @@ export function buildSourceRows(answers: SourcesAnswers): SourcesTableRow[] {
   const specsByNode = new Map(answers.specs?.items.map((item) => [item.repo, item.specs]));
   const activityByNode = new Map(answers.activity?.items.map((item) => [item.repo, item]));
   const lines = new Map(answers.lines.map((line) => [pathKey(line.repo), line]));
+  const runs = lastSyncRuns(answers.runs ?? []);
 
   const rows: SourcesTableRow[] = [];
   // @cpt-begin:cpt-studiofrontend-algo-project-sources-rows:p2:inst-1
@@ -301,6 +328,11 @@ export function buildSourceRows(answers: SourcesAnswers): SourcesTableRow[] {
       // @cpt-begin:cpt-studiofrontend-algo-project-sources-rows:p2:inst-9
       sync: syncOf(lines.get(pathKey(source.full_path))),
       // @cpt-end:cpt-studiofrontend-algo-project-sources-rows:p2:inst-9
+      syncRun: syncRunOf(
+        source.full_path,
+        runs.get(pathKey(source.full_path)),
+        lines.get(pathKey(source.full_path))
+      ),
       clone: cloneOf(answers.clones, source),
     });
   }

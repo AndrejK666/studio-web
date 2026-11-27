@@ -2520,7 +2520,15 @@ impl DomainModelService {
             .access(ctx, access::READ, Some(&q.type_ref))
             .await
             .map_err(|e| super::query::QueryError::Failed(e.into()))?;
-        super::query::run_bulk(self.store.as_ref(), &ontology, ctx, q, &read).await
+        super::query::run_bulk(
+            self.store.as_ref(),
+            &ontology,
+            ctx,
+            q,
+            &read,
+            self.policy.as_ref(),
+        )
+        .await
     }
 
     /// The relations of `names` between objects of the tenant, as
@@ -3100,6 +3108,17 @@ impl DomainModelService {
         Ok(read.retain(ctx, found).await)
     }
 
+    /// What `ctx` may read of `entity`'s objects: the answer [`Self::query`]
+    /// applies, for a gear that reads its own records and answers a caller
+    /// ([`super::port::DomainObjects::read_access`]).
+    pub async fn read_access(
+        &self,
+        ctx: &SecurityContext,
+        entity: Option<&str>,
+    ) -> Result<access::Access, AccessError> {
+        self.policy.access(ctx, access::READ, entity).await
+    }
+
     /// Answer a query (see [`super::query`]): a type's objects filtered,
     /// ordered, projected, with declared relations followed. Experimental,
     /// beside `list_objects` and `objects_graph` rather than in place of them.
@@ -3115,7 +3134,33 @@ impl DomainModelService {
             .access(ctx, access::READ, Some(&q.type_ref))
             .await
             .map_err(|e| super::query::QueryError::Failed(e.into()))?;
-        super::query::run(self.store.as_ref(), &ontology, ctx, q, &read).await
+        // Several projects at once: each one the caller may read, or the
+        // request is refused whole, naming the first it may not.
+        if let Some(projects) = &q.scopes {
+            if projects.len() > super::query::MAX_PROJECT_IDS {
+                return Err(super::query::QueryError::Invalid(format!(
+                    "`project_ids` names at most {} projects, not {}",
+                    super::query::MAX_PROJECT_IDS,
+                    projects.len()
+                )));
+            }
+            for p in projects.iter().map(|p| p.trim()).filter(|p| !p.is_empty()) {
+                if !read.admits_owner(ctx, read.owner_of_scope(Some(p))).await {
+                    return Err(super::query::QueryError::Failed(
+                        super::query::ProjectNotReadable(p.to_string()).into(),
+                    ));
+                }
+            }
+        }
+        super::query::run(
+            self.store.as_ref(),
+            &ontology,
+            ctx,
+            q,
+            &read,
+            self.policy.as_ref(),
+        )
+        .await
     }
 
     /// Objects whose `_scope` is set but is not a tenant id (ADR-0035 §3).

@@ -114,6 +114,12 @@ struct OwnerRow {
 }
 
 #[derive(Debug, FromQueryResult)]
+struct TypeOwnerRow {
+    type_id: String,
+    owner_id: Uuid,
+}
+
+#[derive(Debug, FromQueryResult)]
 struct TypeCountRow {
     type_id: String,
     n: i64,
@@ -385,6 +391,29 @@ impl DomainMirror {
             })
             .await?;
         Ok(rows.into_iter().map(|r| r.owner_id).collect())
+    }
+
+    /// [`Self::owners`] per type: each `(type_id, owner)` pair the tenant
+    /// holds objects of, for a decision per type rather than one for all.
+    pub async fn owners_by_type(
+        &self,
+        tenant: Uuid,
+        type_ids: &[String],
+    ) -> anyhow::Result<Vec<(String, Uuid)>> {
+        let conn = self.db.conn()?;
+        let rows: Vec<TypeOwnerRow> = object::Entity::find()
+            .secure()
+            .scope_with(&AccessScope::for_tenant(tenant))
+            .filter(Condition::all().add(object::Column::TypeId.is_in(type_ids.iter().cloned())))
+            .project_all(&conn, |q| {
+                q.select_only()
+                    .column(object::Column::TypeId)
+                    .column(object::Column::OwnerId)
+                    .distinct()
+                    .into_model::<TypeOwnerRow>()
+            })
+            .await?;
+        Ok(rows.into_iter().map(|r| (r.type_id, r.owner_id)).collect())
     }
 
     /// One page of a query's root, and how many match across every page.

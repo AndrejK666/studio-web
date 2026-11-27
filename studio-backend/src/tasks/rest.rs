@@ -201,6 +201,10 @@ pub struct RunFilter {
     state: Option<String>,
     #[serde(default)]
     task_type: Option<String>,
+    /// Only the runs whose payload names this project (`payload.project_id`),
+    /// within the tenants the rest of the filter reaches.
+    #[serde(default)]
+    project_id: Option<Uuid>,
     /// `?offset=&limit=` — see [`crate::pagination`]. The ceiling used to be
     /// 500 here and is 200 everywhere else; one contract is worth more than
     /// this endpoint's extra 300, and no caller asks for more than 200.
@@ -268,6 +272,7 @@ async fn list_runs(
             &RunQuery {
                 state,
                 task_type: q.task_type,
+                project_id: q.project_id,
                 offset: q.page.offset() as u64,
                 limit: q.page.limit() as u64,
             },
@@ -410,6 +415,12 @@ pub fn register_routes(
             "tenant",
             false,
             "The tenant the runs are in, when it is not the caller's",
+        )
+        .query_param(
+            "project_id",
+            false,
+            "Only the runs whose payload names this project (`payload.project_id`), \
+             such as a project's repository syncs",
         )
         .handler(list_runs)
         .json_response_with_schema::<RunListDto>(openapi, StatusCode::OK, "Runs")

@@ -158,20 +158,22 @@ pub struct Stage {
     pub focus: bool,
 }
 
-/// A stage's title, tab and kit.
+/// A stage's title, tab and kit: Sources is the shell's own, every other
+/// stage is declared by the kit whose tab holds it
+/// (`organizations/kit_parts.rs`, ADR-0079).
 fn shape(id: &str) -> (&'static str, &'static str, Option<&'static str>) {
-    match id {
-        "sources" => ("Sources", "sources", None),
-        "documents" => ("Documents", "specs", Some(status::SPECS_KIT)),
-        "model" => ("Domain model", "model", Some(status::DOMAIN_MODEL_KIT)),
-        "findings" => ("Findings", "issues", Some(status::DOMAIN_MODEL_KIT)),
-        "product" => ("Product", "product", Some(status::PRODUCT_KIT)),
-        "build" => ("Build", "releases", Some(status::DELIVERY_KIT)),
-        "images" => ("Images", "releases", Some(status::DELIVERY_KIT)),
-        "environment" => ("Environment", "releases", Some(status::DELIVERY_KIT)),
-        "deploy" => ("Deploy", "releases", Some(status::DELIVERY_KIT)),
-        _ => ("", "", None),
+    if id == "sources" {
+        return ("Sources", "sources", None);
     }
+    match crate::organizations::port::path_stage(id) {
+        Some((title, tab, kit)) => (title, tab, Some(kit)),
+        None => ("", "", None),
+    }
+}
+
+/// The kit whose tab holds a stage of the path; `None` for the shell's own.
+pub fn stage_kit(id: &str) -> Option<&'static str> {
+    shape(id).2
 }
 
 /// A stage's place in [`STAGES`], from 1; 0 for an id that is not one.

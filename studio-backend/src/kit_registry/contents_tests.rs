@@ -438,3 +438,82 @@ type = "directory"
     assert!(two.kinds.is_empty());
     assert!(read_manifest(body, "three").is_none());
 }
+
+/// A built-in kit's `kit.json` names the micro-frontend that draws each of
+/// its screens, and the portal says the same from its side: every
+/// `mfe_packages/<package>/mfe.json` extension with `presentation.kit = X`
+/// is in a package kit X lists, and every package a kit lists names the kit.
+/// A package may draw several kits' screens (`activity-mfe`, `product-mfe`,
+/// `infrastructure-mfe`, `projects-mfe`).
+#[test]
+fn builtin_kits_and_the_portal_s_mfes_name_each_other() {
+    use std::collections::BTreeSet;
+
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../studio-frontend-prototype/src-app/mfe_packages");
+    let Ok(dirs) = std::fs::read_dir(&root) else {
+        // A checkout without the frontend (a crate-only build) has nothing to
+        // hold the manifests to.
+        return;
+    };
+    // (package, kit) and (package, route, kit), as the portal declares them.
+    let mut portal: BTreeSet<(String, String)> = BTreeSet::new();
+    let mut portal_routes: BTreeSet<(String, String, String)> = BTreeSet::new();
+    for dir in dirs.flatten() {
+        let Ok(body) = std::fs::read_to_string(dir.path().join("mfe.json")) else {
+            continue;
+        };
+        let package = dir.file_name().to_string_lossy().into_owned();
+        let doc: serde_json::Value = serde_json::from_str(&body).unwrap();
+        for ext in doc["extensions"].as_array().into_iter().flatten() {
+            let Some(kit) = ext["presentation"]["kit"].as_str() else {
+                continue;
+            };
+            portal.insert((package.clone(), kit.to_owned()));
+            if let Some(route) = ext["presentation"]["route"].as_str() {
+                portal_routes.insert((package.clone(), route.to_owned(), kit.to_owned()));
+            }
+        }
+    }
+    assert!(!portal.is_empty(), "no mfe.json under {}", root.display());
+
+    let mut kits: BTreeSet<(String, String)> = BTreeSet::new();
+    let mut kit_routes: BTreeSet<(String, String, String)> = BTreeSet::new();
+    for kit in builtin_catalogue() {
+        let m = crate::kit_registry::manifest::builtin_manifest(&kit.slug).unwrap();
+        for s in m.screens {
+            let package = s.mfe.unwrap_or_else(|| {
+                panic!(
+                    "builtin/{}.kit.json: screen `{}` names no `mfe`",
+                    kit.slug, s.label
+                )
+            });
+            kits.insert((package.clone(), kit.slug.clone()));
+            if let Some(route) = s.route {
+                kit_routes.insert((package, route, kit.slug.clone()));
+            }
+        }
+    }
+
+    let unlisted: Vec<_> = portal.difference(&kits).collect();
+    assert!(
+        unlisted.is_empty(),
+        "(package, kit): an mfe.json gives the kit a screen its kit.json does not list: {unlisted:?}"
+    );
+    let unclaimed: Vec<_> = kits.difference(&portal).collect();
+    assert!(
+        unclaimed.is_empty(),
+        "(package, kit): a kit.json lists a package whose mfe.json does not name the kit: \
+         {unclaimed:?}"
+    );
+    let missing: Vec<_> = kit_routes.difference(&portal_routes).collect();
+    assert!(
+        missing.is_empty(),
+        "(package, route, kit): a kit.json screen no mfe.json extension declares: {missing:?}"
+    );
+    let undeclared: Vec<_> = portal_routes.difference(&kit_routes).collect();
+    assert!(
+        undeclared.is_empty(),
+        "(package, route, kit): an mfe.json extension no kit.json screen declares: {undeclared:?}"
+    );
+}

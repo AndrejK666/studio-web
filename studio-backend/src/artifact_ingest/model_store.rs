@@ -182,7 +182,7 @@ const RELATIONS: [(&str, &str, &str, &str); 15] = [
 
 const RELATION_SOURCE: &str = "system-object";
 
-fn entity_of(artifact_type: &str) -> Option<&'static str> {
+pub(super) fn entity_of(artifact_type: &str) -> Option<&'static str> {
     KINDS
         .iter()
         .find(|(a, _)| *a == artifact_type)
@@ -773,6 +773,12 @@ fn scope_where(scope: &str) -> Value {
     json!({"_or": [{"workspace_id": {"_eq": scope}}, {"project_id": {"_eq": scope}}]})
 }
 
+/// The artifacts whose payload names `repo` as the repository they came
+/// from: `repo` is one of the fields every artifact type declares.
+fn repo_where(repo: &str) -> Value {
+    json!({"repo": {"_eq": repo}})
+}
+
 /// [`scope_where`] for any of several projects.
 ///
 /// Sent with `project_ids`, which narrows by the indexed `scope` column
@@ -992,6 +998,60 @@ impl GraphStore for ModelGraph {
                 ctx,
                 type_filter,
                 |entity| json!({"type": entity, "where": scope_where(scope), "limit": 1}),
+            )
+            .await?;
+        let n: usize = answers.iter().map(|(_, _, n)| *n).sum();
+        Ok(u64::try_from(n).unwrap_or(u64::MAX))
+    }
+
+    async fn list_of_repo(
+        &self,
+        ctx: &SecurityContext,
+        type_id: &str,
+        repo: &str,
+    ) -> anyhow::Result<Vec<GtsNode>> {
+        let s = &self.0;
+        if !s.ready(ctx).await {
+            return s.legacy.list_of_repo(ctx, type_id, repo).await;
+        }
+        let answers = s
+            .query_types(
+                ctx,
+                Some(type_id),
+                |entity| json!({"type": entity, "where": repo_where(repo)}),
+            )
+            .await?;
+        let (held, total) = answers
+            .iter()
+            .fold((0usize, 0usize), |(h, t), (_, nodes, n)| {
+                (h + nodes.len(), t + n)
+            });
+        // A repository past the bulk read's bound is not handed over short:
+        // a caller deciding what is gone would take the rest for gone.
+        if held < total {
+            anyhow::bail!(
+                "{repo} holds {total} nodes of {type_id}, more than one read of the model returns ({held})"
+            );
+        }
+        Ok(answers.into_iter().flat_map(|(_, n, _)| n).collect())
+    }
+
+    async fn count_of_repo(
+        &self,
+        ctx: &SecurityContext,
+        type_id: &str,
+        repo: &str,
+    ) -> anyhow::Result<u64> {
+        let s = &self.0;
+        if !s.ready(ctx).await {
+            return s.legacy.count_of_repo(ctx, type_id, repo).await;
+        }
+        // The model counts; one row each is all that is read.
+        let answers = s
+            .query_types(
+                ctx,
+                Some(type_id),
+                |entity| json!({"type": entity, "where": repo_where(repo), "limit": 1}),
             )
             .await?;
         let n: usize = answers.iter().map(|(_, _, n)| *n).sum();

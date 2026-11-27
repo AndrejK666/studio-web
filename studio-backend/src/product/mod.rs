@@ -15,6 +15,7 @@
 //! [`port`].
 
 mod assembly;
+mod creation_steps; // its part of a project's creation (ADR-0079)
 mod description_edit;
 mod descriptions;
 mod explanations;
@@ -32,6 +33,35 @@ inventory::submit! {
         order: 100,
         tools: mcp::tools,
     }
+}
+
+// What this gear registers, contributed to the offline GTS inventory
+// (`crate::gts_inventory`, ADR-0079 §4). Its node types live in the
+// catalogue graph, which the catalogue's store registers with graph-storage
+// whole; the types-registry entries are the product's own.
+inventory::submit! {
+    crate::gts_inventory::GtsSchemas {
+        gear: "studio-product",
+        schemas: inventory_entries,
+    }
+}
+
+// The catalogue graph's node types this gear writes, and the catalogue
+// does not.
+inventory::submit! {
+    crate::catalog_graph::HeldNodeTypes {
+        gear: "studio-product",
+        type_ids: &crate::catalog_graph::gts::PRODUCT_NODE_TYPES,
+    }
+}
+
+/// This gear's documents as the inventory records them.
+fn inventory_entries() -> Vec<serde_json::Value> {
+    use crate::gts_inventory::{BOOT_FAILS, TYPES_REGISTRY, entry};
+    crate::catalog_graph::gts::product_type_schemas()
+        .into_iter()
+        .map(|s| entry(TYPES_REGISTRY, "studio-product", BOOT_FAILS, s))
+        .collect()
 }
 
 /// Every type this gear declares in the model, for the kits' claims test:
@@ -55,6 +85,7 @@ pub mod sdk;
 mod service;
 mod skeleton;
 pub mod sources_lock;
+mod status_part; // its part of a project's status (ADR-0079)
 
 use std::sync::{Arc, OnceLock};
 
@@ -69,7 +100,9 @@ use types_registry_sdk::{RegisterResult, TypesRegistryClient};
 use service::ProductService;
 
 /// The metadata row an organization's plain explanations of gears are kept
-/// in. Only this gear writes it (`studio_authz_plugin::GEAR_HELD_METADATA`).
+/// in. Only this gear writes it (`studio_authz_plugin::GEAR_HELD_METADATA`);
+/// the inventory reads it through `gts_inventory::ProfileDeclaredType`.
+#[cfg(test)]
 pub use explanations::EXPLANATIONS_METADATA_TYPE;
 
 #[toolkit::gear(

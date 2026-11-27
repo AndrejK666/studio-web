@@ -948,10 +948,29 @@ impl ConnectorDriver for GitHubDriver {
         page: u32,
         per_page: u32,
     ) -> anyhow::Result<Vec<RemoteIssue>> {
+        Ok(self
+            .list_issue_page(auth, repo_full_path, since, page, per_page)
+            .await?
+            .0)
+    }
+
+    async fn list_issue_page(
+        &self,
+        auth: &ConnectionAuth,
+        repo_full_path: &str,
+        since: Option<&str>,
+        page: u32,
+        per_page: u32,
+    ) -> anyhow::Result<(Vec<RemoteIssue>, bool)> {
         // /issues returns both issues and PRs; a PR carries a `pull_request`
-        // object, which we drop so this endpoint means issues only.
+        // object, which we drop so this endpoint means issues only. Whether
+        // the page held anything is answered apart: a page of nothing but
+        // PRs is not the end of the listing. Newest created first: a
+        // creation time never moves, so a page boundary stays put while a
+        // sync walks the listing and a stopped walk goes on from its page
+        // (`artifact_ingest::listing_cursor`).
         let mut url = format!(
-            "{}/repos/{repo_full_path}/issues?state=all&sort=updated&direction=desc&per_page={}&page={}",
+            "{}/repos/{repo_full_path}/issues?state=all&sort=created&direction=desc&per_page={}&page={}",
             auth.root(),
             per_page.clamp(1, 100),
             page.max(1),
@@ -970,7 +989,8 @@ impl ConnectorDriver for GitHubDriver {
             );
         }
         let issues: Vec<GitHubIssue> = res.json().await?;
-        Ok(issues
+        let more = !issues.is_empty();
+        let issues = issues
             .into_iter()
             .filter(|i| i.pull_request.is_none())
             .map(|i| RemoteIssue {
@@ -987,7 +1007,8 @@ impl ConnectorDriver for GitHubDriver {
                 parent: i.parent_issue_url.as_deref().and_then(api_issue_ref),
                 iteration: i.milestone.map(|m| m.title),
             })
-            .collect())
+            .collect();
+        Ok((issues, more))
     }
 
     async fn list_pull_requests(
@@ -998,11 +1019,12 @@ impl ConnectorDriver for GitHubDriver {
         page: u32,
         per_page: u32,
     ) -> anyhow::Result<Vec<RemotePullRequest>> {
-        // /pulls has no `since` filter; we sort by most-recent activity and let
-        // the caller stop once it walks past the incremental cursor.
+        // /pulls has no `since` filter: every pull request is listed. Newest
+        // created first, as the issues: a page boundary stays put while a
+        // sync walks it (`artifact_ingest::listing_cursor`).
         let _ = since;
         let url = format!(
-            "{}/repos/{repo_full_path}/pulls?state=all&sort=updated&direction=desc&per_page={}&page={}",
+            "{}/repos/{repo_full_path}/pulls?state=all&sort=created&direction=desc&per_page={}&page={}",
             auth.root(),
             per_page.clamp(1, 100),
             page.max(1),
@@ -1070,8 +1092,10 @@ impl ConnectorDriver for GitHubDriver {
         }
         // Best-effort and paged: a non-2xx (e.g. a huge diff GitHub declines to
         // list) just stops the walk, so the sync keeps whatever links it got.
+        // Thirty pages is GitHub's own end: this listing stops at 3,000 files
+        // whatever is asked, so a page past it would only come back empty.
         let mut out: Vec<String> = Vec::new();
-        for page in 1..=10u32 {
+        for page in 1..=30u32 {
             let url = format!(
                 "{}/repos/{repo_full_path}/pulls/{number}/files?per_page=100&page={page}",
                 auth.root()
@@ -1098,8 +1122,10 @@ impl ConnectorDriver for GitHubDriver {
         page: u32,
         per_page: u32,
     ) -> anyhow::Result<Vec<RemoteComment>> {
+        // Newest created first, so a sync's stopped walk goes on from its
+        // page (`artifact_ingest::listing_cursor`).
         let mut url = format!(
-            "{}/repos/{repo_full_path}/issues/comments?sort=updated&direction=desc&per_page={}&page={}",
+            "{}/repos/{repo_full_path}/issues/comments?sort=created&direction=desc&per_page={}&page={}",
             auth.root(),
             per_page.clamp(1, 100),
             page.max(1),

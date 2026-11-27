@@ -40,6 +40,8 @@ const SCOPE_ORG: &str = "org";
 const SCOPE_PROJECT: &str = "project";
 /// The role key that makes somebody an owner.
 pub const ROLE_OWNER: &str = "owner";
+/// The role key an organization's administrator holds.
+pub const ROLE_ADMIN: &str = "admin";
 
 /// The Studio privilege catalogue (ADR-0019 §2).
 ///
@@ -121,7 +123,7 @@ pub(crate) fn default_roles() -> serde_json::Value {
     };
     serde_json::json!([
         { "key": ROLE_OWNER, "name": "Owner", "system": true, "privileges": PRIVILEGES },
-        { "key": "admin", "name": "Admin", "system": true, "privileges": except(&["access.manage"]) },
+        { "key": ROLE_ADMIN, "name": "Admin", "system": true, "privileges": except(&["access.manage"]) },
         { "key": "editor", "name": "Editor", "system": true, "privileges": [
             "people.view", "document.view", "document.edit",
             "connector.view", "secret.view", "session.open",
@@ -130,6 +132,75 @@ pub(crate) fn default_roles() -> serde_json::Value {
         { "key": "viewer", "name": "Viewer", "system": true, "privileges":
             PRIVILEGES.iter().filter(|p| p.ends_with(".view")).collect::<Vec<_>>() },
     ])
+}
+
+/// The role an active membership of an organization carries in that
+/// organization's access config, derived when a question is asked and never
+/// written (a projection, so it cannot drift from the membership: a demotion
+/// or a membership that ends takes it away on the next decision).
+///
+/// * `owner` → `owner`: what the stored owner grant already says.
+/// * `admin` → `admin`: an organization's administrator administers it, as
+///   the membership screen promises. On Dev an `admin` member held no grant,
+///   and the `roles` model refused them every domain object.
+/// * `member` → nothing. The `roles` model narrows on purpose: being a member
+///   is not itself a grant (ADR-0019), and projecting `viewer` onto every
+///   member would undo that for every organization that opted in. A member's
+///   access stays what their explicit grants say.
+///
+/// A suspended membership projects nothing, and neither does any role this
+/// list does not name.
+#[must_use]
+pub(crate) fn projected_role(
+    membership_role: &str,
+    membership_status: &str,
+) -> Option<&'static str> {
+    if membership_status != "active" {
+        return None;
+    }
+    match membership_role {
+        ROLE_OWNER => Some(ROLE_OWNER),
+        ROLE_ADMIN => Some(ROLE_ADMIN),
+        _ => None,
+    }
+}
+
+/// Does a projected `role` carry `privilege`? An owner carries every one
+/// (ADR-0019 §7). Any other role is read from the document's own ladder when
+/// it defines the role — the organization decides what its administrators may
+/// do — and from the default ladder when it does not, so a document written
+/// before the ladder was seeded does not strip its administrators.
+#[must_use]
+pub(crate) fn projected_role_carries(
+    defined: Option<&[String]>,
+    role: &str,
+    privilege: &str,
+) -> bool {
+    if role == ROLE_OWNER {
+        return true;
+    }
+    match defined {
+        Some(privileges) => carries(privileges, privilege),
+        None => default_privileges(role).is_some_and(|p| carries(&p, privilege)),
+    }
+}
+
+/// The privileges the default ladder gives `role`.
+fn default_privileges(role: &str) -> Option<Vec<String>> {
+    default_roles()
+        .as_array()?
+        .iter()
+        .find(|r| r["key"] == role)
+        .map(|r| {
+            r["privileges"]
+                .as_array()
+                .map(|p| {
+                    p.iter()
+                        .filter_map(|v| v.as_str().map(str::to_owned))
+                        .collect()
+                })
+                .unwrap_or_default()
+        })
 }
 
 /// The `model` value that turns role evaluation on for an organization.
@@ -236,6 +307,18 @@ impl AccessConfig {
                             && g.scope_id.as_deref() == Some(project_id)))
             })
             .map(|g| g.subject_id.as_str())
+    }
+
+    /// Does a role an active membership projects ([`projected_role`]) carry
+    /// `privilege` in this document?
+    #[must_use]
+    pub fn projected_role_carries(&self, role: &str, privilege: &str) -> bool {
+        let defined = self
+            .roles
+            .iter()
+            .find(|r| r.key == role)
+            .map(|r| r.privileges.as_slice());
+        projected_role_carries(defined, role, privilege)
     }
 
     /// Does the named role carry `privilege`?
@@ -868,5 +951,38 @@ mod tests {
                 "{id} is not `<resource>.<action>`"
             );
         }
+    }
+
+    /* ── Membership projected into the document ── */
+
+    #[test]
+    fn an_active_admin_or_owner_membership_projects_its_role_and_nothing_else_does() {
+        assert_eq!(projected_role("admin", "active"), Some(ROLE_ADMIN));
+        assert_eq!(projected_role("owner", "active"), Some(ROLE_OWNER));
+        assert_eq!(projected_role("member", "active"), None);
+        assert_eq!(projected_role("admin", "suspended"), None);
+        assert_eq!(projected_role("steward", "active"), None);
+    }
+
+    #[test]
+    fn a_projected_admin_reads_the_documents_ladder_and_the_default_without_one() {
+        let defined: AccessConfig = serde_json::from_value(serde_json::json!({
+            "model": "roles",
+            "roles": [{ "key": "admin", "privileges": ["people.view"] }],
+        }))
+        .unwrap();
+        assert!(defined.projected_role_carries(ROLE_ADMIN, "people.view"));
+        assert!(
+            !defined.projected_role_carries(ROLE_ADMIN, "connector.manage"),
+            "the organization's own ladder decides what its administrators may do"
+        );
+        let legacy: AccessConfig =
+            serde_json::from_value(serde_json::json!({ "model": "roles" })).unwrap();
+        assert!(legacy.projected_role_carries(ROLE_ADMIN, "domain.edit"));
+        assert!(
+            !legacy.projected_role_carries(ROLE_ADMIN, "access.manage"),
+            "the default admin does not manage access"
+        );
+        assert!(legacy.projected_role_carries(ROLE_OWNER, "access.manage"));
     }
 }

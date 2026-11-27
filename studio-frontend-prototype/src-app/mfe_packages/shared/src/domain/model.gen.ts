@@ -2458,17 +2458,17 @@ export interface Report {
 }
 
 /**
- * Comment.
- * A source-aware comment attached to a pull request or document, with authorship, threading, resolution and edit history.
+ * Finding.
+ * Observed issue over the graph: gap, drift, staleness, contradiction, duplicate, ownership hole or review/scan result.
  * Extends `managed-object`.
  */
-export interface Comment {
+export interface Finding {
   /**
    * Tenant context in which this object is produced or persisted
    * `TenantId`, required, from `system-object`.
    */
   tenant_id?: string;
-  /** `CommentId`, required. */
+  /** `FindingId`, required. */
   id?: string;
   /** `string`, required, from `node`. */
   node_type?: string;
@@ -2498,11 +2498,11 @@ export interface Comment {
   object_type_ref?: string;
   /** `mirrored | linked | authored`, required, from `managed-object`. */
   acquisition_mode?: "mirrored" | "linked" | "authored";
-  /** `string`, required, from `managed-object`. */
+  /** `string`, required. */
   title?: string;
   /** `EntityId[]`, from `managed-object`. */
   source_link_refs?: string[];
-  /** `ProvenanceId?`, from `managed-object`. */
+  /** `ProvenanceId?`. */
   provenance_ref?: string;
   /** `0..1?`, from `managed-object`. */
   confidence?: number;
@@ -2516,28 +2516,14 @@ export interface Comment {
   valid_to?: string;
   /** `timestamp`, required, from `managed-object`. */
   observed_at?: string;
-  /** `EntityRef`, required. */
-  subject_ref?: string;
-  /** `pull_request | document`, required. */
-  subject_kind?: "pull_request" | "document";
-  /** `ActorRef`, required. */
-  author_ref?: string;
-  /** `TextContent`, required. */
-  body?: string;
-  /** `CommentId?`. */
-  parent_ref?: string;
-  /** `CommentId?`. */
-  thread_ref?: string;
-  /** `SourceId?`. */
-  source_system?: string;
-  /** `string?`. */
-  external_id?: string;
-  /** `active | resolved | deleted`. */
-  status?: "active" | "resolved" | "deleted";
-  /** `timestamp`, required. */
-  created_at?: string;
-  /** `timestamp?`. */
-  updated_at?: string;
+  /** `gap | drift | stale | contradiction | duplicate | ownership_hole | review | scan | cost_optimization | bloat`, required. */
+  finding_kind?: "gap" | "drift" | "stale" | "contradiction" | "duplicate" | "ownership_hole" | "review" | "scan" | "cost_optimization" | "bloat";
+  /** `mirrored | computed | authored`, required. */
+  provenance_kind?: "mirrored" | "computed" | "authored";
+  /** `EntityRef[]`. */
+  subject_refs?: string[];
+  /** `detected | acknowledged | triaged | accepted | dismissed | auto_resolved`, required. */
+  status?: "detected" | "acknowledged" | "triaged" | "accepted" | "dismissed" | "auto_resolved";
 }
 
 /**
@@ -2622,75 +2608,6 @@ export interface PullRequest {
 }
 
 /**
- * Finding.
- * Observed issue over the graph: gap, drift, staleness, contradiction, duplicate, ownership hole or review/scan result.
- * Extends `managed-object`.
- */
-export interface Finding {
-  /**
-   * Tenant context in which this object is produced or persisted
-   * `TenantId`, required, from `system-object`.
-   */
-  tenant_id?: string;
-  /** `FindingId`, required. */
-  id?: string;
-  /** `string`, required, from `node`. */
-  node_type?: string;
-  /** `Map<string, JsonValue>`, required, from `node`. */
-  properties?: unknown;
-  /**
-   * Fixed by the object type; root_project_ref is set only when scope is project tree
-   * `shared | project tree`, required, from `managed-object`.
-   */
-  scope?: unknown;
-  /**
-   * Set only when scope is project tree
-   * `EntityId?`, from `managed-object`.
-   */
-  root_project_ref?: string;
-  /**
-   * Shared objects only; set at tenant scope
-   * `public | restricted?`, from `managed-object`.
-   */
-  access_level?: "public" | "restricted";
-  /**
-   * Shared objects with access_level restricted
-   * `EntityId[]?`, from `managed-object`.
-   */
-  allowed_root_project_refs?: string[];
-  /** `TypeId`, required, from `managed-object`. */
-  object_type_ref?: string;
-  /** `mirrored | linked | authored`, required, from `managed-object`. */
-  acquisition_mode?: "mirrored" | "linked" | "authored";
-  /** `string`, required. */
-  title?: string;
-  /** `EntityId[]`, from `managed-object`. */
-  source_link_refs?: string[];
-  /** `ProvenanceId?`. */
-  provenance_ref?: string;
-  /** `0..1?`, from `managed-object`. */
-  confidence?: number;
-  /** `EntityId?`, from `managed-object`. */
-  sync_state_ref?: string;
-  /** `integer`, required, from `managed-object`. */
-  version?: number;
-  /** `timestamp`, from `managed-object`. */
-  valid_from?: string;
-  /** `timestamp?`, from `managed-object`. */
-  valid_to?: string;
-  /** `timestamp`, required, from `managed-object`. */
-  observed_at?: string;
-  /** `gap | drift | stale | contradiction | duplicate | ownership_hole | review | scan | cost_optimization | bloat`, required. */
-  finding_kind?: "gap" | "drift" | "stale" | "contradiction" | "duplicate" | "ownership_hole" | "review" | "scan" | "cost_optimization" | "bloat";
-  /** `mirrored | computed | authored`, required. */
-  provenance_kind?: "mirrored" | "computed" | "authored";
-  /** `EntityRef[]`. */
-  subject_refs?: string[];
-  /** `detected | acknowledged | triaged | accepted | dismissed | auto_resolved`, required. */
-  status?: "detected" | "acknowledged" | "triaged" | "accepted" | "dismissed" | "auto_resolved";
-}
-
-/**
  * Work Item.
  * A provider-neutral instance of a configurable Work Item Type, retaining source identity and lifecycle history.
  * Extends `managed-object`.
@@ -2769,6 +2686,89 @@ export interface WorkItem {
   updated_at?: string;
   /** `timestamp?`. */
   closed_at?: string;
+}
+
+/**
+ * Comment.
+ * A source-aware comment attached to a pull request or document, with authorship, threading, resolution and edit history.
+ * Extends `managed-object`.
+ */
+export interface Comment {
+  /**
+   * Tenant context in which this object is produced or persisted
+   * `TenantId`, required, from `system-object`.
+   */
+  tenant_id?: string;
+  /** `CommentId`, required. */
+  id?: string;
+  /** `string`, required, from `node`. */
+  node_type?: string;
+  /** `Map<string, JsonValue>`, required, from `node`. */
+  properties?: unknown;
+  /**
+   * Fixed by the object type; root_project_ref is set only when scope is project tree
+   * `shared | project tree`, required, from `managed-object`.
+   */
+  scope?: unknown;
+  /**
+   * Set only when scope is project tree
+   * `EntityId?`, from `managed-object`.
+   */
+  root_project_ref?: string;
+  /**
+   * Shared objects only; set at tenant scope
+   * `public | restricted?`, from `managed-object`.
+   */
+  access_level?: "public" | "restricted";
+  /**
+   * Shared objects with access_level restricted
+   * `EntityId[]?`, from `managed-object`.
+   */
+  allowed_root_project_refs?: string[];
+  /** `TypeId`, required, from `managed-object`. */
+  object_type_ref?: string;
+  /** `mirrored | linked | authored`, required, from `managed-object`. */
+  acquisition_mode?: "mirrored" | "linked" | "authored";
+  /** `string`, required, from `managed-object`. */
+  title?: string;
+  /** `EntityId[]`, from `managed-object`. */
+  source_link_refs?: string[];
+  /** `ProvenanceId?`, from `managed-object`. */
+  provenance_ref?: string;
+  /** `0..1?`, from `managed-object`. */
+  confidence?: number;
+  /** `EntityId?`, from `managed-object`. */
+  sync_state_ref?: string;
+  /** `integer`, required, from `managed-object`. */
+  version?: number;
+  /** `timestamp`, from `managed-object`. */
+  valid_from?: string;
+  /** `timestamp?`, from `managed-object`. */
+  valid_to?: string;
+  /** `timestamp`, required, from `managed-object`. */
+  observed_at?: string;
+  /** `EntityRef`, required. */
+  subject_ref?: string;
+  /** `pull_request | document`, required. */
+  subject_kind?: "pull_request" | "document";
+  /** `ActorRef`, required. */
+  author_ref?: string;
+  /** `TextContent`, required. */
+  body?: string;
+  /** `CommentId?`. */
+  parent_ref?: string;
+  /** `CommentId?`. */
+  thread_ref?: string;
+  /** `SourceId?`. */
+  source_system?: string;
+  /** `string?`. */
+  external_id?: string;
+  /** `active | resolved | deleted`. */
+  status?: "active" | "resolved" | "deleted";
+  /** `timestamp`, required. */
+  created_at?: string;
+  /** `timestamp?`. */
+  updated_at?: string;
 }
 
 /**
@@ -3301,83 +3301,6 @@ export interface Approval {
 }
 
 /**
- * Assignment.
- * A dated record that work was allocated to someone: who, to what, in which job role, from when. A reified relationship, distinct from ownership, which is accountability rather than allocation.
- * Extends `managed-object`.
- */
-export interface Assignment {
-  /**
-   * Tenant context in which this object is produced or persisted
-   * `TenantId`, required, from `system-object`.
-   */
-  tenant_id?: string;
-  /** `EntityId`, required. */
-  id?: string;
-  /** `string`, required, from `node`. */
-  node_type?: string;
-  /** `Map<string, JsonValue>`, required, from `node`. */
-  properties?: unknown;
-  /**
-   * Fixed by the object type; root_project_ref is set only when scope is project tree
-   * `shared | project tree`, required, from `managed-object`.
-   */
-  scope?: unknown;
-  /**
-   * Set only when scope is project tree
-   * `EntityId?`, from `managed-object`.
-   */
-  root_project_ref?: string;
-  /**
-   * Shared objects only; set at tenant scope
-   * `public | restricted?`, from `managed-object`.
-   */
-  access_level?: "public" | "restricted";
-  /**
-   * Shared objects with access_level restricted
-   * `EntityId[]?`, from `managed-object`.
-   */
-  allowed_root_project_refs?: string[];
-  /** `TypeId`, required, from `managed-object`. */
-  object_type_ref?: string;
-  /** `mirrored | linked | authored`, required, from `managed-object`. */
-  acquisition_mode?: "mirrored" | "linked" | "authored";
-  /** `string`, required, from `managed-object`. */
-  title?: string;
-  /** `EntityId[]`, from `managed-object`. */
-  source_link_refs?: string[];
-  /** `ProvenanceId?`, from `managed-object`. */
-  provenance_ref?: string;
-  /** `0..1?`, from `managed-object`. */
-  confidence?: number;
-  /** `EntityId?`, from `managed-object`. */
-  sync_state_ref?: string;
-  /** `integer`, required, from `managed-object`. */
-  version?: number;
-  /** `timestamp`, required. */
-  valid_from?: string;
-  /** `timestamp?`. */
-  valid_to?: string;
-  /** `timestamp`, required, from `managed-object`. */
-  observed_at?: string;
-  /** `EntityId`, required. */
-  assignee_ref?: string;
-  /** `person | team | agent`, required. */
-  assignee_kind?: "person" | "team" | "agent";
-  /**
-   * The work being allocated
-   * `EntityId`, required.
-   */
-  subject_ref?: string;
-  /**
-   * The role the assignee acts in for this work
-   * `string?`.
-   */
-  job_role?: string;
-  /** `proposed | active | completed | withdrawn`, required. */
-  status?: "proposed" | "active" | "completed" | "withdrawn";
-}
-
-/**
  * Check.
  * One verification step performed while producing a Report — a rule evaluated, a query run, a file scanned, a comparison made — recording what was done and its outcome, whether or not it produced a Finding.
  * Extends `managed-object`.
@@ -3503,10 +3426,10 @@ export interface DomainEntities {
   message: Message;
   "approval-request": ApprovalRequest;
   report: Report;
-  comment: Comment;
-  "pull-request": PullRequest;
   finding: Finding;
+  "pull-request": PullRequest;
   "work-item": WorkItem;
+  comment: Comment;
   risk: Risk;
   dependency: Dependency;
   "lifecycle-stage": LifecycleStage;
@@ -3515,7 +3438,6 @@ export interface DomainEntities {
   policy: Policy;
   "review-request": ReviewRequest;
   approval: Approval;
-  assignment: Assignment;
   check: Check;
 }
 
@@ -3607,8 +3529,6 @@ export interface DomainRelations {
     activity: "activity";
     /** advances → `managed-object` (`references` edge). */
     advances: "managed-object";
-    /** Artifacts → `repository-file` (`shows` edge). */
-    artifacts: "repository-file";
     /** contains child → `project` (`composes` edge). */
     contains_child: "project";
     /** documented by → `document` (`references` edge). */
@@ -3633,8 +3553,6 @@ export interface DomainRelations {
     overview: "project";
     /** owns → `view` (`composes` edge). */
     owns: "view";
-    /** Team → `person` (`shows` edge). */
-    people: "person";
     /** records → `transition` (`composes` edge). */
     records: "transition";
     /** represented as → `managed-object` (`references` edge). */
@@ -3661,8 +3579,6 @@ export interface DomainRelations {
     uses: "repository";
   };
   organization: {
-    /** Connections → `connector` (`shows` edge). */
-    connectors: "connector";
     /** Overview → `organization` (`shows` edge). */
     org: "organization";
     /** People → `person` (`shows` edge). */
@@ -3878,17 +3794,11 @@ export interface DomainRelations {
     /** typed by → `object-type` (`references` edge). */
     typed_by: "object-type";
   };
-  comment: {
-    /** authored by → `person` (`references` edge). */
-    authored_by: "person";
-    /** produces → `notification` (`derives` edge). */
-    notifies: "notification";
+  finding: {
+    /** may produce opportunity → `managed-object` (`derives` edge). */
+    may_produce_opportunity: "managed-object";
     /** records → `transition` (`composes` edge). */
     records: "transition";
-    /** replies to → `comment` (`references` edge). */
-    replies_to: "comment";
-    /** targets → `managed-object` (`references` edge). */
-    targets: "managed-object";
     /** typed by → `object-type` (`references` edge). */
     typed_by: "object-type";
   };
@@ -3910,14 +3820,6 @@ export interface DomainRelations {
     /** typed by → `object-type` (`references` edge). */
     typed_by: "object-type";
   };
-  finding: {
-    /** may produce opportunity → `managed-object` (`derives` edge). */
-    may_produce_opportunity: "managed-object";
-    /** records → `transition` (`composes` edge). */
-    records: "transition";
-    /** typed by → `object-type` (`references` edge). */
-    typed_by: "object-type";
-  };
   "work-item": {
     /** assigned_to → `person` (`member` edge). */
     assigned_to: "person";
@@ -3925,6 +3827,20 @@ export interface DomainRelations {
     implemented_by: "pull-request";
     /** records → `transition` (`composes` edge). */
     records: "transition";
+    /** typed by → `object-type` (`references` edge). */
+    typed_by: "object-type";
+  };
+  comment: {
+    /** authored by → `person` (`references` edge). */
+    authored_by: "person";
+    /** produces → `notification` (`derives` edge). */
+    notifies: "notification";
+    /** records → `transition` (`composes` edge). */
+    records: "transition";
+    /** replies to → `comment` (`references` edge). */
+    replies_to: "comment";
+    /** targets → `managed-object` (`references` edge). */
+    targets: "managed-object";
     /** typed by → `object-type` (`references` edge). */
     typed_by: "object-type";
   };
@@ -3994,16 +3910,6 @@ export interface DomainRelations {
     /** records → `evidence` (`derives` edge). */
     records: "evidence";
   };
-  assignment: {
-    /** assigned_to → `person` (`member` edge). */
-    assigned_to: "person";
-    /** assigns → `managed-object` (`references` edge). */
-    assigns: "managed-object";
-    /** records → `transition` (`composes` edge). */
-    records: "transition";
-    /** typed by → `object-type` (`references` edge). */
-    typed_by: "object-type";
-  };
   check: {
     /** belongs to → `report` (`references` edge). */
     belongs_to: "report";
@@ -4072,10 +3978,10 @@ export const DOMAIN_FIELDS: { readonly [E in DomainEntity]: { readonly [field: s
   message: { tenant_id: {"kind":"string"}, id: {"kind":"string"}, record_type: {"kind":"string"}, properties: {"kind":"unknown"}, role: {"kind":"enum","values":["system","user","assistant","tool"]}, author_ref: {"kind":"string"}, content: {"kind":"list"}, references: {"kind":"list"}, usage: {"kind":"unknown"}, created_at: {"kind":"string"} },
   "approval-request": { tenant_id: {"kind":"string"}, id: {"kind":"string"}, node_type: {"kind":"string"}, properties: {"kind":"unknown"}, scope: {"kind":"unknown"}, root_project_ref: {"kind":"string"}, access_level: {"kind":"enum","values":["public","restricted"]}, allowed_root_project_refs: {"kind":"list"}, object_type_ref: {"kind":"string"}, acquisition_mode: {"kind":"enum","values":["mirrored","linked","authored"]}, title: {"kind":"string"}, source_link_refs: {"kind":"list"}, provenance_ref: {"kind":"string"}, confidence: {"kind":"number"}, sync_state_ref: {"kind":"string"}, version: {"kind":"number"}, valid_from: {"kind":"string"}, valid_to: {"kind":"string"}, observed_at: {"kind":"string"}, subject_ref: {"kind":"string"}, gate_ref: {"kind":"string"}, requester_ref: {"kind":"string"}, approver_refs: {"kind":"list"}, status: {"kind":"enum","values":["requested","approved","rejected","expired","withdrawn"]}, due_at: {"kind":"string"}, created_at: {"kind":"string"} },
   report: { tenant_id: {"kind":"string"}, id: {"kind":"string"}, node_type: {"kind":"string"}, properties: {"kind":"unknown"}, scope: {"kind":"unknown"}, root_project_ref: {"kind":"string"}, access_level: {"kind":"enum","values":["public","restricted"]}, allowed_root_project_refs: {"kind":"list"}, object_type_ref: {"kind":"string"}, acquisition_mode: {"kind":"enum","values":["mirrored","linked","authored"]}, title: {"kind":"string"}, source_link_refs: {"kind":"list"}, provenance_ref: {"kind":"string"}, confidence: {"kind":"number"}, sync_state_ref: {"kind":"string"}, version: {"kind":"number"}, valid_from: {"kind":"string"}, valid_to: {"kind":"string"}, observed_at: {"kind":"string"}, scope_ref: {"kind":"string"}, report_kind: {"kind":"enum","values":["automated","manual_review","mixed"]}, status: {"kind":"enum","values":["running","completed","failed"]}, producer_ref: {"kind":"string"}, summary: {"kind":"string"}, started_at: {"kind":"string"}, completed_at: {"kind":"string"} },
-  comment: { tenant_id: {"kind":"string"}, id: {"kind":"string"}, node_type: {"kind":"string"}, properties: {"kind":"unknown"}, scope: {"kind":"unknown"}, root_project_ref: {"kind":"string"}, access_level: {"kind":"enum","values":["public","restricted"]}, allowed_root_project_refs: {"kind":"list"}, object_type_ref: {"kind":"string"}, acquisition_mode: {"kind":"enum","values":["mirrored","linked","authored"]}, title: {"kind":"string"}, source_link_refs: {"kind":"list"}, provenance_ref: {"kind":"string"}, confidence: {"kind":"number"}, sync_state_ref: {"kind":"string"}, version: {"kind":"number"}, valid_from: {"kind":"string"}, valid_to: {"kind":"string"}, observed_at: {"kind":"string"}, subject_ref: {"kind":"string"}, subject_kind: {"kind":"enum","values":["pull_request","document"]}, author_ref: {"kind":"string"}, body: {"kind":"string"}, parent_ref: {"kind":"string"}, thread_ref: {"kind":"string"}, source_system: {"kind":"string"}, external_id: {"kind":"string"}, status: {"kind":"enum","values":["active","resolved","deleted"]}, created_at: {"kind":"string"}, updated_at: {"kind":"string"} },
-  "pull-request": { tenant_id: {"kind":"string"}, id: {"kind":"string"}, node_type: {"kind":"string"}, properties: {"kind":"unknown"}, scope: {"kind":"unknown"}, root_project_ref: {"kind":"string"}, access_level: {"kind":"enum","values":["public","restricted"]}, allowed_root_project_refs: {"kind":"list"}, object_type_ref: {"kind":"string"}, acquisition_mode: {"kind":"enum","values":["mirrored","linked","authored"]}, title: {"kind":"string"}, source_link_refs: {"kind":"list"}, provenance_ref: {"kind":"string"}, confidence: {"kind":"number"}, sync_state_ref: {"kind":"string"}, version: {"kind":"number"}, valid_from: {"kind":"string"}, valid_to: {"kind":"string"}, observed_at: {"kind":"string"}, repository_ref: {"kind":"string"}, author_ref: {"kind":"string"}, source_system: {"kind":"string"}, external_id: {"kind":"string"}, number: {"kind":"number"}, state: {"kind":"enum","values":["open","merged","closed"]}, source_branch: {"kind":"string"}, target_branch: {"kind":"string"}, created_at: {"kind":"string"}, merged_at: {"kind":"string"} },
   finding: { tenant_id: {"kind":"string"}, id: {"kind":"string"}, node_type: {"kind":"string"}, properties: {"kind":"unknown"}, scope: {"kind":"unknown"}, root_project_ref: {"kind":"string"}, access_level: {"kind":"enum","values":["public","restricted"]}, allowed_root_project_refs: {"kind":"list"}, object_type_ref: {"kind":"string"}, acquisition_mode: {"kind":"enum","values":["mirrored","linked","authored"]}, title: {"kind":"string"}, source_link_refs: {"kind":"list"}, provenance_ref: {"kind":"string"}, confidence: {"kind":"number"}, sync_state_ref: {"kind":"string"}, version: {"kind":"number"}, valid_from: {"kind":"string"}, valid_to: {"kind":"string"}, observed_at: {"kind":"string"}, finding_kind: {"kind":"enum","values":["gap","drift","stale","contradiction","duplicate","ownership_hole","review","scan","cost_optimization","bloat"]}, provenance_kind: {"kind":"enum","values":["mirrored","computed","authored"]}, subject_refs: {"kind":"list"}, status: {"kind":"enum","values":["detected","acknowledged","triaged","accepted","dismissed","auto_resolved"]} },
+  "pull-request": { tenant_id: {"kind":"string"}, id: {"kind":"string"}, node_type: {"kind":"string"}, properties: {"kind":"unknown"}, scope: {"kind":"unknown"}, root_project_ref: {"kind":"string"}, access_level: {"kind":"enum","values":["public","restricted"]}, allowed_root_project_refs: {"kind":"list"}, object_type_ref: {"kind":"string"}, acquisition_mode: {"kind":"enum","values":["mirrored","linked","authored"]}, title: {"kind":"string"}, source_link_refs: {"kind":"list"}, provenance_ref: {"kind":"string"}, confidence: {"kind":"number"}, sync_state_ref: {"kind":"string"}, version: {"kind":"number"}, valid_from: {"kind":"string"}, valid_to: {"kind":"string"}, observed_at: {"kind":"string"}, repository_ref: {"kind":"string"}, author_ref: {"kind":"string"}, source_system: {"kind":"string"}, external_id: {"kind":"string"}, number: {"kind":"number"}, state: {"kind":"enum","values":["open","merged","closed"]}, source_branch: {"kind":"string"}, target_branch: {"kind":"string"}, created_at: {"kind":"string"}, merged_at: {"kind":"string"} },
   "work-item": { tenant_id: {"kind":"string"}, id: {"kind":"string"}, node_type: {"kind":"string"}, properties: {"kind":"unknown"}, scope: {"kind":"unknown"}, root_project_ref: {"kind":"string"}, access_level: {"kind":"enum","values":["public","restricted"]}, allowed_root_project_refs: {"kind":"list"}, object_type_ref: {"kind":"string"}, acquisition_mode: {"kind":"enum","values":["mirrored","linked","authored"]}, title: {"kind":"string"}, source_link_refs: {"kind":"list"}, provenance_ref: {"kind":"string"}, confidence: {"kind":"number"}, sync_state_ref: {"kind":"string"}, version: {"kind":"number"}, valid_from: {"kind":"string"}, valid_to: {"kind":"string"}, observed_at: {"kind":"string"}, type_id: {"kind":"string"}, external_id: {"kind":"string"}, url: {"kind":"string"}, details: {"kind":"unknown"}, state: {"kind":"string"}, priority: {"kind":"unknown"}, source_system: {"kind":"string"}, created_at: {"kind":"string"}, updated_at: {"kind":"string"}, closed_at: {"kind":"string"} },
+  comment: { tenant_id: {"kind":"string"}, id: {"kind":"string"}, node_type: {"kind":"string"}, properties: {"kind":"unknown"}, scope: {"kind":"unknown"}, root_project_ref: {"kind":"string"}, access_level: {"kind":"enum","values":["public","restricted"]}, allowed_root_project_refs: {"kind":"list"}, object_type_ref: {"kind":"string"}, acquisition_mode: {"kind":"enum","values":["mirrored","linked","authored"]}, title: {"kind":"string"}, source_link_refs: {"kind":"list"}, provenance_ref: {"kind":"string"}, confidence: {"kind":"number"}, sync_state_ref: {"kind":"string"}, version: {"kind":"number"}, valid_from: {"kind":"string"}, valid_to: {"kind":"string"}, observed_at: {"kind":"string"}, subject_ref: {"kind":"string"}, subject_kind: {"kind":"enum","values":["pull_request","document"]}, author_ref: {"kind":"string"}, body: {"kind":"string"}, parent_ref: {"kind":"string"}, thread_ref: {"kind":"string"}, source_system: {"kind":"string"}, external_id: {"kind":"string"}, status: {"kind":"enum","values":["active","resolved","deleted"]}, created_at: {"kind":"string"}, updated_at: {"kind":"string"} },
   risk: { tenant_id: {"kind":"string"}, id: {"kind":"string"}, node_type: {"kind":"string"}, properties: {"kind":"unknown"}, scope: {"kind":"unknown"}, root_project_ref: {"kind":"string"}, access_level: {"kind":"enum","values":["public","restricted"]}, allowed_root_project_refs: {"kind":"list"}, object_type_ref: {"kind":"string"}, acquisition_mode: {"kind":"enum","values":["mirrored","linked","authored"]}, title: {"kind":"string"}, source_link_refs: {"kind":"list"}, provenance_ref: {"kind":"string"}, confidence: {"kind":"number"}, sync_state_ref: {"kind":"string"}, version: {"kind":"number"}, valid_from: {"kind":"string"}, valid_to: {"kind":"string"}, observed_at: {"kind":"string"}, scope_ref: {"kind":"string"}, category: {"kind":"enum","values":["schedule","cost","technical","security","compliance","operational"]}, probability: {"kind":"number"}, impact: {"kind":"enum","values":["low","medium","high","critical"]}, score: {"kind":"number"}, owner_ref: {"kind":"string"}, mitigation_ref: {"kind":"string"}, status: {"kind":"enum","values":["identified","analyzing","mitigating","accepted","closed"]} },
   dependency: { tenant_id: {"kind":"string"}, id: {"kind":"string"}, node_type: {"kind":"string"}, properties: {"kind":"unknown"}, scope: {"kind":"unknown"}, root_project_ref: {"kind":"string"}, access_level: {"kind":"enum","values":["public","restricted"]}, allowed_root_project_refs: {"kind":"list"}, object_type_ref: {"kind":"string"}, acquisition_mode: {"kind":"enum","values":["mirrored","linked","authored"]}, title: {"kind":"string"}, source_link_refs: {"kind":"list"}, provenance_ref: {"kind":"string"}, confidence: {"kind":"number"}, sync_state_ref: {"kind":"string"}, version: {"kind":"number"}, valid_from: {"kind":"string"}, valid_to: {"kind":"string"}, observed_at: {"kind":"string"}, source_ref: {"kind":"string"}, target_ref: {"kind":"string"}, dependency_kind: {"kind":"enum","values":["blocks","requires","affects"]}, criticality: {"kind":"enum","values":["low","medium","high","blocking"]}, status: {"kind":"enum","values":["proposed","confirmed","resolved","retired"]}, note: {"kind":"string"} },
   "lifecycle-stage": { tenant_id: {"kind":"string"}, id: {"kind":"string"}, record_type: {"kind":"string"}, properties: {"kind":"unknown"}, phase_ref: {"kind":"string"}, name: {"kind":"string"}, ordinal: {"kind":"number"}, activity_refs: {"kind":"list"}, quality_gate_refs: {"kind":"list"} },
@@ -4084,7 +3990,6 @@ export const DOMAIN_FIELDS: { readonly [E in DomainEntity]: { readonly [field: s
   policy: { tenant_id: {"kind":"string"}, id: {"kind":"string"}, node_type: {"kind":"string"}, properties: {"kind":"unknown"}, scope: {"kind":"unknown"}, root_project_ref: {"kind":"string"}, access_level: {"kind":"enum","values":["public","restricted"]}, allowed_root_project_refs: {"kind":"list"}, object_type_ref: {"kind":"string"}, acquisition_mode: {"kind":"enum","values":["mirrored","linked","authored"]}, title: {"kind":"string"}, source_link_refs: {"kind":"list"}, provenance_ref: {"kind":"string"}, confidence: {"kind":"number"}, sync_state_ref: {"kind":"string"}, version: {"kind":"string"}, valid_from: {"kind":"string"}, valid_to: {"kind":"string"}, observed_at: {"kind":"string"}, space_ref: {"kind":"string"}, source_system: {"kind":"string"}, external_id: {"kind":"string"}, url: {"kind":"string"}, parent_id: {"kind":"string"}, created_at: {"kind":"string"}, updated_at: {"kind":"string"}, content_ref: {"kind":"string"}, policy_kind: {"kind":"enum","values":["security","privacy","data_retention","engineering","compliance","other"]}, status: {"kind":"enum","values":["draft","active","superseded","retired"]}, owner_ref: {"kind":"string"}, effective_from: {"kind":"string"}, review_due: {"kind":"string"}, acquisition: {"kind":"enum","values":["mirrored","authored"]} },
   "review-request": { tenant_id: {"kind":"string"}, id: {"kind":"string"}, node_type: {"kind":"string"}, properties: {"kind":"unknown"}, scope: {"kind":"unknown"}, root_project_ref: {"kind":"string"}, access_level: {"kind":"enum","values":["public","restricted"]}, allowed_root_project_refs: {"kind":"list"}, object_type_ref: {"kind":"string"}, acquisition_mode: {"kind":"enum","values":["mirrored","linked","authored"]}, title: {"kind":"string"}, source_link_refs: {"kind":"list"}, provenance_ref: {"kind":"string"}, confidence: {"kind":"number"}, sync_state_ref: {"kind":"string"}, version: {"kind":"number"}, valid_from: {"kind":"string"}, valid_to: {"kind":"string"}, observed_at: {"kind":"string"}, subject_ref: {"kind":"string"}, requester_ref: {"kind":"string"}, reviewer_refs: {"kind":"list"}, review_type: {"kind":"enum","values":["code","document","architecture","security","release","custom"]}, status: {"kind":"enum","values":["requested","in_review","completed","dismissed","expired"]}, due_at: {"kind":"string"}, created_at: {"kind":"string"} },
   approval: { tenant_id: {"kind":"string"}, id: {"kind":"string"}, record_type: {"kind":"string"}, properties: {"kind":"unknown"}, subject_ref: {"kind":"string"}, gate_ref: {"kind":"string"}, decision: {"kind":"enum","values":["pending","approved","rejected","expired"]}, decided_by: {"kind":"string"}, reason: {"kind":"string"}, decided_at: {"kind":"string"} },
-  assignment: { tenant_id: {"kind":"string"}, id: {"kind":"string"}, node_type: {"kind":"string"}, properties: {"kind":"unknown"}, scope: {"kind":"unknown"}, root_project_ref: {"kind":"string"}, access_level: {"kind":"enum","values":["public","restricted"]}, allowed_root_project_refs: {"kind":"list"}, object_type_ref: {"kind":"string"}, acquisition_mode: {"kind":"enum","values":["mirrored","linked","authored"]}, title: {"kind":"string"}, source_link_refs: {"kind":"list"}, provenance_ref: {"kind":"string"}, confidence: {"kind":"number"}, sync_state_ref: {"kind":"string"}, version: {"kind":"number"}, valid_from: {"kind":"string"}, valid_to: {"kind":"string"}, observed_at: {"kind":"string"}, assignee_ref: {"kind":"string"}, assignee_kind: {"kind":"enum","values":["person","team","agent"]}, subject_ref: {"kind":"string"}, job_role: {"kind":"string"}, status: {"kind":"enum","values":["proposed","active","completed","withdrawn"]} },
   check: { tenant_id: {"kind":"string"}, id: {"kind":"string"}, node_type: {"kind":"string"}, properties: {"kind":"unknown"}, scope: {"kind":"unknown"}, root_project_ref: {"kind":"string"}, access_level: {"kind":"enum","values":["public","restricted"]}, allowed_root_project_refs: {"kind":"list"}, object_type_ref: {"kind":"string"}, acquisition_mode: {"kind":"enum","values":["mirrored","linked","authored"]}, title: {"kind":"string"}, source_link_refs: {"kind":"list"}, provenance_ref: {"kind":"string"}, confidence: {"kind":"number"}, sync_state_ref: {"kind":"string"}, version: {"kind":"number"}, valid_from: {"kind":"string"}, valid_to: {"kind":"string"}, observed_at: {"kind":"string"}, name: {"kind":"string"}, check_kind: {"kind":"enum","values":["rule","query","scan","comparison","manual"]}, status: {"kind":"enum","values":["passed","failed","skipped","error"]}, input_ref: {"kind":"string"}, details: {"kind":"unknown"}, started_at: {"kind":"string"}, completed_at: {"kind":"string"} },
 };
 
@@ -4104,8 +4009,8 @@ export const DOMAIN_RELATION_TARGETS: { readonly [E in DomainEntity]: { readonly
   "org-unit": { contains_child: "org-unit", includes: "person", led_by: "person", records: "transition", typed_by: "object-type" },
   ownership: { records: "transition", typed_by: "object-type" },
   connector: {  },
-  project: { activity: "activity", advances: "managed-object", artifacts: "repository-file", contains_child: "project", documented_by: "document", enables: "workflow", includes: "person", includes_2: "team", includes_3: "managed-object", issues: "finding", kits: "kit", model: "object-type", organizes: "workflow", overview: "project", owns: "view", people: "person", records: "transition", represented_as: "managed-object", scopes: "work-item", sources: "repository", specs: "document", tests: "check", tracks: "risk", tree_activates: "object-type", tree_installs: "kit", tree_owns_2: "managed-object", typed_by: "object-type", uses: "repository" },
-  organization: { connectors: "connector", org: "organization", people: "person", projects: "workspace", records: "transition", reports: "report", tasks: "activity", typed_by: "object-type" },
+  project: { activity: "activity", advances: "managed-object", contains_child: "project", documented_by: "document", enables: "workflow", includes: "person", includes_2: "team", includes_3: "managed-object", issues: "finding", kits: "kit", model: "object-type", organizes: "workflow", overview: "project", owns: "view", records: "transition", represented_as: "managed-object", scopes: "work-item", sources: "repository", specs: "document", tests: "check", tracks: "risk", tree_activates: "object-type", tree_installs: "kit", tree_owns_2: "managed-object", typed_by: "object-type", uses: "repository" },
+  organization: { org: "organization", people: "person", projects: "workspace", records: "transition", reports: "report", tasks: "activity", typed_by: "object-type" },
   workspace: { about: "workspace", projects: "project", records: "transition", typed_by: "object-type", types: "template" },
   kit: { extends_through: "object-type", introduces_type: "template", introduces_type_22: "finding", packages: "object-type" },
   repository: { contains: "repository-file", has: "branch", hosts: "pull-request", typed_by: "object-type" },
@@ -4139,10 +4044,10 @@ export const DOMAIN_RELATION_TARGETS: { readonly [E in DomainEntity]: { readonly
   message: { generated_by: "model" },
   "approval-request": { collects_decisions: "approval", records: "transition", typed_by: "object-type" },
   report: { contains: "finding", contains_2: "check", typed_by: "object-type" },
-  comment: { authored_by: "person", notifies: "notification", records: "transition", replies_to: "comment", targets: "managed-object", typed_by: "object-type" },
-  "pull-request": { authored_by: "person", has_comments: "comment", proposes: "commit", records: "transition", requests_reviews: "review-request", sources_from: "branch", targets: "branch", typed_by: "object-type" },
   finding: { may_produce_opportunity: "managed-object", records: "transition", typed_by: "object-type" },
+  "pull-request": { authored_by: "person", has_comments: "comment", proposes: "commit", records: "transition", requests_reviews: "review-request", sources_from: "branch", targets: "branch", typed_by: "object-type" },
   "work-item": { assigned_to: "person", implemented_by: "pull-request", records: "transition", typed_by: "object-type" },
+  comment: { authored_by: "person", notifies: "notification", records: "transition", replies_to: "comment", targets: "managed-object", typed_by: "object-type" },
   risk: { assessed_as: "evidence", mitigated_by: "work-item", owned_by: "person", records: "transition", typed_by: "object-type" },
   dependency: { depends_on: "managed-object", records: "transition", typed_by: "object-type" },
   "lifecycle-stage": { defines: "activity" },
@@ -4151,7 +4056,6 @@ export const DOMAIN_RELATION_TARGETS: { readonly [E in DomainEntity]: { readonly
   policy: { contains_child: "document", has_comments: "comment", records: "transition", typed_by: "object-type" },
   "review-request": { records: "transition", typed_by: "object-type" },
   approval: { notifies: "notification", records: "evidence" },
-  assignment: { assigned_to: "person", assigns: "managed-object", records: "transition", typed_by: "object-type" },
   check: { belongs_to: "report", produced: "finding", records: "transition", typed_by: "object-type" },
 };
 
@@ -4206,10 +4110,10 @@ export const DOMAIN_BUCKETS: { readonly [E in DomainEntity]: string } = {
   message: "collaboration",
   "approval-request": "collaboration",
   report: "automation",
-  comment: "collaboration",
-  "pull-request": "collaboration",
   finding: "automation",
+  "pull-request": "collaboration",
   "work-item": "planning",
+  comment: "collaboration",
   risk: "planning",
   dependency: "planning",
   "lifecycle-stage": "kit-management",
@@ -4218,7 +4122,6 @@ export const DOMAIN_BUCKETS: { readonly [E in DomainEntity]: string } = {
   policy: "governance",
   "review-request": "collaboration",
   approval: "collaboration",
-  assignment: "planning",
   check: "automation",
 };
 
@@ -4273,10 +4176,10 @@ export const DOMAIN_ENTITIES = [
   "message",
   "approval-request",
   "report",
-  "comment",
-  "pull-request",
   "finding",
+  "pull-request",
   "work-item",
+  "comment",
   "risk",
   "dependency",
   "lifecycle-stage",
@@ -4285,6 +4188,5 @@ export const DOMAIN_ENTITIES = [
   "policy",
   "review-request",
   "approval",
-  "assignment",
   "check"
 ] as const satisfies readonly DomainEntity[];

@@ -87,6 +87,11 @@ export function headline(run: TaskRun): string {
   return run.summary || run.last_error || run.progress || '—';
 }
 
+/** The run a screen view names: `run-<uuid>` (the shell takes `[a-z][a-z0-9-]*`); `null` for any other view. */
+export function linkedRunOf(view: string | undefined): string | null {
+  return /^run-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/.exec(view ?? '')?.[1] ?? null;
+}
+
 export function finished(run: TaskRun): boolean {
   return run.state === 'succeeded' || run.state === 'failed' || run.state === 'cancelled';
 }

@@ -35,6 +35,16 @@ function isOrganizationRef(value: unknown): value is OrganizationRef {
   return typeof ref.id === 'string' && !!ref.id && typeof ref.name === 'string';
 }
 
+/**
+ * The id of the organization the shell publishes, read straight from the
+ * shared property: for a screen with no {@link OrganizationProvider} above
+ * it. Null until the shell says, or when it says there is none.
+ */
+export function useOrganizationId(): string | null {
+  const published = useSharedProperty<unknown>(STUDIO_SHARED_PROPERTY_CONTEXT_ORGANIZATION);
+  return isOrganizationRef(published) ? published.id : null;
+}
+
 export const OrganizationProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const published = useSharedProperty<unknown>(STUDIO_SHARED_PROPERTY_CONTEXT_ORGANIZATION);
 

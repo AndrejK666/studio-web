@@ -53,9 +53,11 @@ This README is what you need to work in the directory.
   own kit at its pin); a strategy a service runs declares
   `service: {contract: "gears-matcher/v1"}` and requires `gears-matcher`
   (ADR-0074 amendment). A feature ported into the portal is added here,
-  with its screens in `contents.rs` (a route only once the portal has one)
-  and everything else in its compiled-in `builtin/<slug>.kit.json` — every
-  built-in kit has one, `studio-api-docs` too: its model, what it claims
+  with everything in its compiled-in `builtin/<slug>.kit.json` — every
+  built-in kit has one, `studio-api-docs` too: its `screens` (a route only
+  once the portal has one; `mfe`, the package that draws it, whose
+  `mfe.json` names the kit as `presentation.kit`, which a test holds both
+  ways; a built-in kit may put a screen on the `platform` level), its model, what it claims
   (`gears`) and, in `permissions`, the routes its screens call — a test
   holds every one to `docs/api-contract.json`.
 - What a kit claims of the gears (ADR-0071 §1–§3, step 1), `claims.rs`: the
@@ -161,8 +163,7 @@ This README is what you need to work in the directory.
   `kit` or `core`); `model` lists the fields and relations it adds on other
   types and the tabs it shows (`shows` relations), all by model id
   (`manifest.rs`, `model_contents`). Where it comes from, in `manifest`:
-  - `built-in`: the screens in `builtin_contents()` and the rest from its
-    compiled-in `kit.json`, only what Studio has today (the tab, its route,
+  - `built-in`: everything from its compiled-in `kit.json`, only what Studio has today (the tab, its route,
     the gears' routes its screen calls). Change it when the screen changes.
   - `.cf-studio-kit.toml`: an official kit, read from the copy of its
     manifest in `manifests/` at the commit `official_catalogue()` pins

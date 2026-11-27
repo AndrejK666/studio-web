@@ -240,12 +240,9 @@ impl RunnableCapability for StudioSchedulerGear {
 /// the cadence or switched one off keeps that across restarts.
 async fn register_platform_schedules(service: &Arc<SchedulerService>) -> anyhow::Result<()> {
     let ctx = service_identity(service.owner())?;
-    // Concatenated by hand rather than collected through a registry: this is
-    // a single-binary assembly, the list is short, and a `grep
-    // platform_schedules` finds every gear that contributes one.
-    let wanted = crate::tasks::platform_schedules()
-        .into_iter()
-        .chain(crate::studio_session::platform_schedules());
+    // Collected through the background-work port (ADR-0079 §4): each gear
+    // submits its own `tasks::sdk::ScheduleSet`, so this names none of them.
+    let wanted = crate::tasks::sdk::contributed_schedules();
     for schedule in wanted {
         // A schedule for work nothing in this process can run would fire every
         // cadence and dead-letter every time. The gears that own the work

@@ -66,6 +66,18 @@ pub(super) fn fingerprint(p: &RemotePullRequest) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// [`fingerprint`] of a pull request as its stored node says it: for one an
+/// earlier attempt of a resumed walk listed (`listing_cursor`), which this
+/// attempt does not list again.
+pub(super) fn stored_fingerprint(node: &GtsNode) -> Option<String> {
+    ["head_sha", "merge_sha", "updated_at"]
+        .into_iter()
+        .filter_map(|field| node.value.get(field).and_then(Value::as_str))
+        .map(str::trim)
+        .find(|s| !s.is_empty())
+        .map(str::to_owned)
+}
+
 /// The marks the stored pull requests of one repository carry: node instance
 /// id → the head they were linked at.
 pub(super) fn stored_marks(stored: &[GtsNode], repo_id: &str) -> HashMap<String, String> {
@@ -138,13 +150,18 @@ pub(super) struct Linking<'a> {
 ///
 /// The first portion is read whatever the deadline says, so every attempt
 /// gets somewhere even when the sync before the linking was slow.
+///
+/// Answers the marks it stored, by node instance id: a later write of the
+/// same node in this sync (its comments read, `item_comments`) must carry
+/// them, or it would put back the null it was listed with.
 pub(super) async fn link(
     run: &Linking<'_>,
     pending: Vec<Pending>,
     file_id: &(dyn Fn(&str) -> Option<String> + Sync),
     tally: &mut Tally,
     report: &(dyn Fn(&Tally) + Sync),
-) {
+) -> HashMap<String, Option<String>> {
+    let mut written: HashMap<String, Option<String>> = HashMap::new();
     let width = run.driver.item_read_concurrency().max(1);
     let portion = width * PORTION_PER_READ;
     let mut rest = pending;
@@ -213,7 +230,13 @@ pub(super) async fn link(
         }
         if stored_edges && !marked.is_empty() {
             match run.graph.upsert_nodes(run.ctx, &marked).await {
-                Ok(()) => tally.linked += marked.len(),
+                Ok(()) => {
+                    tally.linked += marked.len();
+                    written.extend(marked.iter().map(|n| {
+                        let mark = n.value.get(LINKED_FIELD).and_then(Value::as_str);
+                        (n.instance_id.clone(), mark.map(str::to_owned))
+                    }));
+                }
                 Err(e) => warn!(
                     error = %e,
                     repo = run.repo_full_path,
@@ -223,6 +246,7 @@ pub(super) async fn link(
         }
         report(tally);
     }
+    written
 }
 
 #[cfg(test)]

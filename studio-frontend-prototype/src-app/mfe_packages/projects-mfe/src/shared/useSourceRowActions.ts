@@ -4,10 +4,16 @@
 // @cpt-dod:cpt-studiofrontend-dod-project-sources-menu-specs:p1
 import { useCallback, useMemo } from 'react';
 import { apiRegistry, eventBus, useAppDispatch, useMfeBridge, useQueryCache } from '@gears-frontx/react';
-import { AccountsApiService, PROJECT_CONFIG_TYPE, type ProjectConfig } from '@constructor-studio/mfe-shared';
+import {
+  AccountsApiService,
+  PROJECT_CONFIG_TYPE,
+  openScreen,
+  type ProjectConfig,
+} from '@constructor-studio/mfe-shared';
 import { announceSection } from '../actions/projectsActions';
 import { withBranch, type ShareMode } from '../model/projectSources';
 import type { SourceRow } from '../model/sourceRows';
+import { syncRunView } from '../model/sourceSyncRun';
 import { syncPlan } from '../model/syncRequest';
 import { showSourceSpecs } from '../slices/specsFilterSlice';
 import { cancelRepoSync, retryRepoSync } from './useArtifactImport';
@@ -32,7 +38,12 @@ export interface SourceRowActions {
   detach: (row: SourceRow) => void;
   /** Rows whose detach is running, by row id. */
   detaching: ReadonlySet<string>;
+  /** Open the sync's run in Organization › Background work. */
+  openSyncRun: (runId: string) => void;
 }
+
+/** Organization › Background work, the screen that lists `studio-tasks` runs (`organization-mfe/mfe.json`). */
+export const BACKGROUND_WORK_ROUTE = '/organization/tasks';
 
 export function useSourceRowActions(
   projectId: string,
@@ -108,6 +119,11 @@ export function useSourceRowActions(
     [projectId, cache]
   );
 
+  const openSyncRun = useCallback(
+    (runId: string) => openScreen(bridge, BACKGROUND_WORK_ROUTE, syncRunView(runId) ?? undefined),
+    [bridge]
+  );
+
   const connectionsRead = !loading && !failed;
   return useMemo(
     () => ({
@@ -121,6 +137,7 @@ export function useSourceRowActions(
       changeBranch,
       detach,
       detaching,
+      openSyncRun,
     }),
     [
       connectionsRead,
@@ -133,6 +150,7 @@ export function useSourceRowActions(
       changeBranch,
       detach,
       detaching,
+      openSyncRun,
     ]
   );
 }

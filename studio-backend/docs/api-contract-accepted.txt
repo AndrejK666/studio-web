@@ -685,6 +685,7 @@ request	POST /studio-domain-model/v1/query	order_by	Vec<{}>	optional
 request	POST /studio-domain-model/v1/query	order_by.direction	String	optional
 request	POST /studio-domain-model/v1/query	order_by.field	String	optional
 request	POST /studio-domain-model/v1/query	project_id	String	optional
+request	POST /studio-domain-model/v1/query	project_ids	Vec<String>	optional
 request	POST /studio-domain-model/v1/query	type	String	required
 request	POST /studio-domain-model/v1/query	where	Value	optional
 request	POST /studio-domain-model/v1/relations	from	String	required

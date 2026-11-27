@@ -9,6 +9,22 @@
     "workspace",
     "project"
   ],
+  "screens": [
+    {
+      "kind": "tab",
+      "level": "workspace",
+      "label": "Document types",
+      "route": "/document-types",
+      "mfe": "document-types-mfe"
+    },
+    {
+      "kind": "tab",
+      "level": "project",
+      "label": "Specs",
+      "route": "/projects/specs",
+      "mfe": "projects-mfe"
+    }
+  ],
   "model": {
     "types": [
       {

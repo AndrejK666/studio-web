@@ -8,6 +8,15 @@
   "levels": [
     "project"
   ],
+  "screens": [
+    {
+      "kind": "tab",
+      "level": "project",
+      "label": "Deal",
+      "route": "/deal",
+      "mfe": "mna-mfe"
+    }
+  ],
   "project_type": true,
   "model": {
     "types": [

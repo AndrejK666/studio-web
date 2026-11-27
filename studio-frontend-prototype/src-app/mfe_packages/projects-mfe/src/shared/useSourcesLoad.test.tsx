@@ -6,7 +6,7 @@ import { ARTIFACT_NODE_TYPES } from '../api/artifactTypes';
 /** The Sources rows and the load the table calls (#685, DoD `...-sources-reads`). */
 
 type Query = { data?: unknown; isLoading: boolean; isError: boolean };
-type Key = 'config' | 'nodes' | 'connections' | 'activity' | 'specs' | 'documents' | 'clones';
+type Key = 'config' | 'nodes' | 'connections' | 'activity' | 'specs' | 'documents' | 'clones' | 'runs';
 
 const { queries, asked, config, lines, studio, invalidate, triggerLoad } = vi.hoisted(() => ({
   queries: { current: {} as Record<string, Query> },
@@ -31,14 +31,15 @@ vi.mock('@gears-frontx/react', () => ({
       sourceActivity: descriptor('activity'),
       specsPerSource: descriptor('specs'),
       cloneStatus: descriptor('clones'),
+      runs: descriptor('runs'),
     }),
   },
   // A key that is not one of the services' is the hook's own read with nothing to ask.
   useApiQuery: ({ key }: { key: Key | readonly unknown[] }) => {
     asked.push(key);
-    return typeof key === 'string'
-      ? queries.current[key]
-      : { data: null, isLoading: false, isError: false };
+    if (typeof key !== 'string') return { data: null, isLoading: false, isError: false };
+    // The sync runs are extra: a test that does not answer them reads none.
+    return queries.current[key] ?? { data: { items: [], total: 0 }, isLoading: false, isError: false };
   },
   useQueryCache: () => ({ invalidate }),
 }));
@@ -49,6 +50,7 @@ vi.mock('@gears-frontx/ui-kit', async (importOriginal) => ({
 vi.mock('@constructor-studio/mfe-shared', () => ({
   AccountsApiService: class {},
   ConnectorsApiService: class {},
+  StudioTasksApiService: class {},
   PROJECT_CONFIG_TYPE: 'project-config',
 }));
 vi.mock('../api/ArtifactIngestApiService', () => ({ ArtifactIngestApiService: class {} }));
@@ -143,7 +145,7 @@ const pathOf = (row: SourcesTableRow) => (row.kind === 'uploads' ? 'uploads' : r
 /** The hook, and its bridge rendered as the grid would. */
 function mount(workspaceId: string | null = 'ws-1') {
   let projectId = 'p-1';
-  const hook = renderHook((props: { projectId: string }) => useSourcesLoad(props.projectId, workspaceId, 'Uploaded files'), {
+  const hook = renderHook((props: { projectId: string }) => useSourcesLoad(props.projectId, workspaceId, 'Uploaded files', 'org-1'), {
     initialProps: { projectId },
   });
   const grid = render(hook.result.current.rowsBridge);
@@ -158,6 +160,10 @@ function mount(workspaceId: string | null = 'ws-1') {
     },
   };
 }
+
+/** The reads asked again, apart from the sync runs' listing. */
+const rereads = () =>
+  invalidate.mock.calls.map(([query]) => (query as { key: string }).key).filter((key) => key !== 'runs');
 
 const importLine = (runId: string | null, status: string) => ({
   repo: 'acme/web',
@@ -285,15 +291,15 @@ describe('useSourcesLoad', () => {
   it('reads the nodes, the activity and the specs again when a sync settles', () => {
     lines.current = [importLine('r-old', 'failed')];
     const sources = mount();
-    expect(invalidate).not.toHaveBeenCalled();
+    expect(rereads()).toEqual([]);
 
     lines.current = [importLine('r-1', 'running')];
     sources.rerender();
-    expect(invalidate).not.toHaveBeenCalled();
+    expect(rereads()).toEqual([]);
 
     lines.current = [importLine('r-1', 'succeeded')];
     sources.rerender();
-    expect(invalidate.mock.calls.map(([query]) => query.key)).toEqual(['nodes', 'activity', 'specs']);
+    expect(rereads()).toEqual(['nodes', 'activity', 'specs']);
   });
 
   it('does not read again for a line that never had a run', () => {
@@ -303,7 +309,7 @@ describe('useSourcesLoad', () => {
     sources.rerender();
     lines.current = [importLine(null, 'failed')];
     sources.rerender();
-    expect(invalidate).not.toHaveBeenCalled();
+    expect(rereads()).toEqual([]);
   });
 
   it('does not read again for a sync that settles as the project changes', () => {
@@ -312,10 +318,63 @@ describe('useSourcesLoad', () => {
 
     lines.current = [importLine('r-1', 'succeeded')];
     sources.rerender('p-2');
-    expect(invalidate).not.toHaveBeenCalled();
+    expect(rereads()).toEqual([]);
   });
 
-  it("loads the grid again when the rows change, but not for its first load or a sync's progress", () => {
+  it("reads the project's sync runs, and again when a line's run starts or moves", () => {
+    const sources = mount();
+    expect(asked).toContainEqual('runs');
+    expect(invalidate).not.toHaveBeenCalled();
+
+    lines.current = [importLine('r-1', 'running')];
+    sources.rerender();
+    lines.current = [importLine('r-1', 'running')];
+    sources.rerender();
+    lines.current = [importLine('r-1', 'succeeded')];
+    sources.rerender();
+    const runs = invalidate.mock.calls.filter(([query]) => (query as { key: string }).key === 'runs');
+    expect(runs.map(([query]) => (query as { params: unknown }).params)).toEqual([
+      { taskType: 'artifact.ingest', projectId: 'p-1', limit: 200, organizationId: 'org-1' },
+      { taskType: 'artifact.ingest', projectId: 'p-1', limit: 200, organizationId: 'org-1' },
+    ]);
+  });
+
+  it("shows each source's last sync run from the listing, and nothing of it when the listing fails", () => {
+    queries.current.runs = answered({
+      items: [
+        {
+          id: 'r-9',
+          state: 'failed',
+          payload: { project_id: 'p-1', repo_full_path: 'acme/web' },
+          attempts: 3,
+          progress: null,
+          summary: null,
+          result: null,
+          last_error: 'acme/web: attempt 1 never reported back',
+          created_at: '2026-11-26T07:00:00Z',
+          started_at: '2026-11-26T07:01:00Z',
+          finished_at: '2026-11-26T07:13:00Z',
+        },
+      ],
+      total: 1,
+    });
+    const { view } = mount();
+    const web = repositories(view.rows).find((row) => row.fullPath === 'acme/web');
+    expect(web?.syncRun).toMatchObject({
+      runId: 'r-9',
+      status: 'failed',
+      detail: 'attempt 1 never reported back',
+      attempts: 3,
+    });
+    expect(repositories(view.rows).find((row) => row.fullPath === 'acme/api')?.syncRun).toBeNull();
+
+    queries.current.runs = failedQuery;
+    const again = mount();
+    expect(again.view.ready).toBe(true);
+    expect(repositories(again.view.rows).every((row) => row.syncRun === null)).toBe(true);
+  });
+
+  it("loads the grid again when the rows change, the phase a sync shows among them, but not for its first load or a count it does not show", () => {
     const sources = mount();
     expect(triggerLoad).not.toHaveBeenCalled();
 
@@ -329,9 +388,15 @@ describe('useSourcesLoad', () => {
       canCancel: true,
     });
 
+    // The phase is the cell's live progress text.
+    lines.current = [{ ...running, phase: 'storing' }];
+    sources.rerender();
+    expect(triggerLoad).toHaveBeenCalledTimes(2);
+    expect(repositories(sources.view.rows)[1].syncRun).toMatchObject({ status: 'running', detail: 'storing' });
+
     lines.current = [{ ...running, phase: 'storing', stored: 40 }];
     sources.rerender();
-    expect(triggerLoad).toHaveBeenCalledTimes(1);
+    expect(triggerLoad).toHaveBeenCalledTimes(2);
   });
 
   it('adds the Uploaded files row after the sources, found by its name, and counts it', async () => {

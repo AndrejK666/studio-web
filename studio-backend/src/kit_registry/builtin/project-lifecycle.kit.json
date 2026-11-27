@@ -10,6 +10,22 @@
     "workspace",
     "project"
   ],
+  "screens": [
+    {
+      "kind": "tab",
+      "level": "workspace",
+      "label": "Project templates",
+      "route": "/project-templates",
+      "mfe": "project-templates-mfe"
+    },
+    {
+      "kind": "tab",
+      "level": "project",
+      "label": "Timeline",
+      "route": "/projects/timeline",
+      "mfe": "activity-mfe"
+    }
+  ],
   "model": {
     "types": [
       {

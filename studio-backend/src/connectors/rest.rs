@@ -101,9 +101,38 @@ fn connection_write_error(e: &anyhow::Error) -> CanonicalError {
             .with_reason(PLATFORM_ADMIN_REQUIRED)
             .create();
     }
+    if let Some(refused) = catalogue_refused(e) {
+        return refused;
+    }
     StudioConnectorError::invalid_argument()
         .with_constraint(format!("{e:#}"))
         .create()
+}
+
+/// The reason a catalogue refused to the caller is answered with (403).
+pub const CATALOGUE_REFUSED: &str = "CONNECTION_CATALOGUE_REFUSED";
+
+/// A catalogue the caller may not read or write: a tenant they do not reach
+/// is not found (404), as account-management answers it, and a refusal is
+/// forbidden (403). Neither is the server's fault.
+fn catalogue_refused(e: &anyhow::Error) -> Option<CanonicalError> {
+    let refusal = super::service::catalogue_refusal(e)?;
+    Some(match refusal {
+        CanonicalError::NotFound { .. } => {
+            StudioConnectorError::not_found("No connection catalogue for this tenant")
+                .with_resource("connection-catalogue".to_owned())
+                .create()
+        }
+        _ => StudioConnectorError::permission_denied()
+            .with_reason(CATALOGUE_REFUSED)
+            .create(),
+    })
+}
+
+/// A list that failed: a refusal as [`catalogue_refused`] says, anything else
+/// the server's.
+fn connection_read_error(e: &anyhow::Error) -> CanonicalError {
+    catalogue_refused(e).unwrap_or_else(|| CanonicalError::internal(format!("{e:#}")).create())
 }
 
 /// The type exists in both builds so `register_routes` keeps one signature;
@@ -831,7 +860,7 @@ async fn list_connections(
     } else {
         svc.list(&ctx, tenant).await
     }
-    .map_err(|e| CanonicalError::internal(format!("{e:#}")).create())?;
+    .map_err(|e| connection_read_error(&e))?;
     // Whose each row is: one identity lookup per distinct creator that is not
     // the caller's current sign-in, and the caller resolved once (#1077).
     let created_by: Vec<&str> = items.iter().map(|c| c.created_by.as_str()).collect();
@@ -1331,6 +1360,10 @@ pub fn register_routes(
         .handler(list_connections)
         .json_response_with_schema::<ConnectionListDto>(openapi, StatusCode::OK, "Connections")
         .error_401(openapi)
+        // The catalogue refused to the caller.
+        .error_403(openapi)
+        // A tenant the caller does not reach.
+        .error_404(openapi)
         .error_500(openapi)
         .register(router, openapi);
 
@@ -1354,8 +1387,11 @@ pub fn register_routes(
         )
         .error_400(openapi)
         .error_401(openapi)
-        // `platform_auth` set by somebody other than a platform administrator.
+        // `platform_auth` set by somebody other than a platform administrator,
+        // or the catalogue refused to the caller.
         .error_403(openapi)
+        // An owner tenant the caller does not reach.
+        .error_404(openapi)
         .error_500(openapi)
         .register(router, openapi);
 
@@ -1973,4 +2009,61 @@ fn sync_outcome_of(result: serde_json::Value) -> Option<SyncOutcome> {
     serde_json::from_value(result)
         .inspect_err(|e| tracing::warn!("studio-connector: unreadable import result: {e}"))
         .ok()
+}
+
+#[cfg(test)]
+mod catalogue_refusal_tests {
+    //! A catalogue refused to the caller is the caller's answer, not a 500:
+    //! Dev answered "permission denied" from the model as an internal error.
+
+    use super::*;
+    use crate::connectors::service::catalogue_error;
+
+    const READ: &str = "cannot read the connection catalogue";
+
+    #[test]
+    fn a_tenant_the_caller_does_not_reach_is_not_found() {
+        let e = catalogue_error(
+            StudioConnectorError::not_found("no tenant")
+                .with_resource("t".to_owned())
+                .create(),
+            READ,
+        );
+        assert!(format!("{e:#}").starts_with(READ), "{e:#}");
+        assert!(matches!(
+            connection_read_error(&e),
+            CanonicalError::NotFound { .. }
+        ));
+        assert!(matches!(
+            connection_write_error(&e),
+            CanonicalError::NotFound { .. }
+        ));
+    }
+
+    #[test]
+    fn a_refused_catalogue_is_forbidden() {
+        let e = catalogue_error(
+            StudioConnectorError::permission_denied()
+                .with_reason("TEST")
+                .create(),
+            READ,
+        );
+        assert!(matches!(
+            connection_read_error(&e),
+            CanonicalError::PermissionDenied { .. }
+        ));
+        assert!(matches!(
+            connection_write_error(&e),
+            CanonicalError::PermissionDenied { .. }
+        ));
+    }
+
+    #[test]
+    fn anything_else_stays_the_servers() {
+        let e = catalogue_error(CanonicalError::internal("store down").create(), READ);
+        assert!(matches!(
+            connection_read_error(&e),
+            CanonicalError::Internal { .. }
+        ));
+    }
 }

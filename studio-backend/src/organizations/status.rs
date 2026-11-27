@@ -29,7 +29,8 @@
 //! specs project-specs', findings (Open questions) and the project domain model
 //! project-domain-model's (ADR-0071 step 4), the product project-product's,
 //! builds and deploys delivery's, comment threads and quiet projects
-//! project-git's (ADR-0071 step 5). A signal or step
+//! project-git's (ADR-0071 step 5). The kits declare what they own
+//! (`kit_parts.rs`, ADR-0079); this module names none. A signal or step
 //! whose kit does not apply to the project is left out ([`Kits`]) and the
 //! verdict is computed from the rest; the repository connection and the IDE
 //! are the shell's and always stay.
@@ -38,16 +39,6 @@ use crate::plural::plural;
 
 /// A pull request quiet this many days or more is stuck.
 pub const QUIET_DAYS: u32 = 7;
-
-/// The kits a project's status reads for (`kit_registry/builtin`).
-pub const GIT_KIT: &str = "project-git";
-pub const SPECS_KIT: &str = "project-specs";
-pub const DOMAIN_MODEL_KIT: &str = "project-domain-model";
-/// What the product is made of (ADR-0071 §6; product-releases' Product).
-pub const PRODUCT_KIT: &str = "project-product";
-/// Builds, releases and environments (ADR-0071 §6; product-releases'
-/// Releases and org-infrastructure).
-pub const DELIVERY_KIT: &str = "delivery";
 
 /// The kits that apply to a project: `All` where they cannot be told (an
 /// assembly without studio-kits, or its answer could not be read), so
@@ -181,14 +172,7 @@ pub struct Step {
 
 /// The kit a step of the path is done in.
 pub fn step_kit(id: &str) -> Option<&'static str> {
-    match id {
-        "types" => Some(SPECS_KIT),
-        "model" => Some(DOMAIN_MODEL_KIT),
-        "findings" => Some(DOMAIN_MODEL_KIT),
-        "kind" | "product" => Some(PRODUCT_KIT),
-        "build" => Some(DELIVERY_KIT),
-        _ => None,
-    }
+    super::kit_parts::step_kit(id)
 }
 
 struct Draft {
@@ -553,16 +537,7 @@ pub struct Signal {
 
 /// The kit a signal belongs to, by its key.
 pub fn signal_kit(key: &str) -> Option<&'static str> {
-    match key {
-        "stuck" | "nobody" => Some(GIT_KIT),
-        "specs" => Some(SPECS_KIT),
-        "findings" => Some(DOMAIN_MODEL_KIT),
-        "product" => Some(PRODUCT_KIT),
-        "build" | "deploy" => Some(DELIVERY_KIT),
-        // Activity is Git collaboration's (ADR-0071 §6).
-        "threads" | "quiet" => Some(GIT_KIT),
-        _ => None,
-    }
+    super::kit_parts::signal_kit(key)
 }
 
 /// An open pull request as the signals read it.

@@ -32,6 +32,42 @@ pub struct ToolSet {
 
 inventory::collect!(ToolSet);
 
+/// What a gear's tools are for, as one phrase of the server's
+/// `instructions` (`Constructor Studio: <phrases>. …`), registered by the gear
+/// beside its [`ToolSet`] (ADR-0079 §4).
+pub struct Instruction {
+    /// The gear whose tools it names, for readers of the registry.
+    #[allow(dead_code, reason = "named for readers of the registry")]
+    pub gear: &'static str,
+    /// Where the phrase stands in the list, lowest first.
+    pub order: u16,
+    /// A noun phrase: `the spec-quality detectors`.
+    pub phrase: &'static str,
+}
+
+inventory::collect!(Instruction);
+
+/// What the server says of itself after the gears' phrases.
+const INSTRUCTIONS_TAIL: &str = "Every call acts as the person whose token this is, with exactly \
+what they may do in the Studio portal. A project is named by `project_id`, the id in the portal's \
+address of that project. Text you send is checked as you send it: nothing is read from your disk \
+or your repository.";
+
+/// The server's `instructions`: what its tools are for, as the gears
+/// registered it, then how every call acts.
+pub fn instructions() -> String {
+    let mut found: Vec<&Instruction> = inventory::iter::<Instruction>.into_iter().collect();
+    found.sort_by_key(|i| (i.order, i.phrase));
+    let phrases: Vec<&str> = found.iter().map(|i| i.phrase).collect();
+    let list = match phrases.as_slice() {
+        [] => return format!("Constructor Studio. {INSTRUCTIONS_TAIL}"),
+        [one] => (*one).to_owned(),
+        [a, b] => format!("{a} and {b}"),
+        [rest @ .., last] => format!("{}, and {last}", rest.join(", ")),
+    };
+    format!("Constructor Studio: {list}. {INSTRUCTIONS_TAIL}")
+}
+
 /// One tool an agent can call. The gear that owns the routes it uses declares
 /// it, next to them (`<gear>/mcp.rs`), and registers it as part of its
 /// [`ToolSet`]; `studio-mcp` only collects them.

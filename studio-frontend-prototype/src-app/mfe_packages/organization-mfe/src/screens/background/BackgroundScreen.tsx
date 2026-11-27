@@ -20,13 +20,28 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiRegistry, useSharedProperty, FRONTX_SHARED_PROPERTY_LANGUAGE } from '@gears-frontx/react';
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle } from '@gears-frontx/ui-kit';
-import { isRunEvent, useOrganization, usePollWhileVisible, useStudioEventRefresh } from '@constructor-studio/mfe-shared';
+import {
+  isRunEvent,
+  screenView,
+  useOrganization,
+  usePollWhileVisible,
+  useStudioEventRefresh,
+} from '@constructor-studio/mfe-shared';
 import { GridFailed } from '@constructor-studio/mfe-shared/grid';
 import { BackgroundApiService, scheduleOf } from '../../api/BackgroundApiService';
-import { ATTENTION_STATES, EVERY_STATE, STATES, foldRecurring, mergePages, type ShownRun } from '../../background/model';
+import {
+  ATTENTION_STATES,
+  EVERY_STATE,
+  STATES,
+  finished,
+  foldRecurring,
+  linkedRunOf,
+  mergePages,
+  type ShownRun,
+} from '../../background/model';
 import type { TaskRun, TaskSchedule } from '../../background/types';
 import { useBackgroundTranslations } from '../../i18n';
-import { RunDetails, RunsGrid, SchedulesGrid, type RunQuery } from './BackgroundGrids';
+import { LinkedRun, RunDetails, RunsGrid, SchedulesGrid, type RunQuery } from './BackgroundGrids';
 import styles from './BackgroundScreen.module.css';
 
 const PAGE = 50;
@@ -62,6 +77,12 @@ export const BackgroundScreen: React.FC = () => {
   const [types, setTypes] = useState<string[]>([]);
   const [schedules, setSchedules] = useState<TaskSchedule[] | null>(null);
   const [open, setOpen] = useState<string | null>(null);
+  /** The run a link names (`view=run-<id>`, the Sources tab's "Open the sync task"). */
+  const [linkedId] = useState(() => linkedRunOf(screenView(window.location.search)));
+  const [linked, setLinked] = useState<TaskRun | null>(null);
+  /** When the linked run was read: what its "took" counts to while it runs. */
+  const [linkedAt, setLinkedAt] = useState(0);
+  const [linkedMissing, setLinkedMissing] = useState(false);
 
   const refresh = useCallback(() => setTick((n) => n + 1), []);
   const recurring = useMemo(() => new Set((schedules ?? []).map((sc) => sc.task_type)), [schedules]);
@@ -159,9 +180,33 @@ export const BackgroundScreen: React.FC = () => {
     };
   }, [api, state, taskType, limit, recurring, tick, organizationId]);
 
+  // The linked run, read on its own: the list's filter (failed and running) may not show it.
+  // Filed under the organization as a project's sync is; else wherever the caller asked for it.
+  useEffect(() => {
+    let alive = true;
+    if (!linkedId || !organizationId) return;
+    api
+      .run({ id: linkedId, tenant: organizationId })
+      .fetch({ staleTime: 0 })
+      .catch(() => api.run({ id: linkedId, tenant: '' }).fetch({ staleTime: 0 }))
+      .then(
+        (run) => {
+          if (!alive) return;
+          setLinked(run);
+          setLinkedAt(Date.now());
+          setLinkedMissing(false);
+        },
+        () => alive && setLinkedMissing(true)
+      );
+    return () => {
+      alive = false;
+    };
+  }, [api, linkedId, organizationId, tick]);
+
   useStudioEventRefresh(isRunEvent, refresh);
 
-  const live = !!page?.items.some((r) => r.state === 'queued' || r.state === 'running');
+  const live =
+    !!page?.items.some((r) => r.state === 'queued' || r.state === 'running') || (!!linked && !finished(linked));
   // Not while the tab is hidden: shown again, it reads at once.
   usePollWhileVisible(refresh, LIVE_POLL_MS, live);
 
@@ -228,6 +273,21 @@ export const BackgroundScreen: React.FC = () => {
         </p>
       )}
       {unavailable && <p className={styles.muted}>{t('unavailable')}</p>}
+
+      {linkedId && (linked || linkedMissing) && (
+        <Card data-background-linked>
+          <CardHeader>
+            <CardTitle>{t('linked_title')}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {linked ? (
+              <LinkedRun run={linked} t={t} language={language} now={linkedAt} onAct={onAct} />
+            ) : (
+              <p className={styles.muted}>{t('linked_missing')}</p>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <Card data-background-runs>
         <CardHeader>

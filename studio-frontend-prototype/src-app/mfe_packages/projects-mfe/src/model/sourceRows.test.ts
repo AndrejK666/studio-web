@@ -104,6 +104,7 @@ describe('a source in the config is a row', () => {
       activity: { open: 3, merged: 4, commits: 9, days: [0, 1, 0, 2, 0, 0, 1] },
       lastSync: { kind: 'synced', at: '2026-10-14T10:52:00Z' },
       sync: { kind: 'none' },
+      syncRun: null,
       clone: { kind: 'unknown' },
     });
   });

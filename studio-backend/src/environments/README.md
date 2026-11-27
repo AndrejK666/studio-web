@@ -71,8 +71,9 @@ of studio-user through `OrgAuthority`.
 - Task types `environments.images` (delete, copy) and
   `environments.image_sweep` (daily, scheduled when a retention is set).
 - Task type `environments.deploy` (studio-tasks), registered at `init`.
-- The cluster is a connection of the `kubernetes` kind
-  (`connectors/kubernetes.rs`, plugin gear `kubernetes-connector-plugin`). Its
+- The cluster is a connection of the `kubernetes` kind, whose driver is this
+  kit's (`cluster_driver.rs`, plugin gear `kubernetes-connector-plugin`,
+  through studio-connector's connector-driver port, ADR-0079). Its
   credential is a service-account token or a kubeconfig with inline data only;
   `ClusterAccess::parse` refuses `exec`, `auth-provider`, file paths and
   `insecure-skip-tls-verify`, and a kubeconfig for another server than the

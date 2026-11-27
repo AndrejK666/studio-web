@@ -423,7 +423,13 @@ impl AccountManagementClient for Catalogues {
             .get(&tenant)
             .cloned()
             .map(entry)
-            .ok_or_else(|| CanonicalError::internal("no catalogue").create())
+            // Absent, as account-management (and the model behind it) answers
+            // a tenant with no catalogue: not found, which reads as empty.
+            .ok_or_else(|| {
+                crate::model_metadata::StudioTenantDocumentError::not_found("no catalogue")
+                    .with_resource(tenant.to_string())
+                    .create()
+            })
     }
     async fn resolve_metadata(
         &self,

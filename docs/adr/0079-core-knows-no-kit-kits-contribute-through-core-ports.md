@@ -95,10 +95,24 @@ kit's gear registers in its own module, so adding a kit changes no core file.
 | **Access rules** | the PDP's rules for its own resource types | ported: kits register `ServiceRule`, `GearHeldMetadata` (inventory) and `MirrorSyncSubject` (ClientHub); studio-authz-plugin names no kit |
 | **Connector drivers** | a driver behind a connection kind | studio-connector names llm-proxy |
 | **Background work** | task kinds and schedules | studio-session, studio-kits start kits' work |
-| **Cost metering** | what it meters and how it is priced | usage is read by name from organizations and sessions |
+| **Cost metering** | what it meters and how it is priced | organizations ported: kits register `CostMeter` (inventory, studio-usage); sessions still read usage by name |
+| **Project status** | its facts about a project's status and delivery path | ported: kits register `StatusContributor` (inventory) answering a `StatusPart`; organizations merges them in `order` |
+| **Project creation** | a step of a project's creation run, or a field its configuration starts with | ported: kits register `CreationStep` and `CreationField` (inventory); the plan keeps the step keys and their order |
+| **Rollup counts** | per-project counts for the portfolio and the projects table | ported: organizations declares `DocumentCounter`, `ArtifactCounter` and `RowSignalSource`; kits publish them on the ClientHub |
+| **Repository metrics** | the metrics board's git, CI and task half | ported: the analysing kit registers `RepositoryMetricsSource` (inventory, studio-insight) |
+| **Kit parts** | which status steps, signals and path stages its tab owns | ported: kits register `ProjectKitParts` (inventory) |
 
 In process a port is a static registration (`inventory`); for a kit's gear
 beside Studio it is the directory (ADR-0077 §6).
+
+Two choices in the organizations ports. The rollup counts are ports of
+their own, published on the ClientHub, not Overview blocks: blocks answer
+an Overview with tiles, while a rollup is one row per project whose JSON
+fields are pinned, so the core declares the counts and the kits answer
+them. And the delivery path's stage ids and their order (`STAGES` in
+`project_path.rs`) stay in the core: they number the stages the same on
+every tab. A kit declares only a stage's title, its tab and that the stage
+is its own.
 
 ### 5. Which kits run is a setting
 

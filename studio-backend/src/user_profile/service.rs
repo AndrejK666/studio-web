@@ -793,13 +793,18 @@ impl IdentityService {
         org_id: Uuid,
         privilege: &str,
     ) -> bool {
-        if !self.caller_is_active_member(ctx, org_id).await {
+        let Some(role) = self.caller_active_role(ctx, org_id).await else {
             return false;
-        }
+        };
         let cfg = crate::access_config::read(self.am.as_ref(), ctx, org_id).await;
         let keys = self.caller_grant_keys(ctx).await;
+        // The membership's own role counts as a grant it projects (an
+        // `admin` member administers), read now and never stored, so a
+        // demotion takes it away at once — the same rule the PDP applies.
+        let projected = crate::access_config::projected_role(&role, "active")
+            .is_some_and(|r| cfg.projected_role_carries(r, privilege));
         cfg.grants_ownership_to(&keys)
-            || (cfg.is_roles_model() && cfg.grants_privilege_to(&keys, privilege))
+            || (cfg.is_roles_model() && (cfg.grants_privilege_to(&keys, privilege) || projected))
     }
 
     /// May the caller dispose of `org_id` — hand it over or delete it?
@@ -817,6 +822,16 @@ impl IdentityService {
         }
         let cfg = crate::access_config::read(self.am.as_ref(), ctx, org_id).await;
         cfg.grants_ownership_to(&self.caller_grant_keys(ctx).await)
+    }
+
+    /// The role of the caller's active membership of `org_id`, if they hold one.
+    async fn caller_active_role(&self, ctx: &SecurityContext, org_id: Uuid) -> Option<String> {
+        self.memberships_of_subject(&ctx.subject_id().to_string())
+            .await
+            .ok()?
+            .into_iter()
+            .find(|m| m.org_id == org_id && m.status == "active")
+            .map(|m| m.role)
     }
 
     async fn caller_is_active_member(&self, ctx: &SecurityContext, org_id: Uuid) -> bool {

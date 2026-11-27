@@ -20,9 +20,9 @@ use async_trait::async_trait;
 use serde_json::Value;
 use toolkit_security::SecurityContext;
 
-/// The GTS id a domain type is stored and named by (`pull-request` →
-/// `gts.cf.studio.domain.pull_request.v1~`): what a screen's `needs` names.
-pub use super::gts::node_type_id;
+/// What a caller may read (ADR-0035), as [`DomainObjects::read_access`]
+/// answers it, and the policy a test puts behind [`in_memory_with_policy`].
+pub use super::access::{Access, AccessError, ObjectPolicy, TenantParents, access_error};
 /// A kit's model overlay and what applying it changed (ADR-0067 §6): the
 /// format another gear (studio-kits) reads from a kit's manifest.
 pub use super::kit_overlay::{
@@ -93,6 +93,25 @@ pub trait DomainObjects: Send + Sync {
 
     /// The objects of `entity` the caller may read.
     async fn list(&self, ctx: &SecurityContext, entity: &str) -> anyhow::Result<Vec<StoredObject>>;
+
+    /// What `ctx` may read of `entity`'s objects: the domain-object policy's
+    /// answer to `domain.view`, the one `POST /query` asks (ADR-0035). For a
+    /// gear that reads its records as itself ([`KeptByGear`]) but answers a
+    /// caller: it applies this to what it returns, so the caller sees what
+    /// the query would show them. `Err` carries an
+    /// [`AccessError`](super::access::AccessError): `Denied` without a grant,
+    /// `Unavailable` when the PDP cannot be asked. A port without a policy
+    /// answers what a build without a PDP reads: the caller's tenant.
+    async fn read_access(
+        &self,
+        ctx: &SecurityContext,
+        entity: Option<&str>,
+    ) -> anyhow::Result<super::access::Access> {
+        use super::access::ObjectPolicy as _;
+        Ok(super::access::TenantOnly
+            .access(ctx, super::access::READ, entity)
+            .await?)
+    }
 
     /// Create or replace the object of `entity` keyed by `key` in one
     /// tenant's scope (`scope` is its id: a project, a workspace, an
@@ -317,6 +336,45 @@ pub fn in_memory() -> Arc<dyn DomainObjects> {
     )))))
 }
 
+/// [`in_memory`] asking `policy` who may read and write, as production asks
+/// the PDP; a gear acting as itself keeps its own records.
+#[cfg(test)]
+pub fn in_memory_with_policy(
+    policy: Arc<dyn super::access::ObjectPolicy>,
+) -> Arc<dyn DomainObjects> {
+    Arc::new(Objects(Arc::new(
+        DomainModelService::new(Arc::new(super::store::InMemoryDomainStore::default()))
+            .with_policy(Arc::new(super::access::GearsKeepTheirOwn(policy))),
+    )))
+}
+
+/// [`in_memory`] behind the policy production runs on an organization on the
+/// `roles` model where the caller holds no grant: every caller is refused,
+/// and a gear acting as itself keeps its own records.
+#[cfg(test)]
+pub fn in_memory_without_grants() -> Arc<dyn DomainObjects> {
+    struct NoGrant;
+
+    #[async_trait]
+    impl super::access::ObjectPolicy for NoGrant {
+        async fn access(
+            &self,
+            _ctx: &SecurityContext,
+            _action: &str,
+            _entity: Option<&str>,
+        ) -> Result<super::access::Access, super::access::AccessError> {
+            Err(super::access::AccessError::Denied)
+        }
+    }
+
+    Arc::new(Objects(Arc::new(
+        DomainModelService::new(Arc::new(super::store::InMemoryDomainStore::default()))
+            .with_policy(Arc::new(super::access::GearsKeepTheirOwn(Arc::new(
+                NoGrant,
+            )))),
+    )))
+}
+
 #[async_trait]
 impl DomainObjects for Objects {
     async fn upsert(
@@ -349,6 +407,14 @@ impl DomainObjects for Objects {
                 payload: n.value,
             })
             .collect())
+    }
+
+    async fn read_access(
+        &self,
+        ctx: &SecurityContext,
+        entity: Option<&str>,
+    ) -> anyhow::Result<super::access::Access> {
+        Ok(self.0.read_access(ctx, entity).await?)
     }
 
     async fn upsert_in(
@@ -626,6 +692,16 @@ impl DomainObjects for KeptByGear {
 
     async fn list(&self, ctx: &SecurityContext, entity: &str) -> anyhow::Result<Vec<StoredObject>> {
         self.0.list(&as_gear(ctx)?, entity).await
+    }
+
+    /// The one call made as the caller, not as the gear: the question is
+    /// what the caller may read, and the gear itself may read everything.
+    async fn read_access(
+        &self,
+        ctx: &SecurityContext,
+        entity: Option<&str>,
+    ) -> anyhow::Result<super::access::Access> {
+        self.0.read_access(ctx, entity).await
     }
 
     async fn upsert_in(

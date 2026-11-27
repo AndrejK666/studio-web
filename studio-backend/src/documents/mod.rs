@@ -18,12 +18,14 @@ mod brief;
 mod classify;
 #[cfg(test)]
 mod confirm_types_tests;
+mod creation_steps; // its part of a project's creation (ADR-0079)
 mod data;
 #[cfg(test)]
 mod data_tests;
 mod delivery;
 mod entity;
 pub(crate) mod gts;
+mod inbox; // review requests in a person's Inbox (the Inbox port, ADR-0079)
 pub(crate) mod intake;
 mod mcp;
 mod migrations;
@@ -53,6 +55,7 @@ mod spec_model;
 mod spec_rows;
 mod spec_texts;
 mod stamp;
+mod status_part; // its part of a project's status (ADR-0079)
 #[cfg(test)]
 mod sync_analysis_tests;
 mod uploads;
@@ -79,6 +82,15 @@ inventory::submit! {
         gear: "studio-documents",
         order: 20,
         tools: mcp::tools,
+    }
+}
+
+// What these tools are for, in studio-mcp's `instructions`.
+inventory::submit! {
+    crate::mcp::sdk::Instruction {
+        gear: "studio-documents",
+        order: 10,
+        phrase: "a project's domain model (what its documents say, `project_domain_model_*`)",
     }
 }
 

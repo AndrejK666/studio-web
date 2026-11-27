@@ -72,6 +72,12 @@ pub struct NewRun<'a> {
 pub struct RunQuery {
     pub state: Option<RunState>,
     pub task_type: Option<String>,
+    /// Only the runs whose payload names this project (`payload.project_id`):
+    /// the key every producer of a project's work writes, as a sync does. The
+    /// gear still does not understand a payload; it matches one key of it, so
+    /// a project's Sources tab can show each repository's last sync without
+    /// paging through the whole organization's history.
+    pub project_id: Option<Uuid>,
     /// Zero-based index of the first row of the page. Pushed into the SQL, not
     /// applied to a materialised list.
     pub offset: u64,
@@ -520,6 +526,12 @@ impl TaskService {
         }
         if let Some(task_type) = query.task_type.as_deref() {
             filter = filter.add(entity::Column::TaskType.eq(task_type));
+        }
+        if let Some(project) = query.project_id {
+            filter = filter.add(Expr::cust_with_values(
+                "(payload ->> 'project_id') = $1",
+                [project.to_string()],
+            ));
         }
         let conn = self.db.conn()?;
         // One scoped query, used twice: the clone keeps the tenant scope and

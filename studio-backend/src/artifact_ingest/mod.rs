@@ -25,7 +25,10 @@ mod graph;
 #[cfg(feature = "graph")]
 pub(crate) mod graph_backend;
 pub(crate) mod gts;
+mod inbox; // pull requests in a person's Inbox (the Inbox port, ADR-0079)
 mod index;
+mod item_comments; // comments read item by item, resumable across runs
+mod listing_cursor; // where the listings got to, resumable across runs
 mod mcp;
 // This gear's MCP tools, collected by studio-mcp (ADR-0079).
 inventory::submit! {
@@ -33,6 +36,15 @@ inventory::submit! {
         gear: "studio-artifact-ingest",
         order: 120,
         tools: mcp::tools,
+    }
+}
+// Detaching a project's source: after studio-organizations' sources (80),
+// before its connections (90), where the pipeline asks for it.
+inventory::submit! {
+    crate::mcp::sdk::ToolSet {
+        gear: "studio-artifact-ingest",
+        order: 85,
+        tools: mcp::source_tools,
     }
 }
 
@@ -51,11 +63,15 @@ mod model_store;
 mod outputs; // what the builds produced: CI artifacts and releases
 /// The Delivery block of an organization's Overview (ADR-0079 §4).
 pub mod overview_block;
+mod paging; // a provider's listing walked to its end
 pub mod port;
 mod pr_links; // pull request → file links, resumable across runs
 mod pull_request_waits;
+mod read_access; // `/nodes` and `/runs` read what `domain.view` admits (ADR-0035)
 mod rest;
+mod row_signals; // its answer to the rollup counts port (ADR-0079)
 mod service;
+mod status_part; // its part of a project's status (ADR-0079)
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -525,9 +541,10 @@ impl RestApiCapability for StudioArtifactIngestGear {
             // The portfolio's finding count, for whoever composes the rollup.
             ctx.client_hub()
                 .register::<dyn port::ArtifactCounter>(service.clone());
-            // The projects table's review and source columns, likewise.
+            // The projects table's review and source columns, likewise
+            // (the core's rollup counts port).
             ctx.client_hub()
-                .register::<dyn port::ProjectSignalSource>(service.clone());
+                .register::<dyn crate::organizations::port::RowSignalSource>(service.clone());
             // A project's issues, pull requests and commits, for the documents
             // gear to link to the requirements they name.
             ctx.client_hub()

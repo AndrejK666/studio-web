@@ -41,6 +41,15 @@ inventory::submit! {
         tools: mcp::tools,
     }
 }
+
+// What these tools are for, in studio-mcp's `instructions`.
+inventory::submit! {
+    crate::mcp::sdk::Instruction {
+        gear: "studio-domain-model",
+        order: 90,
+        phrase: "the Studio domain model (Studio's own types and objects, `domain_model_*` and `domain_type*`; not a project's)",
+    }
+}
 #[cfg(test)]
 mod claimed_types_tests;
 #[cfg(test)]

@@ -1,16 +1,48 @@
-# Core-side modules that still name a kit's gear (ADR-0079).
+# Core-side modules that still name a kit (ADR-0079).
 #
-# One `from -> to` per line: a top-level module under src/ that is not a kit
-# gear, and the kit gear folder it names as `crate::<to>::…` outside tests and
-# comments. `assembly/core_kit_tests.rs` fails on a pair that is not listed
-# here, and on a listed pair the code no longer has.
+# One `from -> to  # why` per line. `from` is a top-level module under src/
+# that is not a kit gear, or the crate root (`lib`, `main`). `to` is either
+#   - a kit gear folder the module names as `crate::<to>::…` (in the crate
+#     root, also a bare `<to>::…`), or whose gear name or REST path
+#     (`"studio-documents"`, `"/studio-documents/v1/…"`) is in one of its
+#     string literals; or
+#   - `kit:<slug>`, a built-in kit's slug as one of its string literals.
+# Tests and comments are not read. `assembly/core_kit_tests.rs` fails on a
+# pair that is not listed here, and on a listed pair the code no longer has.
 #
 # This list only shrinks. Do not add a line: contribute through a core port
 # instead (MCP tools, Overview blocks, access rules, connector drivers,
 # background work, cost metering). When you remove a reference, remove its line.
-organizations -> artifact_ingest
-organizations -> documents
-organizations -> environments
-organizations -> insight
-organizations -> product
-organizations -> usage
+
+# The crate root: CLI subcommands that run a kit's code.
+lib -> research_emulator  # `research-emulator` CLI subcommand
+
+# The API contract: the domain registry lists every gear's path segment.
+api_contract -> artifact_ingest  # DOMAINS
+api_contract -> components_catalog  # DOMAINS
+api_contract -> documents  # DOMAINS
+api_contract -> environments  # DOMAINS
+api_contract -> git_proxy  # DOMAINS
+api_contract -> insight  # DOMAINS
+api_contract -> product  # DOMAINS
+api_contract -> reports  # DOMAINS
+api_contract -> spec_graph  # DOMAINS
+api_contract -> spec_mapping  # DOMAINS
+api_contract -> spec_quality  # DOMAINS
+api_contract -> studio_theia  # DOMAINS
+api_contract -> usage  # DOMAINS
+
+# The GTS inventory: walks each gear's type schemas by name.
+
+kit_registry -> artifact_ingest  # mna reads the artifact gear's REST routes
+kit_registry -> documents  # mna names studio-documents in a summary
+notify -> studio_theia  # error text names the IDE bridge gear
+
+
+# Kits named by slug (the kit registry itself is exempt).
+catalog_graph -> kit:project-product  # model_sink: the product type's model id
+organizations -> kit:components  # status: a next step opens the components screen
+organizations -> kit:ide  # status: a next step opens the IDE
+
+
+# The Inbox and the profile MCP tools read kits' gears over REST.

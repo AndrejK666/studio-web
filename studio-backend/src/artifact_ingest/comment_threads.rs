@@ -47,19 +47,12 @@
 //! last. `comment-log.js`'s own header explains why each of those is necessary;
 //! the tests below pin this side to the same answers.
 //!
-//! # Where the count can be low, and why that is left alone
+//! # Where the count can be low
 //!
-//! This reads what the walk read. The walk stops at 10,000 files and spends a
-//! 24 MB text budget ([`super::clone`]), so on a repository big enough to hit
-//! either, sidecars beyond the cap are never opened and their threads are not
-//! counted.
-//!
-//! Exempting `.studio/` from those caps was the obvious fix and is the wrong
-//! one: the caps exist so one enormous repository cannot exhaust the backend's
-//! memory, and carving out a directory by name re-opens exactly that hole for
-//! anybody who puts a large file in it. A repository that big has a count that
-//! is low rather than absent, which is the same compromise its file list
-//! already makes — and the file list is what a reader compares it against.
+//! This reads what the walk read (`connectors::clone::walk`). The walk lists
+//! every file and reads the text of the ones the sync asks for, comment logs
+//! among them; a sidecar it could not open (an unreadable file or directory)
+//! is not counted, and the walk then says it is not complete.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 

@@ -238,11 +238,58 @@ async fn files_and_their_subtypes_share_fields_in_both_readers() {
         {"op":"upsert", "type":"repository-file", "key":"readme", "value":{"name":"README.md", "media_type":"text/markdown", "revision":"abc"}}
     ])).await;
     p.fill().await;
-    for ty in ["file", "repository-file"] {
+    // `file` reads what extends it too; the subtype only itself.
+    for (ty, total) in [("file", 2), ("repository-file", 1)] {
         let result = p.same(ty, json!({"fields":["name", "media_type"], "order_by":[{"field":"name", "direction":"asc"}]})).await;
-        assert_eq!(result["total"], 1);
+        assert_eq!(result["total"], total, "{ty}");
         assert!(result["items"][0]["value"]["media_type"].is_string());
     }
+    // `_type` narrows by the concrete type, in SQL as in memory.
+    for (w, want) in [
+        (
+            json!({"_type": {"_eq": "repository-file"}}),
+            vec!["README.md"],
+        ),
+        (
+            json!({"_type": {"_nin": ["repository-file"]}}),
+            vec!["interview.txt"],
+        ),
+        (
+            json!({"_or": [{"_type": {"_eq": "file"}}, {"name": {"_eq": "README.md"}}]}),
+            vec!["README.md", "interview.txt"],
+        ),
+        (json!({"_type": {"_in": []}}), vec![]),
+    ] {
+        let result = p
+            .same("file", json!({"where": w, "order_by":[{"field":"name"}]}))
+            .await;
+        assert_eq!(names(&result), want, "{w}");
+    }
+}
+
+/// `project_ids` reads several projects in one statement, the same as the
+/// graph reads them one by one.
+#[tokio::test]
+async fn several_projects_answer_the_same_from_postgres() {
+    let p = Pair::new(Uuid::new_v4()).await;
+    let (a, b, c) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+    p.write(json!([
+        {"op": "upsert", "type": "team", "key": "x", "project_id": a.to_string(), "value": {"name": "in a"}},
+        {"op": "upsert", "type": "team", "key": "y", "project_id": b.to_string(), "value": {"name": "in b"}},
+        {"op": "upsert", "type": "team", "key": "z", "project_id": c.to_string(), "value": {"name": "in c"}},
+    ]))
+    .await;
+    p.fill().await;
+    let q = Query::from_json(
+        json!({"type": "team", "project_ids": [a.to_string(), c.to_string()],
+        "order_by": [{"field": "name"}]}),
+    )
+    .expect("query");
+    let g = p.graph.query(&p.ctx, &q).await.unwrap();
+    let s = p.sql.query(&p.ctx, &q).await.unwrap();
+    assert_eq!(s.source, "read_model");
+    assert_eq!(shape(&g), shape(&s));
+    assert_eq!(names(&shape(&s)), ["in a", "in c"]);
 }
 
 #[tokio::test]
@@ -667,6 +714,59 @@ async fn a_project_grant_narrows_the_sql_root_its_total_and_its_relations() {
         .await
         .unwrap();
     assert_eq!(out.rows.items[0].relations["delivers"].total, 1);
+}
+
+/// The caller may read every type but `project`.
+struct NoProjects;
+#[async_trait::async_trait]
+impl ObjectPolicy for NoProjects {
+    async fn access(
+        &self,
+        ctx: &SecurityContext,
+        _action: &str,
+        entity: Option<&str>,
+    ) -> Result<Access, AccessError> {
+        if entity == Some("project") {
+            return Err(AccessError::Denied);
+        }
+        Ok(Access::new(ctx, AccessScope::allow_all(), None))
+    }
+}
+
+/// A related type the caller may not read is left out of a filter on
+/// related objects and of `include` in SQL too, with a warning.
+#[tokio::test]
+async fn a_related_type_is_read_under_its_own_grant_in_sql() {
+    let p = seeded().await;
+    let narrowed = DomainModelService::new(Arc::new(IndexedDomainStore::new(
+        p.inner.clone(),
+        p.mirror.clone(),
+    )))
+    .with_policy(Arc::new(NoProjects));
+    let q = query(
+        "team",
+        json!({"where": {"delivers": {"status": {"_eq": "active"}}}}),
+    );
+    assert_eq!(p.sql.query(&p.ctx, &q).await.unwrap().rows.total, 1);
+    let out = narrowed.query(&p.ctx, &q).await.unwrap();
+    assert_eq!(out.source, "read_model");
+    assert_eq!(out.rows.total, 0);
+    assert!(
+        out.warnings.iter().any(|w| w.contains("`project`")),
+        "{:?}",
+        out.warnings
+    );
+    let out = narrowed
+        .query(&p.ctx, &query("team", json!({"include": {"delivers": {}}})))
+        .await
+        .unwrap();
+    assert_eq!(out.rows.total, 2);
+    assert!(
+        out.rows
+            .items
+            .iter()
+            .all(|r| r.relations["delivers"].total == 0)
+    );
 }
 
 /// The SQL reader counts only when its page cannot say how many match: the

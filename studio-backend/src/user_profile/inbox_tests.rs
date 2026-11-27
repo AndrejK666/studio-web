@@ -5,6 +5,32 @@ use time::macros::datetime;
 
 use super::*;
 
+// The kits' sources this file reads through the Inbox port: project-specs'
+// and project-git's.
+const REVIEW_REQUESTS: &str = "review-requests";
+const PULL_REQUESTS: &str = "pull-requests";
+
+fn items_of(
+    workspace_id: &str,
+    workspace_name: &str,
+    reviews: Vec<Value>,
+    pulls: Vec<Value>,
+) -> Vec<Item> {
+    super::items_of(workspace_id, workspace_name, vec![reviews, pulls])
+}
+
+fn review_key(r: &Value) -> String {
+    format!("review:{}", r["id"].as_str().unwrap_or_default())
+}
+
+fn pull_key(p: &Value) -> String {
+    format!(
+        "pr:{}@{}",
+        p["id"].as_str().unwrap_or_default(),
+        p["updated_at"].as_str().unwrap_or_default()
+    )
+}
+
 fn review(id: &str, due: Option<&str>, overdue: bool) -> Value {
     json!({"id": id, "title": id, "due_at": due, "overdue": overdue})
 }
@@ -90,17 +116,6 @@ fn a_pull_request_comes_back_when_it_moves_again() {
     let moved = json!({"id": "p1", "updated_at": "2026-10-13T11:30:00Z"});
     let (open, _) = inbox(items_of("w", "W", Vec::new(), vec![moved]), &done, NOW);
     assert_eq!(open.len(), 1);
-}
-
-#[test]
-fn a_person_s_pull_requests_wait_on_their_review_first_then_longest_quiet() {
-    let ordered = pulls_in_order(vec![
-        json!({"id": "a", "waiting": "author", "days_since_update": 9}),
-        json!({"id": "r1", "waiting": "review", "days_since_update": 1}),
-        json!({"id": "r2", "waiting": "review", "days_since_update": 5}),
-    ]);
-    let ids: Vec<&str> = ordered.iter().map(|p| p["id"].as_str().unwrap()).collect();
-    assert_eq!(ids, ["r2", "r1", "a"]);
 }
 
 /// The backend's routes as the Inbox calls them, recording each path:
@@ -382,26 +397,38 @@ fn studio_s_own_sources_are_read_only_where_their_kits_list_them() {
         "id": "deploys-awaiting-approval", "path": "/studio-environments/v1/inbox/x"});
 
     // Both kits installed: both sources, each with its kit.
-    let both = Owned::of(Some(&[specs.clone(), git.clone(), other.clone()]));
-    assert_eq!(both.reviews, Some(Some(specs.clone())));
-    assert_eq!(both.pulls, Some(Some(git.clone())));
+    let both = [specs.clone(), git.clone(), other.clone()];
+    assert_eq!(
+        owner(Some(&both), REVIEW_REQUESTS),
+        Some(Some(specs.clone()))
+    );
+    assert_eq!(owner(Some(&both), PULL_REQUESTS), Some(Some(git.clone())));
 
     // Without project-specs: no review requests.
-    let no_specs = Owned::of(Some(&[git.clone(), other.clone()]));
-    assert!(no_specs.reviews.is_none());
-    assert!(no_specs.pulls.is_some());
+    let no_specs = [git.clone(), other.clone()];
+    assert!(owner(Some(&no_specs), REVIEW_REQUESTS).is_none());
+    assert!(owner(Some(&no_specs), PULL_REQUESTS).is_some());
 
     // An organization with no kits at all: neither.
-    assert_eq!(Owned::of(Some(&[])), Owned::default());
+    assert!(owner(Some(&[]), REVIEW_REQUESTS).is_none());
+    assert!(owner(Some(&[]), PULL_REQUESTS).is_none());
 
     // A source of the same id that is not Studio's kind turns nothing on.
     let mut endpoint = git.clone();
     endpoint["kind"] = json!("endpoint");
-    assert!(Owned::of(Some(&[endpoint])).pulls.is_none());
+    assert!(owner(Some(&[endpoint]), PULL_REQUESTS).is_none());
 
     // The kits could not be read: both are read, as the shell's.
-    let unknown = Owned::of(None);
-    assert_eq!((unknown.reviews, unknown.pulls), (Some(None), Some(None)));
+    assert_eq!(owner(None, REVIEW_REQUESTS), Some(None));
+    assert_eq!(owner(None, PULL_REQUESTS), Some(None));
+}
+
+/// The sources are the kits' gears', registered through the Inbox port, in
+/// the order their items are listed.
+#[test]
+fn the_registered_sources_are_reviews_then_pull_requests() {
+    let ids: Vec<&str> = super::super::port::sources().iter().map(|s| s.id).collect();
+    assert_eq!(ids, [REVIEW_REQUESTS, PULL_REQUESTS]);
 }
 
 #[test]

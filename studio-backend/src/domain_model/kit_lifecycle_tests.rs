@@ -304,9 +304,13 @@ impl Org {
         }
     }
 
-    /// `POST /query` of every object of `type_ref`, as `who`.
+    /// `POST /query` of every object of `type_ref` itself (not of the types
+    /// extending it, which a query reads too), as `who`.
     async fn query(&self, who: Uuid, type_ref: &str) -> Result<Vec<Value>, (StatusCode, String)> {
-        let req: QueryObjectsRequest = serde_json::from_value(json!({"type": type_ref})).unwrap();
+        let req: QueryObjectsRequest = serde_json::from_value(
+            json!({"type": type_ref, "where": {"_type": {"_eq": type_ref}}}),
+        )
+        .unwrap();
         match query_objects(OrgCtx(person(who)), Extension(self.handle()), Json(req)).await {
             Ok(body) => Ok(body.0.items),
             Err(e) => Err(problem(e).await),

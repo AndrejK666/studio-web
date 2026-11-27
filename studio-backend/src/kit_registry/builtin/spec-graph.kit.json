@@ -9,6 +9,15 @@
     "organization",
     "project"
   ],
+  "screens": [
+    {
+      "kind": "tab",
+      "level": "project",
+      "label": "Spec graph",
+      "route": "/spec-graph",
+      "mfe": "spec-graph-mfe"
+    }
+  ],
   "requires": [
     "project-domain-model",
     "project-git"

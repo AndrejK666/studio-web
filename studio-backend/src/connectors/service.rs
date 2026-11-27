@@ -663,7 +663,12 @@ impl ConnectorService {
             // Absent row is the common case on the first connection; AM
             // raises NotFound for an unregistered schema, which the gear logs
             // at init, so treating both as "empty" keeps the happy path clean.
-            Err(_) => Ok(Catalogue::default()),
+            Err(toolkit_canonical_errors::CanonicalError::NotFound { .. }) => {
+                Ok(Catalogue::default())
+            }
+            // Anything else is not "empty": the write made from it would
+            // replace the catalogue with the one connection being added.
+            Err(e) => Err(catalogue_error(e, "cannot read the connection catalogue")),
         }
     }
 
@@ -684,7 +689,7 @@ impl ConnectorService {
                 UpsertMetadataRequest::new(Self::type_id(), serde_json::to_value(catalogue)?),
             )
             .await
-            .map_err(|e| anyhow!("cannot write the connection catalogue: {e}"))?;
+            .map_err(|e| catalogue_error(e, "cannot write the connection catalogue"))?;
         Ok(())
     }
 
@@ -738,9 +743,12 @@ impl ConnectorService {
         tenant: Uuid,
     ) -> anyhow::Result<Vec<GearRepositorySource>> {
         use super::gear_repository::{OPTION_REF, OPTION_SOURCE_ID, PROVIDER};
+        // A read only: a catalogue that cannot be read holds no repository
+        // here, as it always did.
         let mut rows: Vec<Connection> = self
             .load_own(ctx, tenant)
-            .await?
+            .await
+            .unwrap_or_default()
             .items
             .into_iter()
             .filter(|c| c.provider == PROVIDER)
@@ -1864,11 +1872,39 @@ async fn load_catalogue(
     let entry = am
         .resolve_metadata(ctx, tenant, GtsTypeId::new(CONNECTIONS_METADATA_TYPE))
         .await
-        .map_err(|e| anyhow!("cannot read the connection catalogue: {e}"))?;
+        .map_err(|e| catalogue_error(e, "cannot read the connection catalogue"))?;
     match entry {
         Some(e) => Ok(serde_json::from_value(e.value).unwrap_or_default()),
         None => Ok(Catalogue::default()),
     }
+}
+
+/// A catalogue read or write that failed, with what account-management (or
+/// the model behind it) said kept as the source, so a route can answer a
+/// tenant the caller does not reach as not found and a refusal as forbidden
+/// ([`catalogue_refusal`]) rather than as a server error. Reads as before:
+/// `what: <the error>`.
+pub(super) fn catalogue_error(
+    e: toolkit_canonical_errors::CanonicalError,
+    what: &'static str,
+) -> anyhow::Error {
+    anyhow::Error::new(e).context(what)
+}
+
+/// The refusal behind a catalogue error, when it is one: not found (a tenant
+/// the caller does not reach) or permission denied.
+pub(super) fn catalogue_refusal(
+    e: &anyhow::Error,
+) -> Option<&toolkit_canonical_errors::CanonicalError> {
+    use toolkit_canonical_errors::CanonicalError;
+    e.chain()
+        .filter_map(|c| c.downcast_ref::<CanonicalError>())
+        .find(|c| {
+            matches!(
+                c,
+                CanonicalError::NotFound { .. } | CanonicalError::PermissionDenied { .. }
+            )
+        })
 }
 
 /// The first connection `wanted` accepts, from `from` or one of its

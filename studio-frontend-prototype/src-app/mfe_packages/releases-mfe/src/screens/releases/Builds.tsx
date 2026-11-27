@@ -17,6 +17,7 @@ import {
   kitAbsent,
   openScreen,
   runWhenVisible,
+  useOrganizationId,
   useScreenAvailability,
   type KitAbsence,
 } from '@constructor-studio/mfe-shared';
@@ -82,6 +83,8 @@ export function ProjectBuilds({
 }) {
   const { t, projectId, bridge } = useReleases();
   const api = useApi();
+  // Where the query reads the artifacts; until the shell says, `/nodes` answers.
+  const orgId = useOrganizationId();
   const [config, setConfig] = useState<ProjectBuildConfig | null>(null);
   // The CI runs of the project's repositories, and what the repositories say
   // about reading them: Build in CI lists them, and the build workflow's are
@@ -104,7 +107,7 @@ export function ProjectBuilds({
     // "could not read the runs" are different answers. They also name the
     // repository a run belongs to, which Build in CI needs.
     api
-      .nodes({ projectId, type: 'repo', limit: 200 })
+      .nodes({ projectId, type: 'repo', limit: 200, orgId })
       .fetch({ staleTime: 0 })
       .then((page) => {
         if (!live) return;
@@ -113,7 +116,7 @@ export function ProjectBuilds({
       })
       .catch(() => live && setCiFailures([]));
     api
-      .nodes({ projectId, type: 'workflow_run', limit: LIMIT, sort: 'updated' })
+      .nodes({ projectId, type: 'workflow_run', limit: LIMIT, sort: 'updated', orgId })
       .fetch({ staleTime: 0 })
       .then((page) => {
         if (!live) return;
@@ -130,7 +133,7 @@ export function ProjectBuilds({
     return () => {
       live = false;
     };
-  }, [api, projectId, round]);
+  }, [api, projectId, round, orgId]);
 
   const builds = useMemo(
     () => productBuildsOf(ideBuilds, runs ?? [], config?.build, repoPaths),

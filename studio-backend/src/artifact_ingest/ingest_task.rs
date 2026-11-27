@@ -27,15 +27,19 @@
 //! ## A sync too big for one attempt goes on in the next
 //!
 //! An attempt holds the queue's lease for fifteen minutes. A repository with
-//! thousands of pull requests needs longer than that to link each one to the
-//! files it changed (one provider call apiece), so an attempt works to
-//! [`ATTEMPT_BUDGET`], stores what it has, and -- when pull requests are
-//! left -- answers `Retry` with "linked X of Y". The next attempt syncs again
-//! and asks only about the pull requests not linked yet: which are linked is
-//! kept on their nodes in the graph (`pr_links`), not on the run, so a retry
-//! by hand and the next scheduled sync go on from there too. An attempt that
-//! is the last one ends `Done` with the count: what it stored is good, and
-//! the next sync links the rest.
+//! ten thousand merge requests and twenty thousand commits needs longer than
+//! that just to list them, then to link each pull request to the files it
+//! changed (one provider call apiece) -- and on GitLab to read each merge
+//! request's and issue's comments, one call apiece too -- so an attempt works
+//! to [`ATTEMPT_BUDGET`], stores what it has, and -- when some is left --
+//! answers `Retry` with "listed … so far", "linked X of Y" or "read the
+//! comments of X of Y". The next attempt asks only about what is not done
+//! yet: where the listings got to is kept on the repository node
+//! (`listing_cursor`), which items are done on their own nodes (`pr_links`,
+//! `item_comments`) -- in the graph, not on the run, so a retry by hand and
+//! the next scheduled sync go on from there too. An attempt that is the last
+//! one ends `Done` with the count: what it stored is good, and the next sync
+//! does the rest.
 
 use crate::plural::plural;
 use std::sync::Arc;
@@ -110,6 +114,48 @@ const ATTEMPT_BUDGET: Duration = Duration::from_secs(12 * 60);
 /// stops with pull requests still to link hands on to the next, and a large
 /// repository's first sync can take a few of those besides a real failure.
 const ATTEMPTS: i16 = 8;
+
+/// What a partial sync got through of the work it does in portions, in
+/// words: the listings read so far, the pull requests linked to their files
+/// and the items whose comments were read, each only when some of it is left.
+fn left_over(counts: &super::service::SyncSummary, noun: &dyn Fn(usize) -> String) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if counts.listings_left > 0 {
+        parts.push(format!(
+            "listed {}, {}, {} and {} so far, {} not read to the end yet",
+            plural(counts.issues, "issue", "issues"),
+            noun(counts.pull_requests),
+            plural(counts.comments, "comment", "comments"),
+            plural(counts.commits, "commit", "commits"),
+            plural(counts.listings_left, "listing", "listings"),
+        ));
+    } else if counts.rest_left {
+        parts.push(format!(
+            "listed all {}, {}, {} and {}; the files, the links and the comments are left",
+            plural(counts.issues, "issue", "issues"),
+            noun(counts.pull_requests),
+            plural(counts.comments, "comment", "comments"),
+            plural(counts.commits, "commit", "commits"),
+        ));
+    }
+    if counts.links_left > 0 {
+        parts.push(format!(
+            "linked {} of {} to their files, {} left",
+            counts.links_done,
+            noun(counts.links_total),
+            counts.links_left
+        ));
+    }
+    if counts.comment_items_left > 0 {
+        parts.push(format!(
+            "read the comments of {} of {}, {} left",
+            counts.comment_items_done,
+            plural(counts.comment_items_total, "item", "items"),
+            counts.comment_items_left
+        ));
+    }
+    parts.join("; ")
+}
 
 /// What the REST route puts on the queue.
 ///
@@ -338,10 +384,8 @@ impl TaskHandler for IngestTask {
         {
             progress.set_with(
                 format!(
-                    "linked {} of {} to their files; {} left for the next attempt",
-                    counts.links_done,
-                    noun(counts.links_total),
-                    counts.links_left
+                    "{}; the rest is for the next attempt",
+                    left_over(counts, &noun)
                 ),
                 serde_json::to_value(counts).unwrap_or_default(),
             );
@@ -365,16 +409,15 @@ impl TaskHandler for IngestTask {
             .await;
         }
         match outcome {
-            // Out of time with pull requests still to link: what it stored
-            // stands, and the next attempt goes on from there -- unless this
-            // was the last one, which ends below with the count.
+            // Out of time with pull requests still to link or comments still
+            // to read: what it stored stands, and the next attempt goes on
+            // from there -- unless this was the last one, which ends below
+            // with the count.
             Ok(counts) if counts.is_partial() && ctx.attempt < self.max_attempts() => {
                 TaskOutcome::Retry(format!(
-                    "{}: partial -- linked {} of {} to their files before the attempt's time ran out; the next attempt continues with the {} left",
+                    "{}: partial -- {} before the attempt's time ran out; the next attempt continues from there",
                     payload.repo_full_path,
-                    counts.links_done,
-                    noun(counts.links_total),
-                    counts.links_left
+                    left_over(&counts, &noun)
                 ))
             }
             Ok(counts) => {
@@ -403,10 +446,17 @@ impl TaskHandler for IngestTask {
                         noun(counts.links_total)
                     ));
                 }
+                if counts.comment_items_total > 0 {
+                    summary.push_str(&format!(
+                        ", comments of {} of {} read",
+                        counts.comment_items_done,
+                        plural(counts.comment_items_total, "item", "items")
+                    ));
+                }
                 if counts.is_partial() {
                     summary.push_str(&format!(
-                        " (partial: the next sync links the {} left)",
-                        counts.links_left
+                        " (partial: {}; the next sync goes on from there)",
+                        left_over(&counts, &noun)
                     ));
                 }
                 match serde_json::to_value(counts) {

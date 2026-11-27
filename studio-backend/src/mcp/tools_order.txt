@@ -57,7 +57,7 @@ studio-spec-quality spec_check
 studio-spec-quality spec_check_result
 studio-organizations project_sources
 studio-organizations project_sources_set
-studio-organizations project_source_detach
+studio-artifact-ingest project_source_detach
 studio-connector project_connections
 studio-connector connection_repositories
 studio-product product_description

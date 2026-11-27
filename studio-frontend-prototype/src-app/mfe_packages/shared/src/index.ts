@@ -94,6 +94,7 @@ export { anchorKitThemeOnShadowHost } from './mfe/anchorKitThemeOnShadowHost';
 export {
   OrganizationProvider,
   useOrganization,
+  useOrganizationId,
   type OrganizationRef,
   type OrganizationState,
 } from './host/organization';
@@ -333,9 +334,19 @@ export {
   type DomainQueryRow,
   type DomainRowSet,
   type DomainSelection,
+  type DomainFieldOf,
+  type DomainIncludeOf,
+  type DomainOrderByOf,
+  type DomainQueryOf,
+  type DomainResultOf,
+  type DomainRowOf,
+  type DomainSelectionOf,
+  type DomainValueOf,
   type SortDirection,
   type SortState as QuerySortState,
 } from './domain/domainQuery';
+// The generated model the typed query reads (scripts/gen-domain-client.mjs).
+export type { DomainEntities, DomainEntity, DomainRelations } from './domain/model.gen';
 export {
   DomainModelApiService,
   DOMAIN_MODEL_API_BASE_URL,
@@ -383,6 +394,17 @@ export {
 // The project's builds (ADR-0045): one model for Releases, Product and Infrastructure.
 export * from './builds/builds';
 export type { ArtifactNode as BuildArtifactNode } from './builds/artifactNode';
+// A project's repositories, CI runs and IDE builds, through the query where the model answers.
+export {
+  ARTIFACT_MODEL_TYPE,
+  artifactNodeOf,
+  artifactsInModel,
+  fetchProjectArtifacts,
+  projectArtifactsQuery,
+  type ArtifactKind,
+  type ProjectArtifactPage,
+  type ProjectArtifactsOptions,
+} from './builds/projectArtifacts';
 // People and teams (people-mfe, team-mfe).
 export * from './people';
 // What a component is, in one word and one glyph: the catalogue's type.

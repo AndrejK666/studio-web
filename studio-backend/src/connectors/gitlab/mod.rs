@@ -42,10 +42,13 @@ use model::{
 };
 use reviews::ReviewState;
 
-/// Pages of a repository tree read before the listing is called truncated:
-/// 100 entries each, so 20,000 entries -- the artifact ingest's own file cap
-/// is 10,000.
-const MAX_TREE_PAGES: u32 = 200;
+/// Pages one walk of a listing the sync reads whole -- a repository's tree, a
+/// merge request's changed files, an item's notes -- follows before it calls
+/// the listing endless. A runaway bound, not a limit: 100 entries a page is
+/// ten million entries, which no repository has, and a walk that gets there
+/// is logged as an error. Lower bounds here used to cut a large repository
+/// short without a word (a tree at 20,000 entries, an item at 1,000 notes).
+const ALL_PAGES: u32 = 100_000;
 
 /// Pages of jobs (100 each, newest first) searched for artifact archives.
 const JOB_PAGES: u32 = 5;
@@ -122,15 +125,13 @@ impl GitLabDriver {
                 encode(git_ref)
             ),
         );
-        let (items, truncated) = api
-            .walk::<TreeItem>(&url, Family::Scope, MAX_TREE_PAGES)
-            .await?;
+        let (items, truncated) = api.walk::<TreeItem>(&url, Family::Scope, ALL_PAGES).await?;
         if truncated {
-            tracing::warn!(
+            tracing::error!(
                 repo = repo_full_path,
                 git_ref,
-                "gitlab: repository tree cut at {} entries -- the listing is partial",
-                MAX_TREE_PAGES * 100
+                pages = ALL_PAGES,
+                "gitlab: repository tree did not end -- the listing is partial"
             );
         }
         Ok((items, truncated))
@@ -818,7 +819,13 @@ impl ConnectorDriver for GitLabDriver {
         let api = self.api(auth);
         let url = api.project(
             repo_full_path,
-            &listing_query("/issues?scope=all&state=all", since, page, per_page),
+            &listing_query(
+                "/issues?scope=all&state=all",
+                Order::Created,
+                since,
+                page,
+                per_page,
+            ),
         );
         Ok(api
             .page::<Issue>(&url, Family::Item)
@@ -844,7 +851,15 @@ impl ConnectorDriver for GitLabDriver {
         // answers in the listing's order whichever read finishes first.
         let api = self.api(auth);
         let mrs = self
-            .merge_requests(&api, repo_full_path, "all", since, page, per_page)
+            .merge_requests(
+                &api,
+                repo_full_path,
+                "all",
+                Order::Created,
+                since,
+                page,
+                per_page,
+            )
             .await?;
         let api = &api;
         let out = stream::iter(mrs.into_iter().map(|mr| async move {
@@ -890,7 +905,15 @@ impl ConnectorDriver for GitLabDriver {
         let mut out: Vec<PullRequestThreads> = Vec::new();
         for page in 1..=want.div_ceil(100) as u32 {
             let mrs = self
-                .merge_requests(api, repo_full_path, "opened", None, page, 100)
+                .merge_requests(
+                    api,
+                    repo_full_path,
+                    "opened",
+                    Order::Updated,
+                    None,
+                    page,
+                    100,
+                )
                 .await?;
             let full = mrs.len() == 100;
             let room = want.saturating_sub(out.len());
@@ -932,7 +955,16 @@ impl ConnectorDriver for GitLabDriver {
             Some(first) => {
                 let mut out = first.items;
                 if let Some(next) = first.next {
-                    out.extend(api.walk::<Diff>(&next, Family::Item, 10).await?.0);
+                    let (rest, endless) = api.walk::<Diff>(&next, Family::Item, ALL_PAGES).await?;
+                    if endless {
+                        tracing::error!(
+                            repo = repo_full_path,
+                            mr = number,
+                            pages = ALL_PAGES,
+                            "gitlab: merge request diffs did not end -- its file list is partial"
+                        );
+                    }
+                    out.extend(rest);
                 }
                 out
             }
@@ -948,74 +980,66 @@ impl ConnectorDriver for GitLabDriver {
         Ok(diffs.into_iter().map(|d| d.new_path).collect())
     }
 
-    async fn list_comments(
+    fn comments_per_item(&self) -> bool {
+        // No project-wide notes listing: notes hang off each merge request
+        // and issue.
+        true
+    }
+
+    async fn list_item_comments(
         &self,
         auth: &ConnectionAuth,
         repo_full_path: &str,
         since: Option<&str>,
-        page: u32,
-        per_page: u32,
+        is_pull_request: bool,
+        number: i64,
     ) -> anyhow::Result<Vec<RemoteComment>> {
-        // GitLab has no project-wide notes listing: notes hang off each merge
-        // request and issue. Comment page N is therefore the notes of item
-        // page N -- the merge requests and issues updated since `since` (a new
-        // note updates its item) -- `COMMENT_ITEMS` of each. Pages whose items
-        // hold no comment at all are stepped over, because an empty answer
-        // ends the caller's walk; the caller may then read a page twice, which
-        // an upsert by note id makes harmless.
+        // Every note of the item, oldest first, without the system notes
+        // GitLab writes itself ("approved this merge request"). A refusal
+        // (the feature off in this edition, the item gone) reads as none.
         let api = self.api(auth);
         let since = since.map(str::trim).filter(|s| !s.is_empty());
-        let per_items = per_page.clamp(1, COMMENT_ITEMS);
-        for item_page in (page.max(1)..).take(MAX_SILENT_PAGES as usize) {
-            let mrs = self
-                .merge_requests(&api, repo_full_path, "all", since, item_page, per_items)
-                .await?;
-            let issues_url = api.project(
-                repo_full_path,
-                &listing_query("/issues?scope=all&state=all", since, item_page, per_items),
+        let kind = if is_pull_request {
+            "merge_requests"
+        } else {
+            "issues"
+        };
+        let url = api.project(
+            repo_full_path,
+            &format!("/{kind}/{number}/notes?sort=asc&order_by=created_at&per_page=100"),
+        );
+        let (notes, endless) = api.walk::<Note>(&url, Family::Item, ALL_PAGES).await?;
+        if endless {
+            tracing::error!(
+                repo = repo_full_path,
+                kind,
+                number,
+                pages = ALL_PAGES,
+                "gitlab: notes did not end -- this item's comments are partial"
             );
-            let issues: Vec<Issue> = api
-                .page::<Issue>(&issues_url, Family::Item)
-                .await?
-                .map(|p| p.items)
-                .unwrap_or_default();
-            if mrs.is_empty() && issues.is_empty() {
-                return Ok(Vec::new());
-            }
-            let mut out = Vec::new();
-            let targets = mrs
-                .iter()
-                .map(|m| (true, m.iid, m.web_url.clone()))
-                .chain(issues.iter().map(|i| (false, i.iid, i.web_url.clone())));
-            for (is_mr, iid, web_url) in targets {
-                let kind = if is_mr { "merge_requests" } else { "issues" };
-                let url = api.project(
-                    repo_full_path,
-                    &format!("/{kind}/{iid}/notes?sort=asc&order_by=created_at&per_page=100"),
-                );
-                let (notes, _) = api.walk::<Note>(&url, Family::Item, 10).await?;
-                out.extend(
-                    notes
-                        .into_iter()
-                        .filter(|n| !n.system)
-                        .filter(|n| since.is_none_or(|s| not_before(n.updated_at.as_deref(), s)))
-                        .map(|n| RemoteComment {
-                            id: n.id.to_string(),
-                            target_number: iid,
-                            target_is_pull_request: Some(is_mr),
-                            author: n.author_login(),
-                            url: web_url.as_ref().map(|u| format!("{u}#note_{}", n.id)),
-                            body: n.body,
-                            created_at: n.created_at,
-                            updated_at: n.updated_at,
-                        }),
-                );
-            }
-            if !out.is_empty() {
-                return Ok(out);
-            }
         }
-        Ok(Vec::new())
+        // Each note's link is its item's page and an anchor. The notes API
+        // does not say the item's page, so it is built the way GitLab builds it.
+        let web_base = format!(
+            "{}/{}/-/{kind}/{number}",
+            api.root(),
+            client::project_path(repo_full_path)
+        );
+        Ok(notes
+            .into_iter()
+            .filter(|n| !n.system)
+            .filter(|n| since.is_none_or(|s| not_before(n.updated_at.as_deref(), s)))
+            .map(|n| RemoteComment {
+                id: n.id.to_string(),
+                target_number: number,
+                target_is_pull_request: Some(is_pull_request),
+                author: n.author_login(),
+                url: Some(format!("{web_base}#note_{}", n.id)),
+                body: n.body,
+                created_at: n.created_at,
+                updated_at: n.updated_at,
+            })
+            .collect())
     }
 
     async fn list_commits(
@@ -1073,14 +1097,6 @@ impl ConnectorDriver for GitLabDriver {
             .collect())
     }
 }
-
-/// Items whose notes make one page of comments: each costs a call of its
-/// own, so a page stays small.
-const COMMENT_ITEMS: u32 = 20;
-
-/// Item pages without a single comment stepped over before a comment page
-/// answers empty.
-const MAX_SILENT_PAGES: u32 = 5;
 
 impl GitLabDriver {
     /// Where release asset link `link` points, from the project's releases
@@ -1142,13 +1158,15 @@ impl GitLabDriver {
         ))
     }
 
-    /// One page of a project's merge requests, most recently updated first.
+    /// One page of a project's merge requests, newest first by `order`.
     /// `state` is GitLab's: `all`, `opened`, `merged`, `closed`.
+    #[allow(clippy::too_many_arguments)]
     async fn merge_requests(
         &self,
         api: &Api<'_>,
         repo_full_path: &str,
         state: &str,
+        order: Order,
         since: Option<&str>,
         page: u32,
         per_page: u32,
@@ -1157,6 +1175,7 @@ impl GitLabDriver {
             repo_full_path,
             &listing_query(
                 &format!("/merge_requests?state={state}"),
+                order,
                 since,
                 page,
                 per_page,
@@ -1170,11 +1189,39 @@ impl GitLabDriver {
     }
 }
 
-/// A dated listing's query: newest activity first, one page, and
+/// What a dated listing is ordered by, newest first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Order {
+    /// When each item was created. The sync's listings: a creation time
+    /// never moves, so a page boundary stays put while the walk runs and a
+    /// walk stopped at page N goes on from page N (`listing_cursor`).
+    Created,
+    /// When each item last changed: the most active first, for a listing cut
+    /// at a few pages (the open merge requests' review state).
+    Updated,
+}
+
+impl Order {
+    fn field(self) -> &'static str {
+        match self {
+            Order::Created => "created_at",
+            Order::Updated => "updated_at",
+        }
+    }
+}
+
+/// A dated listing's query: newest first by `order`, one page, and
 /// `updated_after` for an incremental sync.
-fn listing_query(path: &str, since: Option<&str>, page: u32, per_page: u32) -> String {
+fn listing_query(
+    path: &str,
+    order: Order,
+    since: Option<&str>,
+    page: u32,
+    per_page: u32,
+) -> String {
     let mut q = format!(
-        "{path}&order_by=updated_at&sort=desc&per_page={}&page={}",
+        "{path}&order_by={}&sort=desc&per_page={}&page={}",
+        order.field(),
         per_page.clamp(1, 100),
         page.max(1)
     );

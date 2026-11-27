@@ -9,6 +9,22 @@
     "organization",
     "project"
   ],
+  "screens": [
+    {
+      "kind": "tab",
+      "level": "project",
+      "label": "Gear match",
+      "route": "/gear-match",
+      "mfe": "product-mfe"
+    },
+    {
+      "kind": "tab",
+      "level": "organization",
+      "label": "Gears matcher",
+      "route": "/gears-matcher",
+      "mfe": "product-mfe"
+    }
+  ],
   "requires": [
     "project-product"
   ],

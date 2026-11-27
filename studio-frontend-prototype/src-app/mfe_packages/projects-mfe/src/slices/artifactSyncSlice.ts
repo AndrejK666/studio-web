@@ -16,6 +16,8 @@ export interface RepoImport {
   summary: string | null;
   /** Why it stopped. */
   reason: Refusal | null;
+  /** The run's last error as the gear said it, kept while it waits for another attempt too. */
+  lastError: string | null;
   /** Nodes the sync has flushed so far. */
   stored: number;
   /** Cancel was asked for and the gear has not recorded it yet. */
@@ -59,6 +61,7 @@ function row(repo: string, status: RepoImportStatus, reason: Refusal | null): Re
     phase: null,
     summary: null,
     reason,
+    lastError: null,
     stored: 0,
     cancelling: false,
     refusal: null,
@@ -77,6 +80,7 @@ function repoOf(state: ArtifactSyncState, projectId: string, repo: string) {
 
 function applyUpdate(target: RepoImport, update: RunUpdate): void {
   if (update.phase !== undefined) target.phase = update.phase;
+  if (update.error !== undefined) target.lastError = update.error;
   if (update.result) target.stored = runCount(update.result, 'stored');
   target.status = repoStatusOf(update.state, target.phase);
   if (target.status === 'succeeded') target.summary = update.summary ?? target.summary;
@@ -253,6 +257,7 @@ const {
         phase: null,
         summary: null,
         reason: null,
+        lastError: null,
         stored: 0,
         cancelling: false,
         refusal: null,

@@ -521,6 +521,32 @@ pub fn register_routes(
     router.layer(Extension(CloneStatusApi { store, hub }))
 }
 
+// What `project_sources` shows of each source (the tool's `clone`): read
+// as the person, through this route (ADR-0079 §4).
+inventory::submit! {
+    crate::project_sources::SourceReading {
+        key: "clone",
+        gear: "studio-artifact-ingest",
+        read: read_for_tool,
+    }
+}
+
+fn read_for_tool(
+    api: crate::mcp::sdk::Api,
+    project: String,
+) -> crate::project_sources::ReadingFuture {
+    Box::pin(async move {
+        api.get_answer(
+            "/studio-artifact-ingest/v1/sources/clone-status",
+            &[("project_id".to_owned(), project)],
+        )
+        .await
+        .ok()
+        .filter(|answer| answer.ok())
+        .map(|answer| answer.body)
+    })
+}
+
 #[cfg(test)]
 #[path = "clone_status_tests.rs"]
 mod tests;

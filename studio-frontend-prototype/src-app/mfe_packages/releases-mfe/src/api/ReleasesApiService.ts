@@ -10,6 +10,7 @@
  */
 
 import { BaseApiService, RestEndpointProtocol, RestProtocol } from '@gears-frontx/react';
+import { fetchProjectArtifacts, type ArtifactKind } from '@constructor-studio/mfe-shared';
 import type {
   ArtifactNodePage,
   BuildLog,
@@ -56,10 +57,11 @@ export interface ProjectPathParams extends ProjectParams {
 }
 
 export interface NodesParams extends ProjectParams {
-  /** `build`, `workflow_run`, `repo`. */
-  type: string;
+  type: ArtifactKind;
   limit: number;
   sort?: 'updated';
+  /** The organization the query reads in; null reads `/nodes`. */
+  orgId: string | null;
 }
 
 export class ReleasesApiService extends BaseApiService {
@@ -226,15 +228,16 @@ export class ReleasesApiService extends BaseApiService {
 
   /* ── studio-artifact-ingest ── */
 
-  /** The artifact sync's nodes of one type in the project: builds, CI runs, repositories. */
-  readonly nodes = this.protocol(RestEndpointProtocol).queryWith<ArtifactNodePage, NodesParams>(
-    ({ projectId, type, limit, sort }) => {
-      const qs = new URLSearchParams({ type, scope: projectId });
-      if (sort) qs.set('sort', sort);
-      qs.set('limit', String(limit));
-      return `/studio-artifact-ingest/v1/nodes?${qs}`;
-    }
-  );
+  /**
+   * The artifact sync's nodes of one kind in the project: builds, CI runs,
+   * repositories. Through `POST /studio-domain-model/v1/query` where the
+   * organization's artifacts are answered from the model, else
+   * `GET /studio-artifact-ingest/v1/nodes` (`fetchProjectArtifacts`).
+   */
+  readonly nodes = ({ projectId, type, limit, sort, orgId }: NodesParams) => ({
+    fetch: (_options?: { staleTime?: number }): Promise<ArtifactNodePage> =>
+      fetchProjectArtifacts(orgId, projectId, type, { limit, sort }) as Promise<ArtifactNodePage>,
+  });
 
   /** Build in CI (ADR-0045 phase 3): start the workflow named, on a ref or the repository's branch. */
   dispatchBuild(projectId: string) {

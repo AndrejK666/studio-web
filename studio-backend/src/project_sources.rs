@@ -669,6 +669,7 @@ pub async fn git_sources(
 
 #[path = "project_sources_mcp.rs"]
 mod mcp;
+pub use mcp::{ReadingFuture, SourceReading};
 // This gear's MCP tools, collected by studio-mcp (ADR-0079).
 // The pipeline starts here: a project's sources (then its connections, the
 // product's description, where it runs, its builds and their runs).

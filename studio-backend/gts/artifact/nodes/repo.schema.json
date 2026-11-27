@@ -12,7 +12,16 @@
     "default_branch": { "type": ["string", "null"] },
     "commit_sha": { "type": ["string", "null"], "description": "Head commit at ingest time (snapshot key)." },
     "cloned_at": { "type": ["string", "null"], "format": "date-time" },
-    "volume_ref": { "type": ["string", "null"], "description": "Content-addressed clone volume ref." }
+    "volume_ref": { "type": ["string", "null"], "description": "Content-addressed clone volume ref." },
+    "listing": {
+      "type": ["object", "null"],
+      "description": "Where a sync's listings are while it goes on across attempts: when the walk began (started_at), its since, and per listing (issues, pull_requests, comments, commits) the last page read (next, asked again as overlap), the items counted before it (counted) and whether it is done; listed once every listing is read and links or comments are still left. null when no walk is under way. Added to v1 as an optional field.",
+      "properties": {
+        "started_at": { "type": "string", "format": "date-time" },
+        "since": { "type": ["string", "null"] },
+        "listed": { "type": "boolean" }
+      }
+    }
   },
   "required": ["connector_id", "provider", "full_path"],
   "additionalProperties": false
