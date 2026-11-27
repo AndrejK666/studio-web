@@ -1,0 +1,3978 @@
+[
+  {
+    "declared_by": "studio-artifact-ingest",
+    "id": "build-artifact",
+    "name": "Build Artifact",
+    "description": "A file a CI run uploaded.",
+    "extends": "record",
+    "bucket": "content",
+    "fields": [
+      [
+        "workspace_id",
+        "string",
+        "The workspace the artifact belongs to"
+      ],
+      [
+        "project_id",
+        "string",
+        "The project the artifact belongs to"
+      ],
+      [
+        "repo",
+        "string",
+        "The repository the artifact came from"
+      ],
+      [
+        "path",
+        "string",
+        "Its path in the repository"
+      ],
+      [
+        "title",
+        "string",
+        "What it is called"
+      ],
+      [
+        "updated_at",
+        "timestamp",
+        "When the source last changed it"
+      ],
+      [
+        "url",
+        "url",
+        "Where it is in the source system"
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-artifact-ingest",
+    "searchable": true
+  },
+  {
+    "declared_by": "studio-artifact-ingest",
+    "id": "ci-job",
+    "name": "CI Job",
+    "description": "One job of a CI run's latest attempt.",
+    "extends": "record",
+    "bucket": "content",
+    "fields": [
+      [
+        "workspace_id",
+        "string",
+        "The workspace the artifact belongs to"
+      ],
+      [
+        "project_id",
+        "string",
+        "The project the artifact belongs to"
+      ],
+      [
+        "repo",
+        "string",
+        "The repository the artifact came from"
+      ],
+      [
+        "path",
+        "string",
+        "Its path in the repository"
+      ],
+      [
+        "title",
+        "string",
+        "What it is called"
+      ],
+      [
+        "updated_at",
+        "timestamp",
+        "When the source last changed it"
+      ],
+      [
+        "url",
+        "url",
+        "Where it is in the source system"
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-artifact-ingest",
+    "searchable": true
+  },
+  {
+    "declared_by": "studio-artifact-ingest",
+    "id": "ci-run",
+    "name": "CI Run",
+    "description": "One run of one CI workflow on one commit.",
+    "extends": "record",
+    "bucket": "content",
+    "fields": [
+      [
+        "workspace_id",
+        "string",
+        "The workspace the artifact belongs to"
+      ],
+      [
+        "project_id",
+        "string",
+        "The project the artifact belongs to"
+      ],
+      [
+        "repo",
+        "string",
+        "The repository the artifact came from"
+      ],
+      [
+        "path",
+        "string",
+        "Its path in the repository"
+      ],
+      [
+        "title",
+        "string",
+        "What it is called"
+      ],
+      [
+        "updated_at",
+        "timestamp",
+        "When the source last changed it"
+      ],
+      [
+        "url",
+        "url",
+        "Where it is in the source system"
+      ],
+      [
+        "author",
+        "string",
+        "Who wrote it, by their login in the source"
+      ],
+      [
+        "number",
+        "integer",
+        "Its number in the source system"
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-artifact-ingest",
+    "searchable": true
+  },
+  {
+    "declared_by": "studio-artifact-ingest",
+    "id": "comment",
+    "name": "",
+    "description": "",
+    "extends": null,
+    "bucket": null,
+    "fields": [
+      [
+        "workspace_id",
+        "string",
+        "The workspace the artifact belongs to"
+      ],
+      [
+        "project_id",
+        "string",
+        "The project the artifact belongs to"
+      ],
+      [
+        "repo",
+        "string",
+        "The repository the artifact came from"
+      ],
+      [
+        "path",
+        "string",
+        "Its path in the repository"
+      ],
+      [
+        "title",
+        "string",
+        "What it is called"
+      ],
+      [
+        "updated_at",
+        "timestamp",
+        "When the source last changed it"
+      ],
+      [
+        "url",
+        "url",
+        "Where it is in the source system"
+      ],
+      [
+        "author",
+        "string",
+        "Who wrote it, by their login in the source"
+      ]
+    ],
+    "relations": [],
+    "held_by": null,
+    "searchable": true
+  },
+  {
+    "declared_by": "studio-artifact-ingest",
+    "id": "commit",
+    "name": "",
+    "description": "",
+    "extends": null,
+    "bucket": null,
+    "fields": [
+      [
+        "workspace_id",
+        "string",
+        "The workspace the artifact belongs to"
+      ],
+      [
+        "project_id",
+        "string",
+        "The project the artifact belongs to"
+      ],
+      [
+        "repo",
+        "string",
+        "The repository the artifact came from"
+      ],
+      [
+        "path",
+        "string",
+        "Its path in the repository"
+      ],
+      [
+        "title",
+        "string",
+        "What it is called"
+      ],
+      [
+        "updated_at",
+        "timestamp",
+        "When the source last changed it"
+      ],
+      [
+        "url",
+        "url",
+        "Where it is in the source system"
+      ],
+      [
+        "author",
+        "string",
+        "Who wrote it, by their login in the source"
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-artifact-ingest",
+    "searchable": true
+  },
+  {
+    "declared_by": "studio-artifact-ingest",
+    "id": "finding",
+    "name": "",
+    "description": "",
+    "extends": null,
+    "bucket": null,
+    "fields": [
+      [
+        "workspace_id",
+        "string",
+        "The workspace the artifact belongs to"
+      ],
+      [
+        "project_id",
+        "string",
+        "The project the artifact belongs to"
+      ],
+      [
+        "repo",
+        "string",
+        "The repository the artifact came from"
+      ],
+      [
+        "path",
+        "string",
+        "Its path in the repository"
+      ],
+      [
+        "title",
+        "string",
+        "What it is called"
+      ],
+      [
+        "updated_at",
+        "timestamp",
+        "When the source last changed it"
+      ],
+      [
+        "url",
+        "url",
+        "Where it is in the source system"
+      ]
+    ],
+    "relations": [],
+    "held_by": null,
+    "searchable": true
+  },
+  {
+    "declared_by": "studio-artifact-ingest",
+    "id": "mapping-decision",
+    "name": "Mapping Decision",
+    "description": "A member's decision on which gear covers a capability a document declares.",
+    "extends": "record",
+    "bucket": "content",
+    "fields": [
+      [
+        "workspace_id",
+        "string",
+        "The workspace the artifact belongs to"
+      ],
+      [
+        "project_id",
+        "string",
+        "The project the artifact belongs to"
+      ],
+      [
+        "repo",
+        "string",
+        "The repository the artifact came from"
+      ],
+      [
+        "path",
+        "string",
+        "Its path in the repository"
+      ],
+      [
+        "title",
+        "string",
+        "What it is called"
+      ],
+      [
+        "updated_at",
+        "timestamp",
+        "When the source last changed it"
+      ],
+      [
+        "url",
+        "url",
+        "Where it is in the source system"
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-artifact-ingest",
+    "searchable": true
+  },
+  {
+    "declared_by": "studio-artifact-ingest",
+    "id": "product-build",
+    "name": "Product Build",
+    "description": "A build of the project's product the IDE ran and reported.",
+    "extends": "record",
+    "bucket": "content",
+    "fields": [
+      [
+        "workspace_id",
+        "string",
+        "The workspace the artifact belongs to"
+      ],
+      [
+        "project_id",
+        "string",
+        "The project the artifact belongs to"
+      ],
+      [
+        "repo",
+        "string",
+        "The repository the artifact came from"
+      ],
+      [
+        "path",
+        "string",
+        "Its path in the repository"
+      ],
+      [
+        "title",
+        "string",
+        "What it is called"
+      ],
+      [
+        "updated_at",
+        "timestamp",
+        "When the source last changed it"
+      ],
+      [
+        "url",
+        "url",
+        "Where it is in the source system"
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-artifact-ingest",
+    "searchable": true
+  },
+  {
+    "declared_by": "studio-artifact-ingest",
+    "id": "pull-request",
+    "name": "",
+    "description": "",
+    "extends": null,
+    "bucket": null,
+    "fields": [
+      [
+        "workspace_id",
+        "string",
+        "The workspace the artifact belongs to"
+      ],
+      [
+        "project_id",
+        "string",
+        "The project the artifact belongs to"
+      ],
+      [
+        "repo",
+        "string",
+        "The repository the artifact came from"
+      ],
+      [
+        "path",
+        "string",
+        "Its path in the repository"
+      ],
+      [
+        "title",
+        "string",
+        "What it is called"
+      ],
+      [
+        "updated_at",
+        "timestamp",
+        "When the source last changed it"
+      ],
+      [
+        "url",
+        "url",
+        "Where it is in the source system"
+      ],
+      [
+        "author",
+        "string",
+        "Who wrote it, by their login in the source"
+      ],
+      [
+        "number",
+        "integer",
+        "Its number in the source system"
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-artifact-ingest",
+    "searchable": true
+  },
+  {
+    "declared_by": "studio-artifact-ingest",
+    "id": "release",
+    "name": "Release",
+    "description": "A release of a repository: a tag and the files attached to it.",
+    "extends": "record",
+    "bucket": "content",
+    "fields": [
+      [
+        "workspace_id",
+        "string",
+        "The workspace the artifact belongs to"
+      ],
+      [
+        "project_id",
+        "string",
+        "The project the artifact belongs to"
+      ],
+      [
+        "repo",
+        "string",
+        "The repository the artifact came from"
+      ],
+      [
+        "path",
+        "string",
+        "Its path in the repository"
+      ],
+      [
+        "title",
+        "string",
+        "What it is called"
+      ],
+      [
+        "updated_at",
+        "timestamp",
+        "When the source last changed it"
+      ],
+      [
+        "url",
+        "url",
+        "Where it is in the source system"
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-artifact-ingest",
+    "searchable": true
+  },
+  {
+    "declared_by": "studio-artifact-ingest",
+    "id": "repository",
+    "name": "",
+    "description": "",
+    "extends": null,
+    "bucket": null,
+    "fields": [
+      [
+        "workspace_id",
+        "string",
+        "The workspace the artifact belongs to"
+      ],
+      [
+        "project_id",
+        "string",
+        "The project the artifact belongs to"
+      ],
+      [
+        "repo",
+        "string",
+        "The repository the artifact came from"
+      ],
+      [
+        "path",
+        "string",
+        "Its path in the repository"
+      ],
+      [
+        "title",
+        "string",
+        "What it is called"
+      ],
+      [
+        "updated_at",
+        "timestamp",
+        "When the source last changed it"
+      ],
+      [
+        "url",
+        "url",
+        "Where it is in the source system"
+      ],
+      [
+        "full_path",
+        "string",
+        "The repository's path in its source, owner/name"
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-artifact-ingest",
+    "searchable": true
+  },
+  {
+    "declared_by": "studio-artifact-ingest",
+    "id": "repository-file",
+    "name": "",
+    "description": "",
+    "extends": null,
+    "bucket": null,
+    "fields": [
+      [
+        "workspace_id",
+        "string",
+        "The workspace the artifact belongs to"
+      ],
+      [
+        "project_id",
+        "string",
+        "The project the artifact belongs to"
+      ],
+      [
+        "repo",
+        "string",
+        "The repository the artifact came from"
+      ],
+      [
+        "path",
+        "string",
+        "Its path in the repository"
+      ],
+      [
+        "title",
+        "string",
+        "What it is called"
+      ],
+      [
+        "updated_at",
+        "timestamp",
+        "When the source last changed it"
+      ],
+      [
+        "url",
+        "url",
+        "Where it is in the source system"
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-artifact-ingest",
+    "searchable": true
+  },
+  {
+    "declared_by": "studio-artifact-ingest",
+    "id": "source-account",
+    "name": "Source Account",
+    "description": "An account in a source system: who wrote or reviewed something there.",
+    "extends": "record",
+    "bucket": "content",
+    "fields": [
+      [
+        "workspace_id",
+        "string",
+        "The workspace the artifact belongs to"
+      ],
+      [
+        "project_id",
+        "string",
+        "The project the artifact belongs to"
+      ],
+      [
+        "repo",
+        "string",
+        "The repository the artifact came from"
+      ],
+      [
+        "path",
+        "string",
+        "Its path in the repository"
+      ],
+      [
+        "title",
+        "string",
+        "What it is called"
+      ],
+      [
+        "updated_at",
+        "timestamp",
+        "When the source last changed it"
+      ],
+      [
+        "url",
+        "url",
+        "Where it is in the source system"
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-artifact-ingest",
+    "searchable": true
+  },
+  {
+    "declared_by": "studio-artifact-ingest",
+    "id": "system-object",
+    "name": "",
+    "description": "",
+    "extends": null,
+    "bucket": null,
+    "fields": [],
+    "relations": [
+      [
+        "in_repository",
+        "repository",
+        "references"
+      ],
+      [
+        "contains_file",
+        "repository-file",
+        "composes"
+      ],
+      [
+        "authored_by_account",
+        "source-account",
+        "references"
+      ],
+      [
+        "modifies_file",
+        "repository-file",
+        "references"
+      ],
+      [
+        "duplicates",
+        "system-object",
+        "references"
+      ],
+      [
+        "traces_to",
+        "system-object",
+        "references"
+      ],
+      [
+        "finding_on",
+        "system-object",
+        "references"
+      ],
+      [
+        "comment_on",
+        "system-object",
+        "references"
+      ],
+      [
+        "content_of",
+        "repository-file",
+        "references"
+      ],
+      [
+        "decision_on",
+        "system-object",
+        "references"
+      ],
+      [
+        "reviewed_by_account",
+        "source-account",
+        "references"
+      ],
+      [
+        "assigned_to_account",
+        "source-account",
+        "references"
+      ],
+      [
+        "closes_item",
+        "work-item",
+        "references"
+      ],
+      [
+        "mentions",
+        "system-object",
+        "references"
+      ],
+      [
+        "part_of_item",
+        "work-item",
+        "references"
+      ]
+    ],
+    "held_by": null,
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-artifact-ingest",
+    "id": "text-content",
+    "name": "",
+    "description": "",
+    "extends": null,
+    "bucket": null,
+    "fields": [
+      [
+        "workspace_id",
+        "string",
+        "The workspace the artifact belongs to"
+      ],
+      [
+        "project_id",
+        "string",
+        "The project the artifact belongs to"
+      ],
+      [
+        "repo",
+        "string",
+        "The repository the artifact came from"
+      ],
+      [
+        "path",
+        "string",
+        "Its path in the repository"
+      ],
+      [
+        "title",
+        "string",
+        "What it is called"
+      ],
+      [
+        "updated_at",
+        "timestamp",
+        "When the source last changed it"
+      ],
+      [
+        "url",
+        "url",
+        "Where it is in the source system"
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-artifact-ingest",
+    "searchable": true
+  },
+  {
+    "declared_by": "studio-artifact-ingest",
+    "id": "work-item",
+    "name": "",
+    "description": "",
+    "extends": null,
+    "bucket": null,
+    "fields": [
+      [
+        "workspace_id",
+        "string",
+        "The workspace the artifact belongs to"
+      ],
+      [
+        "project_id",
+        "string",
+        "The project the artifact belongs to"
+      ],
+      [
+        "repo",
+        "string",
+        "The repository the artifact came from"
+      ],
+      [
+        "path",
+        "string",
+        "Its path in the repository"
+      ],
+      [
+        "title",
+        "string",
+        "What it is called"
+      ],
+      [
+        "updated_at",
+        "timestamp",
+        "When the source last changed it"
+      ],
+      [
+        "url",
+        "url",
+        "Where it is in the source system"
+      ],
+      [
+        "author",
+        "string",
+        "Who wrote it, by their login in the source"
+      ],
+      [
+        "number",
+        "integer",
+        "Its number in the source system"
+      ]
+    ],
+    "relations": [],
+    "held_by": null,
+    "searchable": true
+  },
+  {
+    "declared_by": "studio-backend",
+    "id": "tenant-document",
+    "name": "Tenant Document",
+    "description": "The settings and version of a gear's document on one tenant.",
+    "extends": "record",
+    "bucket": "operations",
+    "fields": [
+      [
+        "type_id",
+        "string",
+        ""
+      ],
+      [
+        "doc_tenant_id",
+        "string",
+        ""
+      ],
+      [
+        "version",
+        "integer",
+        ""
+      ],
+      [
+        "deleted",
+        "boolean?",
+        ""
+      ],
+      [
+        "legacy",
+        "boolean?",
+        ""
+      ],
+      [
+        "settings",
+        "JSON?",
+        ""
+      ],
+      [
+        "updated_at",
+        "timestamp",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-backend",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-backend",
+    "id": "tenant-document",
+    "name": "Tenant Document",
+    "description": "The settings and version of a gear's document on one tenant.",
+    "extends": "record",
+    "bucket": "operations",
+    "fields": [
+      [
+        "type_id",
+        "string",
+        ""
+      ],
+      [
+        "doc_tenant_id",
+        "string",
+        ""
+      ],
+      [
+        "version",
+        "integer",
+        ""
+      ],
+      [
+        "deleted",
+        "boolean?",
+        ""
+      ],
+      [
+        "legacy",
+        "boolean?",
+        ""
+      ],
+      [
+        "settings",
+        "JSON?",
+        ""
+      ],
+      [
+        "updated_at",
+        "timestamp",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-backend",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-backend",
+    "id": "tenant-document",
+    "name": "Tenant Document",
+    "description": "The settings and version of a gear's document on one tenant.",
+    "extends": "record",
+    "bucket": "operations",
+    "fields": [
+      [
+        "type_id",
+        "string",
+        ""
+      ],
+      [
+        "doc_tenant_id",
+        "string",
+        ""
+      ],
+      [
+        "version",
+        "integer",
+        ""
+      ],
+      [
+        "deleted",
+        "boolean?",
+        ""
+      ],
+      [
+        "legacy",
+        "boolean?",
+        ""
+      ],
+      [
+        "settings",
+        "JSON?",
+        ""
+      ],
+      [
+        "updated_at",
+        "timestamp",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-backend",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-backend",
+    "id": "tenant-document",
+    "name": "Tenant Document",
+    "description": "The settings and version of a gear's document on one tenant.",
+    "extends": "record",
+    "bucket": "operations",
+    "fields": [
+      [
+        "type_id",
+        "string",
+        ""
+      ],
+      [
+        "doc_tenant_id",
+        "string",
+        ""
+      ],
+      [
+        "version",
+        "integer",
+        ""
+      ],
+      [
+        "deleted",
+        "boolean?",
+        ""
+      ],
+      [
+        "legacy",
+        "boolean?",
+        ""
+      ],
+      [
+        "settings",
+        "JSON?",
+        ""
+      ],
+      [
+        "updated_at",
+        "timestamp",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-backend",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-backend",
+    "id": "tenant-document",
+    "name": "Tenant Document",
+    "description": "The settings and version of a gear's document on one tenant.",
+    "extends": "record",
+    "bucket": "operations",
+    "fields": [
+      [
+        "type_id",
+        "string",
+        ""
+      ],
+      [
+        "doc_tenant_id",
+        "string",
+        ""
+      ],
+      [
+        "version",
+        "integer",
+        ""
+      ],
+      [
+        "deleted",
+        "boolean?",
+        ""
+      ],
+      [
+        "legacy",
+        "boolean?",
+        ""
+      ],
+      [
+        "settings",
+        "JSON?",
+        ""
+      ],
+      [
+        "updated_at",
+        "timestamp",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-backend",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-backend",
+    "id": "tenant-document",
+    "name": "Tenant Document",
+    "description": "The settings and version of a gear's document on one tenant.",
+    "extends": "record",
+    "bucket": "operations",
+    "fields": [
+      [
+        "type_id",
+        "string",
+        ""
+      ],
+      [
+        "doc_tenant_id",
+        "string",
+        ""
+      ],
+      [
+        "version",
+        "integer",
+        ""
+      ],
+      [
+        "deleted",
+        "boolean?",
+        ""
+      ],
+      [
+        "legacy",
+        "boolean?",
+        ""
+      ],
+      [
+        "settings",
+        "JSON?",
+        ""
+      ],
+      [
+        "updated_at",
+        "timestamp",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-backend",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-components-catalog",
+    "id": "approval-request",
+    "name": "",
+    "description": "",
+    "extends": null,
+    "bucket": null,
+    "fields": [
+      [
+        "kind",
+        "string",
+        ""
+      ],
+      [
+        "organization_id",
+        "string",
+        ""
+      ],
+      [
+        "organization_name",
+        "string?",
+        ""
+      ],
+      [
+        "name",
+        "string",
+        ""
+      ],
+      [
+        "version",
+        "string?",
+        ""
+      ],
+      [
+        "reason",
+        "string?",
+        ""
+      ],
+      [
+        "requested_by",
+        "string",
+        ""
+      ],
+      [
+        "requested_by_name",
+        "string?",
+        ""
+      ],
+      [
+        "at",
+        "timestamp",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": null,
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-components-catalog",
+    "id": "catalog-kit",
+    "name": "Catalog Kit",
+    "description": "A set of files a project installs into its repositories.",
+    "extends": "record",
+    "bucket": "catalog",
+    "fields": [
+      [
+        "catalog_id",
+        "string",
+        ""
+      ],
+      [
+        "catalog_tenant",
+        "string",
+        ""
+      ],
+      [
+        "day",
+        "integer?",
+        ""
+      ],
+      [
+        "component",
+        "string?",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-components-catalog",
+    "searchable": true
+  },
+  {
+    "declared_by": "studio-components-catalog",
+    "id": "catalog-service",
+    "name": "Catalog Service",
+    "description": "A service image and its service.gdl declaration, distinct from a gear crate.",
+    "extends": "record",
+    "bucket": "catalog",
+    "fields": [
+      [
+        "catalog_id",
+        "string",
+        ""
+      ],
+      [
+        "catalog_tenant",
+        "string",
+        ""
+      ],
+      [
+        "day",
+        "integer?",
+        ""
+      ],
+      [
+        "component",
+        "string?",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-components-catalog",
+    "searchable": true
+  },
+  {
+    "declared_by": "studio-components-catalog",
+    "id": "catalog-source",
+    "name": "Catalog Source",
+    "description": "A repository an organization's catalogue reads, its ref and mode.",
+    "extends": "record",
+    "bucket": "catalog",
+    "fields": [
+      [
+        "catalog_id",
+        "string",
+        ""
+      ],
+      [
+        "catalog_tenant",
+        "string",
+        ""
+      ],
+      [
+        "day",
+        "integer?",
+        ""
+      ],
+      [
+        "component",
+        "string?",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-components-catalog",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-components-catalog",
+    "id": "component-field-schema",
+    "name": "Component Field Schema",
+    "description": "Which fields a page shows for one component type, and where each is read.",
+    "extends": "record",
+    "bucket": "catalog",
+    "fields": [
+      [
+        "catalog_id",
+        "string",
+        ""
+      ],
+      [
+        "catalog_tenant",
+        "string",
+        ""
+      ],
+      [
+        "day",
+        "integer?",
+        ""
+      ],
+      [
+        "component",
+        "string?",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-components-catalog",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-components-catalog",
+    "id": "component-snapshot",
+    "name": "Component Snapshot",
+    "description": "What one component's fields said on one day.",
+    "extends": "record",
+    "bucket": "catalog",
+    "fields": [
+      [
+        "catalog_id",
+        "string",
+        ""
+      ],
+      [
+        "catalog_tenant",
+        "string",
+        ""
+      ],
+      [
+        "day",
+        "integer?",
+        ""
+      ],
+      [
+        "component",
+        "string?",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-components-catalog",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-components-catalog",
+    "id": "frontx-package",
+    "name": "FrontX Package",
+    "description": "A FrontX micro-frontend package.",
+    "extends": "record",
+    "bucket": "catalog",
+    "fields": [
+      [
+        "catalog_id",
+        "string",
+        ""
+      ],
+      [
+        "catalog_tenant",
+        "string",
+        ""
+      ],
+      [
+        "day",
+        "integer?",
+        ""
+      ],
+      [
+        "component",
+        "string?",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-components-catalog",
+    "searchable": true
+  },
+  {
+    "declared_by": "studio-components-catalog",
+    "id": "gear",
+    "name": "Gear",
+    "description": "A gear: a published crate or one found in a repository.",
+    "extends": "record",
+    "bucket": "catalog",
+    "fields": [
+      [
+        "catalog_id",
+        "string",
+        ""
+      ],
+      [
+        "catalog_tenant",
+        "string",
+        ""
+      ],
+      [
+        "day",
+        "integer?",
+        ""
+      ],
+      [
+        "component",
+        "string?",
+        ""
+      ]
+    ],
+    "relations": [
+      [
+        "has_version",
+        "gear-version",
+        "has"
+      ]
+    ],
+    "held_by": "studio-components-catalog",
+    "searchable": true
+  },
+  {
+    "declared_by": "studio-components-catalog",
+    "id": "gear-profile",
+    "name": "Gear Profile",
+    "description": "What an organization says about a gear, kept apart from its source.",
+    "extends": "record",
+    "bucket": "catalog",
+    "fields": [
+      [
+        "catalog_id",
+        "string",
+        ""
+      ],
+      [
+        "catalog_tenant",
+        "string",
+        ""
+      ],
+      [
+        "day",
+        "integer?",
+        ""
+      ],
+      [
+        "component",
+        "string?",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-components-catalog",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-components-catalog",
+    "id": "gear-version",
+    "name": "Gear Version",
+    "description": "One published version of a gear.",
+    "extends": "record",
+    "bucket": "catalog",
+    "fields": [
+      [
+        "catalog_id",
+        "string",
+        ""
+      ],
+      [
+        "catalog_tenant",
+        "string",
+        ""
+      ],
+      [
+        "day",
+        "integer?",
+        ""
+      ],
+      [
+        "component",
+        "string?",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-components-catalog",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-components-catalog",
+    "id": "project-component",
+    "name": "Project Component",
+    "description": "A service or application in a project's repositories that is not a gear, found from its build manifest when the repository was synced.",
+    "extends": "record",
+    "bucket": "content",
+    "fields": [
+      [
+        "project_id",
+        "string",
+        ""
+      ],
+      [
+        "repo",
+        "string",
+        ""
+      ],
+      [
+        "dir",
+        "string",
+        ""
+      ],
+      [
+        "name",
+        "string",
+        ""
+      ],
+      [
+        "kind",
+        "string",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-components-catalog",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-components-catalog",
+    "id": "project-component-view",
+    "name": "Project Components View",
+    "description": "What a derived view of a project was last computed from (each source and its commit), when, and whether a computation is running or failed.",
+    "extends": "record",
+    "bucket": "content",
+    "fields": [
+      [
+        "project_id",
+        "string",
+        ""
+      ],
+      [
+        "status",
+        "string",
+        ""
+      ],
+      [
+        "computed_at",
+        "timestamp?",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-components-catalog",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-components-catalog",
+    "id": "project-gear-repository",
+    "name": "Project Gear Repository",
+    "description": "Where a project's gears live and new ones are written.",
+    "extends": "record",
+    "bucket": "catalog",
+    "fields": [
+      [
+        "catalog_id",
+        "string",
+        ""
+      ],
+      [
+        "catalog_tenant",
+        "string",
+        ""
+      ],
+      [
+        "day",
+        "integer?",
+        ""
+      ],
+      [
+        "component",
+        "string?",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": null,
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-components-catalog",
+    "id": "project-product",
+    "name": "Project Product",
+    "description": "The product a project composes out of gears, and what the engine said of it.",
+    "extends": "record",
+    "bucket": "catalog",
+    "fields": [
+      [
+        "catalog_id",
+        "string",
+        ""
+      ],
+      [
+        "catalog_tenant",
+        "string",
+        ""
+      ],
+      [
+        "day",
+        "integer?",
+        ""
+      ],
+      [
+        "component",
+        "string?",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": null,
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-components-catalog",
+    "id": "registry-decision",
+    "name": "Registry Decision",
+    "description": "A decision a person made about a registry entry, and why.",
+    "extends": "record",
+    "bucket": "catalog",
+    "fields": [
+      [
+        "catalog_id",
+        "string",
+        ""
+      ],
+      [
+        "catalog_tenant",
+        "string",
+        ""
+      ],
+      [
+        "day",
+        "integer?",
+        ""
+      ],
+      [
+        "component",
+        "string?",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-components-catalog",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-components-catalog",
+    "id": "registry-entry",
+    "name": "Registry Entry",
+    "description": "A component of an organization's registry and where it is in its lifecycle.",
+    "extends": "record",
+    "bucket": "catalog",
+    "fields": [
+      [
+        "catalog_id",
+        "string",
+        ""
+      ],
+      [
+        "catalog_tenant",
+        "string",
+        ""
+      ],
+      [
+        "day",
+        "integer?",
+        ""
+      ],
+      [
+        "component",
+        "string?",
+        ""
+      ]
+    ],
+    "relations": [
+      [
+        "found_in",
+        "registry-occurrence",
+        "found in"
+      ],
+      [
+        "decided",
+        "registry-decision",
+        "decided"
+      ]
+    ],
+    "held_by": "studio-components-catalog",
+    "searchable": true
+  },
+  {
+    "declared_by": "studio-components-catalog",
+    "id": "registry-occurrence",
+    "name": "Registry Occurrence",
+    "description": "Where a registry entry was found: project, repository, ref, path.",
+    "extends": "record",
+    "bucket": "catalog",
+    "fields": [
+      [
+        "catalog_id",
+        "string",
+        ""
+      ],
+      [
+        "catalog_tenant",
+        "string",
+        ""
+      ],
+      [
+        "day",
+        "integer?",
+        ""
+      ],
+      [
+        "component",
+        "string?",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-components-catalog",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-components-catalog",
+    "id": "registry-read",
+    "name": "Registry Read",
+    "description": "One repository the registry walk read, and what it found unchanged.",
+    "extends": "record",
+    "bucket": "catalog",
+    "fields": [
+      [
+        "catalog_id",
+        "string",
+        ""
+      ],
+      [
+        "catalog_tenant",
+        "string",
+        ""
+      ],
+      [
+        "day",
+        "integer?",
+        ""
+      ],
+      [
+        "component",
+        "string?",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-components-catalog",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-components-catalog",
+    "id": "registry-settings",
+    "name": "Registry Settings",
+    "description": "An organization's registry settings: the projects its walk skips.",
+    "extends": "record",
+    "bucket": "catalog",
+    "fields": [
+      [
+        "catalog_id",
+        "string",
+        ""
+      ],
+      [
+        "catalog_tenant",
+        "string",
+        ""
+      ],
+      [
+        "day",
+        "integer?",
+        ""
+      ],
+      [
+        "component",
+        "string?",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-components-catalog",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-components-catalog",
+    "id": "roadmap-item",
+    "name": "Roadmap Item",
+    "description": "A gear on a roadmap board, planned whether or not it exists yet.",
+    "extends": "record",
+    "bucket": "catalog",
+    "fields": [
+      [
+        "catalog_id",
+        "string",
+        ""
+      ],
+      [
+        "catalog_tenant",
+        "string",
+        ""
+      ],
+      [
+        "day",
+        "integer?",
+        ""
+      ],
+      [
+        "component",
+        "string?",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-components-catalog",
+    "searchable": true
+  },
+  {
+    "declared_by": "studio-connector",
+    "id": "connector-connection",
+    "name": "Connector Connection",
+    "description": "A connection to a source system an organization or workspace set up; its token stays in credstore.",
+    "extends": "record",
+    "bucket": "operations",
+    "fields": [],
+    "relations": [],
+    "held_by": "studio-connector",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-documents",
+    "id": "application-part",
+    "name": "Application Part",
+    "description": "What a person records about one part of the application: owner, description, boundary.",
+    "extends": "record",
+    "bucket": "content",
+    "fields": [
+      [
+        "tenant_id",
+        "string",
+        ""
+      ],
+      [
+        "project_id",
+        "string",
+        ""
+      ],
+      [
+        "repo",
+        "string",
+        ""
+      ],
+      [
+        "kind",
+        "string",
+        ""
+      ],
+      [
+        "reference",
+        "string",
+        ""
+      ],
+      [
+        "owner",
+        "string?",
+        ""
+      ],
+      [
+        "owner_name",
+        "string?",
+        ""
+      ],
+      [
+        "description_path",
+        "string?",
+        ""
+      ],
+      [
+        "boundary",
+        "string?",
+        ""
+      ],
+      [
+        "related",
+        "JSON",
+        ""
+      ],
+      [
+        "updated_by",
+        "string",
+        ""
+      ],
+      [
+        "updated_at",
+        "timestamp",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-documents",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-documents",
+    "id": "approval",
+    "name": "",
+    "description": "",
+    "extends": null,
+    "bucket": null,
+    "fields": [
+      [
+        "workspace_id",
+        "string",
+        ""
+      ],
+      [
+        "project_id",
+        "string",
+        ""
+      ],
+      [
+        "request_id",
+        "string",
+        ""
+      ],
+      [
+        "subject_id",
+        "string",
+        ""
+      ],
+      [
+        "version",
+        "string",
+        ""
+      ],
+      [
+        "approver",
+        "string",
+        ""
+      ],
+      [
+        "approver_name",
+        "string?",
+        ""
+      ],
+      [
+        "verdict",
+        "string",
+        ""
+      ],
+      [
+        "security",
+        "boolean",
+        ""
+      ],
+      [
+        "note",
+        "string?",
+        ""
+      ],
+      [
+        "checks",
+        "JSON",
+        ""
+      ],
+      [
+        "decided_at",
+        "timestamp",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-documents",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-documents",
+    "id": "capability",
+    "name": "Capability",
+    "description": "Something a product can need, in the vocabulary its specs are mapped to gears with.",
+    "extends": "record",
+    "bucket": "kit-management",
+    "fields": [
+      [
+        "key",
+        "string",
+        "The capability's key"
+      ],
+      [
+        "name",
+        "string",
+        "What people call it"
+      ],
+      [
+        "terms",
+        "string[]",
+        "Words a spec uses for it"
+      ],
+      [
+        "contracts",
+        "string[]",
+        "Contracts a gear has to fill to provide it"
+      ],
+      [
+        "nonfunctional",
+        "boolean",
+        "Answered by the deployment profile, never by gears"
+      ],
+      [
+        "hidden",
+        "boolean",
+        "Hides the entry of the same key from the level above"
+      ]
+    ],
+    "relations": [],
+    "held_by": null,
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-documents",
+    "id": "decision",
+    "name": "Decision",
+    "description": "A decision a project recorded: what was decided, about which requirements, by whom.",
+    "extends": "record",
+    "bucket": "collaboration",
+    "fields": [
+      [
+        "workspace_id",
+        "string",
+        ""
+      ],
+      [
+        "project_id",
+        "string",
+        ""
+      ],
+      [
+        "statement",
+        "string",
+        ""
+      ],
+      [
+        "requirements",
+        "JSON",
+        ""
+      ],
+      [
+        "source_url",
+        "url?",
+        ""
+      ],
+      [
+        "source_kind",
+        "string",
+        ""
+      ],
+      [
+        "path",
+        "string?",
+        ""
+      ],
+      [
+        "decided_by",
+        "string",
+        ""
+      ],
+      [
+        "decided_by_name",
+        "string?",
+        ""
+      ],
+      [
+        "decided_at",
+        "timestamp",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": null,
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-documents",
+    "id": "delivery-limit",
+    "name": "Delivery Limit",
+    "description": "A limit on a delivery scope: a dependency, a risk, an open question.",
+    "extends": "record",
+    "bucket": "content",
+    "fields": [
+      [
+        "tenant_id",
+        "string",
+        ""
+      ],
+      [
+        "project_id",
+        "string",
+        ""
+      ],
+      [
+        "scope_id",
+        "string",
+        ""
+      ],
+      [
+        "kind",
+        "string",
+        ""
+      ],
+      [
+        "text",
+        "string",
+        ""
+      ],
+      [
+        "blocking",
+        "boolean",
+        ""
+      ],
+      [
+        "depends_on",
+        "string?",
+        ""
+      ],
+      [
+        "resolution",
+        "string?",
+        ""
+      ],
+      [
+        "resolved_by",
+        "string?",
+        ""
+      ],
+      [
+        "resolved_at",
+        "timestamp?",
+        ""
+      ],
+      [
+        "created_by",
+        "string",
+        ""
+      ],
+      [
+        "created_at",
+        "timestamp",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-documents",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-documents",
+    "id": "delivery-scope",
+    "name": "Delivery Scope",
+    "description": "A slice of a project to deliver: outcome, requirements, gears, acceptance.",
+    "extends": "record",
+    "bucket": "content",
+    "fields": [
+      [
+        "tenant_id",
+        "string",
+        ""
+      ],
+      [
+        "project_id",
+        "string",
+        ""
+      ],
+      [
+        "title",
+        "string",
+        ""
+      ],
+      [
+        "outcome",
+        "string",
+        ""
+      ],
+      [
+        "owner",
+        "string?",
+        ""
+      ],
+      [
+        "owner_name",
+        "string?",
+        ""
+      ],
+      [
+        "target_date",
+        "string?",
+        ""
+      ],
+      [
+        "requirements",
+        "JSON",
+        ""
+      ],
+      [
+        "gears",
+        "JSON",
+        ""
+      ],
+      [
+        "acceptance",
+        "string",
+        ""
+      ],
+      [
+        "state",
+        "string",
+        ""
+      ],
+      [
+        "created_by",
+        "string",
+        ""
+      ],
+      [
+        "created_at",
+        "timestamp",
+        ""
+      ],
+      [
+        "updated_by",
+        "string",
+        ""
+      ],
+      [
+        "updated_at",
+        "timestamp",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-documents",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-documents",
+    "id": "delivery-scope-version",
+    "name": "Delivery Scope Version",
+    "description": "The version of a delivery scope a change replaced.",
+    "extends": "record",
+    "bucket": "content",
+    "fields": [
+      [
+        "tenant_id",
+        "string",
+        ""
+      ],
+      [
+        "scope_id",
+        "string",
+        ""
+      ],
+      [
+        "snapshot",
+        "JSON",
+        ""
+      ],
+      [
+        "changed_by",
+        "string",
+        ""
+      ],
+      [
+        "changed_at",
+        "timestamp",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-documents",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-documents",
+    "id": "document-analysis",
+    "name": "Document Analysis",
+    "description": "One detector's verdict on one document or repository file.",
+    "extends": "record",
+    "bucket": "content",
+    "fields": [
+      [
+        "tenant_id",
+        "string",
+        ""
+      ],
+      [
+        "document_id",
+        "string?",
+        ""
+      ],
+      [
+        "binding_id",
+        "string?",
+        ""
+      ],
+      [
+        "detector",
+        "string",
+        ""
+      ],
+      [
+        "state",
+        "pending | passed | failed",
+        ""
+      ],
+      [
+        "task_id",
+        "string?",
+        ""
+      ],
+      [
+        "summary",
+        "string",
+        ""
+      ],
+      [
+        "created_at",
+        "timestamp",
+        ""
+      ],
+      [
+        "updated_at",
+        "timestamp",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-documents",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-documents",
+    "id": "document-binding",
+    "name": "Document Binding",
+    "description": "A repository file and the document type Studio decided it is.",
+    "extends": "record",
+    "bucket": "content",
+    "fields": [
+      [
+        "tenant_id",
+        "string",
+        ""
+      ],
+      [
+        "project_id",
+        "string?",
+        ""
+      ],
+      [
+        "node_id",
+        "string",
+        ""
+      ],
+      [
+        "path",
+        "string",
+        ""
+      ],
+      [
+        "type_key",
+        "string?",
+        ""
+      ],
+      [
+        "state",
+        "detected | confirmed | manual | unknown | not_a_document",
+        ""
+      ],
+      [
+        "confidence",
+        "number?",
+        ""
+      ],
+      [
+        "source",
+        "string?",
+        ""
+      ],
+      [
+        "candidates",
+        "JSON",
+        ""
+      ],
+      [
+        "conforms",
+        "boolean?",
+        ""
+      ],
+      [
+        "validation",
+        "JSON",
+        ""
+      ],
+      [
+        "capabilities",
+        "JSON",
+        ""
+      ],
+      [
+        "requirements",
+        "JSON",
+        ""
+      ],
+      [
+        "inferred_capabilities",
+        "JSON",
+        ""
+      ],
+      [
+        "content_sha",
+        "string",
+        ""
+      ],
+      [
+        "created_at",
+        "timestamp",
+        ""
+      ],
+      [
+        "updated_at",
+        "timestamp",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-documents",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-documents",
+    "id": "document-type",
+    "name": "Document Type",
+    "description": "A document type an organization or a workspace defines, overrides or hides.",
+    "extends": "record",
+    "bucket": "content",
+    "fields": [
+      [
+        "tenant_id",
+        "string",
+        ""
+      ],
+      [
+        "key",
+        "string",
+        ""
+      ],
+      [
+        "name",
+        "string",
+        ""
+      ],
+      [
+        "description",
+        "string",
+        ""
+      ],
+      [
+        "gts_type_id",
+        "string",
+        ""
+      ],
+      [
+        "template",
+        "string",
+        ""
+      ],
+      [
+        "hidden",
+        "boolean",
+        ""
+      ],
+      [
+        "created_at",
+        "timestamp",
+        ""
+      ],
+      [
+        "updated_at",
+        "timestamp",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-documents",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-documents",
+    "id": "fact-review",
+    "name": "Fact Review",
+    "description": "A member's accept or reject on one fact the model read.",
+    "extends": "record",
+    "bucket": "content",
+    "fields": [
+      [
+        "tenant_id",
+        "string",
+        ""
+      ],
+      [
+        "project_id",
+        "string",
+        ""
+      ],
+      [
+        "fact_key",
+        "string",
+        ""
+      ],
+      [
+        "state",
+        "accepted | rejected",
+        ""
+      ],
+      [
+        "path",
+        "string",
+        ""
+      ],
+      [
+        "revision",
+        "string",
+        ""
+      ],
+      [
+        "note",
+        "string?",
+        ""
+      ],
+      [
+        "value",
+        "string?",
+        ""
+      ],
+      [
+        "decided_by",
+        "string",
+        ""
+      ],
+      [
+        "decided_at",
+        "timestamp",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-documents",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-documents",
+    "id": "finding-decision",
+    "name": "Finding Decision",
+    "description": "A member's confirm or dismiss on a project domain model finding.",
+    "extends": "record",
+    "bucket": "content",
+    "fields": [
+      [
+        "tenant_id",
+        "string",
+        ""
+      ],
+      [
+        "project_id",
+        "string",
+        ""
+      ],
+      [
+        "fingerprint",
+        "string",
+        ""
+      ],
+      [
+        "decision",
+        "confirmed | dismissed",
+        ""
+      ],
+      [
+        "decided_by",
+        "string",
+        ""
+      ],
+      [
+        "decided_at",
+        "timestamp",
+        ""
+      ],
+      [
+        "note",
+        "string?",
+        ""
+      ],
+      [
+        "snapshot",
+        "JSON?",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-documents",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-documents",
+    "id": "glossary-decision",
+    "name": "Glossary Decision",
+    "description": "A member's decision on one entry of a project's glossary.",
+    "extends": "record",
+    "bucket": "content",
+    "fields": [
+      [
+        "tenant_id",
+        "string",
+        ""
+      ],
+      [
+        "project_id",
+        "string",
+        ""
+      ],
+      [
+        "term_key",
+        "string",
+        ""
+      ],
+      [
+        "name",
+        "string?",
+        ""
+      ],
+      [
+        "alias_of",
+        "string?",
+        ""
+      ],
+      [
+        "distinct_from",
+        "JSON",
+        ""
+      ],
+      [
+        "decided_by",
+        "string",
+        ""
+      ],
+      [
+        "decided_at",
+        "timestamp",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-documents",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-documents",
+    "id": "lifecycle-stage",
+    "name": "Lifecycle Stage",
+    "description": "",
+    "extends": "record",
+    "bucket": "kit-management",
+    "fields": [
+      [
+        "key",
+        "string",
+        "The stage's key in the process catalogue"
+      ],
+      [
+        "required",
+        "boolean",
+        "A project is incomplete without it"
+      ],
+      [
+        "requires",
+        "string[]",
+        "Document-type keys the stage requires"
+      ],
+      [
+        "gates",
+        "string[]",
+        "Detectors every required document must pass"
+      ],
+      [
+        "checks",
+        "string[]",
+        "Checks beyond documents: code, tests, review"
+      ],
+      [
+        "hidden",
+        "boolean",
+        "Hides the entry of the same key from the level above"
+      ]
+    ],
+    "relations": [],
+    "held_by": null,
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-documents",
+    "id": "record-chunk",
+    "name": "Record Chunk",
+    "description": "A slice of a long field of another gear record.",
+    "extends": "record",
+    "bucket": "content",
+    "fields": [
+      [
+        "owner",
+        "string",
+        ""
+      ],
+      [
+        "field",
+        "string",
+        ""
+      ],
+      [
+        "ordinal",
+        "integer",
+        ""
+      ],
+      [
+        "text",
+        "string",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-documents",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-documents",
+    "id": "review-request",
+    "name": "",
+    "description": "",
+    "extends": null,
+    "bucket": null,
+    "fields": [
+      [
+        "workspace_id",
+        "string",
+        ""
+      ],
+      [
+        "project_id",
+        "string",
+        ""
+      ],
+      [
+        "subject_kind",
+        "string",
+        ""
+      ],
+      [
+        "subject_id",
+        "string",
+        ""
+      ],
+      [
+        "type_key",
+        "string?",
+        ""
+      ],
+      [
+        "title",
+        "string",
+        ""
+      ],
+      [
+        "version",
+        "string",
+        ""
+      ],
+      [
+        "requested_by",
+        "string",
+        ""
+      ],
+      [
+        "requested_by_name",
+        "string?",
+        ""
+      ],
+      [
+        "reviewers",
+        "JSON",
+        ""
+      ],
+      [
+        "due_at",
+        "timestamp?",
+        ""
+      ],
+      [
+        "state",
+        "open | approved | superseded | withdrawn",
+        ""
+      ],
+      [
+        "created_at",
+        "timestamp",
+        ""
+      ],
+      [
+        "reviewed_text",
+        "string?",
+        ""
+      ],
+      [
+        "stakeholders",
+        "JSON",
+        ""
+      ],
+      [
+        "rules_snapshot",
+        "JSON?",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-documents",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-documents",
+    "id": "spec-extraction",
+    "name": "Spec Extraction",
+    "description": "What a model read out of one revision of one document.",
+    "extends": "record",
+    "bucket": "content",
+    "fields": [
+      [
+        "tenant_id",
+        "string",
+        ""
+      ],
+      [
+        "project_id",
+        "string",
+        ""
+      ],
+      [
+        "path",
+        "string",
+        ""
+      ],
+      [
+        "revision",
+        "string",
+        ""
+      ],
+      [
+        "extractor_version",
+        "string",
+        ""
+      ],
+      [
+        "facts",
+        "JSON",
+        ""
+      ],
+      [
+        "dropped",
+        "integer",
+        ""
+      ],
+      [
+        "error",
+        "string?",
+        ""
+      ],
+      [
+        "provider",
+        "string",
+        ""
+      ],
+      [
+        "model",
+        "string",
+        ""
+      ],
+      [
+        "created_at",
+        "timestamp",
+        ""
+      ],
+      [
+        "source_commit",
+        "string?",
+        ""
+      ],
+      [
+        "source_ref",
+        "string?",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-documents",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-documents",
+    "id": "spec-judgement",
+    "name": "Spec Judgement",
+    "description": "What the judge said about one candidate contradiction at its sides' revisions.",
+    "extends": "record",
+    "bucket": "content",
+    "fields": [
+      [
+        "tenant_id",
+        "string",
+        ""
+      ],
+      [
+        "project_id",
+        "string",
+        ""
+      ],
+      [
+        "fingerprint",
+        "string",
+        ""
+      ],
+      [
+        "revisions",
+        "string",
+        ""
+      ],
+      [
+        "judge_version",
+        "string",
+        ""
+      ],
+      [
+        "conflict",
+        "boolean",
+        ""
+      ],
+      [
+        "finding",
+        "JSON?",
+        ""
+      ],
+      [
+        "created_at",
+        "timestamp",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-documents",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-documents",
+    "id": "spec-pipeline-step",
+    "name": "Spec Pipeline Step",
+    "description": "One step of a project's automatic spec pipeline -- specs, domain model, mapping, product -- and how it last went: done, unchanged, running, waiting or stopped, with the reason.",
+    "extends": "record",
+    "bucket": "content",
+    "fields": [
+      [
+        "project_id",
+        "string",
+        ""
+      ],
+      [
+        "step",
+        "string",
+        ""
+      ],
+      [
+        "state",
+        "string",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-documents",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-documents",
+    "id": "spec-pipeline-view",
+    "name": "Spec Pipeline",
+    "description": "What a derived view of a project was last computed from (each source and its commit), when, and whether a computation is running or failed.",
+    "extends": "record",
+    "bucket": "content",
+    "fields": [
+      [
+        "project_id",
+        "string",
+        ""
+      ],
+      [
+        "status",
+        "string",
+        ""
+      ],
+      [
+        "computed_at",
+        "timestamp?",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-documents",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-documents",
+    "id": "spec-upload",
+    "name": "Uploaded Source",
+    "description": "A CSV, JSON or plain-text file a member uploaded for a project's domain model to read.",
+    "extends": "record",
+    "bucket": "content",
+    "fields": [
+      [
+        "tenant_id",
+        "string",
+        ""
+      ],
+      [
+        "project_id",
+        "string",
+        ""
+      ],
+      [
+        "name",
+        "string",
+        ""
+      ],
+      [
+        "kind",
+        "csv | json | text",
+        ""
+      ],
+      [
+        "revision",
+        "string",
+        ""
+      ],
+      [
+        "size",
+        "integer",
+        ""
+      ],
+      [
+        "storage",
+        "string",
+        ""
+      ],
+      [
+        "file_id",
+        "string?",
+        ""
+      ],
+      [
+        "content",
+        "string?",
+        ""
+      ],
+      [
+        "created_by",
+        "string",
+        ""
+      ],
+      [
+        "created_at",
+        "timestamp",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-documents",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-documents",
+    "id": "studio-document",
+    "name": "Studio Document",
+    "description": "A document written in Studio: workspace-wide, or one project's.",
+    "extends": "record",
+    "bucket": "content",
+    "fields": [
+      [
+        "tenant_id",
+        "string",
+        ""
+      ],
+      [
+        "project_id",
+        "string?",
+        ""
+      ],
+      [
+        "type_key",
+        "string",
+        ""
+      ],
+      [
+        "title",
+        "string",
+        ""
+      ],
+      [
+        "content",
+        "TextContent",
+        ""
+      ],
+      [
+        "status",
+        "integer",
+        ""
+      ],
+      [
+        "conforms",
+        "boolean",
+        ""
+      ],
+      [
+        "validation",
+        "JSON",
+        ""
+      ],
+      [
+        "capabilities",
+        "JSON",
+        ""
+      ],
+      [
+        "requirements",
+        "JSON",
+        ""
+      ],
+      [
+        "inferred_capabilities",
+        "JSON",
+        ""
+      ],
+      [
+        "created_by",
+        "string",
+        ""
+      ],
+      [
+        "created_at",
+        "timestamp",
+        ""
+      ],
+      [
+        "updated_at",
+        "timestamp",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-documents",
+    "searchable": true
+  },
+  {
+    "declared_by": "studio-environments",
+    "id": "deployment",
+    "name": "Deployment",
+    "description": "One deploy of a project's build to an environment, and how it went.",
+    "extends": "record",
+    "bucket": "operations",
+    "fields": [],
+    "relations": [],
+    "held_by": "studio-environments",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-environments",
+    "id": "deployment-environment",
+    "name": "Deployment Environment",
+    "description": "A cluster namespace an organization deploys its products to.",
+    "extends": "record",
+    "bucket": "operations",
+    "fields": [],
+    "relations": [],
+    "held_by": "studio-environments",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-environments",
+    "id": "environment-binding",
+    "name": "Environment Binding",
+    "description": "Which environment a project's deployment profile deploys to, with its values.",
+    "extends": "record",
+    "bucket": "operations",
+    "fields": [],
+    "relations": [],
+    "held_by": "studio-environments",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-environments",
+    "id": "environment-config-secret",
+    "name": "Environment Config Secret",
+    "description": "A configuration secret a project sets for one environment; the value stays in credstore.",
+    "extends": "record",
+    "bucket": "operations",
+    "fields": [],
+    "relations": [],
+    "held_by": "studio-environments",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-kits",
+    "id": "kit-installation",
+    "name": "Kit Installation",
+    "description": "A kit a project wants installed, at which version and how.",
+    "extends": "record",
+    "bucket": "operations",
+    "fields": [],
+    "relations": [],
+    "held_by": "studio-kits",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-organizations",
+    "id": "project-status",
+    "name": "Project Status",
+    "description": "Where a project stands, as its Overview last computed it: the verdict, its signals and the path to a build.",
+    "extends": "record",
+    "bucket": "content",
+    "fields": [
+      [
+        "project_id",
+        "string",
+        ""
+      ],
+      [
+        "verdict",
+        "string",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-organizations",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-organizations",
+    "id": "project-status-view",
+    "name": "Project Status View",
+    "description": "What a derived view of a project was last computed from (each source and its commit), when, and whether a computation is running or failed.",
+    "extends": "record",
+    "bucket": "content",
+    "fields": [
+      [
+        "project_id",
+        "string",
+        ""
+      ],
+      [
+        "status",
+        "string",
+        ""
+      ],
+      [
+        "computed_at",
+        "timestamp?",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-organizations",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-organizations",
+    "id": "project-type",
+    "name": "Project Type",
+    "description": "A kind of project a workspace offers: what creating one provisions, which tabs it shows, which kits it starts with.",
+    "extends": "record",
+    "bucket": "operations",
+    "fields": [],
+    "relations": [],
+    "held_by": "studio-organizations",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-product",
+    "id": "catalog-kit",
+    "name": "Catalog Kit",
+    "description": "A set of files a project installs into its repositories.",
+    "extends": "record",
+    "bucket": "catalog",
+    "fields": [
+      [
+        "catalog_id",
+        "string",
+        ""
+      ],
+      [
+        "catalog_tenant",
+        "string",
+        ""
+      ],
+      [
+        "day",
+        "integer?",
+        ""
+      ],
+      [
+        "component",
+        "string?",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": null,
+    "searchable": true
+  },
+  {
+    "declared_by": "studio-product",
+    "id": "catalog-service",
+    "name": "Catalog Service",
+    "description": "A service image and its service.gdl declaration, distinct from a gear crate.",
+    "extends": "record",
+    "bucket": "catalog",
+    "fields": [
+      [
+        "catalog_id",
+        "string",
+        ""
+      ],
+      [
+        "catalog_tenant",
+        "string",
+        ""
+      ],
+      [
+        "day",
+        "integer?",
+        ""
+      ],
+      [
+        "component",
+        "string?",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": null,
+    "searchable": true
+  },
+  {
+    "declared_by": "studio-product",
+    "id": "catalog-source",
+    "name": "Catalog Source",
+    "description": "A repository an organization's catalogue reads, its ref and mode.",
+    "extends": "record",
+    "bucket": "catalog",
+    "fields": [
+      [
+        "catalog_id",
+        "string",
+        ""
+      ],
+      [
+        "catalog_tenant",
+        "string",
+        ""
+      ],
+      [
+        "day",
+        "integer?",
+        ""
+      ],
+      [
+        "component",
+        "string?",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": null,
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-product",
+    "id": "component-field-schema",
+    "name": "Component Field Schema",
+    "description": "Which fields a page shows for one component type, and where each is read.",
+    "extends": "record",
+    "bucket": "catalog",
+    "fields": [
+      [
+        "catalog_id",
+        "string",
+        ""
+      ],
+      [
+        "catalog_tenant",
+        "string",
+        ""
+      ],
+      [
+        "day",
+        "integer?",
+        ""
+      ],
+      [
+        "component",
+        "string?",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": null,
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-product",
+    "id": "component-snapshot",
+    "name": "Component Snapshot",
+    "description": "What one component's fields said on one day.",
+    "extends": "record",
+    "bucket": "catalog",
+    "fields": [
+      [
+        "catalog_id",
+        "string",
+        ""
+      ],
+      [
+        "catalog_tenant",
+        "string",
+        ""
+      ],
+      [
+        "day",
+        "integer?",
+        ""
+      ],
+      [
+        "component",
+        "string?",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": null,
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-product",
+    "id": "frontx-package",
+    "name": "FrontX Package",
+    "description": "A FrontX micro-frontend package.",
+    "extends": "record",
+    "bucket": "catalog",
+    "fields": [
+      [
+        "catalog_id",
+        "string",
+        ""
+      ],
+      [
+        "catalog_tenant",
+        "string",
+        ""
+      ],
+      [
+        "day",
+        "integer?",
+        ""
+      ],
+      [
+        "component",
+        "string?",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": null,
+    "searchable": true
+  },
+  {
+    "declared_by": "studio-product",
+    "id": "gear",
+    "name": "Gear",
+    "description": "A gear: a published crate or one found in a repository.",
+    "extends": "record",
+    "bucket": "catalog",
+    "fields": [
+      [
+        "catalog_id",
+        "string",
+        ""
+      ],
+      [
+        "catalog_tenant",
+        "string",
+        ""
+      ],
+      [
+        "day",
+        "integer?",
+        ""
+      ],
+      [
+        "component",
+        "string?",
+        ""
+      ]
+    ],
+    "relations": [
+      [
+        "has_version",
+        "gear-version",
+        "has"
+      ]
+    ],
+    "held_by": null,
+    "searchable": true
+  },
+  {
+    "declared_by": "studio-product",
+    "id": "gear-explanation",
+    "name": "Gear Explanation",
+    "description": "What a gear does in plain words, written for an organization's people.",
+    "extends": "record",
+    "bucket": "operations",
+    "fields": [],
+    "relations": [],
+    "held_by": "studio-product",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-product",
+    "id": "gear-profile",
+    "name": "Gear Profile",
+    "description": "What an organization says about a gear, kept apart from its source.",
+    "extends": "record",
+    "bucket": "catalog",
+    "fields": [
+      [
+        "catalog_id",
+        "string",
+        ""
+      ],
+      [
+        "catalog_tenant",
+        "string",
+        ""
+      ],
+      [
+        "day",
+        "integer?",
+        ""
+      ],
+      [
+        "component",
+        "string?",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": null,
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-product",
+    "id": "gear-version",
+    "name": "Gear Version",
+    "description": "One published version of a gear.",
+    "extends": "record",
+    "bucket": "catalog",
+    "fields": [
+      [
+        "catalog_id",
+        "string",
+        ""
+      ],
+      [
+        "catalog_tenant",
+        "string",
+        ""
+      ],
+      [
+        "day",
+        "integer?",
+        ""
+      ],
+      [
+        "component",
+        "string?",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": null,
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-product",
+    "id": "project-gear-repository",
+    "name": "Project Gear Repository",
+    "description": "Where a project's gears live and new ones are written.",
+    "extends": "record",
+    "bucket": "catalog",
+    "fields": [
+      [
+        "catalog_id",
+        "string",
+        ""
+      ],
+      [
+        "catalog_tenant",
+        "string",
+        ""
+      ],
+      [
+        "day",
+        "integer?",
+        ""
+      ],
+      [
+        "component",
+        "string?",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-product",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-product",
+    "id": "project-product",
+    "name": "Project Product",
+    "description": "The product a project composes out of gears, and what the engine said of it.",
+    "extends": "record",
+    "bucket": "catalog",
+    "fields": [
+      [
+        "catalog_id",
+        "string",
+        ""
+      ],
+      [
+        "catalog_tenant",
+        "string",
+        ""
+      ],
+      [
+        "day",
+        "integer?",
+        ""
+      ],
+      [
+        "component",
+        "string?",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-product",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-product",
+    "id": "registry-decision",
+    "name": "Registry Decision",
+    "description": "A decision a person made about a registry entry, and why.",
+    "extends": "record",
+    "bucket": "catalog",
+    "fields": [
+      [
+        "catalog_id",
+        "string",
+        ""
+      ],
+      [
+        "catalog_tenant",
+        "string",
+        ""
+      ],
+      [
+        "day",
+        "integer?",
+        ""
+      ],
+      [
+        "component",
+        "string?",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": null,
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-product",
+    "id": "registry-entry",
+    "name": "Registry Entry",
+    "description": "A component of an organization's registry and where it is in its lifecycle.",
+    "extends": "record",
+    "bucket": "catalog",
+    "fields": [
+      [
+        "catalog_id",
+        "string",
+        ""
+      ],
+      [
+        "catalog_tenant",
+        "string",
+        ""
+      ],
+      [
+        "day",
+        "integer?",
+        ""
+      ],
+      [
+        "component",
+        "string?",
+        ""
+      ]
+    ],
+    "relations": [
+      [
+        "found_in",
+        "registry-occurrence",
+        "found in"
+      ],
+      [
+        "decided",
+        "registry-decision",
+        "decided"
+      ]
+    ],
+    "held_by": null,
+    "searchable": true
+  },
+  {
+    "declared_by": "studio-product",
+    "id": "registry-occurrence",
+    "name": "Registry Occurrence",
+    "description": "Where a registry entry was found: project, repository, ref, path.",
+    "extends": "record",
+    "bucket": "catalog",
+    "fields": [
+      [
+        "catalog_id",
+        "string",
+        ""
+      ],
+      [
+        "catalog_tenant",
+        "string",
+        ""
+      ],
+      [
+        "day",
+        "integer?",
+        ""
+      ],
+      [
+        "component",
+        "string?",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": null,
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-product",
+    "id": "registry-read",
+    "name": "Registry Read",
+    "description": "One repository the registry walk read, and what it found unchanged.",
+    "extends": "record",
+    "bucket": "catalog",
+    "fields": [
+      [
+        "catalog_id",
+        "string",
+        ""
+      ],
+      [
+        "catalog_tenant",
+        "string",
+        ""
+      ],
+      [
+        "day",
+        "integer?",
+        ""
+      ],
+      [
+        "component",
+        "string?",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": null,
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-product",
+    "id": "registry-settings",
+    "name": "Registry Settings",
+    "description": "An organization's registry settings: the projects its walk skips.",
+    "extends": "record",
+    "bucket": "catalog",
+    "fields": [
+      [
+        "catalog_id",
+        "string",
+        ""
+      ],
+      [
+        "catalog_tenant",
+        "string",
+        ""
+      ],
+      [
+        "day",
+        "integer?",
+        ""
+      ],
+      [
+        "component",
+        "string?",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": null,
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-product",
+    "id": "roadmap-item",
+    "name": "Roadmap Item",
+    "description": "A gear on a roadmap board, planned whether or not it exists yet.",
+    "extends": "record",
+    "bucket": "catalog",
+    "fields": [
+      [
+        "catalog_id",
+        "string",
+        ""
+      ],
+      [
+        "catalog_tenant",
+        "string",
+        ""
+      ],
+      [
+        "day",
+        "integer?",
+        ""
+      ],
+      [
+        "component",
+        "string?",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": null,
+    "searchable": true
+  },
+  {
+    "declared_by": "studio-reports",
+    "id": "report-source",
+    "name": "Report Source",
+    "description": "Where an organization's report reads from: its connection, plan file, board, and the plan as last read.",
+    "extends": "record",
+    "bucket": "operations",
+    "fields": [
+      [
+        "report",
+        "string",
+        ""
+      ],
+      [
+        "report_tenant",
+        "string",
+        ""
+      ],
+      [
+        "connection_id",
+        "string?",
+        ""
+      ],
+      [
+        "plan_file",
+        "string?",
+        ""
+      ],
+      [
+        "board",
+        "string?",
+        ""
+      ],
+      [
+        "snapshot",
+        "JSON?",
+        ""
+      ]
+    ],
+    "relations": [],
+    "held_by": "studio-reports",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-usage",
+    "id": "budget",
+    "name": "Budget",
+    "description": "A monthly spending limit for an organization or one of its workspaces or projects.",
+    "extends": "record",
+    "bucket": "operations",
+    "fields": [],
+    "relations": [],
+    "held_by": "studio-usage",
+    "searchable": false
+  },
+  {
+    "declared_by": "studio-usage",
+    "id": "model-price",
+    "name": "Model Price",
+    "description": "What an organization pays per million tokens of one provider's model.",
+    "extends": "record",
+    "bucket": "operations",
+    "fields": [],
+    "relations": [],
+    "held_by": "studio-usage",
+    "searchable": false
+  }
+]

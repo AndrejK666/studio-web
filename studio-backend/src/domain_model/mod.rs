@@ -53,6 +53,8 @@ inventory::submit! {
 #[cfg(test)]
 mod claimed_types_tests;
 #[cfg(test)]
+mod gear_types_snapshot_tests;
+#[cfg(test)]
 mod held_tests;
 #[cfg(test)]
 mod kept_by_gear_tests;
