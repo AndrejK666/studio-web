@@ -1,6 +1,6 @@
 ---
 type: adr
-status: proposed
+status: accepted
 date: 2026-11-27
 ---
 
@@ -8,7 +8,7 @@ date: 2026-11-27
 
 **ID**: `cpt-studio-adr-ide-runtime-port`
 
-Status: **proposed** · Date: 2026-11-27 · Builds on `cpt-studio-adr-core-knows-no-kit` (ADR-0079: the core's ports), `cpt-studio-adr-theia-sessions` (ADR-0003), `cpt-studio-adr-theia-backend-bridge` (ADR-0022), `cpt-studio-adr-a-desktop-session-keeps-the-secrets-on-the-server` (ADR-0027), `cpt-studio-adr-a-shared-session-is-many-people-each-as-themselves` (ADR-0030), `cpt-studio-adr-the-desktop-gets-its-tools-as-extensions` (ADR-0032)
+Status: **accepted** (P1 and P2; P3 optional) · Date: 2026-11-27 · Builds on `cpt-studio-adr-core-knows-no-kit` (ADR-0079: the core's ports), `cpt-studio-adr-theia-sessions` (ADR-0003), `cpt-studio-adr-theia-backend-bridge` (ADR-0022), `cpt-studio-adr-a-desktop-session-keeps-the-secrets-on-the-server` (ADR-0027), `cpt-studio-adr-a-shared-session-is-many-people-each-as-themselves` (ADR-0030), `cpt-studio-adr-the-desktop-gets-its-tools-as-extensions` (ADR-0032)
 
 ## Table of Contents
 
@@ -24,6 +24,7 @@ Status: **proposed** · Date: 2026-11-27 · Builds on `cpt-studio-adr-core-knows
   - [4. One bridge protocol for both IDEs](#4-one-bridge-protocol-for-both-ides)
   - [5. Our features become VS Code extensions where they can](#5-our-features-become-vs-code-extensions-where-they-can)
   - [6. Which IDE runs is a setting](#6-which-ide-runs-is-a-setting)
+  - [7. Decisions for the launch](#7-decisions-for-the-launch)
 - [Phases](#phases)
 - [Consequences](#consequences)
 - [Confirmation](#confirmation)
@@ -127,20 +128,37 @@ supplies:
 The capabilities are: `open_file`, `open_document`, `notify`,
 `repositories`, `operations` (the git operation queue and its journal),
 `install_kit`, `shared_session` (many people, each as themselves, ADR-0030),
-`idle_report`, `desktop`. A call the runtime has not flagged answers
-"this IDE cannot …" as a sentence, never a 404.
+`idle_report`, `desktop`, and `frame_channel` (the portal can talk to the IDE
+page through its frame's `postMessage`). A call the runtime has not flagged
+answers "this IDE cannot …" as a sentence, never a 404. The capabilities are
+how the portal decides what to show: a session's REST answer carries
+`ide: { id, label, capabilities }`, and the portal does not offer what the
+session's IDE does not list. A flavour that lacks a feature ships without it
+rather than with a broken button.
 
 The core keeps the port's single implementation per session: it records the
-runtime's `id` on the session (a container label `cf.studio/ide` and a
-field in the session row) and uses that runtime for the session's life.
+runtime's `id` on the session (a container label `cf.studio/ide`; sessions
+are read back from the runtime, so the label is the session's record) and
+uses that runtime for the session's life. A session without the label
+predates the port and is the default runtime's (Theia).
 
 Three Theia references in the core go behind the port:
 
 - `service.rs` dials `/internal/theia/v1/getRuntimeStatus` with
-  `X-CFS-Theia-Token` for idle reaping; it asks the port instead.
-- `config.rs`'s `image` and `theia_control_enabled` move to the kit's
-  config (`gears.ide-theia.image`); the old keys are read for one release.
-- `sdk.rs`'s `TheiaControlEndpoint` becomes `IdeControlEndpoint`.
+  `X-CFS-Theia-Token` for idle reaping; it asks the session's runtime's
+  endpoint instead, and only a runtime that flags `idle_report`.
+- `config.rs`: `studio-session.ide` names the runtime (unset: the default
+  one); `image` empty means the runtime's own image, so a deployment that
+  only says `ide: vscode` gets the VS Code image; `theia_control_enabled`
+  becomes `ide_control_enabled` and is still read under its old name.
+- `sdk.rs`'s `TheiaControlEndpoint` becomes `IdeControlEndpoint`, carrying
+  the runtime.
+
+As built in P1: the port is `studio-backend/src/ide_runtime.rs` (a static
+descriptor per runtime collected with `inventory`, the `Capability` flags,
+the method → capability table); the descriptors are in `src/ide_theia/` and
+`src/ide_vscode/`, compiled whatever the features, because a session
+launches whether or not the bridge gear is linked.
 
 ### 3. Two kits: ide-theia and ide-vscode
 
@@ -176,8 +194,10 @@ runtime kit switched on. The two runtime kits:
   as Theia's, on the neutral path (§4), so the client moves to the core's
   bridge contract and `studio-theia` keeps only what is Theia's.
 
-code-server is the fallback if openvscode-server's release cadence or its
-server-side hooks fall short; the port does not care which.
+The server is **openvscode-server** (decided for the launch). code-server
+stays the fallback should openvscode-server's release cadence or its
+server-side hooks fall short; the port does not care which. Extensions come
+from **open-vsx only**; Microsoft's marketplace is not used.
 
 ### 4. One bridge protocol for both IDEs
 
@@ -245,16 +265,31 @@ once the frame answers v2 and v1 otherwise, so an old image under a new
 portal and a new image under an old portal both work. The v1 names then go
 from the Theia side and the package.
 
-**How VS Code hears the frame.** A VS Code extension runs in the extension
-host, a Node process, and cannot see the workbench window's `message`
-events. So the gate, which already serves every page of the session,
-injects one small script into the workbench page it passes through (the
-`ide-vscode` runtime declares the page and the script). The script takes
-the portal's `postMessage`, checks the origin as the Theia side does, and
-relays it over a WebSocket on the gate (`/__ide/bridge`) to `studio-bridge`,
-and back. Theia keeps answering in its own frontend.
+**How VS Code hears the portal: the backend's control channel.** A VS Code
+extension runs in the extension host, a Node process, and cannot see the
+workbench window's `message` events. The portal therefore does not use the
+frame for VS Code at all (`frame_channel` is not flagged): it asks the
+backend, which calls the session's control endpoint (`openInEditor`,
+`openDocument`, `notifyEditor`), and the IDE's requests to the portal
+(`ide.openArtifact`) come back as `ide.open-artifact` events on
+studio-events. One more hop than `postMessage`, and no script in the
+workbench. The theme, the token and the viewer are not sent to VS Code: it
+keeps its own theme, and it has no member token (see §7 on the LLM).
 
-### 5. Our features become VS Code extensions where they can
+Injecting a relay script into the workbench page through the gate was the
+first draft. It is held back: it is done only if the control channel turns
+out unable to carry something the launch needs, and then only after the
+decision is reported and taken again. Theia keeps answering in its own
+frontend over the frame, and on the control channel as well.
+
+### 5. Our features become VS Code extensions where they can (optional)
+
+**P3 is optional and not planned; it may never happen.** The VS Code flavour
+ships with the minimal feature set of P2 (files and documents opened from
+the portal, notifications, repositories, git and the terminal, the IDE asking
+the portal to open an artifact), and the capability flags make the portal
+hide what it cannot do. What follows is the path if a feature is ever worth
+porting.
 
 Theia runs VS Code extensions (`@theia/plugin-ext-vscode`; our images
 already run `vscode.git` and `vscode.markdown` at 1.95.3). A feature written
@@ -283,7 +318,9 @@ The survey's table gives each feature its kind and cost.
   gears on. `ide` needs exactly one of `ide-theia` and `ide-vscode` for the
   browser; with both on, the deployment names its default
   (`studio-session.ide = "theia"`), with neither the IDE tab says the
-  deployment has no IDE. Switching needs a restart, not a rebuild.
+  deployment has no IDE. Switching needs a restart, not a rebuild. Until the
+  switch lands (it is being built on its own branch), `studio-session.ide`
+  is a plain config key; the integration wires the switch to set it.
 - **An organization or a project later.** The port is keyed by `id` and
   several runtimes may be on. A launch picks the project's setting, else the
   organization's, else the deployment's default. A session is per
@@ -301,6 +338,31 @@ The survey's table gives each feature its kind and cost.
   the desktop on, since `ide-theia`'s desktop part has its own switch. A VS
   Code desktop (the member's own VS Code with our extensions and Studio
   sign-in) is a later choice, not part of this ADR.
+
+### 7. Decisions for the launch
+
+Taken on 2026-11-27, when P1 and P2 were started:
+
+- **Launch now: P1 and P2.** P3 is optional (§5).
+- **One session per person in VS Code.** `shared_session` is off for
+  `ide-vscode`; ADR-0030's shared session is not needed there yet.
+- **Server:** openvscode-server.
+- **Portal ↔ extension:** through the backend's control channel first (§4).
+  Script injection into the workbench only if that is impossible, and then
+  the work stops and the decision is taken again before it is done.
+- **What a VS Code deployment ships:** it may ship without
+  `gearbox-studio` and without the Theia AI agents. The desktop app stays
+  Theia (`ide-theia`'s desktop part) whatever the browser runs.
+- **Extensions:** open-vsx only; no Microsoft marketplace (open question 7
+  is answered: not a blocker for the launch).
+- **LLM and git in VS Code:** the existing container-side broker path, which
+  is IDE-neutral (`git-credentials.mjs`, `ANTHROPIC_BASE_URL`,
+  `OPENAI_BASE_URL`, `STUDIO_LLM_AUTH=bearer`). No long-lived key goes into
+  the container. If the VS Code flavour would need a token placed in the
+  container (against ADR-0030 §1), the work stops and that is reported
+  instead of done.
+- **Still open:** who owns the second image (its updates, its scan, its
+  pin), open question 8.
 
 ## Phases
 
@@ -327,8 +389,9 @@ review rounds.
 - The openvscode-server image on `session-base` (1 week).
 - `studio-bridge`: control endpoint with `getRuntimeStatus`, `getSession`,
   `getRepositories`, `openInEditor`, `openDocument`, `notifyEditor`; events;
-  the frame relay and the gate's injection; theme and viewer (2–3 weeks).
-  `operations` and `install_kit` are flagged off.
+  the portal's opens over the backend's control channel, no injection
+  (2–3 weeks). `operations`, `install_kit`, `idle_report`, `desktop` and
+  `frame_channel` are flagged off.
 - Git through the broker: `git-credentials.mjs` and `vscode.git` as they are
   (days).
 - LLM: Claude Code and Codex through the broker (1 week, see the open
@@ -339,8 +402,9 @@ review rounds.
   the session by (workspace, person) as ADR-0003 did (days).
 - The stand and a CDP check of the real IDE (1 week).
 
-**P3. Port the features, by value over cost.** Each a VS Code extension that
-`ide-theia` ships too, replacing its Theia version.
+**P3 (optional, not planned). Port the features, by value over cost.** Each a
+VS Code extension that `ide-theia` ships too, replacing its Theia version.
+Nothing here is scheduled; the VS Code flavour is complete without it.
 
 | # | Feature | Weeks |
 |---|---|---|
@@ -372,11 +436,10 @@ Theia only.
 - Bad: two images to build, scan and pin. The shared base keeps the
   difference to the IDE layer.
 - Bad: VS Code gives up the shared session (one person per container), the
-  Theia shell modes and the Theia AI agents, at least until P3 and maybe
-  for good.
-- Bad: VS Code hears the portal through a script the gate injects into its
-  page, which depends on openvscode-server's page shape; a pinned image and a
-  test against it hold that.
+  Theia shell modes, the Theia AI agents, Gearbox Studio and every other
+  Theia feature: P3 is optional, so maybe for good.
+- Bad: the portal reaches VS Code through the backend, one hop more than
+  the frame, and VS Code does not follow the portal's theme.
 - Bad: one release of two protocol versions side by side.
 
 ## Confirmation
@@ -510,40 +573,37 @@ since `ide` stays the member's kit.
 
 ### Risks and open questions
 
-1. **Shared sessions in VS Code.** openvscode-server is one person per
-   server: one connection token, one extension host env. P2 runs one
-   session per (workspace, person). Is that acceptable for the teams that
-   want VS Code, or must ADR-0030's shared session reach VS Code too (a
-   patched server, or an extension host per person behind the gate)?
+1. **Shared sessions in VS Code.** *Decided (§7): one session per person;
+   the shared session is not needed yet.* openvscode-server is one person per
+   server: one connection token, one extension host env.
 2. **The LLM token in VS Code.** Theia passes the member's own Studio token
    per request (`agent-credentials.ts`). VS Code's Claude Code and Codex read
    a key from env or their own login. In a one-person session the backend
    could mint a short-lived, workspace-scoped token for the broker and the
    extension could refresh it, but that puts a personal credential into the
-   container, against ADR-0030 §1. Which do we accept?
-3. **openvscode-server or code-server.** openvscode-server is closer to
-   upstream; code-server has more hooks (its own auth, proxy). Pick one for
-   P2?
-4. **The gate's script injection.** Acceptable as the way VS Code hears the
-   portal, or should portal opens go through the backend's control channel
-   only (slower, one more hop, no `postMessage` at all)?
-5. **How far P3 goes.** Items 1–5 or the whole list? Gearbox Studio and the
-   Theia AI agents may stay Theia only; is a VS Code deployment without them
-   a product we ship?
-6. **The desktop in a VS Code deployment.** Keep offering the Theia desktop
-   app there, or plan a VS Code desktop (the member's own VS Code plus our
-   extensions)?
-7. **Microsoft's marketplace.** openvscode-server uses open-vsx; some
+   container, against ADR-0030 §1. Which do we accept? *Decided (§7): no
+   token goes into the container; if VS Code needs one, that is reported,
+   not done.*
+3. **openvscode-server or code-server.** *Decided (§7): openvscode-server.*
+4. **The gate's script injection.** *Decided (§7, §4): the control channel
+   first; injection only if that is impossible, and only after asking again.*
+5. **How far P3 goes.** *Decided (§7, §5): P3 is optional and not planned;
+   a VS Code deployment without Gearbox Studio and the Theia AI agents is a
+   product we ship.*
+6. **The desktop in a VS Code deployment.** *Decided (§7): the desktop
+   stays Theia.*
+7. **Microsoft's marketplace.** *Decided (§7): open-vsx only.* Some
    extensions people expect (Pylance, the C# Dev Kit, Live Share) are not
    there and may not be installed from Microsoft's marketplace by licence.
-   Is that a blocker for the teams asking?
 8. **Two images in CI.** The build and the Trivy scan double for the IDE
-   layer; who owns the VS Code image's updates?
+   layer; who owns the VS Code image's updates? *Open.*
 
 ## Traceability
 
-- Port in the core: `studio-backend/src/ide_bridge.rs` (today),
+- Port in the core: `studio-backend/src/ide_bridge.rs` (the control half),
   `studio-backend/src/ide_runtime.rs` (P1).
+- Runtimes: `studio-backend/src/ide_theia/`, `studio-backend/src/ide_vscode/`.
+- The protocol's names: `ide-bridge/protocol.json`.
 - Session: `studio-backend/src/studio_session/`.
 - Theia kit gear: `studio-backend/src/studio_theia/`.
 - Kit manifest: `studio-backend/src/kit_registry/builtin/ide.kit.json`.
