@@ -228,7 +228,7 @@ Profiles: `dev.yaml` (static tokens), `postgres.yaml` (same + PG),
    (types, pure functions); use another gear only through those or its
    `mod.rs` exports — `assembly::manifest` tests fail on an `internal` use;
 6. `docs/design/<gear>.md`, an entry in `constructor-studio.md` §3.2, and the
-   gear in a DOMAINS entry of `studio-frontend-prototype/src/architecture.ts`.
+   gear in a DOMAINS entry of `studio-frontend-poc/src/architecture.ts`.
 
 CI/CD: GitHub Actions — `ci.yml` (build+test on PR), `release.yml` (tag
 `v*` → ghcr images). K8s: `deploy/helm/studio-web` per the Helm policy

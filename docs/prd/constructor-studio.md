@@ -61,8 +61,8 @@ Constructor Studio, from Constructor Fabric, gives an engineering team a
 governed place to do project work. A project holds its people, sources, secrets
 and connections, and launches a Theia IDE session against those sources with AI
 agents already configured. This repository is the web runtime of the product:
-the Rust backend assembled from CF/Gears (`studio-backend/`), the FrontX portal
-(`studio-frontend/`), the prototype portal (`studio-frontend-prototype/`), the
+the Rust backend assembled from CF/Gears (`studio-backend/`), the portal
+(`studio-frontend/`, the FrontX shell and its kits), the
 Keycloak image (`keycloak/`), the IDE session image (`theia/`) and the
 deployment definitions (`docker-compose.yml`, `deploy/`).
 
@@ -935,16 +935,16 @@ Criticality follows `README.md`: without PostgreSQL, gears-rust or an identity p
 | `cpt-studio-fr-workspace-project-tenants` | platform `account_management`; `/cf/account-management/v1`; `projects-mfe` (Projects, New project, New workspace), `organization-mfe` (Workspaces); prototype `projects`, workspace tab `projects`, platform `workspaces`, project tab `automation` |
 | `cpt-studio-fr-portal-levels` | `studio-frontend/src-app/app/`, `studio-frontend/src-app/mfe_packages/_iframe-fixture/` |
 | `cpt-studio-fr-portal-reserved-areas` | `people-mfe`, `kits-mfe`, `search-mfe`, `organization-mfe` (Organization settings), `projects-mfe` placeholder sections (Overview, Activity, Timeline, Team, Project settings); prototype project tab `timeline` |
-| `cpt-studio-fr-sign-in` | platform `oidc_authn_plugin`, `static_authn_plugin`, `static_authz_plugin`; `keycloak/`; `studio-frontend/src-app/app/`; `studio-frontend-prototype/src/oidc.ts` |
+| `cpt-studio-fr-sign-in` | platform `oidc_authn_plugin`, `static_authn_plugin`, `static_authz_plugin`; `keycloak/`; `studio-frontend/src-app/app/`; `studio-frontend-poc/src/oidc.ts` |
 | `cpt-studio-fr-canonical-user` | `studio-backend/src/user_profile/`; `/studio-user/v1/{me,resolve,merge,users}`; prototype `profile` |
 | `cpt-studio-fr-invitations-membership` | `studio-backend/src/user_profile/`, platform `keycloak_idp_plugin`, `static_idp_plugin`; `/studio-user/v1/me/{invitations,memberships}`; prototype `people`, project tab `people` |
 | `cpt-studio-fr-identity-directory` | `studio-backend/src/identity_directory/`; `/studio-identity/v1`; prototype platform `identities` |
 | `cpt-studio-fr-authz-tenant-clamp` | `studio-backend/src/studio_authz_plugin/mod.rs`, `studio-backend/src/access_config.rs`; platform `authz_resolver`, `tenant_resolver`, `resource_group` |
 | `cpt-studio-fr-authz-row-roles` | planned: `privilege_for` in `studio-backend/src/studio_authz_plugin/mod.rs`; ADR-0019 Follow-ups |
-| `cpt-studio-fr-presence` | `studio-backend/src/presence/`; `/studio-presence/v1`; `studio-frontend-prototype/src/presence.tsx` |
+| `cpt-studio-fr-presence` | `studio-backend/src/presence/`; `/studio-presence/v1`; `studio-frontend-poc/src/presence.tsx` |
 | `cpt-studio-fr-connections` | `studio-backend/src/connectors/` and its eleven plugin gears; `/studio-connector/v1`; `connections-mfe` (Connections, Connect source); prototype `connectors`, admin `connectors`, project tab `sources` |
 | `cpt-studio-fr-credentials-durable` | `studio-backend/src/credstore_pg/`, `studio-backend/src/secrets_bootstrap/`; platform `credstore`, `static_credstore_plugin`; prototype admin `secrets` |
-| `cpt-studio-fr-chat-notifications` | `studio-backend/src/notify/`; `/studio-notify/v1`; `studio-frontend-prototype/src/notifications.tsx` in prototype `system` |
+| `cpt-studio-fr-chat-notifications` | `studio-backend/src/notify/`; `/studio-notify/v1`; `studio-frontend-poc/src/notifications.tsx` in prototype `system` |
 | `cpt-studio-fr-notification-delivery-choice` | planned: `TASKS.md`, 2026-09-17 |
 | `cpt-studio-fr-spec-gear-mapping` | `studio-backend/src/spec_mapping/` (`reading.rs`: a specification read as written; `plan.rs`: contract, then evidence with a cited passage, then gap); `/studio-spec-mapping/v1/{plan,capabilities}`; facts from `product/gearbox.rs` (`gdl_contracts`) and `repo_enrich.rs` (`doc_text`); vocabulary `documents/model.rs` (`Capability::contracts`); prototype project tab `components`; #205, #199 |
 | `cpt-studio-fr-mapping-decisions` | `studio-backend/src/spec_mapping/` (`/studio-spec-mapping/v1/decisions`, ranking in `plan.rs`); stored as `mapping_decision` nodes with `decision_on` edges by `artifact_ingest` (`port::MappingDecisionStore`); prototype project tab `components` (✓/✗ on a candidate); planned: decisions shared across an organization; #205, #206 |
@@ -959,7 +959,7 @@ Criticality follows `README.md`: without PostgreSQL, gears-rust or an identity p
 | `cpt-studio-fr-document-catalogue` | `studio-backend/src/documents/`; `/studio-documents/v1/{organizations,workspaces}/{id}/{types,stages,capabilities}`; prototype workspace tabs `types` and `process` |
 | `cpt-studio-fr-documents` | `studio-backend/src/documents/`; `/studio-documents/v1/workspaces/{workspace_id}/documents`, `…/projects/{project_id}/stage-status`; prototype project tabs `overview` and `specs` |
 | `cpt-studio-fr-repository-documents` | `studio-backend/src/documents/{classify,validate,intake}.rs`; `/studio-documents/v1/workspaces/{workspace_id}/document-bindings`, `/studio-documents/v1/{spec-rows,spec-pipeline,specs-per-source}`; prototype project tab `specs` |
-| `cpt-studio-fr-spec-quality` | `studio-backend/src/spec_quality/`; `/studio-spec-quality/v1`; `studio-frontend-prototype/src/spec-quality.tsx` |
+| `cpt-studio-fr-spec-quality` | `studio-backend/src/spec_quality/`; `/studio-spec-quality/v1`; `studio-frontend-poc/src/spec-quality.tsx` |
 | `cpt-studio-fr-artifact-ingest` | `studio-backend/src/artifact_ingest/`, platform `graph_storage`; `/studio-artifact-ingest/v1`; `projects-mfe` project screen; prototype project tabs `artifacts` and `activity`, and the hidden `files` view's repository files |
 | `cpt-studio-fr-domain-model` | `studio-backend/src/domain_model/`; `/studio-domain-model/v1`; prototype `objects` |
 | `cpt-studio-fr-gear-catalogue` | `studio-backend/src/components_catalog/`; `/studio-components-catalog/v1/{components,versions,sync,reference,component-values,component-history,types,field-schemas,profiles,activity}`; prototype `gears` |

@@ -709,7 +709,7 @@ its installed version, each package: `kit_slug`, `version`, `package`,
 and `config` (its `mfe-manifest.json`), or `config: null` with `error` when it
 does not read (not built, not JSON, not a FrontX build).
 
-**The shell** (`studio-frontend-prototype/src-app/app/mfe/runtimeKits.ts`,
+**The shell** (`studio-frontend/src-app/app/mfe/runtimeKits.ts`,
 `layout/RuntimeKits.tsx`) reads the list after the installed kits, and again
 whenever their slugs or versions change, turns each package into the config
 the build-time generator would write (the public path from `base_path`, the
@@ -754,7 +754,7 @@ the screen that the person can dismiss; the rest of the shell goes on.
 slot the shell owns, never into a domain of its own (a package naming a domain
 the shell has not registered is refused). Each slot is a FrontX extension
 domain with the concurrent mount strategy
-(`studio-frontend-prototype/src-app/app/mfe/slots.ts`); a contribution is an
+(`studio-frontend/src-app/app/mfe/slots.ts`); a contribution is an
 extension of `gts.frontx.mfes.ext.extension.v1~constructor_studio.shell.slots.contribution.v1~`
 whose `presentation` carries `label`, `order` (ascending, then id), `kit`
 (set by the shell for a runtime package), and optionally `level` and `screen`
@@ -816,7 +816,7 @@ screen would have to host a domain in its shadow root.
 - Same origin: the shell loads them through the gateway (`/cf/…`), so neither
   the portal's nginx nor the browser needs another origin allowed.
 - Content Security Policy: the portal sets none today
-  (`studio-frontend-prototype/nginx.conf.template`). One that is added must
+  (`studio-frontend/nginx.conf.template`). One that is added must
   keep `script-src 'self' blob:` (the loader evaluates every chunk, built-in
   or kit, from a `blob:` URL after rewriting its imports), `style-src 'self'
   'unsafe-inline'` (each screen's styles go into its shadow root) and
@@ -1089,7 +1089,7 @@ evidence summary and the follow-ups: [`mna-kit.md`](mna-kit.md)
 ## 4. Additional context
 
 [`docs/kit-registry-prototype.md`](../kit-registry-prototype.md) is the
-prototype slice: the user flow in `studio-frontend-prototype`, the installation
+prototype slice: the user flow in `studio-frontend`, the installation
 boundary inside the session, and how the session image pins `cfs`.
 
 ## 5. Traceability

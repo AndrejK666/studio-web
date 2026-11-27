@@ -6,7 +6,7 @@ owner: studio-team
 
 # Portal frontend performance, November 2026: what a page load costs and what was cut
 
-A measured pass over the FrontX portal (`studio-frontend-prototype/`: the shell in
+A measured pass over the FrontX portal (`studio-frontend/`: the shell in
 `src-app/app`, the kit MFEs in `src-app/mfe_packages/*`, `mfe-shared`). The work is on
 branch `AndrejK666/frontend-perf-2026-11`, on top of `AndrejK666/frontx-portal`
 (21d8584c). Every number below was measured. None is an estimate.

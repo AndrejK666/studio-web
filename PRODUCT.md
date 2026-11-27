@@ -40,15 +40,14 @@ plugin cannot claim this; a hosted IDE without the tenant model cannot either.
 
 ## Operating Context
 
-- **The portal** (`studio-frontend/`, FrontX shell + microfrontends, ADR-0006) is where
-  projects, people, integrations and secrets live. Shell chrome is a 56px top bar plus an
+- **The portal** (`studio-frontend/`, the FrontX shell and its kits, ADR-0006, ADR-0069) is
+  the one frontend, where projects, people, integrations and secrets live. Shell chrome is a 56px top bar plus an
   overlay drawer (ADR-0008); each MFE owns its own area, gutters and heading.
 - **The session IDE** (`theia/`) is Eclipse Theia 1.74.0 with `studio-product-ext` adding
   the product surface: quality scan/measures/marks, flow rail and log, figure and table
   editors, a markdown editor, search, repositories and project views, and a rail nav.
-- **The prototype** (`studio-frontend-prototype/`) is the pre-FrontX SPA, kept as a
-  playground on port 8081. It still carries the "Open Studio" launcher; the FrontX portal
-  on 8080 does not yet.
+- The pre-FrontX prototype and the first FrontX portal were retired on 2026-11-27; both
+  trees are kept as git tags (README, "Archived frontends").
 - Sessions bind to loopback ports 41000–41099, live 4 hours before a reaper collects
   them, and survive backend restarts through label adoption.
 - Sign-in is real OIDC (Authorization Code + PKCE) against Keycloak; static dev tokens

@@ -593,7 +593,7 @@ requirements are planned (`cpt-studio-fr-authz-row-roles`,
 
 - [x] `p1` - **ID**: `cpt-studio-feature-prototype-portal`
 
-- **Purpose**: The pre-FrontX portal on port 8081 carries every screen the FrontX portal does not have yet, listed by key in the design's prototype portal component. No feature spec is written for it.
+- **Purpose**: **Retired 2026-11-27**: its screens moved into the portal's kits (ADR-0069) and its tree is the tag `archive/studio-frontend-poc-2026-11-27`. As it was: the pre-FrontX portal on port 8081 carried every screen the FrontX portal did not have yet, listed by key in the design's prototype portal component. No feature spec is written for it.
 
 - **Depends On**: `cpt-studio-feature-identity`, `cpt-studio-feature-tenancy`
 

@@ -169,7 +169,7 @@ reason in `detail`. **Never a number made up**: unknown is not zero.
 
 ## 6. The Deal tab
 
-`mna-mfe` (`studio-frontend-prototype/src-app/mfe_packages/mna-mfe`), Project ›
+`mna-mfe` (`studio-frontend/src-app/mfe_packages/mna-mfe`), Project ›
 Deal (`/deal`), shown only where the kit applies (`presentation.kit: "mna"`):
 
 - a header with the target, the phase and the IC date;

@@ -67,7 +67,7 @@ are, because the default currently answers "clean" for every document we have
 tried.
 
 **Our workaround.** `detectLeak` sends `verify: false`, with this table in the
-comment (`studio-frontend-prototype/src/spec-quality.tsx`).
+comment (`studio-frontend-poc/src/spec-quality.tsx`).
 
 ---
 

@@ -197,11 +197,9 @@ keeps working until that date.
 so debt that is deleted stops being counted as debt.
 
 **G3 `[api-usage]` — a wire change lands with its consumers, in the same PR.**
-A path, an `operation_id` or a DTO that moves moves in all three trees at once:
-`studio-backend`, `studio-frontend` and `studio-frontend-prototype`. The
-prototype is not exempt — it is the tree with the most calls in it, and a
-prototype that 404s is worse than no prototype, because it is where a question
-about the product gets answered.
+A path, an `operation_id` or a DTO that moves moves in both trees at once:
+`studio-backend` and `studio-frontend`, the one portal (the prototype and the
+first FrontX portal it was held to as well were retired on 2026-11-27).
 
 `node scripts/check-api-usage.mjs` proves the URL half of this: every path
 either portal calls has to exist in `studio-backend/docs/api-contract.json`. It
@@ -401,8 +399,7 @@ node scripts/check-api-usage.mjs          # rule G3
 node scripts/check-api-usage.mjs --list   # also: what nobody calls
 ```
 
-It reads every URL literal in `studio-frontend` and
-`studio-frontend-prototype` — including the base-URL-plus-relative-path form
+It reads every URL literal in `studio-frontend` — including the base-URL-plus-relative-path form
 the FrontX services use — and matches each against the committed surface.
 Unmatched calls fail, with the file that makes them. Known breaks live in
 `scripts/api-usage-baseline.txt` under the same shrink-only rule.

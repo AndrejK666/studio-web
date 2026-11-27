@@ -60,7 +60,7 @@ nowhere else.
 Opening a file already navigates to the editor screen (#320, #321), but the
 frame shows a static page: the portal has no notion of sessions at all. The
 prototype launches a session, waits for it and mounts its space
-(`studio-frontend-prototype/src/App.tsx`, `startStudioSession`); this feature
+(`studio-frontend-poc/src/App.tsx`, `startStudioSession`); this feature
 does the same in the shell, and is the address that #323 then talks to.
 
 **Assumptions fixed here**, because the issue or the design is silent or wrong

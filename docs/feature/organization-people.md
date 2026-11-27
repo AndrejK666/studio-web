@@ -53,7 +53,7 @@ platform administrator can also add anyone who has an identity.
 Today `people-mfe` holds the reserved placeholder ("This area is under
 construction", `cpt-studio-component-reserved-mfes`). The backend this screen
 needs is in place, and the prototype has a working implementation to read
-before building this one: `studio-frontend-prototype/src/org-admin.tsx`
+before building this one: `studio-frontend-poc/src/org-admin.tsx`
 (`OrgMembersView`, `OrganizationsTable`), PR #456.
 
 ### 1.2 Purpose
@@ -99,7 +99,7 @@ Actor ids are defined in the [PRD](../prd/constructor-studio.md); a gear taking 
 - **Feature**: [Levels in the shell](shell-levels.md) — the level this screen belongs to
 - **ADR**: [ADR-0011 — authentication does not grant organization membership](../adr/0011-authentication-does-not-grant-organization-membership.md)
 - **ADR**: [ADR-0019 — a role narrows what a member may do](../adr/0019-a-role-narrows-what-a-member-may-do.md) — why "owner" is answered in the gear
-- **Reference implementation**: `studio-frontend-prototype/src/org-admin.tsx` (#456); backend #455
+- **Reference implementation**: `studio-frontend-poc/src/org-admin.tsx` (#456); backend #455
 - **Dependencies**: studio-user (`/cf/studio-user/v1`), studio-identity (`/cf/studio-identity/v1`, platform administrator only)
 
 ### 1.5 The API it stands on

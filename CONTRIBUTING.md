@@ -77,8 +77,7 @@ locally for each component you changed:
 | Component | Checks |
 |---|---|
 | `studio-backend/` | `scripts/backend-gate.sh` — fmt, clippy and tests in one container with CI's toolchain and features; `scripts/backend-check.sh <gate>` for build or a single gate; only Docker is needed |
-| `studio-frontend/` | `npm ci && npm run build`, then `npm run lint`, `npm run type-check` and `npm run test:unit` |
-| `studio-frontend-prototype/` | `npm ci && npm test && npm run build` |
+| `studio-frontend/` | `npm ci`, `npm run lint`, then `npm run build` (the suites read its output) and `npm test` — what CI's `test-frontend` runs |
 | `theia/` | `npm test`; for an IDE change, rebuild with `docker compose build session-image` and try it in a session |
 | `keycloak/` | the account-takeover tests against the running Compose Keycloak — [`keycloak/README.md`](keycloak/README.md) has the command |
 | `deploy/` | `helm lint deploy/helm/studio-web -f deploy/helm/values-dev.example.yaml`, and the same for `values-test.example.yaml` |

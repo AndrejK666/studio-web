@@ -16,9 +16,10 @@ graph-storage ([the asks](upstream/graph-storage-requests.md), items 2 and 6–1
 
 ## Where we start
 
-*Updated 2026-11-27.* The portal is `studio-frontend-prototype/src-app`: the
+*Updated 2026-11-27.* The portal is `studio-frontend/src-app`: the
 FrontX shell with its screens as kits (ADR-0069). The old single-page
-prototype in `studio-frontend-prototype/src` was where this plan started; the
+prototype (`studio-frontend-poc/src`, archived as the tag
+`archive/studio-frontend-poc-2026-11-27`) was where this plan started; the
 paths below are the current ones.
 
 **Who calls the domain model.** Every MFE reads it through one shared client
@@ -82,7 +83,7 @@ data transition is where it gets tested:
 built-in kits bring, what `GET /types` serves an organization on the base
 kits) and the types gears declare as they start
 (`studio-backend/src/domain_model/gear-declared-types.json`). It writes
-`studio-frontend-prototype/src-app/mfe_packages/shared/src/domain/model.gen.ts`,
+`studio-frontend/src-app/mfe_packages/shared/src/domain/model.gen.ts`,
 which holds:
 - one interface per entity, with its own and inherited fields;
 - per entity, the relations `include` accepts and the entity each one reaches.

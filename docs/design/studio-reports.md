@@ -440,7 +440,7 @@ capabilities `[rest]`, deps `types_registry`, `account_management`,
 
 ## 4. Additional context
 
-The Reports screen is `studio-frontend-prototype/src/reports.tsx`; it switches
+The Reports screen is `studio-frontend-poc/src/reports.tsx`; it switches
 the hourly schedule on and off. The planning team's handoff
 (`back_roadmap_to_xls.py` and `gears.yaml`) is internal; the workbook is
 confirmed by comparing against that script's output for the same board and

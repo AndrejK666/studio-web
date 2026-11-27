@@ -61,7 +61,7 @@ done, **P2** can wait.
 - [ ] Rebuild the stand from the fork's main and check what landed after it @andrejk666
 
   The stand runs `local-8fe24027b`. Rebuild with `bash local-stand.sh`
-  (frontend only: `docker compose -p studio build frontend-prototype && docker compose -p studio up -d --no-deps frontend-prototype`;
+  (frontend only: `docker compose -p studio build frontend && docker compose -p studio up -d --no-deps frontend`;
   restart the portal after a backend restart, its nginx keeps the old IP).
   Then check:
 

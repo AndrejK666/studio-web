@@ -173,8 +173,7 @@ A second, unrelated transport to §1–§5: the **portal page** talking to the
 **IDE page** it embeds as an iframe (a "Space"). No backend hop, no S2S token —
 `window.postMessage` between two browser windows, origin-checked on both ends
 (`theia/studio/src/browser/portal-bridge-contribution.ts` in the IDE; the
-spaces host of `studio-frontend-prototype`, and
-`studio-frontend/src-app/app/mfe/editorBridge.ts` in the official portal).
+portal's IDE kit, `studio-frontend/src-app/kits/ide/frameBridge.ts`).
 Present because some things are properties of the *running UI*, not of the
 workspace: the theme, the editor that is open, the dirty count.
 
@@ -283,7 +282,7 @@ at once.
 
 ### Who sends what
 
-The prototype portal (`studio-frontend-prototype/src/App.tsx`) sends every
+The prototype portal (`studio-frontend-poc/src/App.tsx`) sends every
 portal → IDE message above and handles all three answers. The official portal
 (`studio-frontend`, [editor bridge](feature/editor-bridge.md)) sends
 `studio.init`, `studio.theme`, `studio.token`, `studio.openInEditor` and

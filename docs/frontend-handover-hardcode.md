@@ -1,6 +1,7 @@
 # What the prototype knows that the contract does not tell it
 
-Written for the team porting `studio-frontend-prototype` into the official
+Written for the team porting `studio-frontend-prototype` (the prototype that
+became `studio-frontend-poc/`, archived 2026-11-27) into the official
 frontend. Every table below is a place where the prototype holds a fact it was
 never given — copied by hand from a Rust comment, or re-derived from data it
 already had. Ported as-is, each one is a place the official frontend will drift

@@ -738,7 +738,7 @@ which is why these totals sit below the repository's.
 ### In the portal
 
 The prototype's **Components** page is the first consumer
-(`studio-frontend-prototype/src/gear-activity.tsx`). It groups the catalogue by
+(`studio-frontend-poc/src/gear-activity.tsx`). It groups the catalogue by
 the `repository` each crate publishes from and sends the gear names as
 components — **two** requests per repository, `components/metrics` with
 `bucket: "week"` and `components/pull-requests`, both with

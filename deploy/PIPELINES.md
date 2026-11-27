@@ -106,7 +106,7 @@ The runners start empty, so each cache has to come from somewhere:
 | Tag | Meaning | Build scope | Allowed deployment |
 | --- | --- | --- | --- |
 | `sha-<40 lowercase hex>` | Immutable commit snapshot | Services | Any configured application environment |
-| `v<semver>` | Application release | Backend, frontend, prototype, and Theia | Any configured application environment |
+| `v<semver>` | Application release | Backend, frontend, and Theia | Any configured application environment |
 | `infra-v<semver>` | Infrastructure release | Graph PostgreSQL and Keycloak | Any configured infrastructure environment |
 | `edge` | Convenience pointer to the latest successful `main` service build | Services | Never accepted by deployment workflows |
 | `latest` | Convenience pointer to the latest service release | Services | Never accepted by deployment workflows |
@@ -148,7 +148,6 @@ Build & Publish selects exactly one scope:
 
 - `studio-backend`
 - `studio-frontend`
-- `studio-frontend-prototype`
 - `cf-studio-theia`
 
 A `v*` tag publishes the immutable full-SHA tag, the version tag, and `latest`.
@@ -231,11 +230,11 @@ Run each once per environment, as a platform administrator, after the backend
 that carries it is up. Each is idempotent, so a second run is harmless.
 
 - **ADR-0040, since #682:** `POST /cf/studio-user/v1/grants/backfill` answers
-  `{organizations, rewritten, failed}`. Deploy the backend and the prototype
+  `{organizations, rewritten, failed}`. Deploy the backend and the frontend
   together, then run it. `failed > 0` means read the backend log
   (`studio-user: grant rekey failed`) and run it again. Skipping it does not
   change who has access, because login-keyed grants still match, but the
-  prototype cannot name the grants written before it.
+  portal cannot name the grants written before it.
 
 ## Helm release migration
 

@@ -161,7 +161,7 @@ Keycloak is healthy. Without credentials it creates nothing.
 | plus `STUDIO_GITLAB_IDP_BASE_URL` | a self-hosted GitLab; Keycloak's container must reach it at that address |
 | the secret removed again | broker switched off on the next run, button gone |
 
-The portal (`frontend-prototype`) shows the button when
+The portal (compose service `frontend`) shows the button when
 `STUDIO_GITLAB_IDP_CLIENT_SECRET` is set; set the client id with it. The
 backend gets the base URL as `STUDIO_GITLAB_URL` (`config/docker.yaml`,
 `studio-user.gitlab_url`). The Vite dev server takes

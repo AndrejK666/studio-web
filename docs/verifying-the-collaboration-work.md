@@ -84,7 +84,8 @@ is exactly why the test for the extension lives next to the fold.
 
 ## Layer 3 — the prototype
 
-The portal work (#267, #268, #270) is in `studio-frontend-prototype`, which is a
+(Historical: that prototype is archived as `archive/studio-frontend-poc-2026-11-27`,
+under `studio-frontend-poc/`.) The portal work (#267, #268, #270) is in `studio-frontend-prototype`, which is a
 self-contained app with its own dependencies — not the workspace-and-packages
 build that `studio-frontend` next door needs:
 

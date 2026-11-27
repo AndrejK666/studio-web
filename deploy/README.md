@@ -274,8 +274,8 @@ values, with the same `maxUnavailable: 1, maxSurge: 0`, rolls one pod at a time
 with the other serving — zero downtime, no surge capacity, 50m/64Mi for the
 second pod.
 
-**PodDisruptionBudgets render only above one replica**, for backend, frontend,
-prototype and Keycloak alike. At one replica the choice is between a budget
+**PodDisruptionBudgets render only above one replica**, for backend, frontend
+and Keycloak alike. At one replica the choice is between a budget
 that permits the eviction, which protects nothing, and one that forbids it,
 which blocks node drains and cluster upgrades on an operator. Neither is
 availability, and an object in the cluster that looks like a guarantee while
@@ -316,6 +316,19 @@ that namespace's `studio-deployer` ServiceAccount. Never use the administrator
 kubeconfig. Add required reviewers when repository access is hardened.
 
 Run **Deploy Services** from `main` and select `backend`, `frontend`, or `all`.
+
+**One frontend on both hosts (2026-11-27).** The chart has one frontend
+Deployment, `<release>-frontend`, and the main ingress routes the environment's
+host and every `global.customDomains` host (Dev and Test list their `-poc`
+host there) to it. The prototype's Deployment, Service and ingress
+(`<release>-frontend-prototype`) are gone from the chart, so the first upgrade
+deletes them and updates `<release>-frontend` in place to the
+`studio-frontend` image built from the renamed tree. That first deploy must
+carry the frontend (`all` or `frontend`, a snapshot built after the rename):
+keeping the running tag would leave the retired FrontX image on both hosts,
+and the workflow refuses it, and any infrastructure deploy, while
+`<release>-frontend-prototype` still exists. A `studio-frontend:sha-<commit>`
+of an earlier commit is the FrontX portal, not this one.
 A full `sha-<commit>` snapshot built from any internal branch may be deployed
 only to `dev`. A versioned `v*` release tag pointing to a commit on `main` may
 be deployed to `dev` or `test`. Run **Deploy Infra** only with a published

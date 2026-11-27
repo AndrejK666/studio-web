@@ -4,6 +4,8 @@
 
 This implementation intentionally exposes Kit Registry only in
 `studio-frontend-prototype`. The production `studio-frontend` is unchanged.
+(Historical: both trees are retired since 2026-11-27, the prototype's as the tag
+`archive/studio-frontend-poc-2026-11-27`; the portal is `studio-frontend/`.)
 
 A kit is a versioned bundle of Constructor Studio conventions and workflows
 whose canonical content remains in Git. The initial official entry is:

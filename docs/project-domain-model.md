@@ -549,8 +549,8 @@ that it is covered.
 
 ## The Project domain model tab
 
-A project tab beside Specs and Components in the prototype
-(`studio-frontend-prototype`), with three views:
+A project tab beside Specs and Components in the portal
+(`studio-frontend`), with three views:
 
 - **Problems** (first, since it is what a person acts on): undecided before
   confirmed before dismissed, high first, disagreements before references.

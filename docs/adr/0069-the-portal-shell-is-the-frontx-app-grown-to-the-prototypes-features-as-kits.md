@@ -10,6 +10,14 @@ date: 2026-11-06
 
 Status: **proposed** · Date: 2026-11-06 · Builds on ADR-0068 (Studio is a shell, and everything inside it comes from kits), ADR-0006 (rebuild the portal on FrontX), ADR-0050 (FrontX micro-frontends) · Amends ADR-0068 §5 (who installs a kit)
 
+> **Note, 2026-11-27.** The team now works on one frontend. This app moved from
+> `studio-frontend-prototype/` to `studio-frontend/` and serves both the main and
+> the `-poc` hosts; the FrontX portal that held `studio-frontend/` and the old
+> prototype (`studio-frontend-poc/`) were removed and are kept as the tags
+> `archive/studio-frontend-frontx-2026-11-27` and
+> `archive/studio-frontend-poc-2026-11-27`. The paths below are as they were
+> when this was written.
+
 ## Table of Contents
 
 <!-- toc -->

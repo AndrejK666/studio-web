@@ -152,7 +152,7 @@ Abbreviations in the citations: **seed** = `ontology.studio.json`;
 `documents/review_store.rs`; **process** = `documents/process_store.rs`;
 **mirror** = `reports/mirror.rs`; **tenants** = `domain_model/tenant_objects.rs`;
 **contents** = `kit_registry/contents.rs`; **poc** = `studio-frontend-poc/src/` (the old
-prototype); **fx** = `studio-frontend-prototype/src-app/mfe_packages/` (the FrontX
+prototype); **fx** = `studio-frontend/src-app/mfe_packages/` (the FrontX
 portal). "Generic only" means that the generic routes and MCP tools (`/objects`, `/query`,
 `/mutate`, `domain_model_*` in `domain_model/mcp.rs`) are the only readers. Backend paths
 are under `studio-backend/src/`.
@@ -444,4 +444,4 @@ declared by `studio-documents`).
 - Kits and their screens: `kit_registry/service.rs` `builtin_catalogue()`,
   `kit_registry/contents.rs` `builtin_contents()`, and each FrontX package's `mfe.json`
   (`kit` on the entry).
-- The portal's state: `studio-frontend-prototype/docs/parity.md`.
+- The portal's state: `studio-frontend/docs/parity.md`.

@@ -47,10 +47,11 @@ private module (enforced in `assembly/manifest.rs`,
 through the platform API gateway under `/cf/`, authenticated by an authn plugin,
 authorized by the Studio PDP and scoped to the caller's tenant.
 
-The FrontX portal (`studio-frontend/`) is a host shell plus microfrontends, one
-per area of a navigation level (ADR-0006, ADR-0008). The prototype portal
-(`studio-frontend-prototype/`) is the earlier single-page application, kept on
-port 8081 with the screens the FrontX portal does not have yet. The IDE is an
+The portal (`studio-frontend/`) is the one frontend: a FrontX host shell plus
+microfrontends, one per area of a navigation level, grouped into kits
+(ADR-0006, ADR-0008, ADR-0069). The earlier prototype single-page application
+and the first FrontX portal were retired on 2026-11-27 and are kept as git
+tags (README, "Archived frontends"). The IDE is an
 Eclipse Theia 1.74.0 image (`theia/Dockerfile`) extended by Studio's Theia
 packages and launched per workspace by the `studio-session` gear (ADR-0003).
 
@@ -124,7 +125,7 @@ This table maps non-functional requirements from PRD to specific design/architec
 ### 1.3 Architecture Layers
 
 ```text
- Browser ── FrontX portal (8080) / prototype portal (8081) ──┐
+ Browser ── portal (compose :8081 and :8080) ───────────────────┐
     │  iframe + postMessage                                  │ REST /cf/<gear>/v1, SSE
     ▼                                                        ▼
  Theia session (container or Pod) ◄── S2S control ── studio-backend (api_gateway → gears)
@@ -301,7 +302,6 @@ Every IDE capability is hung on a published Theia contribution point so Theia ca
 ```mermaid
 graph LR
     Portal[FrontX portal] -->|REST, SSE| GW[api_gateway]
-    Proto[Prototype portal] -->|REST, SSE| GW
     Portal -->|iframe, postMessage| IDE[Theia session]
     GW --> Gears[Studio gears]
     Gears --> AM[account_management]
@@ -1313,11 +1313,11 @@ Make no backend calls.
 
 ##### Why this component exists
 
-The pre-FrontX portal, kept as a playground with the screens FrontX does not have yet.
+**Retired 2026-11-27.** The pre-FrontX portal, kept as a playground with the screens FrontX did not have yet; its screens moved into the portal's kits (ADR-0069) and its tree is in the tag `archive/studio-frontend-poc-2026-11-27`. The text below describes it as it was.
 
 ##### Responsibility scope
 
-`studio-frontend-prototype/src/`, served on port 8081. Screens, by `App.tsx` key:
+`studio-frontend-poc/src/`, served on port 8081 until it was retired. Screens, by `App.tsx` key:
 
 | Level | Key | Label | Backed by |
 |---|---|---|---|
@@ -1351,7 +1351,7 @@ The pre-FrontX portal, kept as a playground with the screens FrontX does not hav
 
 It also carries the "Open Studio" launcher (`/studio-session/v1`) and the presence notes (`/studio-presence/v1`).
 
-Beside the portal the same image serves two pages of its own, opened from the product menu: `/api-docs/`, the backend's `/cf/openapi.json` grouped by gear, and `/architecture/`, the running backend's gears from `/studio-assembly/v1/manifest` joined with the calls this prototype makes (a map extracted from `src/` at build time by `scripts/prototype-api-map.mjs`). The table above is written by hand; that page is not.
+Beside the portal the same image serves two pages of its own, opened from the product menu: `/api-docs/`, the backend's `/cf/openapi.json` grouped by gear, and `/architecture/`, the running backend's gears from `/studio-assembly/v1/manifest` joined with the calls this prototype made (a map extracted from `src/` at build time by `scripts/prototype-api-map.mjs`, removed with it). The table above is written by hand; that page is not.
 
 ##### Responsibility boundaries
 
@@ -1595,7 +1595,7 @@ Stability is `unstable` except where an ADR fixes the contract (`studio-events`,
 
 - **Contracts**: [`docs/theia-bridge-contract-v1.md` §6](../theia-bridge-contract-v1.md#6-portal--ide-browser-channel-postmessage)
 - **Technology**: `window.postMessage` between the portal and the embedded IDE, origin-checked on both ends and never posted to `*`; the IDE accepts only `window.parent`. Portal → IDE: `studio.init`, `studio.theme`, `studio.token`, `studio.openInEditor`, `studio.openGraph`, `studio.openDocument`, `studio.openProduct`, `studio.openGear`, `studio.notify`. IDE → portal: `studio.status`, `studio.documentSaved`, `studio.openComponent`.
-- **Location**: [`theia/studio/src/browser/portal-bridge-contribution.ts`](../../theia/studio/src/browser/portal-bridge-contribution.ts) (the IDE), [`studio-frontend/src-app/app/mfe/editorBridge.ts`](../../studio-frontend/src-app/app/mfe/editorBridge.ts) (the official portal)
+- **Location**: [`theia/studio/src/browser/portal-bridge-contribution.ts`](../../theia/studio/src/browser/portal-bridge-contribution.ts) (the IDE), [`studio-frontend/src-app/kits/ide/frameBridge.ts`](../../studio-frontend/src-app/kits/ide/frameBridge.ts) (the portal)
 
 - [x] `p2` - **ID**: `cpt-studio-interface-session-control`
 
@@ -1813,7 +1813,7 @@ The database names are set in `studio-backend/config/docker.yaml`. Platform gear
 
 - [x] `p3` - **ID**: `cpt-studio-topology-compose`
 
-Docker Compose (`docker-compose.yml`): `keycloak` (8443), `graph-postgres` (5433), `backend-bootstrap`, `backend` (8090, `/cf/docs`), `embedding-model` (fetches the embedding model into a volume), `frontend` (8080), `frontend-prototype` (8081) and `session-image`. `docker-compose.published.yml` swaps builds for published images. The backend mounts the Docker socket and `/srv/cf-studio-workspaces`.
+Docker Compose (`docker-compose.yml`): `keycloak` (8443), `graph-postgres` (5433), `backend-bootstrap`, `backend` (8090, `/cf/docs`), `embedding-model` (fetches the embedding model into a volume), `frontend` (the one portal, on 8081 and 8080) and `session-image`. `docker-compose.published.yml` swaps builds for published images. The backend mounts the Docker socket and `/srv/cf-studio-workspaces`.
 
 - [x] `p3` - **ID**: `cpt-studio-topology-kubernetes`
 
