@@ -24,9 +24,17 @@
 //! vendor:
 //!   studio:
 //!     kits:
+//!       edition: studio     # `studio` (the default) or `glasshouse`
 //!       enabled: all        # `all` (the default), `none`, or a list of slugs
 //!       disabled: []        # slugs taken out of `enabled`
 //! ```
+//!
+//! An **edition** is a set of kits: each built-in kit names the editions it
+//! runs in (`editions` in its `kit.json`; none named is `studio`). `all` means
+//! every kit of the deployment's edition. A list in `enabled` names kits of any
+//! edition, so a deployment can add one kit from another edition on purpose.
+//! Every kit that predates editions is `studio`'s, so a deployment that does
+//! not name an edition runs exactly what it ran before.
 //!
 //! Both take a YAML list or one comma-separated string, so an environment
 //! variable can carry them (`${STUDIO_KITS_DISABLED:-}`). A slug no kit has
@@ -53,6 +61,15 @@ inventory::collect!(KitGear);
 
 /// The `vendor` section this module reads.
 const VENDOR: &str = "studio";
+
+/// The edition every deployment runs unless it names another, and the one a
+/// kit that names no edition belongs to.
+pub const EDITION_STUDIO: &str = "studio";
+/// The Glasshouse edition: a vendor opens its code to partner companies
+/// (`docs/glasshouse-plan.md`).
+pub const EDITION_GLASSHOUSE: &str = "glasshouse";
+/// Every edition this binary knows.
+pub const EDITIONS: [&str; 2] = [EDITION_STUDIO, EDITION_GLASSHOUSE];
 
 /// Which kits run.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -85,6 +102,8 @@ impl Composition {
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct KitsSetting {
+    #[serde(default)]
+    edition: Option<String>,
     #[serde(default)]
     enabled: Option<Slugs>,
     #[serde(default)]
@@ -127,14 +146,53 @@ pub fn known_kits() -> BTreeSet<String> {
         .collect()
 }
 
+/// The editions kit `slug` runs in.
+pub fn kit_editions(slug: &str) -> Vec<String> {
+    crate::kit_registry::builtin_editions(slug)
+}
+
+/// The kits of `edition`, sorted.
+pub fn edition_kits(edition: &str) -> BTreeSet<String> {
+    known_kits()
+        .into_iter()
+        .filter(|k| kit_editions(k).iter().any(|e| e == edition))
+        .collect()
+}
+
+/// `vendor.studio.kits`, read; no section is the default setting.
+fn setting_of(section: Option<&Value>) -> Result<KitsSetting> {
+    match section.and_then(|s| s.get("kits")) {
+        None | Some(Value::Null) => Ok(KitsSetting::default()),
+        Some(v) => serde_json::from_value(v.clone()).map_err(|e| {
+            anyhow::anyhow!("vendor.{VENDOR}.kits: {e}; write `edition`, `enabled` and `disabled`")
+        }),
+    }
+}
+
+/// The edition a setting names: `studio` when it names none (or an empty
+/// string, as an unset environment variable renders).
+fn edition_in(setting: &KitsSetting) -> Result<String> {
+    let edition = setting
+        .edition
+        .as_deref()
+        .map(str::trim)
+        .filter(|e| !e.is_empty())
+        .unwrap_or(EDITION_STUDIO);
+    if !EDITIONS.contains(&edition) {
+        bail!("vendor.{VENDOR}.kits.edition is `{edition}`; the editions are {EDITIONS:?}");
+    }
+    Ok(edition.to_owned())
+}
+
+/// The edition `vendor.studio` (the section, if any) names.
+pub fn edition_from_vendor(section: Option<&Value>) -> Result<String> {
+    edition_in(&setting_of(section)?)
+}
+
 /// The composition `vendor.studio` (the section, if any) asks for.
 pub fn from_vendor(section: Option<&Value>) -> Result<Composition> {
-    let setting: KitsSetting = match section.and_then(|s| s.get("kits")) {
-        None | Some(Value::Null) => return Ok(Composition::All),
-        Some(v) => serde_json::from_value(v.clone()).map_err(|e| {
-            anyhow::anyhow!("vendor.{VENDOR}.kits: {e}; write `enabled` and `disabled`")
-        })?,
-    };
+    let setting = setting_of(section)?;
+    let edition = edition_in(&setting)?;
     let known = known_kits();
     let check = |field: &str, slugs: &[String]| -> Result<()> {
         let unknown: Vec<&String> = slugs.iter().filter(|s| !known.contains(*s)).collect();
@@ -147,8 +205,8 @@ pub fn from_vendor(section: Option<&Value>) -> Result<Composition> {
         Ok(())
     };
     let enabled: BTreeSet<String> = match setting.enabled.as_ref().map(Slugs::items) {
-        None => known.clone(),
-        Some(items) if items.len() == 1 && items[0] == "all" => known.clone(),
+        None => edition_kits(&edition),
+        Some(items) if items.len() == 1 && items[0] == "all" => edition_kits(&edition),
         Some(items) if items.len() == 1 && items[0] == "none" => BTreeSet::new(),
         Some(items) => {
             check("enabled", &items)?;
@@ -177,12 +235,14 @@ static CHOSEN: OnceLock<Composition> = OnceLock::new();
 /// Fix the composition for this process from its configuration, before any
 /// gear starts. A second call keeps the first answer.
 pub fn configure(config: &toolkit::bootstrap::AppConfig) -> Result<()> {
-    let composition = from_vendor(config.vendor.get(VENDOR))?;
+    let section = config.vendor.get(VENDOR);
+    let edition = edition_from_vendor(section)?;
+    let composition = from_vendor(section)?;
     let off = composition.off();
     if off.is_empty() {
-        tracing::info!("kits: every kit is switched on");
+        tracing::info!(edition, "kits: every kit is switched on");
     } else {
-        tracing::info!(off = ?off, "kits: switched off by vendor.{VENDOR}.kits");
+        tracing::info!(edition, off = ?off, "kits: switched off by vendor.{VENDOR}.kits");
     }
     let _ = CHOSEN.set(composition);
     Ok(())

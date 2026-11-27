@@ -5,6 +5,10 @@
   "name": "IDE",
   "description": "A project's IDE in the browser (space-mfe), and a file handed to the desktop app where the project is open there.",
   "publisher": "Constructor Fabric",
+  "editions": [
+    "studio",
+    "glasshouse"
+  ],
   "levels": [
     "project"
   ],

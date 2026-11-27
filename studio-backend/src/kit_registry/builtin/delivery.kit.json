@@ -5,6 +5,10 @@
   "name": "Builds, releases & environments",
   "description": "From a build to a running environment: the places an organization holds and the environments on them, a project's builds, images, its own environments and deploys up the ladder.",
   "publisher": "Constructor Fabric",
+  "editions": [
+    "studio",
+    "glasshouse"
+  ],
   "levels": [
     "organization",
     "project"

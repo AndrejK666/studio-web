@@ -13,7 +13,10 @@ use toolkit::registry::{DatabaseCap, RestApiCap};
 use toolkit::{GearCtx, GearRegistry};
 use uuid::Uuid;
 
-use super::{Composition, KitGear, from_vendor, gear_on, kit_of, kit_on, known_kits, with};
+use super::{
+    Composition, EDITION_GLASSHOUSE, EDITION_STUDIO, EDITIONS, KitGear, edition_from_vendor,
+    edition_kits, from_vendor, gear_on, kit_editions, kit_of, kit_on, known_kits, with,
+};
 
 /// Each kit gear and the kit it belongs to (ADR-0079 §7).
 const KIT_GEARS: &[(&str, &str)] = &[
@@ -125,6 +128,91 @@ fn enabled_lists_the_only_kits_that_run() {
     let none = from_vendor(Some(&vendor(json!({ "enabled": "none" })))).unwrap();
     assert_eq!(none, no_kits());
     assert_eq!(none.off().len(), known_kits().len());
+}
+
+/// The built-in kits that run in Glasshouse too (`docs/glasshouse-plan.md`,
+/// "Editions").
+const GLASSHOUSE_KITS: [&str; 7] = [
+    "assistant",
+    "delivery",
+    "ide",
+    "org-costs",
+    "project-git",
+    "project-specs",
+    "project-tests",
+];
+
+#[test]
+fn every_kit_is_studios_so_no_edition_changes_nothing() {
+    assert_eq!(edition_kits(EDITION_STUDIO), known_kits());
+    assert_eq!(edition_from_vendor(None).unwrap(), EDITION_STUDIO);
+    for kits in [
+        json!({ "edition": "studio" }),
+        json!({ "edition": "" }),
+        json!({ "edition": " studio ", "enabled": "all" }),
+    ] {
+        assert_eq!(
+            from_vendor(Some(&vendor(kits.clone()))).unwrap(),
+            Composition::All,
+            "{kits}"
+        );
+        assert_eq!(
+            edition_from_vendor(Some(&vendor(kits))).unwrap(),
+            EDITION_STUDIO
+        );
+    }
+}
+
+#[test]
+fn every_built_in_kit_names_only_known_editions() {
+    for kit in known_kits() {
+        let editions = kit_editions(&kit);
+        assert!(!editions.is_empty(), "{kit} runs in no edition");
+        for e in &editions {
+            assert!(EDITIONS.contains(&e.as_str()), "{kit} names edition `{e}`");
+        }
+    }
+    let glasshouse = edition_kits(EDITION_GLASSHOUSE);
+    let expected: BTreeSet<String> = GLASSHOUSE_KITS.iter().map(|k| (*k).to_owned()).collect();
+    assert_eq!(glasshouse, expected);
+}
+
+#[test]
+fn the_glasshouse_edition_runs_its_kits_only() {
+    let c = from_vendor(Some(&vendor(json!({ "edition": "glasshouse" })))).unwrap();
+    for kit in GLASSHOUSE_KITS {
+        assert!(c.kit_on(kit), "{kit} must run in Glasshouse");
+    }
+    for kit in [
+        "org-reports",
+        "spec-mapping",
+        "gears-matcher",
+        "project-product",
+    ] {
+        assert!(!c.kit_on(kit), "{kit} is Studio's only");
+    }
+    // `all` is every kit of the edition; `disabled` still takes one out.
+    let c2 = from_vendor(Some(&vendor(
+        json!({ "edition": "glasshouse", "enabled": "all", "disabled": ["org-costs"] }),
+    )))
+    .unwrap();
+    assert!(c2.kit_on("ide"));
+    assert!(!c2.kit_on("org-costs"));
+    assert!(!c2.kit_on("org-reports"));
+    // A list names kits of any edition, on purpose.
+    let c3 = from_vendor(Some(&vendor(
+        json!({ "edition": "glasshouse", "enabled": ["ide", "org-reports"] }),
+    )))
+    .unwrap();
+    assert!(c3.kit_on("org-reports"));
+    assert!(!c3.kit_on("delivery"));
+}
+
+#[test]
+fn an_edition_no_build_has_fails_naming_it() {
+    let err = from_vendor(Some(&vendor(json!({ "edition": "glashouse" })))).unwrap_err();
+    assert!(err.to_string().contains("glashouse"), "{err}");
+    assert!(edition_from_vendor(Some(&vendor(json!({ "edition": "x" })))).is_err());
 }
 
 #[test]

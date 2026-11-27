@@ -165,12 +165,15 @@ backend:
   # switched-off kit's gear starts nothing (no tables, tasks, routes, MCP
   # tools or Overview blocks) and what it claims answers KIT_NOT_INSTALLED.
   # Changing it restarts the backend; nothing is rebuilt. Rendered into
-  # STUDIO_KITS_ENABLED / STUDIO_KITS_DISABLED, which config/k8s.yaml reads
-  # as `vendor.studio.kits`. A slug no kit has stops the boot.
-  #   enabled:  `all` (default), `none`, or a list of kit slugs
+  # STUDIO_EDITION / STUDIO_KITS_ENABLED / STUDIO_KITS_DISABLED, which
+  # config/k8s.yaml reads as `vendor.studio.kits`. A slug no kit has, or an
+  # edition the build does not know, stops the boot.
+  #   edition:  `studio` (default) or `glasshouse`: the kits of that edition
+  #   enabled:  `all` (every kit of the edition), `none`, or a list of slugs
   #   disabled: kit slugs taken out of `enabled` (default: none)
   # e.g. `disabled: [org-reports, gears-matcher]`.
   kits:
+    edition: studio
     enabled: all
     disabled: []
   # Knowledge-graph embeddings (graph-storage gear). ONE provider per

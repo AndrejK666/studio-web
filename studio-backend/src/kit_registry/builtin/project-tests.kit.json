@@ -5,6 +5,10 @@
   "name": "Tests",
   "description": "The project's Tests tab: its test runs and their results.",
   "publisher": "Constructor Fabric",
+  "editions": [
+    "studio",
+    "glasshouse"
+  ],
   "levels": [
     "project"
   ],

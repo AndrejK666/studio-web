@@ -108,6 +108,7 @@ logging:
 vendor:
   studio:
     kits:
+      edition: "${STUDIO_EDITION:-studio}"
       enabled: "${STUDIO_KITS_ENABLED:-all}"
       disabled: "${STUDIO_KITS_DISABLED:-}"
 

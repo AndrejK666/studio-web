@@ -5,6 +5,10 @@
   "name": "Git collaboration",
   "description": "Work on a project's Git host: the pull requests of its repositories, its tracker issues, the discussion on both, and the project's Activity.",
   "publisher": "Constructor Fabric",
+  "editions": [
+    "studio",
+    "glasshouse"
+  ],
   "levels": [
     "organization",
     "project"

@@ -216,6 +216,8 @@ spec:
             # (backend.embedding.provider). `remote` reads its key from the
             # `embed_api_key` app secret; `onnx` needs the init container above.
             # Which kits start (backend.kits; config/k8s.yaml vendor.studio.kits).
+            - name: STUDIO_EDITION
+              value: {{ .Values.backend.kits.edition | default "studio" | quote }}
             - name: STUDIO_KITS_ENABLED
               value: {{ if kindIs "slice" .Values.backend.kits.enabled }}{{ join "," .Values.backend.kits.enabled | quote }}{{ else }}{{ .Values.backend.kits.enabled | default "all" | quote }}{{ end }}
             - name: STUDIO_KITS_DISABLED

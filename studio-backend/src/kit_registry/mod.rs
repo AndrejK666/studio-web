@@ -34,6 +34,8 @@ mod sweep;
 pub(crate) mod testing; // an installer over memory, for a kit function's tests
 
 pub(crate) use installed::KITS_INSTALLED_METADATA_TYPE;
+// The editions a built-in kit runs in, read by the composition switch.
+pub(crate) use manifest::builtin_editions;
 // This gear's MCP tools, collected by studio-mcp (ADR-0079).
 // The kit library, and installing kits for everyone or one organization.
 inventory::submit! {

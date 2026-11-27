@@ -5,6 +5,10 @@
   "name": "Costs",
   "description": "What an organization's model calls and IDE sessions cost, its price list and monthly budgets.",
   "publisher": "Constructor Fabric",
+  "editions": [
+    "studio",
+    "glasshouse"
+  ],
   "levels": [
     "organization"
   ],

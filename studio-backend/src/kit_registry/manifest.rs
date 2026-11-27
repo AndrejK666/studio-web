@@ -64,6 +64,12 @@ pub struct KitManifest {
     pub version: Option<String>,
     #[serde(default)]
     pub levels: Vec<String>,
+    /// The editions of Studio this kit runs in (`studio`, `glasshouse`): a
+    /// deployment of one edition starts the built-in kits that name it
+    /// ([`crate::composition`]). None named reads as `studio`
+    /// ([`KitManifest::editions`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub editions: Vec<String>,
     /// Says the kit is a project type. Only a cache: a kit is a project type
     /// when its `model` derives a type of its own from the core Project type
     /// (ADR-0073, [`KitManifest::project_subtype`]), and a manifest that says
@@ -226,6 +232,16 @@ pub struct ProjectSubtype {
 }
 
 impl KitManifest {
+    /// The editions this kit runs in, as written, or `studio` when it names
+    /// none: every kit that predates editions is Studio's.
+    pub fn editions(&self) -> Vec<String> {
+        if self.editions.is_empty() {
+            vec![crate::composition::EDITION_STUDIO.to_owned()]
+        } else {
+            self.editions.clone()
+        }
+    }
+
     /// The type this kit derives from the core Project type, when it is a
     /// project type: its overlay declares a type of its own that `extends`
     /// `project`. A kit is a project type by its model, not by a flag.
@@ -865,6 +881,15 @@ const BUILTIN_MANIFESTS: &[(&str, &str)] = &[
 pub fn builtin_manifest(slug: &str) -> Option<KitManifest> {
     builtin_manifest_text(slug)
         .map(|body| read_manifest(body, Shelf::Builtin).expect("a built-in kit.json reads"))
+}
+
+/// The editions built-in kit `slug` runs in. A kit with no compiled-in
+/// `kit.json` (a kit known only by its gear) is Studio's.
+pub(crate) fn builtin_editions(slug: &str) -> Vec<String> {
+    builtin_manifest(slug).map_or_else(
+        || vec![crate::composition::EDITION_STUDIO.to_owned()],
+        |m| m.editions(),
+    )
 }
 
 pub(crate) fn project_type_kit(slug: &str) -> Option<KitManifest> {

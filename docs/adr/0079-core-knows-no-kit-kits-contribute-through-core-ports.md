@@ -144,6 +144,16 @@ runs, so a deployment that does not mention it behaves as before. A slug no
 kit has stops the boot, so a typo cannot leave running a kit that was meant
 off.
 
+**Editions (amended 2026-11-27).** A third key, `edition` (`studio`, the
+default, or `glasshouse`; `STUDIO_EDITION`, Helm `backend.kits.edition`),
+names a set of kits. Each built-in kit lists the editions it runs in
+(`editions` in its `kit.json`); a kit that lists none is `studio`'s. `all`
+and an unset `enabled` mean every kit of the edition; a list in `enabled`
+names kits of any edition, on purpose. Every kit that predates editions is
+`studio`'s, so a deployment that names no edition runs what it ran before. An
+edition the build does not know stops the boot. Why: Glasshouse is a Studio
+installation with its own set of kits (`docs/glasshouse-plan.md`).
+
 How it is held:
 
 - A kit's gear registers its kit in its own module

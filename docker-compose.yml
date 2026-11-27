@@ -250,6 +250,7 @@ services:
       # "not configured" and every Spec Quality run fails. Value lives in .env.
       STUDIO_SPEC_QUALITY_API_KEY: ${STUDIO_SPEC_QUALITY_API_KEY:-}
       # Which kits start (ADR-0079 §5; config/docker.yaml `vendor.studio.kits`).
+      STUDIO_EDITION: ${STUDIO_EDITION:-studio}
       STUDIO_KITS_ENABLED: ${STUDIO_KITS_ENABLED:-all}
       STUDIO_KITS_DISABLED: ${STUDIO_KITS_DISABLED:-}
       # Constructor Insight instance token (studio-insight gear). The gear has

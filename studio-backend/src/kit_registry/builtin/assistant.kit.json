@@ -5,6 +5,10 @@
   "name": "Assistant",
   "description": "Studio AI: the chat assistant docked beside every screen, and the model endpoints, tools and messages it works with.",
   "publisher": "Constructor Fabric",
+  "editions": [
+    "studio",
+    "glasshouse"
+  ],
   "levels": [
     "organization",
     "workspace",
