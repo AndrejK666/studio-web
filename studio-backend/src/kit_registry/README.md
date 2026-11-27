@@ -276,7 +276,8 @@ This README is what you need to work in the directory.
 - `project-lifecycle` is the first built-in kit with a model: the type
   `project-lifecycle-phase`, `project.phase` / `phase_owner` / `phase_since`,
   the tab `project.phases` and the phase lifecycle. Its function is
-  `phase.rs`: `GET`/`PUT /project-phase?project_id=` (moves only along a
+  `src/project_lifecycle` (a kit gear on the kit-runtime port, `runtime.rs`):
+  `GET`/`PUT /project-phase?project_id=` (moves only along a
   declared transition, `NO_SUCH_TRANSITION`; `KIT_NOT_INSTALLED` where it
   does not apply; written as the caller, `DOMAIN_EDIT_REQUIRED` when the PDP
   refuses) and `GET /project-phases?organization_id=`. MCP: `project_phase`,

@@ -26,14 +26,9 @@ fn version() -> Value {
         "description": "A Git ref for an official kit; the kit's default when absent. A built-in kit takes Studio's version only." })
 }
 
+/// The library's and the installer's tools. A kit's function registers its
+/// own tool set beside its routes (the kit-runtime port, `runtime.rs`).
 pub fn tools() -> Vec<Tool> {
-    let mut all = kit_tools();
-    // M&A due diligence's deal, findings and risks (studio-web#1024).
-    all.extend(super::mna_mcp::tools());
-    all
-}
-
-fn kit_tools() -> Vec<Tool> {
     vec![
         Tool {
             name: "kits_catalog",
@@ -312,57 +307,6 @@ fn kit_tools() -> Vec<Tool> {
             experimental: false,
             run: Run::Get("/studio-kits/v1/inbox-sources"),
         },
-        Tool {
-            name: "project_phase",
-            description: "A project's phase (the built-in Project lifecycle kit): the phase, who \
-                moves it on and since when, the lifecycle's phases and the moves open from the \
-                current one. `installed` is false where the kit does not apply.",
-            input_schema: || object(json!({ "project_id": project_id() }), &["project_id"]),
-            effect: Effect::Read,
-            experimental: false,
-            run: Run::Get("/studio-kits/v1/project-phase"),
-        },
-        Tool {
-            name: "project_phase_set",
-            description: "Move a project to a phase along the lifecycle Project lifecycle \
-                declares (idea → discovery → build → run, and back); a move it does not declare \
-                is refused with `NO_SUCH_TRANSITION`. `owner` (a subject id) is who moves it on \
-                from there; the project's current owner, else you, when absent.",
-            input_schema: || {
-                object(
-                    json!({
-                        "project_id": project_id(),
-                        "phase": { "type": "string", "enum": ["idea", "discovery", "build", "run"] },
-                        "owner": { "type": "string" }
-                    }),
-                    &["project_id", "phase"],
-                )
-            },
-            effect: Effect::Write,
-            experimental: true,
-            run: Run::Put {
-                path: "/studio-kits/v1/project-phase",
-                query: &["project_id"],
-            },
-        },
-        Tool {
-            name: "project_phases",
-            description: "Every project of an organization that has a phase (Project \
-                lifecycle), by project id, with its owner and since when.",
-            input_schema: || {
-                object(
-                    json!({
-                        "organization_id": organization_id(),
-                        "limit": { "type": "integer" },
-                        "offset": { "type": "integer" }
-                    }),
-                    &[],
-                )
-            },
-            effect: Effect::Read,
-            experimental: false,
-            run: Run::Get("/studio-kits/v1/project-phases"),
-        },
     ]
 }
 
@@ -467,16 +411,6 @@ mod tests {
         let r = request_of(&all, "kit_shelf_remove", json!({"kit_slug": "ops"}));
         assert_eq!(r.method, Method::Delete);
         assert_eq!(r.path, "/studio-kits/v1/organization-shelf/ops");
-
-        let r = request_of(
-            &all,
-            "project_phase_set",
-            json!({"project_id": "p-1", "phase": "build"}),
-        );
-        assert_eq!(r.method, Method::Put);
-        assert_eq!(r.path, "/studio-kits/v1/project-phase");
-        assert_eq!(r.body, json!({"phase": "build"}));
-        assert_eq!(r.query, vec![("project_id".to_owned(), "p-1".to_owned())]);
 
         let r = request_of(&all, "kits_installed", json!({"project_id": "p-1"}));
         assert_eq!(r.path, "/studio-kits/v1/installed-kits");

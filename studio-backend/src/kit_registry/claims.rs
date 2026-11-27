@@ -368,6 +368,25 @@ impl Claims {
     }
 }
 
+/// Whether the built-in kit `kit` may serve `method path` (a template, as
+/// registered) on `gear`: a write its `gears` claim on that gear, or a read
+/// its `permissions.reads` names (reads are never claimed, ADR-0071 §4). The
+/// claimed-route gate a kit's function is mounted through
+/// (`runtime::mount`); a kit that is not built in serves nothing.
+pub fn kit_serves(kit: &str, gear: &str, method: &str, path: &str) -> bool {
+    let Some(m) = builtin_manifest(kit) else {
+        return false;
+    };
+    let route = format!("{} {path}", method.to_ascii_uppercase());
+    if method.eq_ignore_ascii_case("GET") {
+        return m.permissions.reads.contains(&route);
+    }
+    m.gears
+        .iter()
+        .filter(|g| g.gear == gear)
+        .any(|g| g.routes.contains(&route))
+}
+
 /// Every built-in kit's compiled-in `kit.json`, in the catalogue's order.
 pub fn builtin_manifests() -> Vec<KitManifest> {
     builtin_catalogue()

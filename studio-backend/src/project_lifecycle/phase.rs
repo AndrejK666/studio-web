@@ -7,16 +7,21 @@
 //! Studio's function runtime (ADR-0068 §9), the built-in kit's function is
 //! compiled in here: it reads the project's object, and moves it only along a
 //! declared transition (ADR-0067 §4) — a write the domain model makes as the
-//! caller, so the PDP's `domain.edit` decides as for any object write.
+//! caller, so the PDP's `domain.edit` decides as for any object write. What
+//! it reads of the kits and the model it reads through the kit-runtime port
+//! (`crate::kit_registry::runtime`).
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use async_trait::async_trait;
 use serde_json::{Value, json};
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
-use super::installed::{KitInstaller, Refusal};
-use super::manifest::{builtin_manifest, overlay_of};
-use super::service::now_rfc3339;
 use crate::domain_model::port::{KitOverlay, is_refusal};
+use crate::kit_registry::port::ProjectPhases;
+use crate::kit_registry::runtime::{KitRuntime, Refusal, builtin_overlay, now_rfc3339};
 
 /// The kit this is the function of.
 pub const SLUG: &str = "project-lifecycle";
@@ -38,9 +43,7 @@ pub struct Lifecycle {
 
 /// The lifecycle of `project.phase` in the compiled-in overlay.
 pub fn lifecycle() -> Lifecycle {
-    let overlay: KitOverlay = builtin_manifest(SLUG)
-        .and_then(|m| overlay_of(&m).ok().flatten())
-        .expect("project-lifecycle brings a model");
+    let overlay: KitOverlay = builtin_overlay(SLUG).expect("project-lifecycle brings a model");
     let l = overlay
         .lifecycles
         .into_iter()
@@ -103,7 +106,7 @@ fn text(v: &Value, key: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// The query [`KitInstaller::project_phases`] asks the organization's model:
+/// The query [`ProjectLifecycle::project_phases`] asks the organization's model:
 /// every project object (a kit's subtype of Project too, studio-web#1118)
 /// with a phase of the lifecycle, its tenant and the kit's fields.
 pub(crate) fn phases_query() -> Value {
@@ -116,60 +119,14 @@ pub(crate) fn phases_query() -> Value {
     })
 }
 
-impl KitInstaller {
-    /// The caller, acting in `project`'s organization: where the model is.
-    pub(super) async fn org_ctx(
-        &self,
-        ctx: &SecurityContext,
-        project: Uuid,
-    ) -> Result<(Uuid, SecurityContext), Refusal> {
-        let org = self.store().organization_of(ctx, project).await;
-        let at = crate::org_scope::acting_in(ctx, org)
-            .map_err(|e| Refusal::Internal(anyhow::anyhow!("{e}")))?;
-        Ok((org, at))
-    }
+/// Project lifecycle's function, over the kit-runtime port.
+pub struct ProjectLifecycle {
+    runtime: Arc<dyn KitRuntime>,
+}
 
-    /// Write the project's own object whole, as `ctx`. With
-    /// [`Self::project_object`], the one place a kit function names the type a
-    /// project's object is stored as (ADR-0073 §6; studio-web#1118 stores it as
-    /// its kit's subtype of Project): a kit's fields go through these two,
-    /// never through a query or a write of their own.
-    pub(super) async fn put_project_object(
-        &self,
-        ctx: &SecurityContext,
-        project: Uuid,
-        payload: Value,
-    ) -> anyhow::Result<()> {
-        let port = self
-            .models()
-            .ok_or_else(|| anyhow::anyhow!("the domain model is not running"))?;
-        port.upsert_in(ctx, "project", "self", &project.to_string(), payload)
-            .await
-            .map(|_| ())
-    }
-
-    /// The project's own object, whole: its instance id and payload.
-    pub(super) async fn project_object(
-        &self,
-        ctx: &SecurityContext,
-        project: Uuid,
-    ) -> Result<Option<(String, Value)>, Refusal> {
-        let port = self
-            .models()
-            .ok_or_else(|| Refusal::Internal(anyhow::anyhow!("the domain model is not running")))?;
-        let (rows, _) = port
-            .query(
-                ctx,
-                json!({
-                    "type": "project",
-                    "project_id": project.to_string(),
-                    "where": { "tenant_id": { "_eq": project.to_string() } },
-                    "limit": 1,
-                }),
-            )
-            .await
-            .map_err(Refusal::Internal)?;
-        Ok(rows.into_iter().next().map(|r| (r.instance_id, r.payload)))
+impl ProjectLifecycle {
+    pub fn new(runtime: Arc<dyn KitRuntime>) -> Self {
+        Self { runtime }
     }
 
     /// `project`'s phase. The caller has been shown to reach it.
@@ -179,17 +136,17 @@ impl KitInstaller {
         project: Uuid,
     ) -> Result<Phase, Refusal> {
         let lifecycle = lifecycle();
-        if self.applies_to_project(ctx, project, SLUG).await?.is_none() {
+        if !self.runtime.applies_to_project(ctx, project, SLUG).await? {
             return Ok(Phase {
                 states: lifecycle.states,
                 ..Phase::default()
             });
         }
-        let (org, at) = self.org_ctx(ctx, project).await?;
+        let (org, at) = self.runtime.org_ctx(ctx, project).await?;
         // The model may not carry the kit's fields yet (a base kit is applied
         // when an organization is first read): make it.
-        self.models_in_step(org).await?;
-        let object = self.project_object(&at, project).await?;
+        self.runtime.models_in_step(org).await?;
+        let object = self.runtime.project_object(&at, project).await?;
         let payload = object.map(|(_, p)| p).unwrap_or(Value::Null);
         let phase = text(&payload, "phase");
         Ok(Phase {
@@ -224,19 +181,24 @@ impl KitInstaller {
             return Err(Refusal::KitNotInstalled(SLUG.to_owned()));
         }
         if !lifecycle.allows(current.phase.as_deref(), phase) {
-            return Err(Refusal::NoSuchTransition(format!(
-                "a project moves from {} to {}, not to {phase}",
-                current.phase.as_deref().unwrap_or("no phase"),
-                current
-                    .next
-                    .iter()
-                    .map(|(_, to)| to.as_str())
-                    .collect::<Vec<_>>()
-                    .join(" or ")
-            )));
+            return Err(Refusal::Precondition(
+                "phase",
+                format!(
+                    "a project moves from {} to {}, not to {phase}",
+                    current.phase.as_deref().unwrap_or("no phase"),
+                    current
+                        .next
+                        .iter()
+                        .map(|(_, to)| to.as_str())
+                        .collect::<Vec<_>>()
+                        .join(" or ")
+                ),
+                NO_SUCH_TRANSITION,
+            ));
         }
-        let (_, at) = self.org_ctx(ctx, project).await?;
+        let (_, at) = self.runtime.org_ctx(ctx, project).await?;
         let mut payload = self
+            .runtime
             .project_object(&at, project)
             .await?
             .map(|(_, p)| p)
@@ -258,7 +220,8 @@ impl KitInstaller {
         for key in ["_scope", "id"] {
             obj.remove(key);
         }
-        self.put_project_object(&at, project, payload)
+        self.runtime
+            .put_project_object(&at, project, payload)
             .await
             .map_err(|e| {
                 if is_refusal(&e) {
@@ -278,17 +241,11 @@ impl KitInstaller {
         ctx: &SecurityContext,
         org: Uuid,
     ) -> Result<(bool, Vec<(String, String, Option<String>, Option<String>)>), Refusal> {
-        let applies = self
-            .installed(ctx, org)
-            .await?
-            .effective
-            .iter()
-            .any(|k| k.kit_slug == SLUG);
-        if !applies {
+        if !self.runtime.applies_to_organization(ctx, org, SLUG).await? {
             return Ok((false, Vec::new()));
         }
-        self.models_in_step(org).await?;
-        let Some(port) = self.models() else {
+        self.runtime.models_in_step(org).await?;
+        let Some(port) = self.runtime.models() else {
             return Ok((true, Vec::new()));
         };
         let (rows, _) = port
@@ -308,6 +265,26 @@ impl KitInstaller {
             .collect();
         out.sort();
         Ok((true, out))
+    }
+}
+
+/// Every project's phase, for the rows of studio-organizations' rollups.
+#[async_trait]
+impl ProjectPhases for ProjectLifecycle {
+    async fn phases_in(
+        &self,
+        ctx: &SecurityContext,
+        org: Uuid,
+    ) -> anyhow::Result<Option<HashMap<Uuid, String>>> {
+        let (installed, rows) = self
+            .project_phases(ctx, org)
+            .await
+            .map_err(|refusal| anyhow::anyhow!("the phases could not be read: {refusal}"))?;
+        Ok(installed.then(|| {
+            rows.into_iter()
+                .filter_map(|(project, phase, _, _)| Some((project.parse().ok()?, phase)))
+                .collect()
+        }))
     }
 }
 

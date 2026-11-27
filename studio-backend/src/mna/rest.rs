@@ -1,6 +1,6 @@
 //! M&A due diligence's routes (studio-web#1024): a deal's attributes and
 //! sign-off, its findings, risks and open questions, and its evidence.
-//! The function is [`super::mna`]; the writes are claimed by the kit
+//! The function is [`super::deal`]; the writes are claimed by the kit
 //! (`builtin/mna.kit.json`), so they answer `KIT_NOT_INSTALLED` where it does
 //! not apply to the project.
 
@@ -15,8 +15,8 @@ use toolkit::api::{OpenApiRegistry, OperationBuilder};
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
-use super::mna::{Deal, DealPatch, Evidence, Item, Kind, Mna};
-use super::rest::{ProjectKitQuery, refused};
+use super::deal::{Deal, DealPatch, Evidence, Item, Kind, Mna};
+use crate::kit_registry::runtime::{ProjectKitQuery, refused};
 use crate::org_scope::OrgAccess;
 use crate::pagination::{PageQuery, page_of};
 

@@ -1,76 +1,14 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 
 use super::*;
-use crate::kit_registry::installed::{
-    InstalledDocument, InstalledKit, InstalledStore, KitAuthority,
-};
-use crate::kit_registry::models::FixedModels;
-use crate::kit_registry::service::{builtin_catalogue, official_catalogue};
+use crate::kit_registry::testing::{ADMIN, ORG, PROJECT, installer_over, runtime_of};
 
-const ORG: Uuid = Uuid::from_u128(0xc31d);
-const PROJECT: Uuid = Uuid::from_u128(0x9a0e);
-const ADMIN: Uuid = Uuid::from_u128(0x0a);
 /// The project's owner: the deal lead.
 const LEAD: Uuid = Uuid::from_u128(0x1ead);
 const ANALYST: Uuid = Uuid::from_u128(0xa7a1);
-
-#[derive(Default)]
-struct Memory {
-    docs: Mutex<HashMap<Uuid, InstalledDocument>>,
-}
-
-#[async_trait]
-impl InstalledStore for Memory {
-    async fn read(&self, _: &SecurityContext, tenant: Uuid) -> anyhow::Result<InstalledDocument> {
-        Ok(self
-            .docs
-            .lock()
-            .unwrap()
-            .get(&tenant)
-            .cloned()
-            .unwrap_or_default())
-    }
-
-    async fn update(
-        &self,
-        tenant: Uuid,
-        change: &mut (
-                 dyn for<'d> FnMut(
-            &'d mut InstalledDocument,
-        ) -> Result<Option<InstalledKit>, Refusal>
-                     + Send
-             ),
-    ) -> Result<Option<InstalledKit>, Refusal> {
-        let mut docs = self.docs.lock().unwrap();
-        let mut doc = docs.get(&tenant).cloned().unwrap_or_default();
-        let answer = change(&mut doc)?;
-        docs.insert(tenant, doc);
-        Ok(answer)
-    }
-
-    async fn organization_of(&self, _: &SecurityContext, tenant: Uuid) -> Uuid {
-        if tenant == PROJECT { ORG } else { tenant }
-    }
-
-    async fn is_project(&self, _: &SecurityContext, tenant: Uuid) -> bool {
-        tenant == PROJECT
-    }
-}
-
-struct Admins;
-
-#[async_trait]
-impl KitAuthority for Admins {
-    async fn is_platform_admin(&self, _: &SecurityContext) -> bool {
-        false
-    }
-    async fn may_manage(&self, ctx: &SecurityContext, _: Uuid) -> bool {
-        ctx.subject_id() == ADMIN
-    }
-}
 
 /// The project's config and each source's contributors.
 #[derive(Default)]
@@ -137,20 +75,14 @@ fn config() -> Value {
 }
 
 async fn setup(projects: Projects, install: bool) -> Mna {
-    let mut library = builtin_catalogue();
-    library.extend(official_catalogue());
-    let port = crate::domain_model::port::in_memory();
-    let installer = Arc::new(
-        KitInstaller::new(library, Arc::new(Memory::default()), Arc::new(Admins))
-            .with_models(Arc::new(FixedModels(port))),
-    );
+    let installer = installer_over(crate::domain_model::port::in_memory());
     if install {
         installer
             .install_for_project(&caller(ADMIN), PROJECT, SLUG, None)
             .await
             .expect("a project type installs for one project");
     }
-    Mna::new(installer, Arc::new(projects))
+    Mna::new(runtime_of(&installer), Arc::new(projects))
 }
 
 fn with_config() -> Projects {
@@ -685,4 +617,17 @@ async fn evidence_without_repositories_says_so() {
     assert_eq!(fact(&e, "specs_checked").value, Some(4.0));
     assert_eq!(fact(&e, "specs_failing").value, Some(1.0));
     assert!(!fact(&e, "spec_findings_open").available, "null is unknown");
+}
+
+/// Every route the kit's function serves is one its kit.json claims: the
+/// claimed-route gate studio-kits mounts it through lets it in.
+#[tokio::test]
+async fn the_kit_s_routes_pass_the_claimed_route_gate() {
+    let routes = super::super::Routes {
+        mna: Arc::new(setup(Projects::default(), false).await),
+        access: crate::kit_registry::testing::anyone(),
+    };
+    let openapi = toolkit::api::OpenApiRegistryImpl::new();
+    crate::kit_registry::runtime::mount(SLUG, &routes, axum::Router::new(), &openapi)
+        .expect("every route of M&A due diligence is claimed");
 }

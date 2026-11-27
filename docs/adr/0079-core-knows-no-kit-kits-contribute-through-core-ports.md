@@ -101,6 +101,7 @@ kit's gear registers in its own module, so adding a kit changes no core file.
 | **Rollup counts** | per-project counts for the portfolio and the projects table | ported: organizations declares `DocumentCounter`, `ArtifactCounter` and `RowSignalSource`; kits publish them on the ClientHub |
 | **Repository metrics** | the metrics board's git, CI and task half | ported: the analysing kit registers `RepositoryMetricsSource` (inventory, studio-insight) |
 | **Kit parts** | which status steps, signals and path stages its tab owns | ported: kits register `ProjectKitParts` (inventory) |
+| **Kit runtime** | a built-in kit's function: its routes on studio-kits, what it registers on the hub | ported: `mna` and `project_lifecycle` register `KitFunction` (inventory, `kit_registry/runtime.rs`) and read the kits and the project's object through `KitRuntime`; studio-kits mounts a function's routes only where its `kit.json` claims them (a write in its `gears`, a read in `permissions.reads`) and refuses to start otherwise |
 
 In process a port is a static registration (`inventory`); for a kit's gear
 beside Studio it is the directory (ADR-0077 §6).
@@ -143,7 +144,8 @@ By folder under `studio-backend/src/`:
   `environments` (delivery), `product` (project-product),
   `components_catalog` (components), `reports` (org-reports), `usage`
   (org-costs), `insight` (a new kit, insight), `llm_proxy` (assistant),
-  `studio_theia` (a new kit, ide).
+  `studio_theia` (a new kit, ide), `mna` (mna) and `project_lifecycle`
+  (project-lifecycle), the built-in kits' functions on the kit-runtime port.
 
 ## Migration order
 

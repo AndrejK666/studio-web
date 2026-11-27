@@ -1489,7 +1489,7 @@ async fn every_project_s_phase_answers_the_same_from_postgres_and_finds_subtypes
     ]))
     .await;
     p.fill().await;
-    let mut body = crate::kit_registry::port::project_phases_query();
+    let mut body = crate::project_lifecycle::phase::phases_query();
     let ty = body
         .as_object_mut()
         .and_then(|o| o.remove("type"))

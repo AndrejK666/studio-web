@@ -35,8 +35,9 @@ mod identity_directory; // platform-admin view of assigned and unassigned Keyclo
 mod insight; // integration seam to Constructor Insight (external decision-intelligence service)
 mod kit_registry; // Git-backed kit catalogue + project-scoped desired installations
 mod metering; // cost metering: what Studio meters and the port a use is recorded through (ADR-0079)
+mod mna;
 mod model_metadata; // tenant documents a gear keeps (account-management metadata), held as domain objects
-mod model_sweep; // moves every tenant's records into (or back out of) the domain model at start
+mod model_sweep; // moves every tenant's records into (or back out of) the domain model at start // M&A due diligence's function: a kit gear on the kit-runtime port (ADR-0079)
 // keycloak-idp-plugin is the official cf-gears-keycloak-idp-plugin (linked in
 // registered_gears.rs). The former in-crate implementation was removed once the
 // official plugin went green — see docs/keycloak-idp-migration.md.
@@ -53,6 +54,7 @@ mod plural; // "1 document", "2 documents": a count with its noun, never "docume
 mod presence; // studio-presence: who is in Studio now, and a note to reach them
 mod product; // studio-product: a project's product, its gear repository, and the Gearbox engine
 mod project_checkout; // a project's one checkout of each source, as the last sync left it: a core port the syncing kit fills
+mod project_lifecycle; // Project lifecycle's function, a project's phase: a kit gear on the kit-runtime port (ADR-0079)
 mod project_path; // a project's one path, sources to running product: the stages every tab draws
 mod project_sources; // a project's repositories: one record, project.config sources[]
 mod registered_gears;

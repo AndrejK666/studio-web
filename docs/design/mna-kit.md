@@ -81,7 +81,7 @@ Where the objects are: the deal's fields on the project's own object (type
 its phase); findings, risks and questions as objects of their types in the
 project's scope, each carrying its own `item_id`. Nothing has a table of its
 own. The function reads and writes the project's object only through the kit
-installer's pair (`project_object`, `put_project_object` in `phase.rs`),
+runtime port's pair (`project_object`, `put_project_object`, `kit_registry/runtime.rs`),
 the one place that names the type it is stored as, so storing it as the
 subtype itself (studio-web#1118) changes that pair and nothing here.
 
@@ -122,8 +122,9 @@ only.
 ## 4. The function and its routes
 
 Until kit functions run in Studio's function runtime (ADR-0068 §9), the kit's
-function is compiled into **studio-kits** (`kit_registry/mna.rs`), as Project
-lifecycle's phase is (`phase.rs`): the gear that installs a kit's model writes
+function is compiled in (`src/mna`) and served on **studio-kits** through the
+kit-runtime port (`kit_registry/runtime.rs`, ADR-0079), as Project
+lifecycle's phase is (`src/project_lifecycle`): the gear that installs a kit's model writes
 a built-in kit's types through the domain model's port. Every write is the
 domain model's, **as the caller**: the PDP's `domain.edit` decides (403
 `DOMAIN_EDIT_REQUIRED`). The kit claims its write routes and tools (ADR-0071),
@@ -141,7 +142,7 @@ the reads answer an empty deal (`installed: false`) or empty lists.
 | `GET`, `POST`, `PUT`, `DELETE` | `/studio-kits/v1/mna/risks…` | the same for risks; `finding_id` names one of the deal's findings |
 | `GET`, `POST`, `PUT`, `DELETE` | `/studio-kits/v1/mna/open-questions…` | the same for open questions |
 
-MCP (`kit_registry/mna_mcp.rs`, claimed by the kit): `mna_deal` (the deal and
+MCP (`src/mna/mcp.rs`, claimed by the kit): `mna_deal` (the deal and
 its evidence), `mna_deal_update` (fields, and `sign_off: true`), `mna_findings`,
 `mna_finding_upsert`, `mna_risks`, `mna_risk_upsert`. #1024 named three tools,
 `mna_deal`, `mna_findings` and `mna_risks`; each is a read with a write
