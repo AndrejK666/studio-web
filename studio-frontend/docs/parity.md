@@ -2,13 +2,15 @@
 
 ADR-0069 §3: this app replaces the prototype on Dev once every row below is
 **done**. The reference is the old prototype, kept unbuilt as an archive in
-[`studio-frontend-poc/`](../../studio-frontend-poc/) in its latest version
-(everything main changed in it up to the merge that moved it there); the
-state this app was copied against is `00828880`
+`studio-frontend-poc/` in its latest version (everything main changed in it up
+to the merge that moved it there); since 2026-11-27 that tree lives only in the
+tag `archive/studio-frontend-poc-2026-11-27`
+(`git show archive/studio-frontend-poc-2026-11-27:studio-frontend-poc/src/…`).
+The state this app was copied against is `00828880`
 (`git show 00828880:studio-frontend-prototype/src/…`). A file the rows below
-name as "the prototype's" is under `studio-frontend-poc/src/`. The
-`studio-frontend-prototype` image, and so the POC host on Dev, is this app
-from that merge on.
+name as "the prototype's" is under `studio-frontend-poc/src/` in that tag. This
+app, in `studio-frontend-prototype/` until 2026-11-27 and `studio-frontend/`
+since, is the one frontend: the same image serves the main and the POC host.
 
 **Who takes it**:
 - **shell** is the host app (`src-app/app`).

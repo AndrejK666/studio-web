@@ -13,7 +13,7 @@ browser code runs the calculation without an API or a gear.
 
 It is deliberately not under `src-app/mfe_packages/`: nothing in the portal's
 `npm run build` sees it. It builds with the portal's `node_modules` (it sits
-inside `studio-frontend-prototype/`, so Node finds them one level up), and the
+inside `studio-frontend/`, so Node finds them one level up), and the
 shell provides the shared dependencies (React, `@gears-frontx/*`, react-query,
 redux) at run time; `@constructor-studio/mfe-shared` and the ui-kit travel
 inside the bundle, as in every portal MFE.
@@ -44,7 +44,7 @@ same commit.
 ## Build it
 
 ```bash
-cd studio-frontend-prototype
+cd studio-frontend
 npm ci                      # once
 npm run build:package       # once: the frontxMfGts build plugin
 cd examples/kits/hello-kit
@@ -58,13 +58,13 @@ that names bundles is a kit in the library (shelf `organization`, source
 `bundle-dir`), at the version its passport states.
 
 ```bash
-STUDIO_KIT_BUNDLES_DIR=/path/to/studio-frontend-prototype/examples/kits
+STUDIO_KIT_BUNDLES_DIR=/path/to/studio-frontend/examples/kits
 # several backend replicas: one key for all, at least 16 characters
 STUDIO_KIT_BUNDLE_KEY=…
 ```
 
 In a container, mount the directory and point the variable at the mount, for
-example `-v $PWD/studio-frontend-prototype/examples/kits:/kits:ro` and
+example `-v $PWD/studio-frontend/examples/kits:/kits:ro` and
 `STUDIO_KIT_BUNDLES_DIR=/kits`. The backend logs
 `studio-kits: serving kit bundles from a directory` with the number of kits.
 

@@ -5,7 +5,7 @@
 // page showed two colour schemes. These two themes are the portal's tokens
 // mapped onto Theia's colour keys. The token values are not written here:
 // `portal-tokens.json` is generated from the kit's theme.css by
-// studio-frontend-prototype/scripts/generate-ide-theme-tokens.ts, and a test
+// studio-frontend/scripts/generate-ide-theme-tokens.ts, and a test
 // there fails when it falls behind the kit. A token change reaches both sides
 // by regenerating that one file.
 //

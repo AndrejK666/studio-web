@@ -450,7 +450,7 @@ fn builtin_kits_and_the_portal_s_mfes_name_each_other() {
     use std::collections::BTreeSet;
 
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../studio-frontend-prototype/src-app/mfe_packages");
+        .join("../studio-frontend/src-app/mfe_packages");
     let Ok(dirs) = std::fs::read_dir(&root) else {
         // A checkout without the frontend (a crate-only build) has nothing to
         // hold the manifests to.

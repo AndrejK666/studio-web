@@ -1,13 +1,12 @@
 #!/usr/bin/env node
 /**
- * Do both portals still call endpoints that exist?
+ * Does the portal still call endpoints that exist?
  *
  * The backend's API surface is committed at
  * `studio-backend/docs/api-contract.json`, generated from the source by
  * `studio-backend api-contract` and drift-checked by `cargo test`. This script
- * reads it and every URL literal in `studio-frontend` and
- * `studio-frontend-prototype`, and fails when a portal calls a path the
- * backend does not register.
+ * reads it and every URL literal in `studio-frontend` (the one frontend), and
+ * fails when the portal calls a path the backend does not register.
  *
  * That is rule G3 of `docs/api-conventions.md` made mechanical: a path that
  * moves has to move in all three trees in the same PR, and until now nothing
@@ -43,7 +42,6 @@ const BASELINE = join(ROOT, 'scripts/api-usage-baseline.txt');
 /** Where a portal's sources live. */
 const PORTALS = [
   { name: 'studio-frontend', dirs: ['studio-frontend/src', 'studio-frontend/src-app'] },
-  { name: 'studio-frontend-prototype', dirs: ['studio-frontend-prototype/src', 'studio-frontend-prototype/src-app'] },
 ];
 
 // ---------------------------------------------------------------------------
@@ -207,7 +205,7 @@ if (stale.length > 0) {
 if (!failed) {
   const called = registered.filter((entry) => entry.calledBy.size > 0).length;
   console.log(
-    `API usage OK: ${asked.size} distinct calls across both portals, ` +
+    `API usage OK: ${asked.size} distinct calls from the portal, ` +
       `${called}/${registered.length} registered paths in use, ` +
       `${external} to platform gears, ${stats.unparsed} literals unreadable, ` +
       `${baseline.size} known breaks.`

@@ -1,6 +1,7 @@
 // The Studio calls behind the desktop's Domain model view: the documents
 // gear's spec-model routes, the ones the portal's project tab Domain model
-// reads (`studio-frontend-prototype/src/api.ts`, `specModel*`). Through
+// reads (`specModel*` in the old prototype's src/api.ts, now in the tag
+// archive/studio-frontend-poc-2026-11-27). Through
 // `StudioApi`, so the desktop backend's `/studio-api` proxy attaches the
 // member's token; this file is the list of routes the view depends on.
 

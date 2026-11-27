@@ -1,5 +1,5 @@
 {
-  "//": "Generated from @gears-frontx/ui-kit/theme.css and the portal shell themes by studio-frontend-prototype/scripts/generate-ide-theme-tokens.ts. Do not edit by hand: run `npm run generate:ide-theme` in studio-frontend-prototype.",
+  "//": "Generated from @gears-frontx/ui-kit/theme.css and the portal shell themes by studio-frontend/scripts/generate-ide-theme-tokens.ts. Do not edit by hand: run `npm run generate:ide-theme` in studio-frontend.",
   "source": {
     "package": "@gears-frontx/ui-kit",
     "version": "0.4.10"

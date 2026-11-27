@@ -3,7 +3,7 @@
  * "Connect a cluster" shows the manifest a cluster's administrator applies
  * once. The prototype imported the repository's file at build time; this
  * package keeps a copy, because the portal's image builds from
- * studio-frontend-prototype/ alone (Dockerfile.src copies only that). The copy
+ * studio-frontend/ alone (Dockerfile.src copies only that). The copy
  * must be the repository's file, byte for byte: a changed bootstrap is copied
  * here in the same change.
  */

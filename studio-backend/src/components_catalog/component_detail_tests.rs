@@ -139,7 +139,7 @@ fn an_mfe_lists_its_screens_and_the_gears_it_calls() {
         "name": "@constructor-studio/tests-mfe",
         "kind": "frontx",
         "synced_from": "constructorfabric/studio-web",
-        "repo_path": "studio-frontend-prototype/src-app/mfe_packages/tests-mfe",
+        "repo_path": "studio-frontend/src-app/mfe_packages/tests-mfe",
     });
     let profile = json!({
         "gear_name": "@constructor-studio/tests-mfe",
@@ -172,7 +172,7 @@ fn an_mfe_lists_its_screens_and_the_gears_it_calls() {
     );
     assert_eq!(
         d.passport.unwrap().path,
-        "studio-frontend-prototype/src-app/mfe_packages/tests-mfe/frontx.gdl"
+        "studio-frontend/src-app/mfe_packages/tests-mfe/frontx.gdl"
     );
     assert_eq!(d.provides.screens.len(), 1);
     assert_eq!(d.provides.screens[0].route.as_deref(), Some("/tests"));

@@ -10,7 +10,7 @@
  * where the product map shows them on the micro-frontend's card.
  *
  * The portal takes pictures of its own screens into the dist/ it ships
- * (`npm run build:previews` in studio-frontend-prototype: `--out
+ * (`npm run build:previews` in studio-frontend: `--out
  * dist/screen-previews`), so nginx serves `index.json` and the files beside
  * the shell and the product map and a kit's page show them when the
  * catalogue keeps none (mfe-shared `screenPreviews`).

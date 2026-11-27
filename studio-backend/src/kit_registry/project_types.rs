@@ -26,7 +26,7 @@ use super::manifest::{KitManifest, PROJECT_CREATION_STEPS, project_type_kit, pro
 use super::service::{SHELF_BUILTIN, SHELF_ORGANIZATION};
 
 /// The shell's own screens a next step may open: the sections no kit brings
-/// (`studio-frontend-prototype/src-app/mfe_packages/*/mfe.json`; a test holds the two
+/// (`studio-frontend/src-app/mfe_packages/*/mfe.json`; a test holds the two
 /// together).
 pub const SHELL_ROUTES: [&str; 13] = [
     "/projects/overview",

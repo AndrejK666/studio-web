@@ -312,7 +312,7 @@ This README is what you need to work in the directory.
   by `grant`, an HMAC of slug and version under `STUDIO_KIT_BUNDLE_KEY` (else a
   key drawn at start: set it when there is more than one replica). Only a
   bundle's own file types, never HTML, hidden files or anything outside the
-  package. The demo is `studio-frontend-prototype/examples/kits/hello-kit`;
+  package. The demo is `studio-frontend/examples/kits/hello-kit`;
   the design is `docs/design/studio-kits.md` §3.12.
 - The prototype flow and the installer inside the session are in the
   repository-root [`docs/kit-registry-prototype.md`](../../../docs/kit-registry-prototype.md).

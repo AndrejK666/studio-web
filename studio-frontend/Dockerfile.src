@@ -9,18 +9,18 @@ WORKDIR /src
 # The manifests-first layer-cache trick the prototype used does not survive
 # npm workspaces: `npm ci` walks every workspace's package.json
 # (src-app/mfe_packages/*), so the full tree has to be present before install.
-COPY studio-frontend-prototype/ ./
+COPY studio-frontend/ ./
 RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund
 RUN npm run build
 
 FROM nginxinc/nginx-unprivileged:1.27-alpine@sha256:65e3e85dbaed8ba248841d9d58a899b6197106c23cb0ff1a132b7bfe0547e4c0
-COPY studio-frontend-prototype/nginx.conf.template /etc/nginx/templates/default.conf.template
+COPY studio-frontend/nginx.conf.template /etc/nginx/templates/default.conf.template
 ENV BACKEND_HOST=studio-backend:8090
 COPY --from=build /src/dist/ /usr/share/nginx/html/
-COPY studio-frontend-prototype/docker/10-runtime-env.sh /docker-entrypoint.d/10-runtime-env.sh
+COPY studio-frontend/docker/10-runtime-env.sh /docker-entrypoint.d/10-runtime-env.sh
 # Sourced by the entrypoint before the template is rendered: the backend's
 # resolver and absolute name (see nginx.conf.template).
-COPY studio-frontend-prototype/docker/15-backend-upstream.envsh /docker-entrypoint.d/15-backend-upstream.envsh
+COPY studio-frontend/docker/15-backend-upstream.envsh /docker-entrypoint.d/15-backend-upstream.envsh
 USER root
 RUN chmod +x /docker-entrypoint.d/10-runtime-env.sh /docker-entrypoint.d/15-backend-upstream.envsh \
  && touch /usr/share/nginx/html/env.js \

@@ -45,8 +45,8 @@ export const KIT_PACKAGE = '@gears-frontx/ui-kit';
 
 export const GENERATED_NOTE =
   'Generated from @gears-frontx/ui-kit/theme.css and the portal shell themes by ' +
-  'studio-frontend-prototype/scripts/generate-ide-theme-tokens.ts. Do not edit by hand: ' +
-  'run `npm run generate:ide-theme` in studio-frontend-prototype.';
+  'studio-frontend/scripts/generate-ide-theme-tokens.ts. Do not edit by hand: ' +
+  'run `npm run generate:ide-theme` in studio-frontend.';
 
 /** Strip `/* … *\/` comments; the kit's file is mostly commentary. */
 function stripComments(css: string): string {

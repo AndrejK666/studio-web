@@ -1,9 +1,8 @@
 /**
- * Reading the backend calls out of a portal's sources — the half that
- * `check-api-usage.mjs` (rule G3: every call has an endpoint) and
- * `prototype-api-map.mjs` (the /architecture/ page: which screen calls what)
- * share. One reader, so the page and the CI check cannot disagree about what
- * the prototype calls.
+ * Reading the backend calls out of the portal's sources, for
+ * `check-api-usage.mjs` (rule G3: every call has an endpoint). It was shared
+ * with `prototype-api-map.mjs`, the old prototype's /architecture/ map, which
+ * went with that prototype (archive/studio-frontend-poc-2026-11-27).
  */
 
 import { readdirSync, statSync, existsSync } from 'node:fs';

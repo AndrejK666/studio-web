@@ -2,8 +2,8 @@
 #
 #   Full stack (postgres + keycloak + backend built from source + frontend):
 #     docker compose up --build -d
-#     → portal:  http://localhost:8080   ("Continue with Constructor ID",
-#                                         admin/studio or demo/studio)
+#     → portal:  http://localhost:8081 (also :8080; admin/studio or
+#                                         demo/studio)
 #     → api/docs: http://localhost:8090/cf/docs
 #
 # Login goes through the bundled Keycloak (config/docker.yaml selects
@@ -510,6 +510,10 @@ services:
       - studio_models:/models
       - ./studio-backend/docker/fetch-embedding-model.sh:/usr/local/bin/fetch-embedding-model.sh:ro
 
+  # The one frontend (studio-frontend/: the FrontX shell and its kits,
+  # ADR-0069). Context = repo root; the image runs npm ci and the full build
+  # (packages, every MFE, the MFE manifests). nginx proxies /cf/ and /studio/
+  # to the backend (BACKEND_HOST, studio-backend:8090 by default).
   frontend:
     build:
       context: .
@@ -518,34 +522,9 @@ services:
     # Wait for the backend to be healthy and restart together with it, so the
     # portal comes up on its own once the backend is ready — no manual start.
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:8080:8080"   # image is nginx-unprivileged: listens on 8080
-    depends_on:
-      backend:
-        condition: service_healthy
-        # Restart the frontend whenever the backend is restarted (compose v2.17+),
-        # so a backend recovery brings the portal back without intervention.
-        restart: true
-    # nginx.conf proxies /cf/ to http://studio-backend:8090 — the service's
-    # container_name above must stay in sync with it.
-
-  # Prototype portal: since ADR-0069 the FrontX app in studio-frontend-prototype/
-  # growing to the old prototype's features as kits (the old prototype is the
-  # unbuilt archive studio-frontend-poc/). Same build pattern as `frontend`
-  # (context = repo root; npm ci and the full build: packages, every MFE, the
-  # MFE manifests); BACKEND_HOST is
-  # baked into its image, and nginx proxies /cf/ to the backend. Published on
-  # 8081 so it can run alongside the main portal on 8080. Part of the compose
-  # project now, so `--remove-orphans` no longer deletes it.
-  frontend-prototype:
-    build:
-      context: .
-      dockerfile: studio-frontend-prototype/Dockerfile.src
-    container_name: studio-frontend-prototype
-    restart: unless-stopped
-    # The portal (the FrontX app, ADR-0069) signs in from the browser, so it
-    # needs the issuer the browser reaches: docker/10-runtime-env.sh writes
-    # these into env.js at start, as helm does on a cluster.
+    # The portal signs in from the browser, so it needs the issuer the browser
+    # reaches: docker/10-runtime-env.sh writes these into env.js at start, as
+    # helm does on a cluster.
     environment:
       STUDIO_OIDC_ISSUER: ${STUDIO_OIDC_ISSUER_PUBLIC:-https://localhost:8443/realms/studio}
       STUDIO_OIDC_CLIENT_ID: ${STUDIO_OIDC_PORTAL_CLIENT_ID:-studio-portal}
@@ -555,11 +534,17 @@ services:
       # GitLab where keycloak-gitlab-idp brokers it: it needs the secret, so
       # an empty secret turns both off.
       STUDIO_GITLAB_SIGN_IN: ${STUDIO_GITLAB_IDP_CLIENT_SECRET:+true}
+    # The same portal on both ports (nginx-unprivileged listens on 8080
+    # inside): 8081 is where the stand has always been reached, 8080 where
+    # the end-to-end suite and the README expect it. The realm allows both.
     ports:
-      - "127.0.0.1:8081:8080"   # nginx-unprivileged listens on 8080 inside
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:8081:8080"
     depends_on:
       backend:
         condition: service_healthy
+        # Restart the frontend whenever the backend is restarted (compose v2.17+),
+        # so a backend recovery brings the portal back without intervention.
         restart: true
 
 volumes:

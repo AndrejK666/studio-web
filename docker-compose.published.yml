@@ -70,10 +70,6 @@ services:
     image: ghcr.io/constructorfabric/studio-web/studio-frontend:${STUDIO_IMAGE_TAG:-edge}
     pull_policy: always
 
-  frontend-prototype:
-    image: ghcr.io/constructorfabric/studio-web/studio-frontend-prototype:${STUDIO_IMAGE_TAG:-edge}
-    pull_policy: always
-
   # Infrastructure, not a service: the delivery workflow publishes it from
   # `build-infra-images` under its own tags — `sha-<commit>` only when the
   # infrastructure itself was built, `infra-vX.Y.Z` for a release, and

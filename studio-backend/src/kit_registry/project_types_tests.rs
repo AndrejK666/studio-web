@@ -327,11 +327,11 @@ fn the_built_in_project_types_pass_and_their_routes_are_known() {
 }
 
 /// The shell's routes are the shell's: each is a route some
-/// micro-frontend of the portal (`studio-frontend-prototype`) declares.
+/// micro-frontend of the portal (`studio-frontend`) declares.
 #[test]
 fn the_shells_routes_are_routes_the_portal_declares() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../studio-frontend-prototype/src-app/mfe_packages");
+        .join("../studio-frontend/src-app/mfe_packages");
     let Ok(dirs) = std::fs::read_dir(&root) else {
         // A checkout without the frontend (a crate-only build) has nothing to
         // hold the list to.

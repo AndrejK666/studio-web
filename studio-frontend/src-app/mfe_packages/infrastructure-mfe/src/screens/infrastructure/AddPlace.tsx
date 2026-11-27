@@ -14,7 +14,7 @@ import type { Connection } from '../../api/types';
 import { clusterHost, kubeconfigServer } from '../../model/kubeconfig';
 // What the cluster's administrator applies once. A copy of the repository's
 // deploy/k8s/studio-environments/bootstrap.yaml inside this package, read at
-// build time: the portal's image builds from studio-frontend-prototype/ alone,
+// build time: the portal's image builds from studio-frontend/ alone,
 // which cannot reach the repository's deploy/. src/assets/bootstrap.test.ts
 // fails when the copy and the repository's file drift apart.
 import BOOTSTRAP from '../../assets/bootstrap.yaml?raw';

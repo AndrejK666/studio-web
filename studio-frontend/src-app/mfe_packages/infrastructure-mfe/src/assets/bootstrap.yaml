@@ -41,9 +41,9 @@
 # repository and push tokens live; the runtime namespace holds only the pull
 # secret.
 #
-# The Studio prototype shows this file, as it is, in its "Connect a cluster"
-# form (studio-frontend-prototype/src/kubeconfig-field.tsx reads it at build
-# time).
+# The Studio portal shows this file, as it is, in its "Connect a cluster"
+# form (studio-frontend/src-app/mfe_packages/infrastructure-mfe keeps a copy,
+# read at build time, that its bootstrap.test.ts holds to this one).
 apiVersion: v1
 kind: Namespace
 metadata:

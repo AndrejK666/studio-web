@@ -47,7 +47,6 @@ on:
           - all
           - backend
           - frontend
-          - prototype
       image_tag:
         description: Immutable sha-<commit> snapshot or v* release tag (Services only; must match source_ref)
         required: false
@@ -110,7 +109,6 @@ jobs:
       # relying on a tag diff that has no branch base.
       backend: ${{ github.ref_type == 'tag' && !startsWith(github.ref_name, 'infra-v') && 'true' || steps.filter.outputs.backend }}
       frontend: ${{ github.ref_type == 'tag' && !startsWith(github.ref_name, 'infra-v') && 'true' || steps.filter.outputs.frontend }}
-      prototype: ${{ github.ref_type == 'tag' && !startsWith(github.ref_name, 'infra-v') && 'true' || steps.filter.outputs.prototype }}
       theia: ${{ github.ref_type == 'tag' && !startsWith(github.ref_name, 'infra-v') && 'true' || steps.filter.outputs.theia }}
       infra: ${{ github.ref_type == 'tag' && startsWith(github.ref_name, 'infra-v') && 'true' || steps.filter.outputs.infra }}
       deployment: ${{ steps.filter.outputs.deployment }}
@@ -169,9 +167,6 @@ jobs:
               - '.github/workflows/studio-delivery.yml'
             frontend:
               - 'studio-frontend/**'
-              - '.github/workflows/studio-delivery.yml'
-            prototype:
-              - 'studio-frontend-prototype/**'
               # Shown in its "Connect a cluster" form, read at build time.
               - 'deploy/k8s/studio-environments/**'
               - '.github/workflows/studio-delivery.yml'
@@ -254,13 +249,15 @@ jobs:
           cargo run --locked --features theia-bridge -- --config config/dev.yaml --list-gears | tee gears.txt
           grep -q 'account-management' gears.txt
 
-  # The FrontX-based studio-frontend/ (ADR-0006) is the deployed portal;
-  # this used to build studio-frontend-prototype/, which is now a playground
-  # built only at release time (see release.yml, prototype-dist).
+  # The one frontend (studio-frontend/: the FrontX shell and its kits,
+  # ADR-0069), served on every host of an environment. A change to it must
+  # pass Test before an immutable image may be published.
   test-frontend:
     needs: test-changes
     if: needs.test-changes.outputs.frontend == 'true'
     runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/studio-web' || github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'studio-large' }}
+    permissions:
+      contents: read
     defaults:
       run:
         working-directory: studio-frontend
@@ -276,69 +273,11 @@ jobs:
           cache-dependency-path: studio-frontend/package-lock.json
       - name: Install
         run: npm ci
-      # Ahead of Build: the ESLint config is not type-aware, so it needs no build output.
       - name: Lint
         run: npm run lint
-      # Build precedes Test: the test suites import the root package
-      # (@gears-frontx/frontx-template-shell) through dist-lib/ and read
-      # public/generated-mfe-manifests.json, and only the build produces them.
-      - name: Build
-        run: npm run build
-      - name: Test
-        run: npm test
-      - uses: actions/upload-artifact@v6
-        with:
-          name: studio-frontend-dist
-          path: studio-frontend/dist
-          retention-days: 7
-      # A picture of every micro-frontend screen of the shell just built, taken
-      # signed in with a made-up session against an empty stand-in backend
-      # (scripts/mfe-screen-previews.mjs). Kept as an artifact for now: handing
-      # them to the components catalogue (--upload) needs a token this job
-      # does not hold. Advisory -- a browser that will not start must not fail
-      # the portal's tests.
-      - name: Screen previews
-        continue-on-error: true
-        run: |
-          npx playwright install chromium
-          PLAYWRIGHT_MODULE="$PWD/node_modules/playwright" node ../scripts/mfe-screen-previews.mjs             --dist dist --mfes src-app/mfe_packages --out ../mfe-screen-previews             --commit "$(git rev-parse --short=12 HEAD)"
-      - uses: actions/upload-artifact@v6
-        if: always()
-        continue-on-error: true
-        with:
-          name: mfe-screen-previews
-          path: mfe-screen-previews
-          retention-days: 7
-          if-no-files-found: ignore
-
-  # The prototype is independently deployable on its dedicated POC host, so changes to
-  # it must now pass Test before an immutable image may be published. Since
-  # ADR-0069 it is a copy of the FrontX app growing to the old prototype's
-  # features, so it passes the same gates as test-frontend.
-  test-prototype:
-    needs: test-changes
-    if: needs.test-changes.outputs.prototype == 'true'
-    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/studio-web' || github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'studio-large' }}
-    permissions:
-      contents: read
-    defaults:
-      run:
-        working-directory: studio-frontend-prototype
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-          ref: ${{ github.event.inputs.source_ref || github.sha }}
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: studio-frontend-prototype/package-lock.json
-      - name: Install
-        run: npm ci
-      - name: Lint
-        run: npm run lint
-      # Build precedes Test, as in test-frontend: the suites read build output.
+      # Build precedes Test: the suites import the root package through
+      # dist-lib/ and read public/generated-mfe-manifests.json, which only the
+      # build produces.
       - name: Build
         run: npm run build
       - name: Test
@@ -356,8 +295,8 @@ jobs:
           npm run build:previews -- --commit "$(git rev-parse --short=12 HEAD)"
       - uses: actions/upload-artifact@v6
         with:
-          name: studio-frontend-prototype-dist
-          path: studio-frontend-prototype/dist
+          name: studio-frontend-dist
+          path: studio-frontend/dist
           retention-days: 7
 
   # Fast integration test for the authentication redirect implemented inside
@@ -390,14 +329,14 @@ jobs:
       # not a git repository is an ordinary workspace.
       - run: node --test theia/browser-app/scripts/start-browser.test.js
 
-  # The one check that spans all three trees: every URL either portal calls has
+  # The one check that spans both trees: every URL the portal calls has
   # to exist in the backend's committed API surface (rule G3 of
   # docs/api-conventions.md). It carries no filter on purpose — a backend path
   # can move without the frontend job running, and a frontend call can be
   # rewritten without the backend job running, and this job is what notices
   # either way. Seconds, and no toolchain beyond Node.
   test-api-usage:
-    name: Contract — both portals call endpoints that exist
+    name: Contract — the portal calls endpoints that exist
     # No `needs` and no filter: it must not inherit the component selection that
     # is exactly what lets this drift through.
     runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/studio-web' || github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'studio-small' }}
@@ -412,16 +351,13 @@ jobs:
         with:
           node-version: 22
       - run: node scripts/check-api-usage.mjs
-      # The reader behind both that check and the /architecture/ page's
-      # prototype map (scripts/prototype-api-map.mjs).
-      - run: node --test scripts/prototype-api-map.test.mjs
       # Not a contract, but Node-only and seconds: the hunk mapping and
       # scoring of docs/probe-calibration.md.
       - run: node --test scripts/probe-calibrate.test.mjs
       # Which screens the build's previews visit and what the stand-in backend
       # answers (scripts/mfe-screen-previews.mjs).
       - run: node --test scripts/mfe-screen-previews.test.mjs
-      # The other contract both portals owe, and the reason it lives in this
+      # The other contract the portal owes, and the reason it lives in this
       # job rather than test-frontend: the event stream must not be
       # compressed, and a config change that breaks it is invisible in
       # review, invisible in a rendered chart and invisible from outside the
@@ -440,9 +376,9 @@ jobs:
       # single file's diff.
       - run: node scripts/check-platform-release.mjs
       - run: node --test scripts/platform-release.test.mjs
-      # The prototype's domain-query types are generated from the domain
+      # The portal's domain-query types are generated from the domain
       # model's seed. A model edit without the regenerated file would let the
-      # prototype compile queries the backend refuses.
+      # portal compile queries the backend refuses.
       - run: node scripts/gen-domain-client.mjs --check
 
   test-infra:
@@ -621,14 +557,13 @@ jobs:
     # the deployment. Skipped, they cost nothing and assert nothing, which is
     # the same amount of assertion with none of the wait.
     name: 1. Tests passed
-    needs: [test-changes, test-backend, test-frontend, test-prototype, test-api-usage, test-theia-session-gate, test-infra, test-deployment-config]
+    needs: [test-changes, test-backend, test-frontend, test-api-usage, test-theia-session-gate, test-infra, test-deployment-config]
     if: >-
       always() &&
       github.event.inputs.operation != 'Deploy existing images' &&
       (needs.test-changes.result == 'success' || needs.test-changes.result == 'skipped') &&
       (needs.test-backend.result == 'success' || needs.test-backend.result == 'skipped') &&
       (needs.test-frontend.result == 'success' || needs.test-frontend.result == 'skipped') &&
-      (needs.test-prototype.result == 'success' || needs.test-prototype.result == 'skipped') &&
       needs.test-api-usage.result == 'success' &&
       (needs.test-theia-session-gate.result == 'success' || needs.test-theia-session-gate.result == 'skipped') &&
       (needs.test-infra.result == 'success' || needs.test-infra.result == 'skipped') &&
@@ -656,7 +591,6 @@ jobs:
       test_run_id: ${{ steps.tests.outputs.run_id }}
       backend: ${{ steps.changes.outputs.backend }}
       frontend: ${{ steps.changes.outputs.frontend }}
-      prototype: ${{ steps.changes.outputs.prototype }}
       theia: ${{ steps.changes.outputs.theia }}
       any_service: ${{ steps.changes.outputs.any_service }}
     permissions:
@@ -710,20 +644,18 @@ jobs:
           # succeeded. Reusing its values prevents a second, divergent diff.
           backend='${{ github.ref_type == 'tag' && 'true' || needs.test-changes.outputs.backend }}'
           frontend='${{ github.ref_type == 'tag' && 'true' || needs.test-changes.outputs.frontend }}'
-          prototype='${{ github.ref_type == 'tag' && 'true' || needs.test-changes.outputs.prototype }}'
           theia='${{ github.ref_type == 'tag' && 'true' || needs.test-changes.outputs.theia }}'
-          any_service='${{ github.ref_type == 'tag' && 'true' || (needs.test-changes.outputs.backend == 'true' || needs.test-changes.outputs.frontend == 'true' || needs.test-changes.outputs.prototype == 'true' || needs.test-changes.outputs.theia == 'true' || needs.test-changes.outputs.deployment == 'true') && 'true' || 'false' }}'
-          for value in "$backend" "$frontend" "$prototype" "$theia" "$any_service"; do
+          any_service='${{ github.ref_type == 'tag' && 'true' || (needs.test-changes.outputs.backend == 'true' || needs.test-changes.outputs.frontend == 'true' || needs.test-changes.outputs.theia == 'true' || needs.test-changes.outputs.deployment == 'true') && 'true' || 'false' }}'
+          for value in "$backend" "$frontend" "$theia" "$any_service"; do
             test "$value" = true || test "$value" = false
           done
           {
             echo "backend=$backend"
             echo "frontend=$frontend"
-            echo "prototype=$prototype"
             echo "theia=$theia"
             echo "any_service=$any_service"
           } >> "$GITHUB_OUTPUT"
-          echo "Selected by Studio Delivery: backend=$backend frontend=$frontend prototype=$prototype theia=$theia"
+          echo "Selected by Studio Delivery: backend=$backend frontend=$frontend theia=$theia"
 
   build-backend-binary:
     needs: build-require-ci
@@ -840,8 +772,8 @@ jobs:
           name: file-storage-sidecar-linux-x86_64
           path: ${{ runner.temp }}/sidecar/bin/sidecar
 
-  # Builds the FrontX-based studio-frontend/ — the deployed portal since it
-  # replaced studio-frontend-prototype/ (now a playground with its own image).
+  # The one frontend's dist: the one test-frontend built and tested, or built
+  # again when that artifact has expired (a release tag on an old commit).
   build-frontend-dist:
     needs: build-require-ci
     # always(): without it GitHub adds success(), which treats the test jobs
@@ -855,11 +787,6 @@ jobs:
       run:
         working-directory: studio-frontend
     steps:
-      # Test already built, tested and uploaded this exact dist. Downloading
-      # it prevents the same npm install/build/test from running twice. A
-      # release tag may point to a commit whose short-lived artifact expired;
-      # in that case build the dist again, while still relying on the recorded
-      # successful Test result for validation.
       - name: Download dist from the successful Test run
         id: test_dist
         continue-on-error: true
@@ -890,54 +817,8 @@ jobs:
           name: studio-frontend-dist
           path: studio-frontend/dist
 
-  # The prototype (a FrontX app since ADR-0069) ships as its OWN image and
-  # rides along in compose on :8081. It is tested and built only here, at release time —
-  # ci.yml deliberately does not gate on it.
-  build-prototype-dist:
-    needs: build-require-ci
-    # always(): without it GitHub adds success(), which treats the test jobs
-    # the change filter skipped as failed ancestors and skips the build.
-    if: always() && needs.build-require-ci.result == 'success' && needs.build-require-ci.outputs.scope == 'services' && needs.build-require-ci.outputs.prototype == 'true'
-    runs-on: ${{ (vars.STUDIO_FORCE_GITHUB_HOSTED == 'true' || github.repository != 'constructorfabric/studio-web' || github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'studio-small' }}
-    permissions:
-      actions: read
-      contents: read
-    defaults:
-      run:
-        working-directory: studio-frontend-prototype
-    steps:
-      - name: Download dist from the successful Test run
-        id: test_dist
-        continue-on-error: true
-        uses: actions/download-artifact@v7
-        with:
-          name: studio-frontend-prototype-dist
-          path: studio-frontend-prototype/dist
-          repository: ${{ github.repository }}
-          run-id: ${{ needs.build-require-ci.outputs.test_run_id }}
-          github-token: ${{ github.token }}
-      - uses: actions/checkout@v6
-        if: steps.test_dist.outcome != 'success'
-        with:
-          persist-credentials: false
-          ref: ${{ env.SOURCE_SHA }}
-      - uses: actions/setup-node@v6
-        if: steps.test_dist.outcome != 'success'
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: studio-frontend-prototype/package-lock.json
-      - if: steps.test_dist.outcome != 'success'
-        run: npm ci
-      - if: steps.test_dist.outcome != 'success'
-        run: npm run build
-      - uses: actions/upload-artifact@v6
-        with:
-          name: studio-frontend-prototype-dist
-          path: studio-frontend-prototype/dist
-
   build-service-images:
-    needs: [build-require-ci, build-backend-binary, build-file-storage-sidecar-binary, build-frontend-dist, build-prototype-dist]
+    needs: [build-require-ci, build-backend-binary, build-file-storage-sidecar-binary, build-frontend-dist]
     if: >-
       always() &&
       needs.build-require-ci.result == 'success' &&
@@ -945,8 +826,7 @@ jobs:
       needs.build-require-ci.outputs.any_service == 'true' &&
       (needs.build-backend-binary.result == 'success' || needs.build-backend-binary.result == 'skipped') &&
       (needs.build-file-storage-sidecar-binary.result == 'success' || needs.build-file-storage-sidecar-binary.result == 'skipped') &&
-      (needs.build-frontend-dist.result == 'success' || needs.build-frontend-dist.result == 'skipped') &&
-      (needs.build-prototype-dist.result == 'success' || needs.build-prototype-dist.result == 'skipped')
+      (needs.build-frontend-dist.result == 'success' || needs.build-frontend-dist.result == 'skipped')
     outputs:
       # The sha-<commit> tag of the snapshot this run published, for the jobs
       # that consume it (`test-e2e`). Derived here rather than recomputed
@@ -986,11 +866,6 @@ jobs:
         with:
           name: studio-frontend-dist
           path: studio-frontend/dist
-      - uses: actions/download-artifact@v7
-        if: needs.build-require-ci.outputs.prototype == 'true'
-        with:
-          name: studio-frontend-prototype-dist
-          path: studio-frontend-prototype/dist
 
       - uses: docker/login-action@v3
         with:
@@ -1134,16 +1009,6 @@ jobs:
           docker buildx build $(ci-cache-buildx-args studio-frontend) --push \
             -f studio-frontend/Dockerfile -t "$IMAGE_PREFIX/studio-frontend:$tag" studio-frontend
 
-      # Same nginx runtime recipe as the main frontend, its own dist and name.
-      - name: Build & push frontend prototype image
-        if: needs.build-require-ci.outputs.prototype == 'true'
-        run: |
-          set -euo pipefail
-          tag="${{ steps.tags.outputs.immutable }}"
-          # shellcheck disable=SC2046
-          docker buildx build $(ci-cache-buildx-args studio-frontend-prototype) --push \
-            -f studio-frontend-prototype/Dockerfile -t "$IMAGE_PREFIX/studio-frontend-prototype:$tag" studio-frontend-prototype
-
       # buildx, for the Theia image's layer cache below. The default `docker`
       # driver cannot export a cache; `docker-container` can.
       - uses: docker/setup-buildx-action@v3
@@ -1187,7 +1052,6 @@ jobs:
         env:
           BUILD_BACKEND: ${{ needs.build-require-ci.outputs.backend }}
           BUILD_FRONTEND: ${{ needs.build-require-ci.outputs.frontend }}
-          BUILD_PROTOTYPE: ${{ needs.build-require-ci.outputs.prototype }}
           BUILD_THEIA: ${{ needs.build-require-ci.outputs.theia }}
         run: |
           set -euo pipefail
@@ -1209,9 +1073,6 @@ jobs:
           if [ "$BUILD_FRONTEND" != true ]; then
             copy_image studio-frontend
           fi
-          if [ "$BUILD_PROTOTYPE" != true ]; then
-            copy_image studio-frontend-prototype
-          fi
           if [ "$BUILD_THEIA" != true ]; then
             copy_image cf-studio-theia
           fi
@@ -1225,7 +1086,6 @@ jobs:
             studio-backend
             file-storage-sidecar
             studio-frontend
-            studio-frontend-prototype
             cf-studio-theia
           )
           for promotion in ${{ steps.tags.outputs.promotions }}; do
@@ -1259,7 +1119,6 @@ jobs:
               echo "- \`$IMAGE_PREFIX/studio-backend:$t\`"
               echo "- \`$IMAGE_PREFIX/file-storage-sidecar:$t\`"
               echo "- \`$IMAGE_PREFIX/studio-frontend:$t\`"
-              echo "- \`$IMAGE_PREFIX/studio-frontend-prototype:$t\`"
               echo "- \`$IMAGE_PREFIX/cf-studio-theia:$t\`"
             done
           } >> "$GITHUB_STEP_SUMMARY"
@@ -1630,16 +1489,18 @@ jobs:
           case "${{ github.event.inputs.environment }}" in
             dev)
               host=studio-dev.cfabric.org
-              prototype_host=studio-dev-poc.cfabric.org
+              # Served by the same frontend since the portals became one;
+              # listed in the environment's global.customDomains.
+              poc_host=studio-dev-poc.cfabric.org
               ;;
             test)
               host=studio-test.cfabric.org
-              prototype_host=studio-test-poc.cfabric.org
+              poc_host=studio-test-poc.cfabric.org
               ;;
             *) echo "Unsupported environment" >&2; exit 1 ;;
           esac
           echo "host=$host" >> "$GITHUB_OUTPUT"
-          echo "prototype_host=$prototype_host" >> "$GITHUB_OUTPUT"
+          echo "poc_host=$poc_host" >> "$GITHUB_OUTPUT"
           echo "url=https://$host" >> "$GITHUB_OUTPUT"
           echo "source_kind=$source_kind" >> "$GITHUB_OUTPUT"
           echo "source_commit=$resolved" >> "$GITHUB_OUTPUT"
@@ -1732,10 +1593,6 @@ jobs:
 
           backend_tag="$(current_tag backend)"
           frontend_tag="$(current_tag frontend)"
-          # The first prototype deployment has no existing Deployment yet.
-          # Service releases publish frontend and prototype with the same tag,
-          # so the current frontend tag is the safe bootstrap value.
-          prototype_tag="$(current_tag frontend-prototype 2>/dev/null || printf '%s' "$frontend_tag")"
           keycloak_tag="$(current_tag keycloak)"
           current_theia_image="$(kubectl get deployment studio-studio-web-backend \
             -n "$NAMESPACE" \
@@ -1755,9 +1612,6 @@ jobs:
                 if [ "${{ needs.build-require-ci.outputs.frontend }}" = "true" ]; then
                   frontend_tag="$IMAGE_TAG"
                 fi
-                if [ "${{ needs.build-require-ci.outputs.prototype }}" = "true" ]; then
-                  prototype_tag="$IMAGE_TAG"
-                fi
                 if [ "${{ needs.build-require-ci.outputs.backend }}" = "true" ] ||
                    [ "${{ needs.build-require-ci.outputs.theia }}" = "true" ]; then
                   theia_tag="$IMAGE_TAG"
@@ -1765,15 +1619,25 @@ jobs:
               else
                 backend_tag="$IMAGE_TAG"
                 frontend_tag="$IMAGE_TAG"
-                prototype_tag="$IMAGE_TAG"
                 theia_tag="$IMAGE_TAG"
               fi
               ;;
             backend) backend_tag="$IMAGE_TAG"; theia_tag="$IMAGE_TAG" ;;
             frontend) frontend_tag="$IMAGE_TAG" ;;
-            prototype) prototype_tag="$IMAGE_TAG" ;;
             *) echo "Unsupported component" >&2; exit 1 ;;
           esac
+
+          # The first deploy after the portals became one (2026-11-27). Until
+          # then the frontend Deployment runs the FrontX image, and the chart
+          # now sends the -poc host to it as well; keeping its running tag
+          # would put FrontX on both hosts. The old prototype Deployment still
+          # existing is the sign that this is that first deploy, so the
+          # frontend has to be part of it.
+          if kubectl get deployment studio-studio-web-frontend-prototype -n "$NAMESPACE" -o name >/dev/null 2>&1 &&
+             [ "$frontend_tag" != "$IMAGE_TAG" ]; then
+            echo "::error::First deploy of the one frontend: deploy component 'all' or 'frontend' with a snapshot built after the rename, so both hosts get it." >&2
+            exit 1
+          fi
 
           # A push can reach this manual deployment workflow a few seconds
           # before GHCR exposes every manifest. More importantly, print the
@@ -1800,7 +1664,6 @@ jobs:
           wait_for_image "$IMAGE_PREFIX/studio-backend:$backend_tag"
           wait_for_image "$IMAGE_PREFIX/file-storage-sidecar:$backend_tag"
           wait_for_image "$IMAGE_PREFIX/studio-frontend:$frontend_tag"
-          wait_for_image "$IMAGE_PREFIX/studio-frontend-prototype:$prototype_tag"
           wait_for_image "$IMAGE_PREFIX/cf-studio-theia:$theia_tag"
           wait_for_image "$IMAGE_PREFIX/cf-studio-keycloak:$keycloak_tag"
 
@@ -1818,7 +1681,6 @@ jobs:
           echo "builder_image=$builder_image" >> "$GITHUB_OUTPUT"
           echo "backend_tag=$backend_tag" >> "$GITHUB_OUTPUT"
           echo "frontend_tag=$frontend_tag" >> "$GITHUB_OUTPUT"
-          echo "prototype_tag=$prototype_tag" >> "$GITHUB_OUTPUT"
           echo "theia_tag=$theia_tag" >> "$GITHUB_OUTPUT"
           echo "keycloak_tag=$keycloak_tag" >> "$GITHUB_OUTPUT"
 
@@ -1848,7 +1710,6 @@ jobs:
             --set-string "backend.fileStorage.secretRevision=${{ steps.file_storage.outputs.secret_revision }}"
             --set-string "backend.builds.builderImage=${{ steps.versions.outputs.builder_image }}"
             --set-string "frontend.image.tag=${{ steps.versions.outputs.frontend_tag }}"
-            --set-string "frontendPrototype.image.tag=${{ steps.versions.outputs.prototype_tag }}"
             --set-string "keycloak.image.tag=${{ steps.versions.outputs.keycloak_tag }}"
           )
 
@@ -1884,7 +1745,6 @@ jobs:
             --set-string "backend.fileStorage.secretRevision=${{ steps.file_storage.outputs.secret_revision }}" \
             --set-string "backend.builds.builderImage=${{ steps.versions.outputs.builder_image }}" \
             --set-string "frontend.image.tag=${{ steps.versions.outputs.frontend_tag }}" \
-            --set-string "frontendPrototype.image.tag=${{ steps.versions.outputs.prototype_tag }}" \
             --set-string "keycloak.image.tag=${{ steps.versions.outputs.keycloak_tag }}" \
             --server-side=true \
             --force-conflicts \
@@ -1900,10 +1760,9 @@ jobs:
           host="${{ steps.target.outputs.host }}"
 
           case "${{ github.event.inputs.component }}" in
-            all) components=(backend frontend frontend-prototype) ;;
+            all) components=(backend frontend) ;;
             backend) components=(backend) ;;
             frontend) components=(frontend) ;;
-            prototype) components=(frontend-prototype) ;;
           esac
 
           for component in "${components[@]}"; do
@@ -1913,7 +1772,6 @@ jobs:
             case "$component" in
               backend) expected_tag='${{ steps.versions.outputs.backend_tag }}' ;;
               frontend) expected_tag='${{ steps.versions.outputs.frontend_tag }}' ;;
-              frontend-prototype) expected_tag='${{ steps.versions.outputs.prototype_tag }}' ;;
             esac
             grep -q ":$expected_tag" <<<"$images"
           done
@@ -1925,11 +1783,9 @@ jobs:
           # What a browser actually gets: compression, caching, the API
           # surface and the realm issuer. Everything above this line proves
           # the pods came up; none of it looked at a response.
-          proto_host=""
-          if [ "${{ github.event.inputs.component }}" = all ] || [ "${{ github.event.inputs.component }}" = prototype ]; then
-            proto_host="${{ steps.target.outputs.prototype_host }}"
-          fi
-          bash scripts/post-deploy-smoke.sh "$host" $proto_host
+          # The -poc host reaches the same frontend through the same ingress,
+          # so it is checked on every deploy.
+          bash scripts/post-deploy-smoke.sh "$host" "${{ steps.target.outputs.poc_host }}"
 
           kubectl get pods -n "$NAMESPACE"
           helm status studio -n "$NAMESPACE"
@@ -2164,14 +2020,19 @@ jobs:
 
           backend_tag="$(current_tag backend)"
           frontend_tag="$(current_tag frontend)"
-          prototype_tag="$(current_tag frontend-prototype 2>/dev/null || printf '%s' "$frontend_tag")"
+          # Until the one frontend has been deployed once, the frontend
+          # Deployment runs FrontX, and this chart would send the -poc host to
+          # it too. Deploy the services first.
+          if kubectl get deployment studio-studio-web-frontend-prototype -n "$NAMESPACE" -o name >/dev/null 2>&1; then
+            echo "::error::The one frontend is not deployed here yet: run a services deploy with the frontend first, then the infrastructure." >&2
+            exit 1
+          fi
           # The builder the running backend builds with (ADR-0062 §1), kept as
           # it is: an infrastructure release does not change it.
           builder_image="$(kubectl get deployment studio-studio-web-backend -n "$NAMESPACE"             -o jsonpath='{.spec.template.spec.containers[?(@.name=="backend")].env[?(@.name=="STUDIO_BUILDER_IMAGE")].value}'             2>/dev/null || true)"
           echo "builder_image=$builder_image" >> "$GITHUB_OUTPUT"
           echo "backend_tag=$backend_tag" >> "$GITHUB_OUTPUT"
           echo "frontend_tag=$frontend_tag" >> "$GITHUB_OUTPUT"
-          echo "prototype_tag=$prototype_tag" >> "$GITHUB_OUTPUT"
 
       - name: Render and validate infrastructure changes
         shell: bash
@@ -2190,7 +2051,6 @@ jobs:
             --set-string "backend.image.tag=${{ steps.versions.outputs.backend_tag }}"
             --set-string "backend.builds.builderImage=${{ steps.versions.outputs.builder_image }}"
             --set-string "frontend.image.tag=${{ steps.versions.outputs.frontend_tag }}"
-            --set-string "frontendPrototype.image.tag=${{ steps.versions.outputs.prototype_tag }}"
             --set-string "keycloak.image.tag=$INFRA_TAG"
           )
           helm lint deploy/helm/studio-web "${common_args[@]}"
@@ -2244,7 +2104,6 @@ jobs:
             --set-string "backend.image.tag=${{ steps.versions.outputs.backend_tag }}" \
             --set-string "backend.builds.builderImage=${{ steps.versions.outputs.builder_image }}" \
             --set-string "frontend.image.tag=${{ steps.versions.outputs.frontend_tag }}" \
-            --set-string "frontendPrototype.image.tag=${{ steps.versions.outputs.prototype_tag }}" \
             --set-string "keycloak.image.tag=$INFRA_TAG" \
             --server-side=true \
             --force-conflicts \

@@ -345,17 +345,16 @@ describe('PortalBridgeContribution product hand-off', () => {
         expect(registrar).toContain(`id: "${GEARBOX_OPEN_PRODUCT_COMMAND_ID}"`);
     });
 
-    it('names the gear command gearbox-studio actually registers, and the portal sends its message', () => {
+    // The portal half (the old prototype's src/App.tsx sending
+    // `studio.openGear`) went with that prototype, archived as
+    // archive/studio-frontend-poc-2026-11-27; the one frontend sends no such
+    // message yet, so only the IDE half is held here.
+    it('names the gear command gearbox-studio actually registers', () => {
         const registrar = fs.readFileSync(
             path.resolve(__dirname, '../../../gearbox-studio/src/browser/shell/studio-gearbox-perspective.ts'),
             'utf8'
         );
         expect(registrar).toContain(`id: "${GEARBOX_OPEN_GEAR_COMMAND_ID}"`);
-        const portal = fs.readFileSync(
-            path.resolve(__dirname, '../../../../studio-frontend-prototype/src/App.tsx'),
-            'utf8'
-        );
-        expect(portal).toContain('type: "studio.openGear"');
     });
 });
 

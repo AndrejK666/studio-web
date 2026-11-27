@@ -36,7 +36,7 @@ Emergency bypass (use sparingly): `git commit --no-verify`.
 
 ## Frontend (optional, later)
 
-If you want the hook to also gate the prototype's TypeScript formatting, add a
-Prettier config to `studio-frontend-prototype` and extend `pre-commit` with a
+If you want the hook to also gate the frontend's TypeScript formatting, add a
+Prettier config to `studio-frontend` and extend `pre-commit` with a
 `prettier --check "src/**/*.{ts,tsx}"` step. Left out for now to avoid false
-positives, since the prototype has no Prettier config yet.
+positives, since the frontend has no Prettier config yet.

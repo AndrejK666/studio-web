@@ -1,7 +1,8 @@
 //! Turning questionnaire answers into a document.
 //!
 //! This lived in the prototype's UI (`generateFromQuestionnaire` in
-//! `studio-frontend-prototype/src/documents.tsx`), which made it one client's
+//! `studio-frontend-prototype/src/documents.tsx`, the pre-FrontX prototype now in
+//! the tag archive/studio-frontend-poc-2026-11-27), which made it one client's
 //! opinion about what a document type produces. A type is catalogue data now
 //! (ADR-0014), so the thing that renders it belongs next to the catalogue:
 //! the portal, the prototype and an agent writing through the API all get the

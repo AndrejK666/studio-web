@@ -30,7 +30,7 @@ its Kits.
 - `src/assets/bootstrap.yaml` — a copy of the repository's
   `deploy/k8s/studio-environments/bootstrap.yaml`, shown by "Connect a
   cluster" (imported with `?raw`). The portal's image builds from
-  `studio-frontend-prototype/` alone, so the file lives here;
+  `studio-frontend/` alone, so the file lives here;
   `bootstrap.test.ts` fails when the copy drifts from the repository's.
 - `src/screens/infrastructure/` — the screen: header, the ladder, what runs
   where, the administrator's Namespaces and Image retention tabs, the places

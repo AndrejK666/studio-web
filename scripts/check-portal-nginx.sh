@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# What both portals' nginx configs must keep true, asserted without a cluster.
+# What the portal's nginx config must keep true, asserted without a cluster.
 #
 #   scripts/check-portal-nginx.sh
 #
@@ -20,7 +20,6 @@ set -euo pipefail
 
 templates=(
     studio-frontend/nginx.conf.template
-    studio-frontend-prototype/nginx.conf.template
 )
 
 failures=0

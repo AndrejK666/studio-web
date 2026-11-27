@@ -4,9 +4,10 @@
 // Plain functions, next to the widget rather than inside it, so the decisions
 // are tested without a widget (desktop-contributing.md, "Keep the logic out of
 // the widget"). The words follow the portal's product summary
-// (studio-frontend-prototype/src/product-sections.ts, `productSummary` and
+// (the old prototype's src/product-sections.ts, `productSummary` and
 // `PRODUCT_PROFILES`) -- the same product should not be described two ways --
-// copied rather than imported, because Theia does not depend on the portal.
+// copied rather than imported, because Theia does not depend on the portal;
+// that prototype is in the tag archive/studio-frontend-poc-2026-11-27.
 
 import type { Diagnostic } from "../../common/generated/Diagnostic";
 import type { InclusionReason } from "../../common/generated/InclusionReason";
