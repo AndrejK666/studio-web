@@ -582,3 +582,166 @@ async fn a_row_type_newer_than_the_move_is_declared_before_it_is_read() {
         .expect("reading a row type the move did not know");
     assert!(uploads.is_empty());
 }
+
+// ── Specs per source: counted from three fields, as from whole rows ────────
+
+/// One project's bindings the way a synced OpenSpec repository leaves them,
+/// plus the workspace's own and another project's.
+fn spec_layout(ws: Uuid, p: Uuid, other: Uuid) -> Vec<document_binding::Model> {
+    let bound = |node: &str, path: &str, project: Option<Uuid>, state: &str| {
+        let mut b = binding(ws, node, path, 0);
+        b.id = binding_row_id(ws, project, node);
+        b.project_id = project;
+        b.state = state.to_string();
+        b
+    };
+    vec![
+        // A spec layout's type, confirmed like a front matter's (34bc5841e).
+        bound("spec", "openspec/specs/auth/spec.md", Some(p), "confirmed"),
+        bound("adr", "docs/adr/0001-pg.md", Some(p), "manual"),
+        // A guess is writing, not a spec.
+        bound("guess", "docs/guide.md", Some(p), "detected"),
+        // The archive is history: writing, never a spec.
+        bound(
+            "archived",
+            "openspec/changes/archive/2025-01-01-add-2fa/proposal.md",
+            Some(p),
+            "not_a_document",
+        ),
+        // Tool configuration and a kit's scaffolding are neither.
+        bound(
+            "tool",
+            ".claude/commands/review.md",
+            Some(p),
+            "not_a_document",
+        ),
+        bound("nested-tool", "ui/.cursor/rules/x.md", Some(p), "detected"),
+        bound(
+            "kit",
+            "kits/sdlc/artifacts/ADR/template.md",
+            Some(p),
+            "detected",
+        ),
+        bound("code", "src/main.rs", Some(p), "unknown"),
+        // The workspace decided about the same file: two decisions.
+        bound("spec", "openspec/specs/auth/spec.md", None, "confirmed"),
+        // Another project's: only the workspace's count sees it.
+        bound("elsewhere", "docs/prd.md", Some(other), "confirmed"),
+    ]
+}
+
+/// What `/specs-per-source` counted before it read keys: every binding whole.
+fn counted_whole(rows: &[document_binding::Model]) -> super::service::SourceCounting {
+    let mut out = super::service::SourceCounting::default();
+    for b in rows {
+        if super::classify::is_prose_path(&b.path) {
+            out.doc_files.insert(b.node_id.clone());
+        }
+        if matches!(b.state.as_str(), "confirmed" | "manual") {
+            *out.decided.entry(b.node_id.clone()).or_default() += 1;
+        }
+    }
+    out
+}
+
+async fn keys_count_as_rows_did(data: &DocumentsData, ws: Uuid, p: Uuid) {
+    for (label, scope) in [
+        ("the project", DocScope::Effective(p)),
+        ("the workspace", DocScope::Everything),
+    ] {
+        let (rows, _) = data
+            .list_bindings(&ctx(), ws, scope_again(&scope), 0, None)
+            .await
+            .unwrap();
+        let keys = data.binding_keys(&ctx(), ws, scope).await.unwrap();
+        assert_eq!(
+            super::service::SourceCounting::of(&keys),
+            counted_whole(&rows),
+            "{label}"
+        );
+    }
+
+    let keys = data
+        .binding_keys(&ctx(), ws, DocScope::Effective(p))
+        .await
+        .unwrap();
+    let counting = super::service::SourceCounting::of(&keys);
+    assert_eq!(
+        counting.files(),
+        ["adr", "archived", "guess", "spec"],
+        "decided files and prose files, each once"
+    );
+    let repo_of: std::collections::HashMap<String, String> = [
+        ("spec", "repo-a"),
+        ("adr", "repo-a"),
+        ("guess", "repo-b"),
+        ("archived", "repo-b"),
+        ("tool", "repo-b"),
+    ]
+    .into_iter()
+    .map(|(n, r)| (n.to_string(), r.to_string()))
+    .collect();
+    let per = counting.per_repository(&repo_of);
+    assert_eq!(
+        per.get("repo-a"),
+        Some(&(3, 2)),
+        "a convention-confirmed spec counts, once per decision; a manual one too"
+    );
+    assert_eq!(
+        per.get("repo-b"),
+        Some(&(0, 2)),
+        "a guess and the archive are writing, not specs; tooling is neither"
+    );
+    assert_eq!(per.len(), 2);
+
+    let everything = data
+        .binding_keys(&ctx(), ws, DocScope::Everything)
+        .await
+        .unwrap();
+    let all = super::service::SourceCounting::of(&everything);
+    assert_eq!(
+        all.decided.get("elsewhere"),
+        Some(&1),
+        "a workspace counts its projects"
+    );
+    assert_eq!(
+        counting.decided.get("elsewhere"),
+        None,
+        "a project does not count its sibling's"
+    );
+}
+
+fn scope_again(scope: &DocScope) -> DocScope {
+    match scope {
+        DocScope::WorkspaceLevel => DocScope::WorkspaceLevel,
+        DocScope::Effective(p) => DocScope::Effective(*p),
+        DocScope::Everything => DocScope::Everything,
+    }
+}
+
+#[tokio::test]
+async fn specs_per_source_counts_from_keys_what_it_counted_from_rows() {
+    let r = rig().await;
+    let (p, other) = (Uuid::new_v4(), Uuid::new_v4());
+    r.data
+        .upsert_bindings(&ctx(), &spec_layout(r.ws, p, other))
+        .await
+        .unwrap();
+    keys_count_as_rows_did(&r.data, r.ws, p).await;
+}
+
+#[tokio::test]
+async fn specs_per_source_counts_the_same_from_the_tables() {
+    let repo = Arc::new(super::repo_tests::repo().await);
+    let data = DocumentsData::new(
+        Arc::clone(&repo),
+        super::model_table::TableStorage::Tables,
+        None,
+    );
+    let ws = Uuid::new_v4();
+    let (p, other) = (Uuid::new_v4(), Uuid::new_v4());
+    for row in spec_layout(ws, p, other) {
+        repo.upsert_binding(row).await.unwrap();
+    }
+    keys_count_as_rows_did(&data, ws, p).await;
+}

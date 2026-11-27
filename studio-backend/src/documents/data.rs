@@ -344,6 +344,16 @@ pub struct ProjectGroups {
     pub documents: Vec<(Vec<Value>, u64)>,
 }
 
+/// [`DocumentsData::binding_keys`]: one `(node_id, path, state)` and how many
+/// bindings in scope carry it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BindingKey {
+    pub node_id: String,
+    pub path: String,
+    pub state: String,
+    pub count: u64,
+}
+
 pub struct DocumentsData {
     repo: Arc<DocumentsRepo>,
     table: ModelTable,
@@ -1519,6 +1529,66 @@ impl DocumentsData {
         self.repo
             .list_bindings(workspace_id, scope, offset, limit)
             .await
+    }
+
+    /// The bindings `scope` admits as `(node_id, path, state)`, each with how
+    /// many bindings carry it: what a count per file needs and nothing else.
+    ///
+    /// One `GROUP BY` in the read model, answering three short strings per
+    /// file. [`Self::list_bindings`] reads every row whole (validation,
+    /// candidates, timestamps) and decodes it: on a project of 13k bindings
+    /// that cost over a second idle and ten under a repository sync
+    /// (`/specs-per-source`, 2026-11-27), for three fields.
+    pub async fn binding_keys(
+        &self,
+        ctx: &SecurityContext,
+        workspace_id: Uuid,
+        scope: DocScope,
+    ) -> Result<Vec<BindingKey>> {
+        if let Some((port, ref ctx)) = at!(
+            self,
+            ctx,
+            document_binding::Model,
+            workspace_id,
+            all_bindings
+        ) {
+            let body = json!({
+                "type": <document_binding::Model as TableRow>::ENTITY,
+                "where": in_scope(workspace_id, &scope),
+                "aggregate": {"group_by": ["node_id", "path", "state"]},
+                "limit": 0,
+            });
+            let (groups, _) = port.aggregate(ctx, body).await?;
+            let text = |v: Option<&Value>| v.and_then(Value::as_str).unwrap_or_default().to_owned();
+            return Ok(groups
+                .into_iter()
+                .map(|(key, count)| BindingKey {
+                    node_id: text(key.first()),
+                    path: text(key.get(1)),
+                    state: text(key.get(2)),
+                    count,
+                })
+                .collect());
+        }
+        // The tables hold an owner not moved into the model yet.
+        let (rows, _) = self
+            .repo
+            .list_bindings(workspace_id, scope, 0, None)
+            .await?;
+        let mut keys: std::collections::BTreeMap<(String, String, String), u64> =
+            std::collections::BTreeMap::new();
+        for row in rows {
+            *keys.entry((row.node_id, row.path, row.state)).or_default() += 1;
+        }
+        Ok(keys
+            .into_iter()
+            .map(|((node_id, path, state), count)| BindingKey {
+                node_id,
+                path,
+                state,
+                count,
+            })
+            .collect())
     }
 
     pub async fn list_bindings_at(

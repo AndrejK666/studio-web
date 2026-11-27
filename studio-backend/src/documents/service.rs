@@ -1537,17 +1537,22 @@ impl DocumentsService {
         Ok(confirmed.len())
     }
 
-    /// Every binding under a workspace -- its own and all of its projects'.
-    pub async fn every_binding_under(
+    /// `(node_id, path, state)` of the bindings a scope counts, with how many
+    /// carry each: a project's own and what it inherits from `workspace_id`
+    /// ([`Self::all_bindings`]'s set), or with no project everything under
+    /// the workspace, its own and all of its projects'. For a count, which
+    /// needs no row whole.
+    pub async fn binding_keys(
         &self,
         ctx: &SecurityContext,
         workspace_id: Uuid,
-    ) -> Result<Vec<DocumentBinding>> {
-        let (rows, _) = self
-            .data
-            .list_bindings(ctx, workspace_id, DocScope::Everything, 0, None)
-            .await?;
-        rows.into_iter().map(binding_from_row).collect()
+        project_id: Option<Uuid>,
+    ) -> Result<Vec<super::data::BindingKey>> {
+        let scope = match project_id {
+            Some(pid) => DocScope::Effective(pid),
+            None => DocScope::Everything,
+        };
+        self.data.binding_keys(ctx, workspace_id, scope).await
     }
 
     pub async fn all_documents(
@@ -4341,6 +4346,65 @@ pub struct CapabilitySource {
     /// A person confirmed the document is what the classifier says, or Studio
     /// holds it. `false` for a repository file still awaiting review.
     pub confirmed: bool,
+}
+
+/// What `/specs-per-source` counts, read off [`DocumentsService::binding_keys`].
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct SourceCounting {
+    /// Files somebody decided ARE documents (`confirmed`, `manual`), with how
+    /// many bindings decided so: a file decided in the workspace and again in
+    /// a project counts twice, as it always has.
+    pub decided: BTreeMap<String, u32>,
+    /// Files on a path the classifier reads ([`is_prose_path`]), once however
+    /// many scopes bound them.
+    pub doc_files: std::collections::BTreeSet<String>,
+}
+
+impl SourceCounting {
+    pub fn of(keys: &[super::data::BindingKey]) -> Self {
+        let mut out = Self::default();
+        for k in keys {
+            if is_prose_path(&k.path) {
+                out.doc_files.insert(k.node_id.clone());
+            }
+            if matches!(k.state.as_str(), "confirmed" | "manual") {
+                let n = u32::try_from(k.count).unwrap_or(u32::MAX);
+                let slot = out.decided.entry(k.node_id.clone()).or_default();
+                *slot = slot.saturating_add(n);
+            }
+        }
+        out
+    }
+
+    /// Every file whose repository the count needs, each once.
+    pub fn files(&self) -> Vec<String> {
+        let mut ids: Vec<String> = self.decided.keys().cloned().collect();
+        ids.extend(self.doc_files.iter().cloned());
+        ids.sort();
+        ids.dedup();
+        ids
+    }
+
+    /// `(specs, doc files)` per repository, given which repository each file
+    /// came from. A file with no repository counts nowhere.
+    pub fn per_repository(
+        &self,
+        repo_of: &std::collections::HashMap<String, String>,
+    ) -> BTreeMap<String, (u32, u32)> {
+        let mut counts: BTreeMap<String, (u32, u32)> = BTreeMap::new();
+        for (node_id, n) in &self.decided {
+            if let Some(repo) = repo_of.get(node_id) {
+                let slot = &mut counts.entry(repo.clone()).or_default().0;
+                *slot = slot.saturating_add(*n);
+            }
+        }
+        for node_id in &self.doc_files {
+            if let Some(repo) = repo_of.get(node_id) {
+                counts.entry(repo.clone()).or_default().1 += 1;
+            }
+        }
+        counts
+    }
 }
 
 fn binding_from_row(row: document_binding::Model) -> Result<DocumentBinding> {

@@ -9543,35 +9543,26 @@ async fn specs_per_source(
     // A workspace counts its projects' bindings too. A repository's files are
     // bound in the project that synced them, so the workspace's own rows alone
     // made every source on the workspace's Sources table read "0 specs".
-    let bindings = match service.parent_of(&ctx, scope_id).await {
-        Ok(Some(parent)) => service.all_bindings(&ctx, parent, Some(scope_id)).await,
-        _ => service.every_binding_under(&ctx, scope_id).await,
+    //
+    // Read as `(node_id, path, state)` groups, never as whole rows: the
+    // count needs nothing else, and reading 13k bindings whole took ten
+    // seconds under a repository sync and timed the Sources tab out.
+    let keys = match service.parent_of(&ctx, scope_id).await {
+        Ok(Some(parent)) => service.binding_keys(&ctx, parent, Some(scope_id)).await,
+        _ => service.binding_keys(&ctx, scope_id, None).await,
     }
     .map_err(internal)?;
     // Only a file somebody decided about counts as a spec. Every file the
     // classifier reads counts as a doc file (see `SpecsPerSourceDto::doc_files`),
-    // once however many scopes bound it. Both read off the bindings already
-    // in hand: no file listing, no content.
-    let mut decided: Vec<String> = Vec::new();
-    let mut doc_files: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    for b in bindings {
-        if super::classify::is_prose_path(&b.path) {
-            doc_files.insert(b.node_id.clone());
-        }
-        if matches!(b.state.as_str(), "confirmed" | "manual") {
-            decided.push(b.node_id);
-        }
-    }
+    // once however many scopes bound it. No file listing, no content.
+    let counting = super::service::SourceCounting::of(&keys);
 
     // Which repository each of those files came from, asked for those files
     // alone: the scope's whole file listing used to be read to join it here.
     // Absent means the count is UNKNOWN — a screen must not draw that as
     // zero, because "no specs here" and "nobody could tell me" are different
     // sentences.
-    let mut ids: Vec<String> = decided.clone();
-    ids.extend(doc_files.iter().cloned());
-    ids.sort();
-    ids.dedup();
+    let ids = counting.files();
     let (repo_of, files_known) = match quality.files() {
         Some(files) => match files.repos_of_files(&ctx, scope, &ids).await {
             Ok(found) => (found, true),
@@ -9581,18 +9572,7 @@ async fn specs_per_source(
     };
 
     // (specs, doc files) per repository.
-    let mut counts: std::collections::BTreeMap<String, (u32, u32)> =
-        std::collections::BTreeMap::new();
-    for node_id in decided {
-        if let Some(repo) = repo_of.get(&node_id) {
-            counts.entry(repo.clone()).or_default().0 += 1;
-        }
-    }
-    for node_id in &doc_files {
-        if let Some(repo) = repo_of.get(node_id) {
-            counts.entry(repo.clone()).or_default().1 += 1;
-        }
-    }
+    let counts = counting.per_repository(&repo_of);
 
     let items: Vec<SpecsPerSourceDto> = counts
         .into_iter()
