@@ -19,6 +19,9 @@ const WS_LABEL: &str = "cf.studio.workspace_id";
 const TENANT_LABEL: &str = "cf.studio.tenant_id";
 const PORT_LABEL: &str = "cf.studio.port";
 const LAUNCH_LABEL: &str = "cf.studio.launch_id";
+/// Who a session is, for an IDE that runs one person per session
+/// (ADR-0080 §7): the subject id. Absent on a shared session.
+pub(crate) const OWNER_LABEL: &str = "cf.studio.owner";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionState {
@@ -175,6 +178,43 @@ pub fn session_id_for(workspace_id: Uuid) -> Uuid {
     Uuid::new_v5(&SESSION_NS, workspace_id.as_bytes())
 }
 
+/// The id of a session for a workspace and, when its IDE runs one person per
+/// session (no `shared_session`, ADR-0080 §7), the person it is for.
+///
+/// A shared session (`owner` = `None`) keeps [`session_id_for`]'s id, so every
+/// Theia session is called what it always was. A person's own session is
+/// derived from both, the same way and for the same reason: every replica,
+/// before or after a restart, calls it by the same name.
+pub fn session_id_for_owner(workspace_id: Uuid, owner: Option<&str>) -> Uuid {
+    match owner {
+        None => session_id_for(workspace_id),
+        Some(owner) => {
+            let mut name = workspace_id.as_bytes().to_vec();
+            name.push(b'/');
+            name.extend_from_slice(owner.as_bytes());
+            Uuid::new_v5(&SESSION_NS, &name)
+        }
+    }
+}
+
+/// What a session is called on the runtime and on disk: the container or Pod
+/// name, and its directory under the workspaces root. A shared session is
+/// named after its workspace, as always; a person's own session adds eight
+/// hex digits of its id, which keeps a Pod name within 63 characters.
+fn session_names(workspace_id: Uuid, owner: Option<&str>) -> (String, String) {
+    match owner {
+        None => (
+            format!("cf-studio-session-{workspace_id}"),
+            workspace_id.to_string(),
+        ),
+        Some(_) => {
+            let id = session_id_for_owner(workspace_id, owner).simple().to_string();
+            let dir = format!("{workspace_id}-{}", &id[..8]);
+            (format!("cf-studio-session-{dir}"), dir)
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Session {
     pub id: Uuid,
@@ -206,6 +246,20 @@ pub struct Session {
     /// `None` for a runtime this build no longer has: such a session can be
     /// listed and stopped, and nothing else.
     pub ide: Option<&'static crate::ide_runtime::IdeRuntime>,
+    /// The person a one-person session is for (their subject id, the
+    /// [`OWNER_LABEL`] label); `None` for a shared session. Only its owner
+    /// reads it, so only its owner is handed its gate token.
+    pub owner: Option<String>,
+}
+
+impl Session {
+    /// Whether `ctx`'s person may have this session: anyone who reaches its
+    /// workspace for a shared one, its owner alone for a one-person one.
+    pub fn is_for(&self, ctx: &SecurityContext) -> bool {
+        self.owner
+            .as_deref()
+            .is_none_or(|owner| owner == ctx.subject_id().to_string())
+    }
 }
 
 impl Session {
@@ -334,7 +388,7 @@ impl SessionService {
         cache.by_id = listed
             .into_iter()
             .map(|a| {
-                let id = session_id_for(a.workspace_id);
+                let id = session_id_for_owner(a.workspace_id, a.owner.as_deref());
                 let was_running = previous
                     .get(&id)
                     .is_some_and(|p| p.state == SessionState::Running);
@@ -359,6 +413,7 @@ impl SessionService {
                     session_token: a.session_token,
                     control_token: a.control_token,
                     ide: crate::ide_runtime::of_label(a.ide.as_deref()),
+                    owner: a.owner,
                 };
                 (id, session)
             })
@@ -717,6 +772,13 @@ impl SessionService {
         if !self.may_reach(ctx, workspace_id).await {
             return Err(NotReachable { workspace_id }.into());
         }
+        // The IDE this launch runs: the deployment's (ADR-0080 §6). One that
+        // cannot share a session among people runs one per person (§7), so
+        // the session is keyed by (workspace, person) instead of the
+        // workspace alone.
+        let runtime = crate::ide_runtime::resolve(self.cfg.ide.as_deref())?;
+        let owner = (!runtime.can(crate::ide_runtime::Capability::SharedSession))
+            .then(|| ctx.subject_id().to_string());
         {
             // Keyed by the workspace ALONE, because that is what a session is
             // keyed by everywhere else that decides: `session_id_for` derives
@@ -725,11 +787,12 @@ impl SessionService {
             // says "idempotent per workspace". Adding the caller's tenant here
             // never isolated two sessions — one name admits one Pod — it only
             // ever missed a live one and sent the driver off to destroy it.
-            let existing = self
-                .snapshot()
-                .await
-                .into_values()
-                .find(|s| s.workspace_id == workspace_id && s.state != SessionState::Stopped);
+            //
+            // A session the caller may have is reused: their own, else a
+            // shared one (a session keeps its IDE for its life, so a Theia
+            // session started before a deployment switched to VS Code is
+            // still the workspace's). Somebody else's own session is not.
+            let existing = self.reusable(ctx, workspace_id).await;
             if let Some(existing) = existing {
                 // Reuse only when the runtime is actually alive. The listing
                 // can be up to `registry_ttl_secs` old, and a container removed
@@ -829,8 +892,10 @@ impl SessionService {
                 p.to_string()
             }
             None => {
+                // A person's own session has a checkout of its own
+                // (`session_names`): two people's IDEs never write one tree.
                 let root = self.cfg.workspaces_root_expanded();
-                let dir = format!("{root}/{workspace_id}");
+                let dir = format!("{root}/{}", session_names(workspace_id, owner.as_deref()).1);
                 std::fs::create_dir_all(&dir)
                     .with_context(|| format!("cannot create workspace dir {dir}"))?;
                 dir
@@ -861,11 +926,9 @@ impl SessionService {
             }
         }
 
-        // The IDE this launch runs: the deployment's (ADR-0080 §6).
-        let runtime = crate::ide_runtime::resolve(self.cfg.ide.as_deref())?;
         let port = self.allocate_port().await?;
-        let session_id = session_id_for(workspace_id);
-        let name = format!("cf-studio-session-{workspace_id}");
+        let session_id = session_id_for_owner(workspace_id, owner.as_deref());
+        let (name, workspace_dir) = session_names(workspace_id, owner.as_deref());
 
         // Session gate token: random 256-bit, hex. The container's entry
         // proxy refuses requests without it, so a guessed/leaked address on
@@ -979,7 +1042,7 @@ impl SessionService {
 
         // Per launch, and on the runtime so every replica and every listing agree.
         let launch_id = Uuid::new_v4();
-        let labels: HashMap<String, String> = HashMap::from([
+        let mut labels: HashMap<String, String> = HashMap::from([
             (SESSION_LABEL.into(), "1".into()),
             (WS_LABEL.into(), workspace_id.to_string()),
             (TENANT_LABEL.into(), tenant_id.to_string()),
@@ -987,6 +1050,9 @@ impl SessionService {
             (LAUNCH_LABEL.into(), launch_id.to_string()),
             (crate::ide_runtime::LABEL.into(), runtime.id.into()),
         ]);
+        if let Some(owner) = &owner {
+            labels.insert(OWNER_LABEL.into(), owner.clone());
+        }
 
         let local_binds: Vec<LocalBind> = repos
             .iter()
@@ -1008,6 +1074,7 @@ impl SessionService {
         let spec = LaunchSpec {
             image: self.cfg.image_for(runtime),
             runtime,
+            workspace_dir,
             env,
             workspace_host_dir: ws_dir,
             local_binds,
@@ -1029,7 +1096,9 @@ impl SessionService {
                     .await
                     .unwrap_or_default()
                     .into_values()
-                    .find(|s| s.workspace_id == workspace_id && s.state != SessionState::Stopped)
+                    .find(|s| {
+                        s.id == session_id && s.state != SessionState::Stopped
+                    })
                 {
                     tracing::info!(
                         session_id = %existing.id,
@@ -1055,6 +1124,7 @@ impl SessionService {
             session_token,
             control_token,
             ide: Some(runtime),
+            owner,
             sources: root_repo
                 .iter()
                 .map(|_| "workspace root (git)".to_string())
@@ -1220,11 +1290,28 @@ impl SessionService {
     /// Refresh state: Starting → Running once the session port accepts a
     /// connection (driver probe).
     pub async fn get(&self, ctx: &SecurityContext, id: Uuid) -> Option<Session> {
-        let workspace_id = self.snapshot().await.get(&id)?.workspace_id;
-        if !self.may_reach(ctx, workspace_id).await {
+        let session = self.snapshot().await.remove(&id)?;
+        // Somebody else's own session is not there either (ADR-0080 §7).
+        if !session.is_for(ctx) || !self.may_reach(ctx, session.workspace_id).await {
             return None; // not yours == not there; saying which would say it exists
         }
         self.probe(id).await
+    }
+
+    /// The live session of `workspace_id` the caller may have: their own
+    /// first, else a shared one. `None` when there is neither.
+    async fn reusable(&self, ctx: &SecurityContext, workspace_id: Uuid) -> Option<Session> {
+        let mut candidates: Vec<Session> = self
+            .snapshot()
+            .await
+            .into_values()
+            .filter(|s| {
+                s.workspace_id == workspace_id && s.state != SessionState::Stopped && s.is_for(ctx)
+            })
+            .collect();
+        // Own (`Some` owner) before shared (`None`).
+        candidates.sort_by_key(|s| s.owner.is_none());
+        candidates.into_iter().next()
     }
 
     /// A session by id with NO access decision.
@@ -1287,11 +1374,7 @@ impl SessionService {
         if !self.may_reach(ctx, workspace_id).await {
             return None;
         }
-        let session = self
-            .snapshot()
-            .await
-            .into_values()
-            .find(|s| s.workspace_id == workspace_id && s.state != SessionState::Stopped)?;
+        let session = self.reusable(ctx, workspace_id).await?;
         if session.control_token.is_empty() {
             return None;
         }
@@ -1350,7 +1433,7 @@ impl SessionService {
     pub async fn list(&self, ctx: &SecurityContext) -> Vec<Session> {
         let mut reachable = Vec::new();
         for session in self.snapshot().await.into_values() {
-            if self.may_reach(ctx, session.workspace_id).await {
+            if session.is_for(ctx) && self.may_reach(ctx, session.workspace_id).await {
                 reachable.push(session);
             }
         }
@@ -1361,7 +1444,7 @@ impl SessionService {
         let Some(session) = self.snapshot().await.remove(&id) else {
             return Ok(false);
         };
-        if !self.may_reach(ctx, session.workspace_id).await {
+        if !session.is_for(ctx) || !self.may_reach(ctx, session.workspace_id).await {
             return Ok(false); // not yours == not there, as in `get`
         }
         self.driver.destroy(&session.handle).await?;
@@ -1529,8 +1612,11 @@ impl SessionService {
                     outcome.stopped += 1;
                     // Drop it from the cache too, so a listing still inside
                     // its TTL does not keep offering a session that is gone.
-                    self.cache_forget(session_id_for(session.workspace_id))
-                        .await;
+                    self.cache_forget(session_id_for_owner(
+                        session.workspace_id,
+                        session.owner.as_deref(),
+                    ))
+                    .await;
                 }
                 Err(e) => {
                     outcome.failed += 1;
@@ -1764,6 +1850,7 @@ mod tests {
             session_token: "gate".into(),
             control_token: "s2s".into(),
             ide: None,
+            owner: None,
             sources: vec!["docs (git)".into()],
         }
     }
@@ -2644,6 +2731,9 @@ mod tests {
         labels: std::collections::HashMap<String, String>,
         runtime: &'static crate::ide_runtime::IdeRuntime,
         port: u16,
+        name: String,
+        workspace_dir: String,
+        workspace_host_dir: String,
     }
 
     /// A runtime that keeps every spec it launched and lists each launch back
@@ -2668,6 +2758,9 @@ mod tests {
                 labels: spec.labels.clone(),
                 runtime: spec.runtime,
                 port: spec.port,
+                name: spec.name.clone(),
+                workspace_dir: spec.workspace_dir.clone(),
+                workspace_host_dir: spec.workspace_host_dir.clone(),
             });
             Ok(LaunchedSession {
                 handle: spec.name.clone(),
@@ -2692,6 +2785,7 @@ mod tests {
                 .map(|seen| {
                     let ws = seen.labels[super::WS_LABEL].parse().unwrap();
                     let ide = seen.labels.get(crate::ide_runtime::LABEL).cloned();
+                    let owner = seen.labels.get(super::OWNER_LABEL).cloned();
                     let env_value = |name: &str| {
                         let prefix = format!("{name}=");
                         seen.env.iter().find_map(|kv| kv.strip_prefix(&prefix))
@@ -2702,6 +2796,8 @@ mod tests {
                             env_value,
                         ),
                         ide,
+                        owner,
+                        handle: seen.name.clone(),
                         ..running_session(ws, seen.port)
                     }
                 })
@@ -2880,5 +2976,139 @@ mod tests {
         let outcome = reap_with(session, idle.clone()).await;
         assert_eq!((outcome.idle, outcome.stopped), (0, 0));
         assert_eq!(idle.asked.load(Ordering::SeqCst), 0);
+    }
+
+    // ── One VS Code session per person (ADR-0080 §7) ──────────────────────
+
+    /// A service under a deployment that names `ide`, over a recorder.
+    async fn recorded(
+        ide: Option<&str>,
+    ) -> (Arc<SessionService>, Arc<SpecRecorder>, std::path::PathBuf) {
+        let root = std::env::temp_dir().join(format!("cf-session-owner-{}", Uuid::new_v4()));
+        let driver = Arc::new(SpecRecorder::default());
+        let service = SessionService::new(
+            StudioSessionConfig {
+                workspaces_root: root.to_string_lossy().into_owned(),
+                ide: ide.map(str::to_owned),
+                ..config()
+            },
+            driver.clone(),
+        );
+        service
+            .set_workspace_access(Arc::new(Reachable(true)))
+            .await;
+        (service, driver, root)
+    }
+
+    /// Two people opening one workspace in VS Code get a session each: their
+    /// own id, container, checkout and owner label.
+    #[tokio::test]
+    async fn two_people_get_two_vscode_sessions() {
+        let (service, driver, root) = recorded(Some("vscode")).await;
+        let ws = Uuid::from_u128(0xF1);
+        let (ada, bob) = (person(0xA1), person(0xB1));
+        let (mine, reused) = service.create(&ada, ws, None, None, vec![]).await.unwrap();
+        assert!(!reused);
+        let (theirs, reused) = service.create(&bob, ws, None, None, vec![]).await.unwrap();
+        assert!(!reused);
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert_ne!(mine.id, theirs.id);
+        assert_ne!(mine.session_token, theirs.session_token);
+        assert_eq!(mine.owner.as_deref(), Some(ada.subject_id().to_string().as_str()));
+        assert_eq!(theirs.owner.as_deref(), Some(bob.subject_id().to_string().as_str()));
+
+        let seen = driver.seen.lock().unwrap().clone();
+        assert_eq!(seen.len(), 2);
+        assert_ne!(seen[0].name, seen[1].name);
+        assert_ne!(seen[0].workspace_dir, seen[1].workspace_dir);
+        assert_ne!(seen[0].workspace_host_dir, seen[1].workspace_host_dir);
+        for spec in &seen {
+            assert!(spec.name.len() <= 63, "{} is too long for a Pod", spec.name);
+            assert!(spec.workspace_dir.starts_with(&ws.to_string()));
+        }
+        assert_eq!(
+            seen[0].labels[super::OWNER_LABEL],
+            ada.subject_id().to_string()
+        );
+        assert_eq!(
+            seen[1].labels[super::OWNER_LABEL],
+            bob.subject_id().to_string()
+        );
+
+        // Each finds their own, and the bridge reaches their own.
+        let ada_sees: Vec<Uuid> = service.list(&ada).await.iter().map(|s| s.id).collect();
+        assert_eq!(ada_sees, [mine.id]);
+        let bob_sees: Vec<Uuid> = service.list(&bob).await.iter().map(|s| s.id).collect();
+        assert_eq!(bob_sees, [theirs.id]);
+        assert_eq!(
+            service.control_endpoint(&ada, ws).await.unwrap().session_id,
+            mine.id
+        );
+        assert_eq!(
+            service.control_endpoint(&bob, ws).await.unwrap().session_id,
+            theirs.id
+        );
+
+        // Opening again is the same person's same session.
+        let (again, reused) = service.create(&ada, ws, None, None, vec![]).await.unwrap();
+        assert!(reused);
+        assert_eq!(again.id, mine.id);
+        assert_eq!(driver.seen.lock().unwrap().len(), 2);
+    }
+
+    /// One person cannot reach another's own session: not by id, not to stop
+    /// it, and never with its gate token.
+    #[tokio::test]
+    async fn one_person_cannot_reach_anothers_vscode_session() {
+        let (service, _driver, root) = recorded(Some("vscode")).await;
+        let ws = Uuid::from_u128(0xF2);
+        let (ada, bob) = (person(0xA2), person(0xB2));
+        let (mine, _) = service.create(&ada, ws, None, None, vec![]).await.unwrap();
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert!(service.get(&bob, mine.id).await.is_none());
+        assert!(service.list(&bob).await.is_empty());
+        assert!(service.control_endpoint(&bob, ws).await.is_none());
+        assert!(!service.stop(&bob, mine.id).await.unwrap());
+        // Still there for its owner.
+        assert!(service.get(&ada, mine.id).await.is_some());
+        assert!(service.stop(&ada, mine.id).await.unwrap());
+    }
+
+    /// Theia is as it was: one session per workspace, whoever opens it, with
+    /// the workspace's own id, name and checkout, and no owner.
+    #[tokio::test]
+    async fn theia_stays_one_session_per_workspace() {
+        let (service, driver, root) = recorded(None).await;
+        let ws = Uuid::from_u128(0xF3);
+        let (ada, bob) = (person(0xA3), person(0xB3));
+        let (first, _) = service.create(&ada, ws, None, None, vec![]).await.unwrap();
+        let (second, reused) = service.create(&bob, ws, None, None, vec![]).await.unwrap();
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert!(reused);
+        assert_eq!(first.id, second.id);
+        assert_eq!(first.id, super::session_id_for(ws));
+        assert_eq!(first.owner, None);
+        let seen = driver.seen.lock().unwrap().clone();
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].name, format!("cf-studio-session-{ws}"));
+        assert_eq!(seen[0].workspace_dir, ws.to_string());
+        assert!(seen[0].workspace_host_dir.ends_with(&ws.to_string()));
+        assert!(!seen[0].labels.contains_key(super::OWNER_LABEL));
+        assert!(service.get(&bob, first.id).await.is_some());
+    }
+
+    /// A shared id is the one every Theia session always had; an owner's id
+    /// is stable and differs per person.
+    #[test]
+    fn a_persons_session_id_is_derived_like_the_shared_one() {
+        let ws = Uuid::from_u128(0xF4);
+        assert_eq!(super::session_id_for_owner(ws, None), super::session_id_for(ws));
+        let a = super::session_id_for_owner(ws, Some("a"));
+        assert_eq!(a, super::session_id_for_owner(ws, Some("a")));
+        assert_ne!(a, super::session_id_for_owner(ws, Some("b")));
+        assert_ne!(a, super::session_id_for(ws));
     }
 }

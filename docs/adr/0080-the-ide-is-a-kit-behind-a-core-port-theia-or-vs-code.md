@@ -399,7 +399,13 @@ review rounds.
 - The file hand-off: portal to IDE (`open_file`, `open_document`) and IDE to
   portal (`ide.openArtifact`) (in the bridge work above).
 - One person per session: `shared_session` is off, so the launch keys
-  the session by (workspace, person) as ADR-0003 did (days).
+  the session by (workspace, person) as ADR-0003 did (days). Built: the
+  owner is the `cf.studio.owner` label and the session's record; the id,
+  the container or Pod name and the checkout directory are the person's
+  own; reads, lists, stops and the bridge find only the caller's own
+  session (or a shared one), so only its owner is ever handed its gate
+  token. The browser proxy has no caller identity (the frame carries no
+  platform token), so the gate token stays what admits the browser.
 - The stand and a CDP check of the real IDE (1 week).
 
 **P3 (optional, not planned). Port the features, by value over cost.** Each a

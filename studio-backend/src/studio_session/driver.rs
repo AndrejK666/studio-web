@@ -131,6 +131,12 @@ pub struct LaunchSpec {
     /// container and the container's name come from it, and its id is on the
     /// session as the [`crate::ide_runtime::LABEL`] label.
     pub runtime: &'static crate::ide_runtime::IdeRuntime,
+    /// The session's directory name under the workspaces root: the
+    /// workspace id for a shared session, the workspace id and a suffix of
+    /// its own for a one-person session (ADR-0080 §7). The Docker driver gets
+    /// the full path in `workspace_host_dir`; a shared Kubernetes claim uses
+    /// this as the subPath.
+    pub workspace_dir: String,
     /// `STUDIO_*` variables the entrypoint reads.
     pub env: Vec<String>,
     /// Host directory to mount at `/workspace` (Docker). The Kubernetes
@@ -182,6 +188,9 @@ pub struct AdoptedSession {
     /// The [`crate::ide_runtime::LABEL`] label as the runtime has it: `None`
     /// for a session launched before the label existed.
     pub ide: Option<String>,
+    /// The `cf.studio.owner` label: the person a one-person session is for
+    /// (ADR-0080 §7); `None` for a shared one.
+    pub owner: Option<String>,
     /// Human-readable source summaries, rebuilt from the session's env by
     /// [`adopted_sources`].
     pub sources: Vec<String>,

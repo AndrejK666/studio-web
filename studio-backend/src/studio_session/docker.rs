@@ -230,6 +230,7 @@ impl SessionDriver for DockerDriver {
             // IDE's control token, and the sources the summary is built from.
             let env = self.adopted_env(&container_id).await;
             let ide = labels.get(crate::ide_runtime::LABEL).cloned();
+            let owner = labels.get(super::service::OWNER_LABEL).cloned();
             out.push(AdoptedSession {
                 workspace_id: ws,
                 tenant_id: tenant,
@@ -247,6 +248,7 @@ impl SessionDriver for DockerDriver {
                     env_value(&env, name)
                 }),
                 ide,
+                owner,
                 sources: super::driver::adopted_sources(
                     env_value(&env, "STUDIO_ROOT_URL"),
                     env_value(&env, "STUDIO_SOURCES"),

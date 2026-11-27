@@ -358,16 +358,19 @@ impl SessionDriver for KubernetesDriver {
                      must be scheduled on the same node"
                 ));
             }
-            // The subPath is the workspace id and nothing else: it is the
-            // directory name artifact-ingest resolves, so a different scheme
-            // here would leave the backend reading an empty path with no error
-            // anywhere.
-            let Some(workspace_id) = labels.get(WS_LABEL).cloned() else {
+            // The subPath is the session's directory: the workspace id and
+            // nothing else for a shared session, which is the directory name
+            // artifact-ingest resolves, so a different scheme there would
+            // leave the backend reading an empty path with no error anywhere.
+            // A one-person session (ADR-0080 §7) has a directory of its own
+            // beside it, so two people's IDEs never write one tree.
+            if !labels.contains_key(WS_LABEL) {
                 return Err(anyhow!(
                     "studio-session: a session sharing the workspaces claim needs its \
                      {WS_LABEL} label to name the subPath"
                 ));
-            };
+            }
+            let workspace_id = spec.workspace_dir.clone();
             self.await_pod_gone(&name).await;
             (
                 Volume {
@@ -686,6 +689,7 @@ impl SessionDriver for KubernetesDriver {
             };
             let session_token = env_value(SESSION_TOKEN_ENV).unwrap_or_default().to_string();
             let ide = labels.get(crate::ide_runtime::LABEL).cloned();
+            let owner = labels.get(super::service::OWNER_LABEL).cloned();
             let control_token = super::driver::adopted_control_token(ide.as_deref(), env_value);
             let sources =
                 super::driver::adopted_sources(env_value(ROOT_URL_ENV), env_value(SOURCES_ENV));
@@ -707,6 +711,7 @@ impl SessionDriver for KubernetesDriver {
                 session_token,
                 control_token,
                 ide,
+                owner,
                 sources,
             });
         }
