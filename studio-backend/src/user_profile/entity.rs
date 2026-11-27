@@ -336,3 +336,108 @@ pub mod capacity_allocation {
     pub enum Relation {}
     impl ActiveModelBehavior for ActiveModel {}
 }
+
+/// A person's platform role (ADR-0081 §1).
+pub mod platform_role {
+    use sea_orm::entity::prelude::*;
+    use time::OffsetDateTime;
+    use toolkit_db::secure::Scopable;
+    use uuid::Uuid;
+
+    #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Scopable)]
+    #[sea_orm(table_name = "identity_platform_role")]
+    #[secure(tenant_col = "tenant_id", resource_col = "id", no_owner, no_type)]
+    pub struct Model {
+        /// v5 of `(person, role)`.
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub id: Uuid,
+        pub tenant_id: Uuid,
+        pub person_id: Uuid,
+        pub role: String,
+        pub granted_by: String,
+        pub granted_at: OffsetDateTime,
+    }
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
+/// A platform resource granted to one organization (ADR-0081 §2).
+pub mod platform_grant {
+    use sea_orm::entity::prelude::*;
+    use time::OffsetDateTime;
+    use toolkit_db::secure::Scopable;
+    use uuid::Uuid;
+
+    #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Scopable)]
+    #[sea_orm(table_name = "identity_platform_grant")]
+    #[secure(tenant_col = "tenant_id", resource_col = "id", no_owner, no_type)]
+    pub struct Model {
+        /// v5 of `(kind, resource, organization)`.
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub id: Uuid,
+        pub tenant_id: Uuid,
+        pub kind: String,
+        pub resource: String,
+        pub org_id: Uuid,
+        pub granted_by: String,
+        pub granted_at: OffsetDateTime,
+    }
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
+/// One published version of an audience's terms (ADR-0081 §3).
+pub mod terms {
+    use sea_orm::entity::prelude::*;
+    use time::OffsetDateTime;
+    use toolkit_db::secure::Scopable;
+    use uuid::Uuid;
+
+    #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Scopable)]
+    #[sea_orm(table_name = "identity_terms")]
+    #[secure(tenant_col = "tenant_id", resource_col = "id", no_owner, no_type)]
+    pub struct Model {
+        /// v5 of `(audience, version)`.
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub id: Uuid,
+        pub tenant_id: Uuid,
+        pub audience: String,
+        pub version: i32,
+        pub title: String,
+        pub body: String,
+        pub published_by: String,
+        pub published_at: OffsetDateTime,
+    }
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
+/// The version of an audience's terms a person accepted in an organization
+/// (ADR-0081 §3).
+pub mod terms_acceptance {
+    use sea_orm::entity::prelude::*;
+    use time::OffsetDateTime;
+    use toolkit_db::secure::Scopable;
+    use uuid::Uuid;
+
+    #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Scopable)]
+    #[sea_orm(table_name = "identity_terms_acceptance")]
+    #[secure(tenant_col = "tenant_id", resource_col = "id", no_owner, no_type)]
+    pub struct Model {
+        /// v5 of `(person, organization, audience)`: the latest accepted.
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub id: Uuid,
+        pub tenant_id: Uuid,
+        pub person_id: Uuid,
+        pub org_id: Uuid,
+        pub audience: String,
+        pub version: i32,
+        pub accepted_at: OffsetDateTime,
+    }
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+    impl ActiveModelBehavior for ActiveModel {}
+}

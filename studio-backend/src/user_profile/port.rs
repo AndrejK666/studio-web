@@ -158,3 +158,8 @@ pub async fn list_or_none(
 pub fn text<'a>(v: &'a Value, key: &str) -> &'a str {
     v[key].as_str().unwrap_or_default()
 }
+
+// ADR-0081: what studio-user answers about the platform's roles, its grants to
+// an organization and the terms a person has yet to accept. Resolved in the
+// ClientHub under `IDENTITY_INSTANCE_ID`.
+pub use super::platform_access::PlatformAccessPort;

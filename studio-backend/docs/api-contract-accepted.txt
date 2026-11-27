@@ -1143,10 +1143,19 @@ request	POST /studio-user/v1/me/aliases/revoke	external_id	String	required
 request	POST /studio-user/v1/me/aliases/revoke	kind	String	required
 request	POST /studio-user/v1/me/invitations/accept	invitation_id	String	optional
 request	POST /studio-user/v1/me/invitations/accept	token	String	optional
+request	POST /studio-user/v1/me/terms/acceptances	audience	String	required
+request	POST /studio-user/v1/me/terms/acceptances	organization_id	String	required
+request	POST /studio-user/v1/me/terms/acceptances	version	i32	required
 request	POST /studio-user/v1/merge	from_user_id	String	required
 request	POST /studio-user/v1/merge	into_user_id	String	required
 request	POST /studio-user/v1/organizations/{}/invitations	email	String	required
 request	POST /studio-user/v1/organizations/{}/invitations	role	String	required
+request	POST /studio-user/v1/platform/grants	kind	String	required
+request	POST /studio-user/v1/platform/grants	organization_id	String	required
+request	POST /studio-user/v1/platform/grants	resource	String	required
+request	POST /studio-user/v1/platform/terms	audience	String	required
+request	POST /studio-user/v1/platform/terms	body	String	required
+request	POST /studio-user/v1/platform/terms	title	String	required
 request	POST /studio-user/v1/resolve	display_name	String	optional
 request	POST /studio-user/v1/resolve	email	String	optional
 request	POST /studio-user/v1/resolve	provider	String	required
@@ -1482,6 +1491,7 @@ request	PUT /studio-user/v1/me/inbox-marks	item_key	String	required
 request	PUT /studio-user/v1/me/inbox-marks	state	String	required
 request	PUT /studio-user/v1/me/inbox-marks	until	String	optional
 request	PUT /studio-user/v1/me/ui-preferences	preferences	BTreeMap<String,String>	required
+request	PUT /studio-user/v1/platform/roles/{}	roles	Vec<String>	required
 request	PUT /studio-user/v1/users/{}/memberships/{}	directory	{}	optional
 request	PUT /studio-user/v1/users/{}/memberships/{}	directory.affiliation	String	optional
 request	PUT /studio-user/v1/users/{}/memberships/{}	directory.department	String	optional
@@ -6511,6 +6521,16 @@ response	GET /studio-user/v1/me/memberships	items.source	String	always
 response	GET /studio-user/v1/me/memberships	items.status	String	always
 response	GET /studio-user/v1/me/memberships	items.updated_at_epoch_ms	i64	always
 response	GET /studio-user/v1/me/memberships	items.user_id	String	always
+response	GET /studio-user/v1/me/platform-roles	administrator	bool	always
+response	GET /studio-user/v1/me/platform-roles	roles	Vec<String>	always
+response	GET /studio-user/v1/me/terms	items	Vec<{}>	always
+response	GET /studio-user/v1/me/terms	items.audience	String	always
+response	GET /studio-user/v1/me/terms	items.body	String	always
+response	GET /studio-user/v1/me/terms	items.published_at_epoch_ms	i64	always
+response	GET /studio-user/v1/me/terms	items.published_by	String	always
+response	GET /studio-user/v1/me/terms	items.title	String	always
+response	GET /studio-user/v1/me/terms	items.version	i32	always
+response	GET /studio-user/v1/me/terms	total	u32	always
 response	GET /studio-user/v1/me/ui-preferences	preferences	BTreeMap<String,String>	always
 response	GET /studio-user/v1/organizations/{}/invitations	items	Vec<{}>	always
 response	GET /studio-user/v1/organizations/{}/invitations	items.accepted_at_epoch_ms	i64	optional
@@ -6561,6 +6581,26 @@ response	GET /studio-user/v1/organizations/{}/members/{}/identities	logins.provi
 response	GET /studio-user/v1/organizations/{}/members/{}/identities	logins.subject	String	always
 response	GET /studio-user/v1/organizations/{}/members/{}/identities	logins.verified	bool	always
 response	GET /studio-user/v1/organizations/{}/members/{}/identities	user_id	String	always
+response	GET /studio-user/v1/platform/grants	items	Vec<{}>	always
+response	GET /studio-user/v1/platform/grants	items.granted_at_epoch_ms	i64	always
+response	GET /studio-user/v1/platform/grants	items.granted_by	String	always
+response	GET /studio-user/v1/platform/grants	items.id	String	always
+response	GET /studio-user/v1/platform/grants	items.kind	String	always
+response	GET /studio-user/v1/platform/grants	items.organization_id	String	always
+response	GET /studio-user/v1/platform/grants	items.resource	String	always
+response	GET /studio-user/v1/platform/grants	total	u32	always
+response	GET /studio-user/v1/platform/roles	items	Vec<{}>	always
+response	GET /studio-user/v1/platform/roles	items.person_id	String	always
+response	GET /studio-user/v1/platform/roles	items.roles	Vec<String>	always
+response	GET /studio-user/v1/platform/roles	total	u32	always
+response	GET /studio-user/v1/platform/terms	items	Vec<{}>	always
+response	GET /studio-user/v1/platform/terms	items.audience	String	always
+response	GET /studio-user/v1/platform/terms	items.body	String	always
+response	GET /studio-user/v1/platform/terms	items.published_at_epoch_ms	i64	always
+response	GET /studio-user/v1/platform/terms	items.published_by	String	always
+response	GET /studio-user/v1/platform/terms	items.title	String	always
+response	GET /studio-user/v1/platform/terms	items.version	i32	always
+response	GET /studio-user/v1/platform/terms	total	u32	always
 response	GET /studio-user/v1/users/{}	avatar_url	String	optional
 response	GET /studio-user/v1/users/{}	created_at_epoch_ms	i64	always
 response	GET /studio-user/v1/users/{}	display_name	String	optional
@@ -8988,6 +9028,18 @@ response	POST /studio-user/v1/organizations/{}/invitations	invitation.id	String	
 response	POST /studio-user/v1/organizations/{}/invitations	invitation.org_id	String	always
 response	POST /studio-user/v1/organizations/{}/invitations	invitation.role	String	always
 response	POST /studio-user/v1/organizations/{}/invitations	token	String	always
+response	POST /studio-user/v1/platform/grants	granted_at_epoch_ms	i64	always
+response	POST /studio-user/v1/platform/grants	granted_by	String	always
+response	POST /studio-user/v1/platform/grants	id	String	always
+response	POST /studio-user/v1/platform/grants	kind	String	always
+response	POST /studio-user/v1/platform/grants	organization_id	String	always
+response	POST /studio-user/v1/platform/grants	resource	String	always
+response	POST /studio-user/v1/platform/terms	audience	String	always
+response	POST /studio-user/v1/platform/terms	body	String	always
+response	POST /studio-user/v1/platform/terms	published_at_epoch_ms	i64	always
+response	POST /studio-user/v1/platform/terms	published_by	String	always
+response	POST /studio-user/v1/platform/terms	title	String	always
+response	POST /studio-user/v1/platform/terms	version	i32	always
 response	POST /studio-user/v1/resolve	user_id	String	always
 response	POST /studio-user/v1/users/{}/aliases	aliases	Vec<{}>	always
 response	POST /studio-user/v1/users/{}/aliases	aliases.added_at_epoch_ms	i64	always
@@ -9791,6 +9843,8 @@ response	PUT /studio-user/v1/me/inbox-marks	state	String	always
 response	PUT /studio-user/v1/me/inbox-marks	until	String	optional
 response	PUT /studio-user/v1/me/inbox-marks	updated_at	String	always
 response	PUT /studio-user/v1/me/ui-preferences	preferences	BTreeMap<String,String>	always
+response	PUT /studio-user/v1/platform/roles/{}	person_id	String	always
+response	PUT /studio-user/v1/platform/roles/{}	roles	Vec<String>	always
 response	PUT /studio-user/v1/users/{}/memberships/{}	created_at_epoch_ms	i64	always
 response	PUT /studio-user/v1/users/{}/memberships/{}	org_id	String	always
 response	PUT /studio-user/v1/users/{}/memberships/{}	org_name	String	optional
@@ -9839,6 +9893,7 @@ route	DELETE /studio-session/v1/sessions/{}
 route	DELETE /studio-user/v1/me/avatar
 route	DELETE /studio-user/v1/me/memberships/{}
 route	DELETE /studio-user/v1/organizations/{}/invitations/{}
+route	DELETE /studio-user/v1/platform/grants/{}
 route	DELETE /studio-user/v1/users/{}/memberships/{}
 route	GET /studio-artifact-ingest/v1/activity
 route	GET /studio-artifact-ingest/v1/edges
@@ -10115,10 +10170,15 @@ route	GET /studio-user/v1/me/inbox/count
 route	GET /studio-user/v1/me/invitations
 route	GET /studio-user/v1/me/logins
 route	GET /studio-user/v1/me/memberships
+route	GET /studio-user/v1/me/platform-roles
+route	GET /studio-user/v1/me/terms
 route	GET /studio-user/v1/me/ui-preferences
 route	GET /studio-user/v1/organizations/{}/invitations
 route	GET /studio-user/v1/organizations/{}/members
 route	GET /studio-user/v1/organizations/{}/members/{}/identities
+route	GET /studio-user/v1/platform/grants
+route	GET /studio-user/v1/platform/roles
+route	GET /studio-user/v1/platform/terms
 route	GET /studio-user/v1/users/{}
 route	GET /studio-user/v1/users/{}/memberships
 route	GET <dynamic@src/studio_session/rest.rs>
@@ -10317,8 +10377,11 @@ route	POST /studio-user/v1/me/aliases
 route	POST /studio-user/v1/me/aliases/confirm
 route	POST /studio-user/v1/me/aliases/revoke
 route	POST /studio-user/v1/me/invitations/accept
+route	POST /studio-user/v1/me/terms/acceptances
 route	POST /studio-user/v1/merge
 route	POST /studio-user/v1/organizations/{}/invitations
+route	POST /studio-user/v1/platform/grants
+route	POST /studio-user/v1/platform/terms
 route	POST /studio-user/v1/resolve
 route	POST /studio-user/v1/users/{}/aliases
 route	POST <dynamic@src/studio_session/rest.rs>
@@ -10385,4 +10448,5 @@ route	PUT /studio-user/v1/me/avatar
 route	PUT /studio-user/v1/me/home-organization
 route	PUT /studio-user/v1/me/inbox-marks
 route	PUT /studio-user/v1/me/ui-preferences
+route	PUT /studio-user/v1/platform/roles/{}
 route	PUT /studio-user/v1/users/{}/memberships/{}

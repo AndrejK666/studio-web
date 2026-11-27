@@ -92,6 +92,7 @@ later ADR that retires or amends an earlier one says so under its title.
 | [0078](0078-gears-are-published-packages-and-a-platform-release-is-a-bom-version.md) | Gears are published packages; a platform release is a BOM version | proposed | 2026-11-23 |
 | [0079](0079-core-knows-no-kit-kits-contribute-through-core-ports.md) | The core knows no kit, and kits contribute to it through the core's ports | proposed | 2026-11-25 |
 | [0080](0080-the-ide-is-a-kit-behind-a-core-port-theia-or-vs-code.md) | The IDE is a kit behind a core port, so a deployment runs Theia or VS Code | proposed | 2026-11-27 |
+| [0081](0081-platform-roles-grants-to-an-organization-and-accepted-terms.md) | The platform has roles of its own, grants resources to an organization, and asks people to accept its terms | proposed | 2026-11-27 |
 
 ADR-0017 is not on `main`. It is "We own the settings gear for now", written on
 the unmerged branch `AndrejK666/settings-follow-the-person`, and ADR-0018 cites
