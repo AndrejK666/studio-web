@@ -321,7 +321,14 @@ const bearerApiOk = (req) =>
 // the node checks itself — so it bypasses the browser session-cookie gate. When
 // the bridge is off the node mounts no such route and simply 404s, so this is
 // safe for normal sessions.
-const controlApiOk = (req) => req.url.startsWith("/internal/theia/v1/");
+//
+// v2 (ADR-0080 §4) is the IDE-neutral spelling, /internal/ide/v2/* with
+// X-CFS-Ide-Token. It goes to whichever local process serves it: the Theia
+// node itself (the default, 3004), or a VS Code session's studio-bridge
+// extension on its own loopback port (STUDIO_IDE_CONTROL_PORT).
+const CONTROL_V2 = { host: "127.0.0.1", port: Number(process.env.STUDIO_IDE_CONTROL_PORT || 3004) };
+const controlV2 = (req) => req.url.startsWith("/internal/ide/v2/");
+const controlApiOk = (req) => req.url.startsWith("/internal/theia/v1/") || controlV2(req);
 
 // Theia's webview shell, which the cookie can never reach.
 //
@@ -391,7 +398,7 @@ http
         "<h3>403 — session token required</h3><p>Open this session from the Studio portal.</p>",
       );
     }
-    let target = { ...TARGET, path: req.url };
+    let target = { ...(controlV2(req) ? CONTROL_V2 : TARGET), path: req.url };
     if (GW && req.url.startsWith("/studio-api/")) {
       const headers = { ...req.headers, host: GW.host };
       return req.pipe(
