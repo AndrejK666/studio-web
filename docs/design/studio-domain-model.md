@@ -348,7 +348,8 @@ keep working unchanged; screens move to it one at a time.
 ##### Responsibility scope
 
 `query.rs`. `POST /query` takes a type, a `where` (`_eq _neq _gt _gte _lt _lte
-_in _nin _contains _is_null`, combined with `_and _or _not`), `order_by`,
+_in _nin _contains _ilike _nilike _is_null`, combined with `_and _or _not`;
+`_ilike` is a case-insensitive `LIKE` with `%` and `_`), `order_by`,
 `fields`, `offset`/`limit`, `aggregate` (counts grouped by up to three
 fields) and `include`: relations by their declared name, or backwards from
 their target with a leading `~`, each with the same options, nested up to

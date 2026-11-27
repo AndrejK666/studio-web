@@ -373,11 +373,18 @@ enum Op {
     In,
     Nin,
     Contains,
+    /// SQL's `ILIKE`: the whole value against a pattern, ignoring case. `%`
+    /// is any run of characters, `_` one character, `\` makes the next one
+    /// literal. A string, or a number by its JSON text.
+    Ilike,
+    /// The negation of [`Op::Ilike`] over a present value.
+    Nilike,
     IsNull,
 }
 
 impl Op {
-    const ALL: &'static str = "_eq, _neq, _gt, _gte, _lt, _lte, _in, _nin, _contains, _is_null";
+    const ALL: &'static str =
+        "_eq, _neq, _gt, _gte, _lt, _lte, _in, _nin, _contains, _ilike, _nilike, _is_null";
 
     fn parse(token: &str) -> Option<Self> {
         Some(match token {
@@ -390,6 +397,8 @@ impl Op {
             "_in" => Self::In,
             "_nin" => Self::Nin,
             "_contains" => Self::Contains,
+            "_ilike" => Self::Ilike,
+            "_nilike" => Self::Nilike,
             "_is_null" => Self::IsNull,
             _ => return None,
         })
@@ -510,6 +519,17 @@ fn parse_expr(v: &Value) -> Result<Expr, String> {
                         }
                         Op::IsNull if !arg.is_boolean() => {
                             return Err(format!("`_is_null` on `{field}` takes true or false"));
+                        }
+                        Op::Ilike | Op::Nilike => {
+                            let pattern = arg.as_str().ok_or_else(|| {
+                                format!("`{token}` on `{field}` takes a pattern: \"%text%\"")
+                            })?;
+                            like_pattern(pattern).ok_or_else(|| {
+                                format!(
+                                    "`{token}` on `{field}`: the pattern ends with an escape `\\`; \
+                                     write `\\\\` for a backslash"
+                                )
+                            })?;
                         }
                         _ => {}
                     }
@@ -667,6 +687,8 @@ fn eval(e: &Expr, node: &ObjectNode, id: &Value) -> bool {
                     (Value::Array(items), needle) => items.iter().any(|i| equal(i, needle)),
                     _ => false,
                 },
+                Op::Ilike => ilike(x, arg),
+                Op::Nilike => !ilike(x, arg),
                 Op::IsNull => unreachable!("handled above"),
             }
         }
@@ -677,6 +699,82 @@ fn eval(e: &Expr, node: &ObjectNode, id: &Value) -> bool {
             type_ids, negate, ..
         } => type_ids.contains(&node.type_id) != *negate,
     }
+}
+
+/// One element of a `_ilike` pattern.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Like {
+    /// `%`: any run of characters, the empty one too.
+    Any,
+    /// `_`: exactly one character.
+    One,
+    Char(char),
+}
+
+/// A `_ilike` pattern read as SQL's `LIKE ... ESCAPE '\'` reads it, lower
+/// case. `None` when it ends with an escape that escapes nothing, which
+/// Postgres refuses.
+fn like_pattern(pattern: &str) -> Option<Vec<Like>> {
+    let mut out = Vec::new();
+    let mut chars = pattern.chars().flat_map(char::to_lowercase);
+    while let Some(c) = chars.next() {
+        out.push(match c {
+            '%' => Like::Any,
+            '_' => Like::One,
+            '\\' => Like::Char(chars.next()?),
+            c => Like::Char(c),
+        });
+    }
+    Some(out)
+}
+
+/// The whole of `text` matches `pattern`, both already lower case: the
+/// greedy walk with one point to come back to, linear for one `%` and
+/// quadratic at worst.
+fn like_matches(text: &[char], pattern: &[Like]) -> bool {
+    let (mut t, mut p) = (0, 0);
+    let mut back: Option<(usize, usize)> = None;
+    while t < text.len() {
+        match pattern.get(p) {
+            Some(Like::Any) => {
+                back = Some((p, t));
+                p += 1;
+            }
+            Some(Like::One) => {
+                t += 1;
+                p += 1;
+            }
+            Some(Like::Char(c)) if *c == text[t] => {
+                t += 1;
+                p += 1;
+            }
+            _ => match back {
+                Some((bp, bt)) => {
+                    back = Some((bp, bt + 1));
+                    p = bp + 1;
+                    t = bt + 1;
+                }
+                None => return false,
+            },
+        }
+    }
+    pattern[p..].iter().all(|l| *l == Like::Any)
+}
+
+/// `_ilike`: a string, or a number by its JSON text, matches the pattern as
+/// a whole, ignoring case. Any other value matches nothing. Case folding is
+/// Rust's `to_lowercase`, as for `_contains`.
+fn ilike(x: &Value, arg: &Value) -> bool {
+    let text = match x {
+        Value::String(s) => s.to_lowercase(),
+        Value::Number(n) => n.to_string(),
+        _ => return false,
+    };
+    let Some(pattern) = arg.as_str().and_then(like_pattern) else {
+        return false;
+    };
+    let text: Vec<char> = text.chars().collect();
+    like_matches(&text, &pattern)
 }
 
 // ── Planning: the request checked against the model ───────────────────────
@@ -2500,6 +2598,77 @@ mod tests {
             let out = s.query(&ctx(), &ask(w.clone())).await.unwrap();
             assert_eq!(names(&out.rows), want, "{w}");
         }
+    }
+
+    #[tokio::test]
+    async fn ilike_matches_the_whole_value_ignoring_case() {
+        let s = fixture().await;
+        let ask = |w: Value| {
+            query(
+                "project",
+                json!({"where": w, "order_by": [{"field": "name"}]}),
+            )
+        };
+        let cases = [
+            (json!({"name": {"_ilike": "%MI%"}}), vec!["Gemini"]),
+            (json!({"name": {"_ilike": "a%"}}), vec!["Apollo"]),
+            // The whole value: no `%`, no substring.
+            (json!({"name": {"_ilike": "poll"}}), vec![]),
+            (json!({"name": {"_ilike": "_emini"}}), vec!["Gemini"]),
+            (json!({"name": {"_ilike": "%r_ury"}}), vec!["Mercury"]),
+            (
+                json!({"name": {"_ilike": "%"}}),
+                vec!["Apollo", "Gemini", "Mercury"],
+            ),
+            // `%` written by a user is a literal after the escape.
+            (json!({"name": {"_ilike": "%\\%%"}}), vec![]),
+            (
+                json!({"name": {"_nilike": "%o%"}}),
+                vec!["Gemini", "Mercury"],
+            ),
+            // An absent field matches neither.
+            (
+                json!({"started_at": {"_nilike": "x%"}}),
+                vec!["Apollo", "Gemini"],
+            ),
+            (
+                json!({"_or": [{"name": {"_ilike": "%lo%"}}, {"status": {"_ilike": "PAUSED"}}]}),
+                vec!["Apollo", "Gemini"],
+            ),
+        ];
+        for (w, want) in cases {
+            let out = s.query(&ctx(), &ask(w.clone())).await.unwrap();
+            assert_eq!(names(&out.rows), want, "{w}");
+        }
+        let m = refusal(&s, "project", json!({"where": {"name": {"_ilike": 3}}})).await;
+        assert!(m.contains("takes a pattern"), "{m}");
+        let m = refusal(&s, "project", json!({"where": {"name": {"_ilike": "a\\"}}})).await;
+        assert!(m.contains("ends with an escape"), "{m}");
+    }
+
+    #[test]
+    fn a_like_pattern_reads_as_sql_reads_it() {
+        let m = |text: &str, pattern: &str| ilike(&json!(text), &json!(pattern));
+        assert!(m("abc", "abc"));
+        assert!(m("ABC", "a%"));
+        assert!(m("abc", "%c"));
+        assert!(m("abc", "a_c"));
+        assert!(!m("abc", "a_"));
+        assert!(m("", "%"));
+        assert!(!m("", "_"));
+        assert!(m("a%b", "a\\%b"));
+        assert!(!m("axb", "a\\%b"));
+        assert!(m("a_b", "a\\_b"));
+        assert!(!m("axb", "a\\_b"));
+        assert!(m("a\\b", "a\\\\b"));
+        assert!(m("aXbXc", "%x%x%"));
+        assert!(m("mississippi", "%iss%ppi"));
+        assert!(!m("mississippi", "%iss%ppx"));
+        assert!(m("Ünïcodé", "ü%É"));
+        assert!(ilike(&json!(1234), &json!("%23%")));
+        assert!(!ilike(&json!(true), &json!("%")));
+        assert!(!ilike(&json!(["abc"]), &json!("%")));
+        assert_eq!(like_pattern("ab\\"), None);
     }
 
     #[tokio::test]

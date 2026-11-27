@@ -1401,7 +1401,10 @@ pub struct QueryObjectsRequest {
     pub project_ids: Option<Vec<String>>,
     /// A boolean expression over the type's fields:
     /// `{"status": {"_eq": "active"}}`, combined with `_and`, `_or`, `_not`.
-    /// Operators: `_eq _neq _gt _gte _lt _lte _in _nin _contains _is_null`.
+    /// Operators: `_eq _neq _gt _gte _lt _lte _in _nin _contains _ilike
+    /// _nilike _is_null`. `_ilike` is SQL's case-insensitive `LIKE` over the
+    /// whole value (`%` any run, `_` one character, a backslash escapes
+    /// either), on a string or a number's text.
     /// `id` is the object's own id. A field the type does not declare is a 400.
     /// `{"_type": {"_in": ["deals-project"]}}` (also `_eq`, `_neq`, `_nin`)
     /// tests the object's concrete type, the `entity` its row names: the

@@ -238,6 +238,40 @@ fn common_fields() -> Vec<(String, String, String)> {
     .collect()
 }
 
+/// The fields of `entity` beyond [`common_fields`]: what its payload carries
+/// that the listing's search matches (`q`: author, number, the repository's
+/// full path), so the query can filter on them too.
+fn own_fields(entity: &str) -> Vec<(String, String, String)> {
+    let author = (
+        "author",
+        "string",
+        "Who wrote it, by their login in the source",
+    );
+    let number = ("number", "integer", "Its number in the source system");
+    let full_path = (
+        "full_path",
+        "string",
+        "The repository's path in its source, owner/name",
+    );
+    let fields: &[(&str, &str, &str)] = match entity {
+        "work-item" | "pull-request" | "ci-run" => &[author, number],
+        "comment" | "commit" => &[author],
+        "repository" => &[full_path],
+        _ => &[],
+    };
+    fields
+        .iter()
+        .map(|(n, t, d)| (n.to_string(), t.to_string(), d.to_string()))
+        .collect()
+}
+
+/// [`common_fields`] and [`own_fields`].
+fn fields_of(entity: &str) -> Vec<(String, String, String)> {
+    let mut out = common_fields();
+    out.extend(own_fields(entity));
+    out
+}
+
 /// The gear that keeps the synced types (`TypeNeed::held_by`).
 const GEAR: &str = "studio-artifact-ingest";
 
@@ -253,7 +287,7 @@ pub(super) fn needs() -> Vec<TypeNeed> {
         description: description.to_string(),
         extends: Some("record".to_string()),
         bucket: Some("content".to_string()),
-        fields: common_fields(),
+        fields: fields_of(id),
         relations: Vec::new(),
         held_by: Some(GEAR.to_string()),
         searchable: true,
@@ -298,7 +332,7 @@ pub(super) fn needs() -> Vec<TypeNeed> {
         out.push(TypeNeed {
             declared_by: GEAR.to_owned(),
             id: entity.to_string(),
-            fields: common_fields(),
+            fields: fields_of(entity),
             // What a sync writes is the source's, and the next sync would
             // overwrite an edit: those types are this gear's. Work items,
             // comments and findings are also what members write themselves.
@@ -452,6 +486,7 @@ impl ModelGraphStore {
     pub(super) async fn make_ready(&self, ctx: &SecurityContext) -> anyhow::Result<bool> {
         let tenant = ctx.subject_tenant_id();
         if self.is_moved(tenant) {
+            self.declare_moved(ctx).await;
             return Ok(true);
         }
         let waiting = self
@@ -468,6 +503,7 @@ impl ModelGraphStore {
             if let Ok(mut m) = self.moved.lock() {
                 m.insert(tenant);
             }
+            self.declare_moved(ctx).await;
             return Ok(true);
         }
         let claimed = self
@@ -507,6 +543,20 @@ impl ModelGraphStore {
                 warn!(error = %format!("{e:#}"), %tenant, retry_in_s = retry_in.as_secs(), "studio-artifact-ingest: moving the artifacts into the domain model failed — reads stay on the old store until the sweep moves them");
                 Err(e)
             }
+        }
+    }
+
+    /// A moved tenant's model gains what a newer build declares (a field the
+    /// screens filter on) at the sweep, not only at its next sync: a tenant
+    /// nobody syncs would otherwise refuse those filters. Once per process,
+    /// as every declaration; a failure is the next sweep's to retry.
+    async fn declare_moved(&self, ctx: &SecurityContext) {
+        let declared = match self.port() {
+            Ok(port) => self.ensure_types(ctx, port.as_ref()).await,
+            Err(e) => Err(e),
+        };
+        if let Err(e) = declared {
+            warn!(error = %format!("{e:#}"), tenant = %ctx.subject_tenant_id(), "studio-artifact-ingest: declaring the artifact types failed; the next sweep tries again");
         }
     }
 

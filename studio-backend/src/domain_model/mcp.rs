@@ -62,7 +62,7 @@ pub fn tools() -> Vec<Tool> {
             name: "domain_model_query",
             description: "Read the objects of one type: filtered with `where` (Hasura-style: \
                 `{\"status\": {\"_eq\": \"active\"}}`, operators _eq _neq _gt _gte _lt _lte _in \
-                _nin _contains _is_null, combined with _and _or _not), ordered, projected to \
+                _nin _contains _ilike _nilike _is_null, combined with _and _or _not), ordered, projected to \
                 `fields`, with declared relations followed through `include` up to three \
                 levels. A type reads the types that extend it too (each row names its own \
                 `entity`); `{\"_type\": {\"_in\": [...]}}` in `where` narrows by it. Pages go \
