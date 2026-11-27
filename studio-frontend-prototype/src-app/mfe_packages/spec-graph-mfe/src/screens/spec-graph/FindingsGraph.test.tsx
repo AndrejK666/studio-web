@@ -101,6 +101,20 @@ describe('FindingsGraph', () => {
     drawn.length = 0;
     render(<FindingsGraph projectId="p1" onOpen={open} t={t} />);
     await waitFor(() => expect(drawn.length).toBeGreaterThan(0));
+    // hovering says what it is, where, what about, and that a click opens it
+    act(() => drawn[drawn.length - 1].handlers.enterNode({ node: 'finding:95d2:run1' }));
+    const card = await screen.findByRole('tooltip');
+    expect(card.textContent).toContain('gate_advise');
+    expect(card.textContent).toContain('Two passages give different values for one thing');
+    expect(card.textContent).toContain('canonical set');
+    expect(card.textContent).toContain('PRD.md:92  ↔  0002.md:78');
+    expect(card.textContent).toContain('«A includes employee_id;');
+    expect(card.textContent).toContain('tip_open_finding');
+    act(() => drawn[drawn.length - 1].handlers.enterNode({ node: 'doc:docs/PRD.md' }));
+    expect((await screen.findByRole('tooltip')).textContent).toContain(
+      'tip_document_findings {"count":1,"block":0,"advise":1}',
+    );
+    act(() => drawn[drawn.length - 1].handlers.leaveNode({ node: 'doc:docs/PRD.md' }));
     act(() => drawn[drawn.length - 1].handlers.clickNode({ node: 'finding:95d2:run1' }));
     expect(await screen.findByText('A includes employee_id; B keeps four canonical types.')).toBeTruthy();
     expect(screen.getByText(/Canonical set: id, email/)).toBeTruthy();

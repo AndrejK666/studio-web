@@ -15,10 +15,10 @@ import { Button, Skeleton } from '@gears-frontx/ui-kit';
 import { refusalText } from '@constructor-studio/mfe-shared';
 import { SpecGraphApiService } from '../../api/SpecGraphApiService';
 import type { Decision, DocumentFindings, Finding, Picture, Verdict } from '../../api/types';
-import { findingsPicture } from '../../model/picture';
+import { familyColour, familyOf, findingsPicture, ruleOf, type NodeAttrs } from '../../model/picture';
 import { useSpecGraphTranslations } from '../../i18n';
 import { FindingRow } from './FindingCard';
-import { GraphCanvas } from './GraphCanvas';
+import { GraphCanvas, type NodeTip } from './GraphCanvas';
 import styles from './SpecGraphScreen.module.css';
 
 type Text = ReturnType<typeof useSpecGraphTranslations>['t'];
@@ -66,6 +66,18 @@ export const FindingsGraph: React.FC<{
     return m;
   }, [stored]);
 
+  // each document's stored findings, for its card
+  const perDocument = useMemo(() => {
+    const m = new Map<string, { block: number; advise: number }>();
+    for (const d of stored) {
+      if (!d.path) continue;
+      const c = { block: 0, advise: 0 };
+      for (const f of d.findings) c[f.gate] += 1;
+      m.set(d.path, c);
+    }
+    return m;
+  }, [stored]);
+
   if (error) return <p className={styles.error}>{error}</p>;
   if (!picture) return <Skeleton className={styles.skeleton} />;
   if (!picture.nodes.some((n) => n.type === 'finding'))
@@ -78,9 +90,54 @@ export const FindingsGraph: React.FC<{
     if (fp) setOpen((o) => (o === fp ? null : fp));
     else onOpen?.(key);
   };
+  const describe = (key: string, a: NodeAttrs): NodeTip | null => {
+    const fp = fingerprintOf(key);
+    if (fp) {
+      const rule = ruleOf(a.label);
+      const known = byFingerprint.get(fp)?.finding;
+      // the name is `rule: subject[: A vs B]`
+      const rest = a.label.slice(rule.length + 1).trim();
+      const subject = rest.includes(' vs ') ? rest.split(': ').slice(0, -1).join(': ') : rest;
+      const places = known
+        ? [{ path: byFingerprint.get(fp)?.path ?? '', anchor: known.anchor }, ...known.related]
+            .filter((p) => p.path)
+            .map((p) => `${p.path.split('/').pop()}${p.anchor.line_start ? `:${p.anchor.line_start}` : ''}`)
+        : [];
+      const first = known?.message.split(/(?<=[.!?])\s/)[0] ?? '';
+      return {
+        title: known?.title ?? rule,
+        badge: known ? (known.gate === 'block' ? t('gate_block') : t('gate_advise')) : undefined,
+        colour: familyColour(familyOf(rule)),
+        lines: [subject, places.join('  ↔  ')],
+        gist: first.length > 160 ? `${first.slice(0, 159)}…` : first || undefined,
+        hint: t('tip_open_finding'),
+      };
+    }
+    if (a.kind === 'document') {
+      const path = a.path || key.slice(4);
+      const c = perDocument.get(path);
+      return {
+        title: a.label,
+        lines: [
+          a.path,
+          c ? t('tip_document_findings', { count: c.block + c.advise, block: c.block, advise: c.advise }) : '',
+        ],
+        hint: onOpen ? t('tip_open_depth') : null,
+      };
+    }
+    return null;
+  };
   return (
     <div className={open ? styles.withPanel : undefined}>
-      <GraphCanvas picture={picture} layout="islands" colouring="finding" onOpen={click} selected={chosenKey} t={t} />
+      <GraphCanvas
+        picture={picture}
+        layout="islands"
+        colouring="finding"
+        onOpen={click}
+        selected={chosenKey}
+        describe={describe}
+        t={t}
+      />
       {open && (
         <aside className={styles.panel} aria-label={t('finding_panel')}>
           <div className={styles.findingHead}>

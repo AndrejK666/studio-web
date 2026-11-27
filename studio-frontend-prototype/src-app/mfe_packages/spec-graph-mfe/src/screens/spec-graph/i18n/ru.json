@@ -201,5 +201,8 @@
   "finding_panel_close": "Закрыть находку",
   "finding_panel_missing": "Эта находка больше не хранится: переиндексируйте, чтобы увидеть текущие.",
   "decided_confirmed": "решено: верно",
-  "decided_dismissed": "решено: отклонено"
+  "decided_dismissed": "решено: отклонено",
+  "tip_open_depth": "Кликните, чтобы открыть в Depth →",
+  "tip_open_finding": "Кликните, чтобы прочитать обе цитаты и принять решение →",
+  "tip_document_findings": "находок: {count} — блокирующих {block}, рекомендательных {advise}"
 }

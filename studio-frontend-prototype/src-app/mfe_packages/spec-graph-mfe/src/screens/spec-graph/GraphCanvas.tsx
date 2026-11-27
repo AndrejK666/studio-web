@@ -33,10 +33,29 @@ type Text = ReturnType<typeof useSpecGraphTranslations>['t'];
 
 export type Colouring = 'type' | 'cluster' | 'finding';
 
+/**
+ * What the hover card says about a node: what it is, where, what about, and what a click does.
+ * A picture may describe its nodes itself (the findings graph); otherwise its name, type and file.
+ */
+export interface NodeTip {
+  title: string;
+  /** A short tag before the title (a finding's gate), with a colour square (its rule family). */
+  badge?: string;
+  colour?: string;
+  lines?: string[];
+  /** One sentence of what it says (a judge's explanation), quoted. */
+  gist?: string;
+  /** What a click does; none where a click does nothing. */
+  hint?: string | null;
+}
+
 interface Hovered {
   key: string;
   x: number;
   y: number;
+  /** The canvas's size then, to keep the card inside it. */
+  w: number;
+  h: number;
 }
 
 /** The graph and its communities, laid out once per picture. */
@@ -61,8 +80,16 @@ export const GraphCanvas: React.FC<{
   labelAll?: boolean;
   /** A node chosen outside the picture (the findings panel's): ringed and labelled. */
   selected?: string | null;
-}> = ({ picture, layout, centre, colouring, onOpen, t, labelAll = false, selected = null }) => {
+  /** The hover card of a node; null for the default (name, type, file). */
+  describe?: (key: string, a: NodeAttrs) => NodeTip | null;
+  /** What a click on a node does, said on the default card; null where it does nothing. */
+  clickHint?: string | null;
+}> = ({ picture, layout, centre, colouring, onOpen, t, labelAll = false, selected = null, describe, clickHint }) => {
   const selectedRef = useRef(selected);
+  const describeRef = useRef(describe);
+  useEffect(() => {
+    describeRef.current = describe;
+  }, [describe]);
   const { g, found } = useLaidOut(picture, layout, centre);
   const box = useRef<HTMLDivElement | null>(null);
   const frame = useRef<HTMLDivElement | null>(null);
@@ -142,6 +169,8 @@ export const GraphCanvas: React.FC<{
                   forceLabel: true,
                   zIndex: 2,
                   highlighted: key === hover,
+                  // the card names the hovered node when the picture describes its nodes
+                  ...(key === hover && describeRef.current ? { label: '' } : {}),
                 };
               return { ...a, color: '#e2e8f0', label: '', zIndex: 0 };
             },
@@ -161,7 +190,7 @@ export const GraphCanvas: React.FC<{
         };
         s.on('enterNode', ({ node }) => {
           hoverRef.current = node;
-          setHovered({ key: node, ...where(node) });
+          setHovered({ key: node, ...where(node), w: el.clientWidth, h: el.clientHeight });
           s.refresh({ skipIndexation: true });
           el.style.cursor = 'pointer';
         });
@@ -175,7 +204,7 @@ export const GraphCanvas: React.FC<{
         s.getCamera().on('updated', (state) => {
           ratioRef.current = state.ratio;
           const h = hoverRef.current;
-          if (h) setHovered({ key: h, ...where(h) });
+          if (h) setHovered({ key: h, ...where(h), w: el.clientWidth, h: el.clientHeight });
         });
         sigma.current = s;
       })
@@ -247,21 +276,36 @@ export const GraphCanvas: React.FC<{
       </div>
       <div className={styles.canvasWrap}>
         <div ref={box} className={styles.canvas} role="img" aria-label={t('graph_map')} data-nodes={g.order} />
-        {h && hovered && (
-          <div className={styles.tooltip} style={{ left: hovered.x + 14, top: hovered.y + 14 }} role="tooltip">
-            <strong>{h.label}</strong>
-            <span>
-              {h.kind} · {t('graph_links', { count: g.degree(hovered.key) })}
-            </span>
-            {h.path && (
-              <code>
-                {h.path}
-                {h.line ? `:${h.line}` : ''}
-              </code>
-            )}
-            {h.cluster != null && found[h.cluster] && <span className={styles.muted}>{found[h.cluster].name}</span>}
-          </div>
-        )}
+        {h &&
+          hovered &&
+          (() => {
+            const tip: NodeTip = describe?.(hovered.key, h) ?? {
+              title: h.label,
+              lines: [[h.kind, h.path ? `${h.path}${h.line ? `:${h.line}` : ''}` : null].filter(Boolean).join(' · ')],
+              hint: clickHint === undefined ? t('tip_open_depth') : clickHint,
+            };
+            // the card opens to the left of the pointer near the right edge, and above it near the bottom
+            const w = hovered.w;
+            const hgt = hovered.h;
+            const left = hovered.x > w - 440 ? Math.max(4, hovered.x - 434) : hovered.x + 14;
+            const top = hovered.y > hgt - 180 ? Math.max(4, hovered.y - 170) : hovered.y + 14;
+            return (
+              <div className={styles.tooltip} style={{ left, top }} role="tooltip">
+                <strong className={styles.tipTitle}>
+                  {tip.colour && (
+                    <span className={styles.swatch} style={{ background: tip.colour, borderColor: tip.colour }} />
+                  )}
+                  {tip.badge && <span className={styles.tipBadge}>{tip.badge}</span>}
+                  {tip.title}
+                </strong>
+                {(tip.lines ?? []).filter(Boolean).map((l) => (
+                  <span key={l}>{l}</span>
+                ))}
+                {tip.gist && <span className={styles.tipGist}>«{tip.gist}»</span>}
+                {tip.hint && <span className={styles.muted}>{tip.hint}</span>}
+              </div>
+            );
+          })()}
       </div>
       <TypeFilter
         cats={cats.map((c) => ({

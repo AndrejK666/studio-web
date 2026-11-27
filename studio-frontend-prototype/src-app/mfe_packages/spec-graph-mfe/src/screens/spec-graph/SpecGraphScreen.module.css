@@ -454,3 +454,24 @@
   border-radius: var(--radius);
   background: var(--background);
 }
+
+/* The hover card: what a node is, where, what about, and what a click does. */
+.tipTitle {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.tipBadge {
+  padding: 0 var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-weight: 500;
+  font-size: 11px;
+}
+
+.tipGist {
+  color: var(--muted-foreground);
+  font-style: italic;
+}

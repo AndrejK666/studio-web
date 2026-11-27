@@ -201,5 +201,8 @@
   "finding_panel_close": "Close the finding",
   "finding_panel_missing": "This finding is no longer stored: index again to see the current ones.",
   "decided_confirmed": "decided: real",
-  "decided_dismissed": "decided: dismissed"
+  "decided_dismissed": "decided: dismissed",
+  "tip_open_depth": "Click to open it in Depth →",
+  "tip_open_finding": "Click to read both passages and decide →",
+  "tip_document_findings": "{count} findings: {block} blocking, {advise} advisory"
 }

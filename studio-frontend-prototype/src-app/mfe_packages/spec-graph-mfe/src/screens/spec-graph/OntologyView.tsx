@@ -35,7 +35,15 @@ export const OntologyView: React.FC<{ ontology: Ontology; t: Text }> = ({ ontolo
       <>
         {toggle}
         <p className={styles.muted}>{t('ontology_graph_hint')}</p>
-        <GraphCanvas picture={picture} layout="around" colouring="type" onOpen={() => undefined} labelAll t={t} />
+        <GraphCanvas
+          picture={picture}
+          layout="around"
+          colouring="type"
+          onOpen={() => undefined}
+          labelAll
+          clickHint={null}
+          t={t}
+        />
       </>
     );
   }
