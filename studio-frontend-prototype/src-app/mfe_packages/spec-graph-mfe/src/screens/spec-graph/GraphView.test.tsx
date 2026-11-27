@@ -9,14 +9,21 @@ vi.mock('@gears-frontx/react', async (importOriginal) => ({
 }));
 
 // jsdom has no WebGL: a stand-in for sigma keeps the graph it was given and its handlers
-type Drawn = { graph: { nodes: () => string[] }; handlers: Record<string, (e: { node: string }) => void> };
+type Reducer = (key: string, a: Record<string, unknown>) => Record<string, unknown>;
+type Drawn = {
+  graph: { nodes: () => string[] };
+  handlers: Record<string, (e: { node: string }) => void>;
+  settings: { nodeReducer: Reducer };
+};
 const { drawn } = vi.hoisted(() => ({ drawn: [] as Drawn[] }));
 vi.mock('sigma', () => ({
   default: class {
     graph: { nodes: () => string[] };
     handlers: Record<string, (e: { node: string }) => void> = {};
-    constructor(graph: { nodes: () => string[] }) {
+    settings: { nodeReducer: Reducer };
+    constructor(graph: { nodes: () => string[] }, _el: unknown, settings: { nodeReducer: Reducer }) {
       this.graph = graph;
+      this.settings = settings;
       drawn.push(this);
     }
     on(name: string, f: (e: { node: string }) => void) {
@@ -169,4 +176,36 @@ describe('GraphView', () => {
     fireEvent.click(screen.getByText('graph_find'));
     expect(await screen.findByText('docs/auth/PRD.md')).toBeTruthy();
   });
+
+  it('hides a node type from its legend switch, and shows every type again', async () => {
+    drawn.length = 0;
+    service.overview = () => ({
+      fetch: () =>
+        Promise.resolve({
+          answer: {
+            nodes: [
+              { key: 'doc:a.md', type: 'document', name: 'A' },
+              { key: REQ, type: 'requirement', name: 'R' },
+            ],
+            edges: [{ from: 'doc:a.md', to: REQ, type: 'defines', kind: 'static' }],
+            counts: { document: 1, requirement: 1 },
+          },
+        }),
+    });
+    render(<GraphView projectId="p1" start={null} counts={{ document: 1, requirement: 1 }} t={t} />);
+    fireEvent.click(screen.getByText('graph_mode_whole'));
+    await waitFor(() => expect(drawn.length).toBeGreaterThan(0));
+    const reduce = (key: string, kind: string) => drawn[drawn.length - 1].settings.nodeReducer(key, { kind });
+    const doc = screen.getByRole('button', { name: /^document/ });
+    expect(doc.getAttribute('aria-pressed')).toBe('true');                 // every type shows at first
+    expect(reduce('doc:a.md', 'document').hidden).toBeUndefined();
+    fireEvent.click(doc);
+    expect(doc.getAttribute('aria-pressed')).toBe('false');
+    expect(reduce('doc:a.md', 'document').hidden).toBe(true);
+    expect(reduce(REQ, 'requirement').hidden).toBeUndefined();
+    expect(screen.getByText(/graph_showing/).textContent).toContain('"shown":1');
+    fireEvent.click(screen.getByText('graph_filter_all'));
+    expect(reduce('doc:a.md', 'document').hidden).toBeUndefined();
+  });
 });
+

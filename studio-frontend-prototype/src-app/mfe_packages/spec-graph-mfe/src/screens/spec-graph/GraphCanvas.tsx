@@ -66,6 +66,9 @@ export const GraphCanvas: React.FC<{
   const hoverRef = useRef<string | null>(null);
   // zoomed out (ratio near 1) the best-linked nodes are always labelled; zoomed in, the label grid decides
   const ratioRef = useRef(1);
+  // the node types the person chose to hide (the legend's switches); every type shows at first
+  const [hidden, setHidden] = useState<Set<string>>(() => new Set());
+  const hiddenRef = useRef(hidden);
   const [hovered, setHovered] = useState<Hovered | null>(null);
   const open = useRef(onOpen);
   useEffect(() => {
@@ -76,6 +79,11 @@ export const GraphCanvas: React.FC<{
     colourBy(g, colouring, found);
     sigma.current?.refresh();
   }, [g, found, colouring]);
+
+  useEffect(() => {
+    hiddenRef.current = hidden;
+    sigma.current?.refresh({ skipIndexation: true });
+  }, [hidden]);
 
   useEffect(() => {
     const el = box.current;
@@ -110,6 +118,7 @@ export const GraphCanvas: React.FC<{
             maxCameraRatio: 3,
             defaultEdgeColor: '#cbd5e1',
             nodeReducer: (key, a) => {
+              if (hiddenRef.current.has(a.kind)) return { ...a, hidden: true };
               const hover = hoverRef.current;
               const lead = shown.has(key) && (labelAll || key === centre || ratioRef.current > 0.5);
               if (!hover) return { ...a, forceLabel: lead, zIndex: lead ? 1 : 0 };
@@ -179,6 +188,14 @@ export const GraphCanvas: React.FC<{
 
   const h = hovered && g.hasNode(hovered.key) ? g.getNodeAttributes(hovered.key) : null;
   const types = [...new Set(g.mapNodes((_, a) => a.kind))].sort();
+  const showing = hidden.size ? g.filterNodes((_, a) => !hidden.has(a.kind)).length : g.order;
+  const toggle = (type: string) =>
+    setHidden((h) => {
+      const next = new Set(h);
+      if (next.has(type)) next.delete(type);
+      else next.add(type);
+      return next;
+    });
   return (
     <div className={styles.picture} ref={frame}>
       <div className={styles.chips}>
@@ -195,7 +212,9 @@ export const GraphCanvas: React.FC<{
           {t('graph_full_screen')}
         </Button>
         <span className={styles.muted}>
-          {t('graph_size', { nodes: g.order, edges: g.size })}
+          {hidden.size
+            ? t('graph_showing', { shown: showing, nodes: g.order })
+            : t('graph_size', { nodes: g.order, edges: g.size })}
           {layout === 'islands' ? ` · ${t('graph_clusters', { count: found.filter((c) => c.size >= 4).length })}` : ''}
         </span>
       </div>
@@ -217,43 +236,81 @@ export const GraphCanvas: React.FC<{
           </div>
         )}
       </div>
-      <Legend colouring={colouring} types={types} counts={picture.counts} found={found} t={t} />
+      <TypeFilter
+        types={types}
+        counts={picture.counts}
+        hidden={hidden}
+        onToggle={toggle}
+        onAll={() => setHidden(new Set())}
+        t={t}
+      />
+      {colouring === 'cluster' && <ClusterLegend found={found} t={t} />}
     </div>
   );
 };
 
-const Legend: React.FC<{
-  colouring: Colouring;
+/**
+ * The legend is the filter: one switch per node type, its colour square filled while the type
+ * shows and hollow once hidden; every type shows at first. A judge's edge is explained, not a switch.
+ */
+const TypeFilter: React.FC<{
   types: string[];
   counts?: Record<string, number>;
-  found: Cluster[];
+  hidden: Set<string>;
+  onToggle: (type: string) => void;
+  onAll: () => void;
   t: Text;
-}> = ({ colouring, types, counts, found, t }) => (
+}> = ({ types, counts, hidden, onToggle, onAll, t }) => (
+  <div className={styles.legend} role="group" aria-label={t('graph_filter')}>
+    {types.map((type) => {
+      const on = !hidden.has(type);
+      return (
+        <button
+          key={type}
+          type="button"
+          className={styles.typeSwitch}
+          aria-pressed={on}
+          title={on ? t('graph_filter_hide', { type }) : t('graph_filter_show', { type })}
+          onClick={() => onToggle(type)}
+        >
+          <span
+            className={styles.swatch}
+            style={on ? { background: colourOf(type), borderColor: colourOf(type) } : { borderColor: colourOf(type) }}
+            aria-hidden
+          />
+          <span className={on ? undefined : styles.off}>{type}</span>
+          {counts?.[type] != null && <span className={styles.muted}>({counts[type]})</span>}
+        </button>
+      );
+    })}
+    {hidden.size > 0 && (
+      <button type="button" className={styles.typeSwitch} onClick={onAll}>
+        {t('graph_filter_all')}
+      </button>
+    )}
+    <span className={styles.legendItem}>
+      <span className={styles.swatch} style={{ background: '#7c3aed', height: 2, borderColor: '#7c3aed' }} />
+      {t('graph_judged_edge')}
+    </span>
+  </div>
+);
+
+/** In cluster colours: which colour is which community, and the rest in grey. */
+const ClusterLegend: React.FC<{ found: Cluster[]; t: Text }> = ({ found, t }) => (
   <div className={styles.legend}>
-    {colouring === 'cluster'
-      ? found
-          .filter((c) => c.colour !== SMALL)
-          .map((c) => (
-            <span key={c.id} className={styles.legendItem} title={c.name}>
-              <span className={styles.swatch} style={{ background: c.colour }} />
-              {c.name.length > 60 ? `${c.name.slice(0, 59)}…` : c.name} <span className={styles.muted}>({c.size})</span>
-            </span>
-          ))
-      : types.map((type) => (
-          <span key={type} className={styles.legendItem}>
-            <span className={styles.swatch} style={{ background: colourOf(type) }} />
-            {type} {counts?.[type] != null && <span className={styles.muted}>({counts[type]})</span>}
-          </span>
-        ))}
-    {colouring === 'cluster' && found.some((c) => c.colour === SMALL) && (
+    {found
+      .filter((c) => c.colour !== SMALL)
+      .map((c) => (
+        <span key={c.id} className={styles.legendItem} title={c.name}>
+          <span className={styles.swatch} style={{ background: c.colour, borderColor: c.colour }} />
+          {c.name.length > 60 ? `${c.name.slice(0, 59)}…` : c.name} <span className={styles.muted}>({c.size})</span>
+        </span>
+      ))}
+    {found.some((c) => c.colour === SMALL) && (
       <span className={styles.legendItem}>
-        <span className={styles.swatch} style={{ background: SMALL }} />
+        <span className={styles.swatch} style={{ background: SMALL, borderColor: SMALL }} />
         {t('graph_other_clusters', { count: found.filter((c) => c.colour === SMALL).length })}
       </span>
     )}
-    <span className={styles.legendItem}>
-      <span className={styles.swatch} style={{ background: '#7c3aed', height: 2 }} />
-      {t('graph_judged_edge')}
-    </span>
   </div>
 );

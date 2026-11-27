@@ -174,5 +174,10 @@
   "run_cancel": "Cancel",
   "build_cap": "at most",
   "build_cost": "pairs · up to ${usd}, about {minutes} min",
-  "graph_other_clusters": "{count} smaller clusters"
+  "graph_other_clusters": "{count} smaller clusters",
+  "graph_filter": "Show node types",
+  "graph_filter_hide": "Hide {type}",
+  "graph_filter_show": "Show {type}",
+  "graph_filter_all": "Show all",
+  "graph_showing": "{shown} of {nodes} nodes shown"
 }

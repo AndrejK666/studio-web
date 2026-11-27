@@ -174,5 +174,10 @@
   "run_cancel": "Отменить",
   "build_cap": "не больше",
   "build_cost": "пар · до ${usd}, около {minutes} мин",
-  "graph_other_clusters": "мелких кластеров: {count}"
+  "graph_other_clusters": "мелких кластеров: {count}",
+  "graph_filter": "Показывать типы узлов",
+  "graph_filter_hide": "Скрыть {type}",
+  "graph_filter_show": "Показать {type}",
+  "graph_filter_all": "Показать все",
+  "graph_showing": "показано {shown} из {nodes} узлов"
 }
