@@ -30,7 +30,9 @@ const REGISTRY: &str = "kit_registry";
 /// The folders under `src/` that are kits' gears (ADR-0079 §7), and the two
 /// kits' modules the ADR's list predates: `gears_matcher` (the gears-matcher
 /// kit's client of its service, ADR-0076) and `research_emulator` (the
-/// constructor-research kit's stand-in for Constructor Research, ADR-0049).
+/// constructor-research kit's stand-in for Constructor Research, ADR-0049); and
+/// the built-in kits' functions on the kit-runtime port: `mna` (M&A due
+/// diligence) and `project_lifecycle` (Project lifecycle).
 const KIT_GEARS: &[&str] = &[
     "artifact_ingest",
     "components_catalog",
@@ -40,7 +42,9 @@ const KIT_GEARS: &[&str] = &[
     "git_proxy",
     "insight",
     "llm_proxy",
+    "mna",
     "product",
+    "project_lifecycle",
     "reports",
     "research_emulator",
     "spec_graph",

@@ -186,8 +186,6 @@ pub enum Refusal {
     /// 400 `failed_precondition`: the kit a function belongs to does not
     /// apply where it was asked.
     KitNotInstalled(String),
-    /// 400 `failed_precondition`: a lifecycle does not declare the move.
-    NoSuchTransition(String),
     /// 400 `failed_precondition`: what a kit function needs first is not
     /// there: `(subject, description, kind)`.
     Precondition(&'static str, String, &'static str),
@@ -238,7 +236,7 @@ impl std::fmt::Display for Refusal {
             Self::KitInstalled(slug) => {
                 write!(f, "`{slug}` is installed for the organization")
             }
-            Self::ModelConflict(detail) | Self::NoSuchTransition(detail) => f.write_str(detail),
+            Self::ModelConflict(detail) => f.write_str(detail),
             Self::ModelKitNotForProject(slug) => write!(
                 f,
                 "`{slug}` brings a model, which is the organization's, not one project's"

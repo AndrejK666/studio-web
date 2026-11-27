@@ -1,95 +1,37 @@
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+//! The kit-runtime port and the registry under it, with Project lifecycle
+//! (a built-in base kit that brings a model) as the kit: the Inbox sources a
+//! kit brings, its model in and out of the organization's, what the port
+//! answers a kit's function, and the claimed-route gate.
+
+use std::sync::Arc;
 
 use async_trait::async_trait;
 
+use axum::Router;
+use serde_json::json;
+use toolkit::api::canonical_prelude::*;
+use toolkit::api::operation_builder::{CORE_GLOBAL_BASE_LICENSE_FEATURE, LicenseFeature};
+use toolkit::api::{OpenApiRegistry, OpenApiRegistryImpl, OperationBuilder};
+use toolkit_security::SecurityContext;
+use uuid::Uuid;
+
 use super::*;
-use crate::kit_registry::installed::{
-    InstalledDocument, InstalledKit, InstalledStore, KitAuthority, PLATFORM_TENANT, service_context,
-};
+use crate::kit_registry::installed::{KitInstaller, PLATFORM_TENANT, service_context};
 use crate::kit_registry::models::FixedModels;
 use crate::kit_registry::service::{builtin_catalogue, official_catalogue};
+use crate::kit_registry::testing::{
+    ADMIN, Admins, Memory, ORG, PLATFORM_ADMIN, PROJECT, caller, installer_over, runtime_of,
+};
 
-const ORG: Uuid = Uuid::from_u128(0xc31d);
-const PROJECT: Uuid = Uuid::from_u128(0x9a0e);
-const ADMIN: Uuid = Uuid::from_u128(0x0a);
-const PLATFORM_ADMIN: Uuid = Uuid::from_u128(0xad);
-
-#[derive(Default)]
-struct Memory {
-    docs: Mutex<HashMap<Uuid, InstalledDocument>>,
-}
-
-#[async_trait]
-impl InstalledStore for Memory {
-    async fn read(&self, _: &SecurityContext, tenant: Uuid) -> anyhow::Result<InstalledDocument> {
-        Ok(self
-            .docs
-            .lock()
-            .unwrap()
-            .get(&tenant)
-            .cloned()
-            .unwrap_or_default())
-    }
-
-    async fn update(
-        &self,
-        tenant: Uuid,
-        change: &mut (
-                 dyn for<'d> FnMut(
-            &'d mut InstalledDocument,
-        ) -> Result<Option<InstalledKit>, Refusal>
-                     + Send
-             ),
-    ) -> Result<Option<InstalledKit>, Refusal> {
-        let mut docs = self.docs.lock().unwrap();
-        let mut doc = docs.get(&tenant).cloned().unwrap_or_default();
-        let answer = change(&mut doc)?;
-        docs.insert(tenant, doc);
-        Ok(answer)
-    }
-
-    async fn organization_of(&self, _: &SecurityContext, tenant: Uuid) -> Uuid {
-        if tenant == PROJECT { ORG } else { tenant }
-    }
-
-    async fn is_project(&self, _: &SecurityContext, tenant: Uuid) -> bool {
-        tenant == PROJECT
-    }
-}
-
-struct Admins;
-
-#[async_trait]
-impl KitAuthority for Admins {
-    async fn is_platform_admin(&self, ctx: &SecurityContext) -> bool {
-        ctx.subject_id() == PLATFORM_ADMIN
-    }
-    async fn may_manage(&self, ctx: &SecurityContext, _: Uuid) -> bool {
-        ctx.subject_id() == ADMIN || ctx.subject_id() == PLATFORM_ADMIN
-    }
-}
-
-fn caller(subject: Uuid, home: Uuid) -> SecurityContext {
-    SecurityContext::builder()
-        .subject_id(subject)
-        .subject_type("user")
-        .subject_tenant_id(home)
-        .token_scopes(vec!["*".into()])
-        .build()
-        .unwrap()
-}
+/// The kit the registry's tests read: built in, a base kit, with a model.
+const SLUG: &str = "project-lifecycle";
 
 fn setup() -> (
-    KitInstaller,
+    Arc<KitInstaller>,
     Arc<dyn crate::domain_model::port::DomainObjects>,
 ) {
-    let mut library = builtin_catalogue();
-    library.extend(official_catalogue());
     let port = crate::domain_model::port::in_memory();
-    let installer = KitInstaller::new(library, Arc::new(Memory::default()), Arc::new(Admins))
-        .with_models(Arc::new(FixedModels(port.clone())));
-    (installer, port)
+    (installer_over(port.clone()), port)
 }
 
 #[tokio::test]
@@ -241,66 +183,30 @@ async fn studio_s_own_inbox_sources_come_and_go_with_their_kits() {
     assert!(studio(installer.inbox_sources(&member, ORG).await.unwrap()).is_empty());
 }
 
-#[test]
-fn the_phase_lifecycle_is_the_kit_s() {
-    let l = lifecycle();
-    assert_eq!(l.states, ["idea", "discovery", "build", "run"]);
-    assert_eq!(l.initial.as_deref(), Some("idea"));
-    // No phase yet: any starts it.
-    assert!(l.allows(None, "build"));
-    assert!(l.allows(Some("idea"), "discovery"));
-    assert!(l.allows(Some("build"), "build"), "staying is not a move");
-    assert!(l.allows(Some("build"), "idea"));
-    assert!(!l.allows(Some("idea"), "run"));
-    assert!(!l.allows(Some("idea"), "nowhere"));
-    assert_eq!(
-        l.next(Some("discovery")),
-        [
-            ("build".to_owned(), "build".to_owned()),
-            ("rethink".to_owned(), "idea".to_owned())
-        ]
-    );
-}
-
 #[tokio::test]
-async fn project_lifecycle_brings_its_model_and_takes_it_away() {
+async fn a_kit_s_model_comes_and_goes_with_the_kit() {
     let (installer, port) = setup();
+    let runtime = runtime_of(&installer);
     let org = service_context(ORG).unwrap();
+    let admin = caller(ADMIN, ORG);
 
     // A built-in kit is a base kit by default: the organization's model gets
     // its overlay when the organization is read.
     assert!(installer.reconcile_models(ORG).await.unwrap().is_empty());
     let carried = port.kit_models(&org).await.unwrap();
     assert!(carried.contains_key(SLUG), "{carried:?}");
-
-    // Its phase moves along the lifecycle only.
-    let admin = caller(ADMIN, ORG);
-    let none = installer.project_phase(&admin, PROJECT).await.unwrap();
-    assert!(none.installed);
-    assert_eq!(none.phase, None);
-    let set = installer
-        .set_project_phase(&admin, PROJECT, "idea", None)
-        .await
-        .unwrap();
-    assert_eq!(set.phase.as_deref(), Some("idea"));
-    assert_eq!(set.owner, Some(ADMIN.to_string()), "the caller owns it");
-    assert!(set.since.is_some());
-    assert!(matches!(
-        installer
-            .set_project_phase(&admin, PROJECT, "run", None)
-            .await,
-        Err(Refusal::NoSuchTransition(_))
-    ));
-    let moved = installer
-        .set_project_phase(&admin, PROJECT, "discovery", Some("someone"))
-        .await
-        .unwrap();
-    assert_eq!(moved.owner.as_deref(), Some("someone"));
-    let (applies, rows) = installer.project_phases(&admin, ORG).await.unwrap();
-    assert!(applies);
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].0, PROJECT.to_string());
-    assert_eq!(rows[0].1, "discovery");
+    assert!(
+        runtime
+            .applies_to_project(&admin, PROJECT, SLUG)
+            .await
+            .unwrap()
+    );
+    assert!(
+        runtime
+            .applies_to_organization(&admin, ORG, SLUG)
+            .await
+            .unwrap()
+    );
 
     // A kit that brings a model is the organization's: the organization's
     // model already carries this one, so a project may take its screens,
@@ -317,19 +223,24 @@ async fn project_lifecycle_brings_its_model_and_takes_it_away() {
         .unwrap();
     assert_eq!(port.kit_models(&org).await.unwrap(), before);
 
-    // The platform takes the base kit away: the model loses the fields.
+    // The platform takes the base kit away: the model loses the fields, and
+    // the kit applies nowhere.
     let platform = caller(PLATFORM_ADMIN, PLATFORM_TENANT);
     installer.uninstall_base(&platform, SLUG).await.unwrap();
     installer.reconcile_models(ORG).await.unwrap();
     assert!(!port.kit_models(&org).await.unwrap().contains_key(SLUG));
-    let gone = installer.project_phase(&admin, PROJECT).await.unwrap();
-    assert!(!gone.installed);
-    assert!(matches!(
-        installer
-            .set_project_phase(&admin, PROJECT, "build", None)
-            .await,
-        Err(Refusal::KitNotInstalled(_))
-    ));
+    assert!(
+        !runtime
+            .applies_to_project(&admin, PROJECT, SLUG)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !runtime
+            .applies_to_organization(&admin, ORG, SLUG)
+            .await
+            .unwrap()
+    );
 
     // The organization installs it for itself: back, at once.
     installer
@@ -413,8 +324,11 @@ async fn reading_the_kits_twice_with_nothing_changed_writes_nothing() {
         syncs: Default::default(),
         model_reads: Default::default(),
     });
-    let installer = KitInstaller::new(library, Arc::new(Memory::default()), Arc::new(Admins))
-        .with_models(Arc::new(FixedModels(counting.clone())));
+    let installer = Arc::new(
+        KitInstaller::new(library, Arc::new(Memory::default()), Arc::new(Admins))
+            .with_models(Arc::new(FixedModels(counting.clone()))),
+    );
+    let runtime = runtime_of(&installer);
     let org = service_context(ORG).unwrap();
     let member = caller(Uuid::from_u128(0x3e), ORG);
     let admin = caller(ADMIN, ORG);
@@ -429,7 +343,16 @@ async fn reading_the_kits_twice_with_nothing_changed_writes_nothing() {
     counting.model_reads.store(0, Ordering::SeqCst);
     installer.models_in_step(ORG).await.unwrap();
     installer.inbox_sources(&member, ORG).await.unwrap();
-    installer.project_phase(&admin, PROJECT).await.unwrap();
+    // What a kit's function reads (a project's phase), through the port.
+    assert!(
+        runtime
+            .applies_to_project(&admin, PROJECT, SLUG)
+            .await
+            .unwrap()
+    );
+    let (_, at) = runtime.org_ctx(&admin, PROJECT).await.unwrap();
+    runtime.models_in_step(ORG).await.unwrap();
+    runtime.project_object(&at, PROJECT).await.unwrap();
     assert_eq!(
         counting.syncs.load(Ordering::SeqCst),
         0,
@@ -464,4 +387,160 @@ async fn reading_the_kits_twice_with_nothing_changed_writes_nothing() {
         1,
         "one reconciliation, not one per read"
     );
+}
+
+#[tokio::test]
+async fn the_port_reads_and_writes_the_project_s_own_object() {
+    let (installer, _) = setup();
+    let runtime = runtime_of(&installer);
+    let admin = caller(ADMIN, ORG);
+    installer.reconcile_models(ORG).await.unwrap();
+
+    let (org, at) = runtime.org_ctx(&admin, PROJECT).await.unwrap();
+    assert_eq!(org, ORG, "a project's model is its organization's");
+    assert!(runtime.models().is_some());
+    assert_eq!(runtime.project_object(&at, PROJECT).await.unwrap(), None);
+
+    runtime
+        .put_project_object(
+            &at,
+            PROJECT,
+            json!({ "tenant_id": PROJECT.to_string(), "phase": "idea" }),
+        )
+        .await
+        .unwrap();
+    let (_, payload) = runtime
+        .project_object(&at, PROJECT)
+        .await
+        .unwrap()
+        .expect("written");
+    assert_eq!(payload["phase"], "idea");
+    assert_eq!(payload["tenant_id"], PROJECT.to_string());
+}
+
+#[test]
+fn a_kit_serves_its_claimed_writes_and_its_listed_reads_only() {
+    // Project lifecycle claims `PUT /project-phase` on studio-kits and lists
+    // its two reads.
+    assert!(super::super::claims::kit_serves(
+        SLUG,
+        GEAR,
+        "PUT",
+        "/studio-kits/v1/project-phase"
+    ));
+    assert!(super::super::claims::kit_serves(
+        SLUG,
+        GEAR,
+        "GET",
+        "/studio-kits/v1/project-phases"
+    ));
+    // Not on another gear, not another kit's, not a route nobody claims.
+    assert!(!super::super::claims::kit_serves(
+        SLUG,
+        "studio-organizations",
+        "PUT",
+        "/studio-kits/v1/project-phase"
+    ));
+    assert!(!super::super::claims::kit_serves(
+        SLUG,
+        GEAR,
+        "PATCH",
+        "/studio-kits/v1/mna/deal"
+    ));
+    assert!(!super::super::claims::kit_serves(
+        SLUG,
+        GEAR,
+        "DELETE",
+        "/studio-kits/v1/project-phase"
+    ));
+    assert!(!super::super::claims::kit_serves(
+        "no-such-kit",
+        GEAR,
+        "GET",
+        "/studio-kits/v1/project-phase"
+    ));
+}
+
+struct License;
+impl AsRef<str> for License {
+    fn as_ref(&self) -> &'static str {
+        CORE_GLOBAL_BASE_LICENSE_FEATURE
+    }
+}
+impl LicenseFeature for License {}
+
+async fn nothing() -> StatusCode {
+    StatusCode::NO_CONTENT
+}
+
+/// A kit function that serves `routes`, `(METHOD, path)`.
+struct Serves(&'static [(&'static str, &'static str)]);
+
+impl KitRoutes for Serves {
+    fn register_rest(&self, mut router: Router, openapi: &dyn OpenApiRegistry) -> Router {
+        for (i, (method, path)) in self.0.iter().enumerate() {
+            let builder = match *method {
+                "GET" => OperationBuilder::get(*path),
+                "PUT" => OperationBuilder::put(*path),
+                "POST" => OperationBuilder::post(*path),
+                _ => OperationBuilder::delete(*path),
+            };
+            router = builder
+                .operation_id(format!("studio_kits.test_{i}"))
+                .summary("A test route")
+                .tag("StudioKits")
+                .authenticated()
+                .require_license_features::<License>([])
+                .handler(nothing)
+                .no_content_response(StatusCode::NO_CONTENT, "Done")
+                .register(router, openapi);
+        }
+        router
+    }
+}
+
+#[test]
+fn the_gate_mounts_a_kit_s_claimed_routes() {
+    let openapi = OpenApiRegistryImpl::new();
+    let routes = Serves(&[
+        ("GET", "/studio-kits/v1/project-phase"),
+        ("PUT", "/studio-kits/v1/project-phase"),
+        ("GET", "/studio-kits/v1/project-phases"),
+    ]);
+    mount(SLUG, &routes, Router::new(), &openapi).expect("every route is claimed");
+}
+
+#[test]
+fn the_gate_refuses_a_kit_s_unclaimed_route() {
+    let openapi = OpenApiRegistryImpl::new();
+    // A write the kit does not claim, and another kit's write.
+    let routes = Serves(&[
+        ("GET", "/studio-kits/v1/project-phase"),
+        ("POST", "/studio-kits/v1/project-phase/undo"),
+        ("PUT", "/studio-kits/v1/mna/findings/{finding_id}"),
+    ]);
+    let err = mount(SLUG, &routes, Router::new(), &openapi)
+        .expect_err("an unclaimed route stops the gear")
+        .to_string();
+    assert!(
+        err.contains("POST /studio-kits/v1/project-phase/undo")
+            && err.contains("PUT /studio-kits/v1/mna/findings/{finding_id}")
+            && !err.contains("GET /studio-kits/v1/project-phase,"),
+        "{err}"
+    );
+}
+
+#[test]
+fn no_two_kit_functions_share_a_kit_or_an_order() {
+    let mut kits = std::collections::BTreeSet::new();
+    let mut orders = std::collections::BTreeSet::new();
+    for f in functions() {
+        assert!(kits.insert(f.kit), "two functions for the kit {}", f.kit);
+        assert!(orders.insert(f.order), "{} takes order {}", f.kit, f.order);
+        assert!(
+            super::super::manifest::builtin_manifest(f.kit).is_some(),
+            "{} is not a built-in kit",
+            f.kit
+        );
+    }
 }

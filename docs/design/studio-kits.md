@@ -554,7 +554,8 @@ organization's Workspaces tree, and moved on the project's Overview. The
 `phases` tab it once brought listed the `phase` type's objects, which nothing
 writes; an organization's model that still carries it loses it at its next
 reconciliation. Until kit functions run in Studio's function runtime
-(ADR-0068 §9), its function is compiled into this gear (`phase.rs`):
+(ADR-0068 §9), its function is compiled in (`src/project_lifecycle`, served
+on this gear through the kit-runtime port, `kit_registry/runtime.rs`):
 
 | Method | Path | Who |
 | --- | --- | --- |
@@ -1079,7 +1080,7 @@ findings, risks and open questions as the kit's own types
 (`gts.cf.studio.kit.mna.*`). It creates a project in `modernize` mode taking
 `sources` only; its next steps connect the target's repositories, fill in the
 thesis (`done_when: field:thesis`) and review the evidence. Its function is
-compiled into this gear (`kit_registry/mna.rs`, routes under
+compiled in (`src/mna`, a kit gear on the kit-runtime port; routes under
 `/studio-kits/v1/mna/`, MCP `mna_*`), its screen is `mna-mfe`'s Project ›
 Deal; the deal lead who signs off is the project's owner. The design, the
 evidence summary and the follow-ups: [`mna-kit.md`](mna-kit.md)

@@ -33,8 +33,6 @@ pub(crate) use super::manifest::{
     KitManifest, PROJECT_CREATION_STEPS, project_type_kit, project_type_kits,
 };
 pub use super::owners::{KitOwners, MarkOn, Rehome};
-#[cfg(test)]
-pub(crate) use super::phase::phases_query as project_phases_query;
 pub(crate) use super::project_types::OrgProjectType;
 use super::service::KitRegistryService;
 pub use super::service::{CONSTRUCTOR_RESEARCH_KIT, GEARS_MATCHER_KIT, SPEC_MAPPING_KIT};
@@ -326,7 +324,9 @@ impl KitPresence for InstalledKits {
 }
 
 /// Every project's phase in an organization: the projects of
-/// [`super::phase::SLUG`]'s lifecycle (`project.phase`, ADR-0068 §7).
+/// Project lifecycle's lifecycle (`project.phase`, ADR-0068 §7). The kit's
+/// function registers it on the hub, started through the
+/// kit-runtime port (ADR-0079).
 #[async_trait]
 pub trait ProjectPhases: Send + Sync + 'static {
     /// The phase of each project of `org` that has one, by project id; `None`
@@ -337,24 +337,4 @@ pub trait ProjectPhases: Send + Sync + 'static {
         ctx: &SecurityContext,
         org: Uuid,
     ) -> anyhow::Result<Option<std::collections::HashMap<Uuid, String>>>;
-}
-
-#[async_trait]
-impl ProjectPhases for InstalledKits {
-    async fn phases_in(
-        &self,
-        ctx: &SecurityContext,
-        org: Uuid,
-    ) -> anyhow::Result<Option<std::collections::HashMap<Uuid, String>>> {
-        let (installed, rows) = self
-            .installer
-            .project_phases(ctx, org)
-            .await
-            .map_err(|refusal| anyhow::anyhow!("the phases could not be read: {refusal}"))?;
-        Ok(installed.then(|| {
-            rows.into_iter()
-                .filter_map(|(project, phase, _, _)| Some((project.parse().ok()?, phase)))
-                .collect()
-        }))
-    }
 }

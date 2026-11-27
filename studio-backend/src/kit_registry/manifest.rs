@@ -831,7 +831,7 @@ const BUILTIN_MANIFESTS: &[(&str, &str)] = &[
         include_str!("builtin/constructor-research.kit.json"),
     ),
     // Technical due diligence of an acquisition target (studio-web#1024):
-    // a deal is a project of this type; its function is `mna.rs`.
+    // a deal is a project of this type; its function is `src/mna`.
     ("mna", include_str!("builtin/mna.kit.json")),
     // What the gears-matcher service reads in a project's specifications
     // (ADR-0072): the gear-match screens, routes, tools and Inbox source,

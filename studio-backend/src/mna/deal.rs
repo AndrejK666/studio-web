@@ -26,7 +26,8 @@
 //! reason: never a number made up.
 //!
 //! Until kit functions run in Studio's function runtime (ADR-0068 §9), this
-//! built-in kit's function is compiled in, as `phase.rs` is.
+//! built-in kit's function is compiled in, as Project lifecycle's is, and joins
+//! studio-kits through the kit-runtime port (`crate::kit_registry::runtime`).
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -36,10 +37,8 @@ use serde_json::{Map, Value, json};
 use toolkit_security::SecurityContext;
 use uuid::Uuid;
 
-use super::installed::{KitInstaller, Refusal};
-use super::manifest::{builtin_manifest, overlay_of};
-use super::service::now_rfc3339;
 use crate::domain_model::port::is_refusal;
+use crate::kit_registry::runtime::{KitRuntime, Refusal, builtin_overlay, now_rfc3339};
 use crate::project_sources::ProjectSource;
 
 /// The kit this is the function of.
@@ -50,7 +49,7 @@ pub const DEAL_LEAD_REQUIRED: &str = "DEAL_LEAD_REQUIRED";
 /// The `failed_precondition` kind for a sign-off with no recommendation.
 pub const NO_RECOMMENDATION: &str = "NO_RECOMMENDATION";
 /// The `permission_denied` reason when the PDP refuses the write.
-pub const DOMAIN_EDIT_REQUIRED: &str = super::phase::DOMAIN_EDIT_REQUIRED;
+pub const DOMAIN_EDIT_REQUIRED: &str = "DOMAIN_EDIT_REQUIRED";
 
 /// The kit's project subtype, by its name in the overlay.
 const SUBTYPE: &str = "project";
@@ -108,9 +107,7 @@ impl Kind {
 /// The values the kit's overlay allows for `field` of its type `type_name`
 /// (`a | b | c`): the one place the vocabulary is written.
 pub fn vocabulary(type_name: &str, field: &str) -> Vec<String> {
-    let overlay = builtin_manifest(SLUG)
-        .and_then(|m| overlay_of(&m).ok().flatten())
-        .expect("mna brings a model");
+    let overlay = builtin_overlay(SLUG).expect("mna brings a model");
     overlay
         .types
         .iter()
@@ -513,20 +510,17 @@ pub fn clean_item(
 
 /// The function: the deal, its items and its evidence.
 pub struct Mna {
-    installer: Arc<KitInstaller>,
+    runtime: Arc<dyn KitRuntime>,
     projects: Arc<dyn DealProjects>,
 }
 
 impl Mna {
-    pub fn new(installer: Arc<KitInstaller>, projects: Arc<dyn DealProjects>) -> Self {
-        Self {
-            installer,
-            projects,
-        }
+    pub fn new(runtime: Arc<dyn KitRuntime>, projects: Arc<dyn DealProjects>) -> Self {
+        Self { runtime, projects }
     }
 
     fn port(&self) -> Result<Arc<dyn crate::domain_model::port::DomainObjects>, Refusal> {
-        self.installer
+        self.runtime
             .models()
             .ok_or_else(|| Refusal::Internal(anyhow::anyhow!("the domain model is not running")))
     }
@@ -539,17 +533,12 @@ impl Mna {
         ctx: &SecurityContext,
         project: Uuid,
     ) -> Result<Option<(Uuid, SecurityContext)>, Refusal> {
-        if self
-            .installer
-            .applies_to_project(ctx, project, SLUG)
-            .await?
-            .is_none()
-        {
+        if !self.runtime.applies_to_project(ctx, project, SLUG).await? {
             return Ok(None);
         }
-        let (org, at) = self.installer.org_ctx(ctx, project).await?;
+        let (org, at) = self.runtime.org_ctx(ctx, project).await?;
         // The model may not carry the kit's types yet: make it.
-        self.installer.models_in_step(org).await?;
+        self.runtime.models_in_step(org).await?;
         Ok(Some((org, at)))
     }
 
@@ -597,7 +586,7 @@ impl Mna {
             });
         };
         let payload = self
-            .installer
+            .runtime
             .project_object(&at, project)
             .await?
             .map(|(_, p)| p)
@@ -614,7 +603,7 @@ impl Mna {
         change: impl FnOnce(&mut Map<String, Value>) -> Result<(), Refusal>,
     ) -> Result<(), Refusal> {
         let mut payload = self
-            .installer
+            .runtime
             .project_object(at, project)
             .await?
             .map(|(_, p)| p)
@@ -625,9 +614,9 @@ impl Mna {
         for key in ["_scope", "id"] {
             obj.remove(key);
         }
-        // Through the installer's pair, which alone names the type the
+        // Through the runtime's pair, which alone names the type the
         // project's object is stored as (ADR-0073 §6, studio-web#1118).
-        self.installer
+        self.runtime
             .put_project_object(at, project, payload)
             .await
             .map_err(write_refusal)
@@ -1203,5 +1192,5 @@ fn write_refusal(e: anyhow::Error) -> Refusal {
 }
 
 #[cfg(test)]
-#[path = "mna_tests.rs"]
+#[path = "deal_tests.rs"]
 mod tests;

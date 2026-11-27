@@ -19,20 +19,19 @@ mod kind;
 pub(crate) mod kit_gdl; // a kit's passport, `kit.gdl`: the registry's, the catalogue reads it too
 mod manifest;
 mod mcp;
-mod mna;
-mod mna_mcp;
-mod mna_rest;
 mod models;
 mod owners;
-mod phase;
 pub mod port;
 mod project_types;
 mod requires;
 mod rest;
+pub(crate) mod runtime; // the kit-runtime port: a kit's function joins studio-kits without being named (ADR-0079)
 pub(crate) mod service;
 mod shelf;
 mod shelf_bundles;
 mod sweep;
+#[cfg(test)]
+pub(crate) mod testing; // an installer over memory, for a kit function's tests
 
 pub(crate) use installed::KITS_INSTALLED_METADATA_TYPE;
 // This gear's MCP tools, collected by studio-mcp (ADR-0079).
@@ -66,7 +65,7 @@ pub struct StudioKitsGear {
     service: OnceLock<Arc<KitRegistryService>>,
     installer: OnceLock<Arc<KitInstaller>>,
     access: OnceLock<crate::org_scope::OrgAccess>,
-    mna: OnceLock<Arc<mna::Mna>>,
+    kit_functions: OnceLock<runtime::Started>,
 }
 
 #[async_trait]
@@ -107,16 +106,6 @@ impl Gear for StudioKitsGear {
             .add_source(Arc::new(shelf_bundles::ShelfBundles::new(
                 Arc::clone(&installer) as Arc<dyn shelf_bundles::ShelfLookup>,
             )));
-        // M&A due diligence's function (studio-web#1024): the deal on the
-        // project's object, its findings, risks and open questions, and the
-        // evidence read from what Studio already holds.
-        let mna = Arc::new(mna::Mna::new(
-            Arc::clone(&installer),
-            Arc::new(mna::HubProjects::new(
-                account_management.clone(),
-                ctx.client_hub(),
-            )),
-        ));
         let access = crate::org_scope::OrgAccess(Arc::new(
             crate::studio_session::sdk::TenantMembership::new(account_management),
         ));
@@ -134,11 +123,14 @@ impl Gear for StudioKitsGear {
             .register::<dyn port::KitPresence>(Arc::new(port::InstalledKits::new(Arc::clone(
                 &installer,
             ))) as Arc<dyn port::KitPresence>);
-        // Every project's phase, for the rows of studio-organizations' rollups.
-        ctx.client_hub()
-            .register::<dyn port::ProjectPhases>(Arc::new(port::InstalledKits::new(Arc::clone(
-                &installer,
-            ))) as Arc<dyn port::ProjectPhases>);
+        // The built-in kits' functions (ADR-0068 §9), each registered in its
+        // own module through the kit-runtime port (ADR-0079): started here,
+        // their routes mounted in `register_rest`. This gear names none.
+        let kit_functions = runtime::start_all(&runtime::KitHost {
+            runtime: Arc::new(runtime::InstallerRuntime(Arc::clone(&installer))),
+            hub: ctx.client_hub(),
+            access: access.clone(),
+        })?;
         // The kit-rename sweep (ADR-0071 §8): every installation and every
         // organization's model moved off the retired slugs, once after start.
         crate::model_sweep::register(Arc::new(sweep::KitRenameSweep(Arc::clone(&installer))));
@@ -151,8 +143,8 @@ impl Gear for StudioKitsGear {
         self.access
             .set(access)
             .map_err(|_| anyhow::anyhow!("studio-kits already initialized"))?;
-        self.mna
-            .set(mna)
+        self.kit_functions
+            .set(kit_functions)
             .map_err(|_| anyhow::anyhow!("studio-kits already initialized"))?;
         Ok(())
     }
@@ -181,16 +173,17 @@ impl toolkit::contracts::RestApiCapability for StudioKitsGear {
             .get()
             .ok_or_else(|| anyhow::anyhow!("studio-kits not initialized"))?
             .clone();
-        let mna = self
-            .mna
+        let kit_functions = self
+            .kit_functions
             .get()
-            .ok_or_else(|| anyhow::anyhow!("studio-kits not initialized"))?
-            .clone();
-        let router = rest::register_routes(router, openapi, service, installer, access.clone());
-        let router = mna_rest::register_routes(router, openapi, mna, access);
+            .ok_or_else(|| anyhow::anyhow!("studio-kits not initialized"))?;
+        let mut router = rest::register_routes(router, openapi, service, installer, access);
+        // Each kit function's routes, held to what its kit.json claims.
+        for (kit, routes) in &kit_functions.0 {
+            router = runtime::mount(kit, routes.as_ref(), router, openapi)?;
+        }
         // The write routes a kit claims answer KIT_NOT_INSTALLED without it
-        // (ADR-0071 §4): Project lifecycle's `PUT /project-phase`, M&A due
-        // diligence's deal, findings, risks and open questions.
+        // (ADR-0071 §4): its own routes' and the kit functions' alike.
         Ok(gate::with_claimed_routes(
             router,
             ctx.client_hub(),
