@@ -4,7 +4,9 @@
  * of slugs — or
  * `null` while it is unknown (no organization yet, the read in flight, or a
  * backend without the installer). Unknown never hides anything: a screen is
- * hidden only once the gear has said its kit is not installed.
+ * hidden only once the gear has said its kit is not installed. A kit the
+ * deployment does not run (ADR-0079 §5, `available_in_deployment: false`)
+ * counts as not installed: its screens show nowhere here.
  *
  * And the domain types installed for the organization (ADR-0070 §2): a
  * section that shows another kit's type declares it in `presentation.needs`
@@ -16,7 +18,7 @@
 import { useMemo } from 'react';
 import { apiRegistry, useApiQuery, useAppSelector } from '@gears-frontx/react';
 import { useDomainTypes } from '@constructor-studio/mfe-shared';
-import { InstalledKitsApiService } from '@/app/api/InstalledKitsApiService';
+import { InstalledKitsApiService, kitsOffInDeployment, runningKits } from '@/app/api/InstalledKitsApiService';
 import type { ModelTypesSummary } from '@/app/api/ModelTypesApiService';
 import { APP_CONTEXT_SLICE_KEY, type AppContextState } from '@/app/slices/appContextSlice';
 import type { ScreenLevel, StudioScreenExtension } from '@/app/mfe/screenLevels';
@@ -42,7 +44,28 @@ export function useInstalledKits(level?: ScreenLevel): ReadonlySet<string> | nul
   if (!read.data) return null;
   // An answer for another scope (the read before a switch) is not this one's.
   if (projectId ? read.data.project_id !== projectId : read.data.organization_id !== orgId) return null;
-  return new Set(read.data.effective.map((k) => k.kit_slug));
+  return new Set(runningKits(read.data));
+}
+
+/**
+ * The kits installed where the person is that the deployment does not run
+ * (ADR-0079 §5), as a set of slugs; empty while unknown. Reads the same cache
+ * entry as `useInstalledKits`, so a screen of such a kit can say why it is
+ * not there.
+ */
+export function useKitsOffInDeployment(): ReadonlySet<string> {
+  const orgId = useAppSelector(
+    (state) => (state[APP_CONTEXT_SLICE_KEY] as AppContextState | undefined)?.org?.id ?? null
+  );
+  const projectId = useAppSelector(
+    (state) => (state[APP_CONTEXT_SLICE_KEY] as AppContextState | undefined)?.project?.id ?? null
+  );
+  const scope = projectId ? { projectId } : { organizationId: orgId ?? '' };
+  const read = useApiQuery(apiRegistry.getService(InstalledKitsApiService).installed(scope), {
+    enabled: !!orgId || !!projectId,
+  });
+  const data = read.data;
+  return useMemo(() => new Set(data ? kitsOffInDeployment(data) : []), [data]);
 }
 
 /** A kit's icon as the installer lists it: a lucide name, or the URL of an SVG in its bundle. */

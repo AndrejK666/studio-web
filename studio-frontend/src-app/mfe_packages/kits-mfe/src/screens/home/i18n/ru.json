@@ -32,6 +32,8 @@
   "base_default": "базовый кит (по умолчанию)",
   "installed_for": "стоит у {organization}",
   "not_installed": "не установлен",
+  "not_in_deployment": "Нет в этой установке",
+  "not_in_deployment_reason": "Эта установка Studio не запускает этот кит, поэтому здесь его нельзя поставить и использовать.",
   "make_base": "Сделать базовым",
   "remove_base": "Убрать из базовых",
   "install_for": "Поставить для {organization}",

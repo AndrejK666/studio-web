@@ -38,6 +38,12 @@ export interface CatalogKit {
   kind?: KitKind;
   /** Every tier it brings, strongest first. */
   brings?: KitKind[];
+  /**
+   * Whether this deployment runs the kit (ADR-0079 §5): `false` for a kit linked into Studio that
+   * the deployment's composition switched off. Such a kit cannot be installed or used here. Absent
+   * from a backend before it: it runs.
+   */
+  available_in_deployment?: boolean;
 }
 
 /** The kit types, strongest first. */
@@ -75,6 +81,8 @@ export interface InstalledKit {
   by_default?: boolean;
   /** A base kit an organization administrator may uninstall for that organization alone (ADR-0074). */
   removable_by_organization?: boolean;
+  /** Whether this deployment runs the kit (ADR-0079 §5), as `CatalogKit.available_in_deployment`. */
+  available_in_deployment?: boolean;
 }
 
 export interface InstalledKits {

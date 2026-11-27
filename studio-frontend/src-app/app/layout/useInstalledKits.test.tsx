@@ -48,7 +48,13 @@ vi.mock('@constructor-studio/mfe-shared', async (importOriginal) => ({
   },
 }));
 
-import { screenShows, typeGtsId, useInstalledKits, useInstalledTypes } from './useInstalledKits';
+import {
+  screenShows,
+  typeGtsId,
+  useInstalledKits,
+  useInstalledTypes,
+  useKitsOffInDeployment,
+} from './useInstalledKits';
 
 const answer = (organization_id: string, project_id: string | null, kits: string[]): InstalledKitsSummary => ({
   organization_id,
@@ -67,6 +73,30 @@ afterEach(() => {
   state.answer = null;
   state.types = null;
   queries.length = 0;
+});
+
+describe('a kit the deployment does not run (ADR-0079 §5)', () => {
+  it('counts as not installed, so its screens show nowhere, and is listed as switched off', () => {
+    state.answer = {
+      organization_id: 'o-1',
+      project_id: null,
+      effective: [
+        { kit_slug: 'org-costs', version: '1', available_in_deployment: false },
+        { kit_slug: 'org-reports', version: '1', available_in_deployment: true },
+        // An older backend says nothing: the kit runs.
+        { kit_slug: 'project-git', version: '1' },
+      ],
+    };
+    const installed = renderHook(() => useInstalledKits()).result.current;
+    expect([...(installed ?? [])]).toEqual(['org-reports', 'project-git']);
+    expect(screenShows(kitScreen('org-costs'), installed)).toBe(false);
+    expect(screenShows(kitScreen('org-reports'), installed)).toBe(true);
+    expect([...renderHook(() => useKitsOffInDeployment()).result.current]).toEqual(['org-costs']);
+  });
+
+  it('lists nothing as switched off while the kits are unknown', () => {
+    expect(renderHook(() => useKitsOffInDeployment()).result.current.size).toBe(0);
+  });
 });
 
 describe('useInstalledKits across a switch', () => {

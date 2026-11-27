@@ -6,6 +6,7 @@ import {
 } from '@gears-frontx/react';
 import {
   STUDIO_ACTION_PREFERENCE_SET,
+  STUDIO_SHARED_PROPERTY_CONTEXT_ORGANIZATION,
   STUDIO_SHARED_PROPERTY_UI_PREFERENCES,
 } from '@constructor-studio/mfe-shared';
 import { createMfeBridgeFixture } from '@frontx-test-utils/createMfeBridgeFixture';
@@ -22,6 +23,10 @@ vi.mock('@gears-frontx/react', async (importOriginal) => ({
   apiRegistry: {
     getService: () => ({
       catalog: {},
+      // Nothing installed yet, wherever it is asked.
+      installed: () => ({
+        fetch: () => Promise.resolve({ organization_id: 'org-1', base: [], organization: [], project: [], effective: [] }),
+      }),
     }),
   },
   useApiQuery: useApiQueryMock,
@@ -173,6 +178,38 @@ describe('HomeScreen', () => {
     );
     expect(await screen.findByRole('button', { name: 'SDLC' })).toBeTruthy();
     expect(document.querySelector('[data-kit-tiles]')).toBeNull();
+  });
+
+  it('marks a kit the deployment does not run, and offers no install of it, saying why', async () => {
+    useApiQueryMock.mockReturnValue({
+      isLoading: false,
+      isError: false,
+      data: {
+        total: 2,
+        items: [
+          { ...SDLC, available_in_deployment: false },
+          { ...SDLC, slug: 'compete', name: 'Competitive Analysis', available_in_deployment: true },
+        ],
+      },
+    });
+    const { bridge } = createMfeBridgeFixture({
+      domainId: TEST_DOMAIN_ID,
+      instanceId: TEST_INSTANCE_ID,
+      initialProperties: {
+        [STUDIO_SHARED_PROPERTY_CONTEXT_ORGANIZATION]: { id: 'org-1', name: 'Acme' } as never,
+      },
+    });
+    render(<HomeScreen bridge={bridge} />);
+    const off = (await screen.findByRole('button', { name: 'SDLC' })).closest('tr')!;
+    const on = screen.getByRole('button', { name: 'Competitive Analysis' }).closest('tr')!;
+    expect(within(off).getByText('not_in_deployment')).toBeTruthy();
+    expect(within(on).queryByText('not_in_deployment')).toBeNull();
+    // On the platform's Kits tab the install action is "make a base kit".
+    const install = await within(off).findByRole('button', { name: 'make_base' });
+    expect((install as HTMLButtonElement).disabled).toBe(true);
+    expect(install.getAttribute('title')).toBe('not_in_deployment_reason');
+    expect(within(off).getByText('not_in_deployment_reason')).toBeTruthy();
+    expect((within(on).getByRole('button', { name: 'make_base' }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it('filters the kits by the search', async () => {

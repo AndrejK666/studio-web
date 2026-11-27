@@ -32,7 +32,35 @@ export interface InstalledKitsSummary {
     icon?: string | null;
     /** Where a bundled icon is served; null for a lucide one. */
     icon_url?: string | null;
+    /**
+     * Whether this deployment runs the kit (ADR-0079 §5). `false` for a kit
+     * the deployment's composition switched off: its routes answer
+     * `KIT_NOT_INSTALLED`, so its screens show nowhere. Absent (an older
+     * backend): it runs.
+     */
+    available_in_deployment?: boolean;
   }[];
+}
+
+type EffectiveKit = InstalledKitsSummary['effective'][number];
+
+/** Whether the deployment runs this installed kit: only an explicit `false` says no. */
+export function runsInDeployment(kit: EffectiveKit): boolean {
+  return kit.available_in_deployment !== false;
+}
+
+/**
+ * The slugs of the kits that apply where the summary is about and that the
+ * deployment runs: an installed kit the deployment switched off counts as not
+ * installed, so its tabs, menu items and routes go the way a missing kit's do.
+ */
+export function runningKits(summary: InstalledKitsSummary): string[] {
+  return summary.effective.filter(runsInDeployment).map((k) => k.kit_slug);
+}
+
+/** The slugs of installed kits the deployment does not run. */
+export function kitsOffInDeployment(summary: InstalledKitsSummary): string[] {
+  return summary.effective.filter((k) => !runsInDeployment(k)).map((k) => k.kit_slug);
 }
 
 export interface KitMfeManifestList {

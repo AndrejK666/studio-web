@@ -15,7 +15,8 @@ use uuid::Uuid;
 
 use super::{
     Composition, EDITION_GLASSHOUSE, EDITION_STUDIO, EDITIONS, KitGear, edition_from_vendor,
-    edition_kits, from_vendor, gear_on, kit_editions, kit_of, kit_on, known_kits, with,
+    edition_kits, from_vendor, gear_on, kit_available, kit_editions, kit_of, kit_on, known_kits,
+    with,
 };
 
 /// Each kit gear and the kit it belongs to (ADR-0079 §7).
@@ -436,5 +437,18 @@ fn a_switched_off_kit_shows_in_no_status() {
         assert!(Kits::All.has(None));
         assert_eq!(crate::organizations::kit_parts::opens("kind"), None);
         assert_eq!(crate::organizations::kit_parts::opens("threads-me"), None);
+    });
+}
+
+#[test]
+fn only_a_linked_kit_switched_off_is_unavailable() {
+    with(all_but(&["org-reports"]), || {
+        assert!(!kit_available("org-reports"));
+        assert!(kit_available("org-costs"));
+        assert!(kit_available("someone-elses-kit"));
+    });
+    with(no_kits(), || {
+        assert!(known_kits().iter().all(|k| !kit_available(k)));
+        assert!(kit_available("someone-elses-kit"));
     });
 }
